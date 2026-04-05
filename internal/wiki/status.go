@@ -16,23 +16,23 @@ import (
 
 // StatusInfo holds wiki stats for display.
 type StatusInfo struct {
-	Project        string
-	Mode           string // greenfield or vault-overlay
-	SourceCount    int
-	PendingCount   int
-	ConceptCount   int
-	EntryCount     int
-	VectorCount    int
-	VectorDims     int
-	EntityCount    int
-	RelationCount  int
-	LearningCount  int
-	EmbedProvider  string
-	EmbedDims      int
-	DimMismatch    bool
-	GitClean       bool
-	LastCommit     string
-	LastMessage    string
+	Project       string
+	Mode          string // greenfield or vault-overlay
+	SourceCount   int
+	PendingCount  int
+	ConceptCount  int
+	EntryCount    int
+	VectorCount   int
+	VectorDims    int
+	EntityCount   int
+	RelationCount int
+	LearningCount int
+	EmbedProvider string
+	EmbedDims     int
+	DimMismatch   bool
+	GitClean      bool
+	LastCommit    string
+	LastMessage   string
 }
 
 // Stores holds shared store references to avoid re-opening the DB.
@@ -101,7 +101,7 @@ func GetStatus(projectDir string, stores *Stores) (*StatusInfo, error) {
 	info.RelationCount, _ = ontStore.RelationCount()
 
 	// Embedding provider
-	embedder := embed.NewCascade(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL)
+	embedder := embed.NewForConfig(cfg)
 	if embedder != nil {
 		info.EmbedProvider = embedder.Name()
 		info.EmbedDims = embedder.Dimensions()

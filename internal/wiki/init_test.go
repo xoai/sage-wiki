@@ -3,6 +3,7 @@ package wiki
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -35,6 +36,16 @@ func TestInitGreenfield(t *testing.T) {
 	cfgPath := filepath.Join(dir, "config.yaml")
 	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
 		t.Error("config.yaml should exist")
+	}
+	cfgData, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(cfgData), "embed:") {
+		t.Error("config.yaml should include embed section")
+	}
+	if !strings.Contains(string(cfgData), "provider: auto") {
+		t.Error("config.yaml should include default embed provider")
 	}
 
 	// Verify .gitignore
@@ -98,6 +109,14 @@ func TestInitVaultOverlay(t *testing.T) {
 	clippingsTest := filepath.Join(dir, "Clippings", "test.md")
 	if _, err := os.Stat(clippingsTest); os.IsNotExist(err) {
 		t.Error("source files should not be modified")
+	}
+
+	cfgData, err := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(cfgData), "embed:") {
+		t.Error("config.yaml should include embed section")
 	}
 }
 

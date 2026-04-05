@@ -20,6 +20,12 @@ func TestDefaults(t *testing.T) {
 	if cfg.Search.HybridWeightBM25 != 0.7 {
 		t.Errorf("expected bm25 weight 0.7, got %f", cfg.Search.HybridWeightBM25)
 	}
+	if cfg.Embed == nil {
+		t.Fatal("expected default embed config")
+	}
+	if cfg.Embed.Provider != "auto" {
+		t.Errorf("expected default embed provider 'auto', got %q", cfg.Embed.Provider)
+	}
 }
 
 func TestLoadGreenfield(t *testing.T) {
@@ -172,6 +178,11 @@ func TestValidation(t *testing.T) {
 			name:    "invalid transport",
 			cfg:     Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Serve: ServeConfig{Transport: "websocket"}},
 			wantErr: "invalid transport",
+		},
+		{
+			name:    "invalid embed provider",
+			cfg:     Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Embed: &EmbedConfig{Provider: "bad-provider"}},
+			wantErr: "invalid embed provider",
 		},
 		{
 			name: "valid minimal",

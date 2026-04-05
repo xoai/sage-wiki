@@ -2,10 +2,8 @@ package wiki
 
 import (
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
@@ -87,7 +85,7 @@ func RunDoctor(projectDir string) *DoctorResult {
 	}
 
 	// Check embedding
-	embedder := embed.NewCascade(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL)
+	embedder := embed.NewForConfig(cfg)
 	if embedder != nil {
 		result.add("embedding", "ok", fmt.Sprintf("Embedding: %s (%d-dim)", embedder.Name(), embedder.Dimensions()))
 	} else {
@@ -95,13 +93,11 @@ func RunDoctor(projectDir string) *DoctorResult {
 	}
 
 	// Check Ollama
-	ollamaClient := http.Client{Timeout: 2 * time.Second}
-	resp, err := ollamaClient.Get("http://localhost:11434/api/tags")
-	if err != nil {
-		result.add("ollama", "info", "Ollama not running (optional)")
+	ollamaBaseURL := embed.ResolveOllamaBaseURL(cfg.API.Provider, cfg.API.BaseURL)
+	if embed.OllamaAvailable(cfg.API.Provider, cfg.API.BaseURL) {
+		result.add("ollama", "ok", fmt.Sprintf("Ollama running at %s", ollamaBaseURL))
 	} else {
-		resp.Body.Close()
-		result.add("ollama", "ok", "Ollama running at localhost:11434")
+		result.add("ollama", "info", fmt.Sprintf("Ollama not running at %s (optional)", ollamaBaseURL))
 	}
 
 	// Check git

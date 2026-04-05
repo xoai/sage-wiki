@@ -29,22 +29,22 @@ type CompileOpts struct {
 
 // CompileResult summarizes what happened during compilation.
 type CompileResult struct {
-	Added              int
-	Modified           int
-	Removed            int
-	Summarized         int
-	ConceptsExtracted  int
-	ArticlesWritten    int
-	Errors             int
+	Added             int
+	Modified          int
+	Removed           int
+	Summarized        int
+	ConceptsExtracted int
+	ArticlesWritten   int
+	Errors            int
 }
 
 // CompileState tracks progress for checkpoint/resume (ADR-018).
 type CompileState struct {
-	CompileID string   `json:"compile_id"`
-	StartedAt string   `json:"started_at"`
-	Pass      int      `json:"pass"`
-	Completed []string `json:"completed"`
-	Pending   []string `json:"pending"`
+	CompileID string         `json:"compile_id"`
+	StartedAt string         `json:"started_at"`
+	Pass      int            `json:"pass"`
+	Completed []string       `json:"completed"`
+	Pending   []string       `json:"pending"`
 	Failed    []FailedSource `json:"failed,omitempty"`
 }
 
@@ -128,7 +128,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
-	embedder := embed.NewCascade(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL)
+	embedder := embed.NewForConfig(cfg)
 
 	// Initialize checkpoint state
 	if state == nil {

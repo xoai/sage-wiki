@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/log"
 )
 
@@ -28,11 +30,22 @@ var defaultModels = map[string]string{
 
 // Default dimensions per model.
 var defaultDimensions = map[string]int{
-	"text-embedding-3-small": 1536,
+	"text-embedding-3-small":     1536,
 	"gemini-embedding-2-preview": 768,
-	"voyage-3-lite":          1024,
-	"mistral-embed":          1024,
-	"nomic-embed-text":       768,
+	"voyage-3-lite":              1024,
+	"mistral-embed":              1024,
+	"nomic-embed-text":           768,
+}
+
+const defaultOllamaBaseURL = "http://localhost:11434"
+const defaultOllamaEmbedModel = "nomic-embed-text"
+
+// NewForConfig creates an embedder using config-driven overrides when present.
+func NewForConfig(cfg *config.Config) Embedder {
+	if cfg == nil {
+		return nil
+	}
+	return newWithConfig(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, cfg.Embed)
 }
 
 // NewCascade auto-detects the best available embedding provider.
@@ -40,31 +53,153 @@ var defaultDimensions = map[string]int{
 // Tier 2: Ollama local (if running).
 // Returns nil if no embedding provider is available.
 func NewCascade(provider string, apiKey string, baseURL string) Embedder {
+	return newWithConfig(provider, apiKey, baseURL, nil)
+}
+
+func newWithConfig(apiProvider string, apiKey string, baseURL string, embedCfg *config.EmbedConfig) Embedder {
+	if embedCfg == nil {
+		return cascadeEmbedder(apiProvider, apiKey, baseURL)
+	}
+
+	provider := strings.TrimSpace(embedCfg.Provider)
+	model := strings.TrimSpace(embedCfg.Model)
+	dims := embedCfg.Dimensions
+
+	if provider == "" {
+		provider = "auto"
+	}
+
+	if provider == "auto" && model == "" && dims == 0 {
+		return cascadeEmbedder(apiProvider, apiKey, baseURL)
+	}
+
+	if provider == "auto" {
+		provider = autoEmbedProvider(apiProvider, apiKey, baseURL, model)
+		if provider == "" {
+			log.Warn("no embedding provider available â€” vector search disabled. Install Ollama or configure an embedding-capable provider.")
+			return nil
+		}
+	}
+
+	return newConfiguredEmbedder(provider, model, dims, apiProvider, apiKey, baseURL)
+}
+
+func cascadeEmbedder(provider string, apiKey string, baseURL string) Embedder {
 	// Tier 1: Provider embedding API
 	if model, ok := defaultModels[provider]; ok && apiKey != "" {
-		dims := defaultDimensions[model]
-		embedder := &APIEmbedder{
-			provider: provider,
-			model:    model,
-			apiKey:   apiKey,
-			baseURL:  baseURL,
-			dims:     dims,
-		}
-		log.Info("embedding provider detected", "tier", 1, "provider", provider, "model", model, "dims", dims)
-		return embedder
+		return newAPIEmbedder(provider, model, defaultDimensions[model], apiKey, baseURL, 1, true)
 	}
 
-	// Tier 2: Ollama local
-	if ollamaAvailable() {
-		log.Info("embedding provider detected", "tier", 2, "provider", "ollama", "model", "nomic-embed-text", "dims", 768)
-		return &OllamaEmbedder{
-			model: "nomic-embed-text",
-			dims:  768,
-		}
+	// Tier 2: Ollama
+	ollamaBaseURL := ResolveOllamaBaseURL(provider, baseURL)
+	if ollamaAvailable(ollamaBaseURL) {
+		return newOllamaEmbedder(defaultOllamaEmbedModel, defaultDimensions[defaultOllamaEmbedModel], ollamaBaseURL, 2, true)
 	}
 
-	log.Warn("no embedding provider available — vector search disabled. Install Ollama or configure an embedding-capable provider.")
+	log.Warn("no embedding provider available â€” vector search disabled. Install Ollama or configure an embedding-capable provider.")
 	return nil
+}
+
+func autoEmbedProvider(apiProvider string, apiKey string, baseURL string, model string) string {
+	if apiProvider == "openai-compatible" && model != "" && baseURL != "" {
+		return apiProvider
+	}
+	if _, ok := defaultModels[apiProvider]; ok && apiKey != "" {
+		return apiProvider
+	}
+	if ollamaAvailable(ResolveOllamaBaseURL(apiProvider, baseURL)) {
+		return "ollama"
+	}
+	return ""
+}
+
+func newConfiguredEmbedder(provider string, model string, dims int, apiProvider string, apiKey string, baseURL string) Embedder {
+	switch provider {
+	case "ollama":
+		if model == "" {
+			model = defaultOllamaEmbedModel
+		}
+		if dims == 0 {
+			dims = defaultDimensions[model]
+		}
+
+		ollamaBaseURL := defaultOllamaBaseURL
+		if apiProvider == "ollama" {
+			ollamaBaseURL = ResolveOllamaBaseURL(apiProvider, baseURL)
+		}
+		if !ollamaAvailable(ollamaBaseURL) {
+			log.Warn("configured Ollama embedding provider unavailable", "base_url", ollamaBaseURL)
+			return nil
+		}
+		return newOllamaEmbedder(model, dims, ollamaBaseURL, 0, false)
+	case "openai", "gemini", "voyage", "mistral", "openai-compatible":
+		if model == "" {
+			model = defaultModels[provider]
+		}
+		if model == "" {
+			log.Warn("embedding provider requires a model", "provider", provider)
+			return nil
+		}
+		if dims == 0 {
+			dims = defaultDimensions[model]
+		}
+		if provider == "openai-compatible" && baseURL == "" {
+			log.Warn("openai-compatible embedding provider requires api.base_url")
+			return nil
+		}
+		if provider != "openai-compatible" && apiKey == "" {
+			log.Warn("embedding provider requires an API key", "provider", provider)
+			return nil
+		}
+		return newAPIEmbedder(provider, model, dims, apiKey, baseURL, 0, false)
+	default:
+		log.Warn("unsupported embedding provider configured", "provider", provider)
+		return nil
+	}
+}
+
+func newAPIEmbedder(provider string, model string, dims int, apiKey string, baseURL string, tier int, detected bool) Embedder {
+	if detected {
+		log.Info("embedding provider detected", "tier", tier, "provider", provider, "model", model, "dims", dims)
+	} else {
+		log.Info("embedding provider configured", "provider", provider, "model", model, "dims", dims)
+	}
+
+	return &APIEmbedder{
+		provider: provider,
+		model:    model,
+		apiKey:   apiKey,
+		baseURL:  baseURL,
+		dims:     dims,
+	}
+}
+
+func newOllamaEmbedder(model string, dims int, baseURL string, tier int, detected bool) Embedder {
+	if detected {
+		log.Info("embedding provider detected", "tier", tier, "provider", "ollama", "model", model, "dims", dims)
+	} else {
+		log.Info("embedding provider configured", "provider", "ollama", "model", model, "dims", dims)
+	}
+
+	return &OllamaEmbedder{
+		model:   model,
+		dims:    dims,
+		baseURL: baseURL,
+	}
+}
+
+// ResolveOllamaBaseURL returns the Ollama base URL to use for the current
+// provider. We only honor api.base_url when the configured provider is Ollama.
+func ResolveOllamaBaseURL(provider string, baseURL string) string {
+	if provider == "ollama" && baseURL != "" {
+		return strings.TrimRight(baseURL, "/")
+	}
+	return defaultOllamaBaseURL
+}
+
+// OllamaAvailable probes the resolved Ollama endpoint for availability.
+func OllamaAvailable(provider string, baseURL string) bool {
+	return ollamaAvailable(ResolveOllamaBaseURL(provider, baseURL))
 }
 
 // APIEmbedder calls a provider's embedding API.
@@ -77,8 +212,8 @@ type APIEmbedder struct {
 	client   http.Client
 }
 
-func (e *APIEmbedder) Name() string     { return fmt.Sprintf("%s/%s", e.provider, e.model) }
-func (e *APIEmbedder) Dimensions() int  { return e.dims }
+func (e *APIEmbedder) Name() string    { return fmt.Sprintf("%s/%s", e.provider, e.model) }
+func (e *APIEmbedder) Dimensions() int { return e.dims }
 
 func (e *APIEmbedder) Embed(text string) ([]float32, error) {
 	if e.provider == "gemini" {
@@ -102,7 +237,9 @@ func (e *APIEmbedder) embedOpenAI(text string) ([]float32, error) {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+e.apiKey)
+	if e.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+e.apiKey)
+	}
 
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -197,15 +334,16 @@ func (e *APIEmbedder) embeddingURL() string {
 	return base + "/embeddings"
 }
 
-// OllamaEmbedder uses a local Ollama instance.
+// OllamaEmbedder uses an Ollama instance.
 type OllamaEmbedder struct {
-	model  string
-	dims   int
-	client http.Client
+	model   string
+	dims    int
+	baseURL string
+	client  http.Client
 }
 
-func (e *OllamaEmbedder) Name() string     { return fmt.Sprintf("ollama/%s", e.model) }
-func (e *OllamaEmbedder) Dimensions() int  { return e.dims }
+func (e *OllamaEmbedder) Name() string    { return fmt.Sprintf("ollama/%s", e.model) }
+func (e *OllamaEmbedder) Dimensions() int { return e.dims }
 
 func (e *OllamaEmbedder) Embed(text string) ([]float32, error) {
 	body, _ := json.Marshal(map[string]any{
@@ -213,7 +351,12 @@ func (e *OllamaEmbedder) Embed(text string) ([]float32, error) {
 		"prompt": text,
 	})
 
-	resp, err := e.client.Post("http://localhost:11434/api/embeddings", "application/json", bytes.NewReader(body))
+	baseURL := e.baseURL
+	if baseURL == "" {
+		baseURL = defaultOllamaBaseURL
+	}
+
+	resp, err := e.client.Post(baseURL+"/api/embeddings", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("ollama embed: %w", err)
 	}
@@ -239,10 +382,13 @@ func (e *OllamaEmbedder) Embed(text string) ([]float32, error) {
 	return result.Embedding, nil
 }
 
-// ollamaAvailable probes localhost:11434 for a running Ollama instance.
-func ollamaAvailable() bool {
+// ollamaAvailable probes the given endpoint for a running Ollama instance.
+func ollamaAvailable(baseURL string) bool {
+	if baseURL == "" {
+		baseURL = defaultOllamaBaseURL
+	}
 	client := http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get("http://localhost:11434/api/tags")
+	resp, err := client.Get(baseURL + "/api/tags")
 	if err != nil {
 		return false
 	}

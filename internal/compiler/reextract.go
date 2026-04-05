@@ -76,7 +76,7 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
 	ontStore := ontology.NewStore(db)
-	embedder := embed.NewCascade(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL)
+	embedder := embed.NewForConfig(cfg)
 
 	// Pass 2: Concept extraction
 	extractModel := cfg.Models.Extract

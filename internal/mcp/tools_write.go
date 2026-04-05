@@ -294,7 +294,7 @@ func (s *Server) handleCompileDiff(ctx context.Context, req mcplib.CallToolReque
 }
 
 func (s *Server) tryEmbed(id string, content string) {
-	embedder := embed.NewCascade(s.cfg.API.Provider, s.cfg.API.APIKey, s.cfg.API.BaseURL)
+	embedder := embed.NewForConfig(s.cfg)
 	if embedder != nil {
 		if vec, err := embedder.Embed(content); err == nil {
 			s.vec.Upsert(id, vec)

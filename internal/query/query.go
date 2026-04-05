@@ -20,11 +20,11 @@ import (
 
 // QueryResult holds the answer and metadata.
 type QueryResult struct {
-	Question    string
-	Answer      string
-	Sources     []string // article paths used
-	Format      string   // markdown, terminal, marp
-	OutputPath  string   // if auto-filed
+	Question   string
+	Answer     string
+	Sources    []string // article paths used
+	Format     string   // markdown, terminal, marp
+	OutputPath string   // if auto-filed
 }
 
 // QueryOpts allows callers to pass shared resources.
@@ -69,7 +69,7 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 	searcher := hybrid.NewSearcher(memStore, vecStore)
 
 	// Get query embedding for hybrid search
-	embedder := embed.NewCascade(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL)
+	embedder := embed.NewForConfig(cfg)
 	var queryVec []float32
 	if embedder != nil {
 		queryVec, _ = embedder.Embed(question)

@@ -11,16 +11,16 @@ import (
 
 // Config represents the sage-wiki project configuration.
 type Config struct {
-	Version     int          `yaml:"version"`
-	Project     string       `yaml:"project"`
-	Description string       `yaml:"description"`
-	Vault       *VaultConfig `yaml:"vault,omitempty"`
-	Sources     []Source     `yaml:"sources"`
-	Output      string       `yaml:"output"`
-	Ignore      []string     `yaml:"ignore,omitempty"`
-	API         APIConfig    `yaml:"api"`
-	Models      ModelsConfig `yaml:"models"`
-	Embed       *EmbedConfig `yaml:"embed,omitempty"`
+	Version     int            `yaml:"version"`
+	Project     string         `yaml:"project"`
+	Description string         `yaml:"description"`
+	Vault       *VaultConfig   `yaml:"vault,omitempty"`
+	Sources     []Source       `yaml:"sources"`
+	Output      string         `yaml:"output"`
+	Ignore      []string       `yaml:"ignore,omitempty"`
+	API         APIConfig      `yaml:"api"`
+	Models      ModelsConfig   `yaml:"models"`
+	Embed       *EmbedConfig   `yaml:"embed,omitempty"`
 	Compiler    CompilerConfig `yaml:"compiler"`
 	Search      SearchConfig   `yaml:"search"`
 	Linting     LintingConfig  `yaml:"linting"`
@@ -89,6 +89,10 @@ func Defaults() Config {
 		Version: 1,
 		Output:  "wiki",
 		Sources: []Source{{Path: "raw", Type: "auto", Watch: true}},
+		Embed: &EmbedConfig{
+			Provider: "auto",
+			Model:    "",
+		},
 		Compiler: CompilerConfig{
 			MaxParallel:      4,
 			DebounceSeconds:  2,
@@ -161,6 +165,14 @@ func (c *Config) Validate() error {
 		}
 		if !validProviders[c.API.Provider] {
 			return fmt.Errorf("config: invalid provider %q (valid: anthropic, openai, gemini, ollama, openai-compatible)", c.API.Provider)
+		}
+	}
+	if c.Embed != nil && c.Embed.Provider != "" {
+		validEmbedProviders := map[string]bool{
+			"auto": true, "openai": true, "gemini": true, "ollama": true, "openai-compatible": true, "voyage": true, "mistral": true,
+		}
+		if !validEmbedProviders[c.Embed.Provider] {
+			return fmt.Errorf("config: invalid embed provider %q (valid: auto, openai, gemini, ollama, openai-compatible, voyage, mistral)", c.Embed.Provider)
 		}
 	}
 	if c.Serve.Transport != "" {
