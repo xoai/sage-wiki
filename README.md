@@ -11,6 +11,8 @@ Drop in your papers, articles, and notes. sage-wiki compiles them into a structu
 
 https://github.com/user-attachments/assets/c35ee202-e9df-4ccd-b520-8f057163ff26
 
+*Dots on the outer boundary represent summaries of all documents in the knowledge base, while dots in the inner circle represent concepts extracted from the knowledge base, with links showing how those concepts connect to one another.*
+
 ## Install
 
 ```bash
