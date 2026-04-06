@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/log"
 )
 
@@ -44,6 +45,22 @@ type EmbedOverride struct {
 	BaseURL    string
 }
 
+// NewFromConfig creates an Embedder from the project config, using embed
+// overrides when present and falling back to auto-detection from api config.
+func NewFromConfig(cfg *config.Config) Embedder {
+	var ov *EmbedOverride
+	if cfg.Embed != nil {
+		ov = &EmbedOverride{
+			Provider:   cfg.Embed.Provider,
+			Model:      cfg.Embed.Model,
+			Dimensions: cfg.Embed.Dimensions,
+			APIKey:     cfg.Embed.APIKey,
+			BaseURL:    cfg.Embed.BaseURL,
+		}
+	}
+	return NewCascade(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, ov)
+}
+
 // NewCascade auto-detects the best available embedding provider.
 // Tier 0: Explicit embed config override (if model + credentials provided).
 // Tier 1: Provider embedding API (if available).
@@ -70,6 +87,7 @@ func NewCascade(provider string, apiKey string, baseURL string, override *EmbedO
 				dims = defaultDimensions[override.Model]
 				if dims == 0 {
 					dims = 1536
+					log.Warn("unknown model dimensions, falling back to 1536", "model", override.Model)
 				}
 			}
 			embedder := &APIEmbedder{
