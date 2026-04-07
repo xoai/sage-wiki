@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/config"
@@ -103,18 +104,24 @@ func NewCascade(provider string, apiKey string, baseURL string, override *EmbedO
 		}
 	}
 
-	// Tier 1: Provider embedding API
+	// Tier 1: Provider embedding API (only for native providers, not custom base_url)
 	if model, ok := defaultModels[provider]; ok && apiKey != "" {
-		dims := defaultDimensions[model]
-		embedder := &APIEmbedder{
-			provider: provider,
-			model:    model,
-			apiKey:   apiKey,
-			baseURL:  baseURL,
-			dims:     dims,
+		// If user set a custom base_url (e.g. Zhipu, SiliconFlow), the default
+		// embedding model (text-embedding-3-small) likely doesn't exist on that
+		// endpoint. Skip Tier 1 and fall through to Tier 2 / nil.
+		if baseURL == "" || isNativeProviderURL(provider, baseURL) {
+			dims := defaultDimensions[model]
+			embedder := &APIEmbedder{
+				provider: provider,
+				model:    model,
+				apiKey:   apiKey,
+				baseURL:  baseURL,
+				dims:     dims,
+			}
+			log.Info("embedding provider detected", "tier", 1, "provider", provider, "model", model, "dims", dims)
+			return embedder
 		}
-		log.Info("embedding provider detected", "tier", 1, "provider", provider, "model", model, "dims", dims)
-		return embedder
+		log.Warn("custom base_url detected — skipping default embedding model. Configure embed section in config.yaml for vector search.", "provider", provider, "base_url", baseURL)
 	}
 
 	// Tier 2: Ollama local
@@ -251,6 +258,21 @@ func (e *APIEmbedder) embedGemini(text string) ([]float32, error) {
 
 	e.dims = len(result.Embedding.Values)
 	return result.Embedding.Values, nil
+}
+
+// isNativeProviderURL returns true if the base_url points to the provider's
+// official API, meaning default embedding models are safe to use.
+func isNativeProviderURL(provider string, baseURL string) bool {
+	switch provider {
+	case "openai":
+		return strings.Contains(baseURL, "api.openai.com")
+	case "voyage":
+		return strings.Contains(baseURL, "voyageai.com")
+	case "mistral":
+		return strings.Contains(baseURL, "mistral.ai")
+	default:
+		return false
+	}
 }
 
 func (e *APIEmbedder) embeddingURL() string {

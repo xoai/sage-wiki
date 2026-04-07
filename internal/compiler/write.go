@@ -43,6 +43,7 @@ func WriteArticles(
 	userTZ *time.Location,
 	articleFields []string,
 	relationPatterns []ontology.RelationPattern,
+	language string,
 ) []ArticleResult {
 	if maxParallel <= 0 {
 		maxParallel = 4
@@ -62,7 +63,7 @@ func WriteArticles(
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			result := writeOneArticle(projectDir, outputDir, c, client, model, maxTokens, memStore, vecStore, ontStore, embedder, userTZ, articleFields, relationPatterns)
+			result := writeOneArticle(projectDir, outputDir, c, client, model, maxTokens, memStore, vecStore, ontStore, embedder, userTZ, articleFields, relationPatterns, language)
 			results[idx] = result
 
 			n := int(done.Add(1))
@@ -92,6 +93,7 @@ func writeOneArticle(
 	userTZ *time.Location,
 	articleFields []string,
 	relationPatterns []ontology.RelationPattern,
+	language string,
 ) ArticleResult {
 	result := ArticleResult{ConceptName: concept.Name}
 
@@ -122,8 +124,14 @@ func writeOneArticle(
 		return result
 	}
 
+	systemPrompt := "You are a wiki author writing comprehensive, precise articles for a personal knowledge base. Use [[wikilinks]] for cross-references. Do not include YAML frontmatter."
+	if language != "" {
+		systemPrompt += fmt.Sprintf(" Write ALL content in %s.", languageDisplayName(language))
+	}
+	systemPrompt += "\nIMPORTANT: Output raw Markdown only. Do NOT wrap your output in ```markdown``` or any other code fence."
+
 	resp, err := client.ChatCompletion([]llm.Message{
-		{Role: "system", Content: "You are a wiki author writing comprehensive, precise articles for a personal knowledge base. Use [[wikilinks]] for cross-references. Do not include YAML frontmatter."},
+		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: prompt},
 	}, llm.CallOpts{Model: model, MaxTokens: maxTokens})
 	if err != nil {
@@ -132,6 +140,9 @@ func writeOneArticle(
 	}
 
 	articleContent := resp.Content
+
+	// Strip outer code fence if LLM wrapped output in ```markdown ... ```
+	articleContent = stripOuterCodeFence(articleContent)
 
 	// Strip any LLM-generated frontmatter — code builds frontmatter from ground-truth data.
 	articleContent = stripLLMFrontmatter(articleContent)
@@ -409,6 +420,52 @@ func extractRelations(conceptID string, content string, ontStore *ontology.Store
 
 func sanitizeID(s string) string {
 	return strings.NewReplacer("/", "-", "\\", "-", ".", "-", " ", "-").Replace(s)
+}
+
+// stripOuterCodeFence removes ```markdown ... ``` or ``` ... ``` wrapping from LLM output.
+func stripOuterCodeFence(content string) string {
+	trimmed := strings.TrimSpace(content)
+	// Match ```markdown, ```md, or plain ```
+	re := regexp.MustCompile("(?s)^```(?:markdown|md)?\\s*\n(.*?)\\s*```\\s*$")
+	if m := re.FindStringSubmatch(trimmed); len(m) == 2 {
+		return strings.TrimSpace(m[1])
+	}
+	return content
+}
+
+// languageDisplayName returns a human-readable language name for prompts.
+func languageDisplayName(lang string) string {
+	switch strings.ToLower(lang) {
+	case "zh", "zh-cn", "chinese":
+		return "Chinese (Simplified, 简体中文)"
+	case "zh-tw":
+		return "Chinese (Traditional, 繁體中文)"
+	case "en", "english":
+		return "English"
+	case "ja", "japanese":
+		return "Japanese (日本語)"
+	case "ko", "korean":
+		return "Korean (한국어)"
+	default:
+		return lang
+	}
+}
+
+// normalizeConfidence replaces non-standard confidence values in frontmatter
+// with the enum (high/medium/low).
+func normalizeConfidence(content string) string {
+	// Find confidence line in frontmatter
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "confidence:") {
+			value := strings.TrimSpace(strings.TrimPrefix(trimmed, "confidence:"))
+			normalized := mapConfidence(value)
+			lines[i] = "confidence: " + normalized
+			break
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func mapConfidence(value string) string {
