@@ -208,7 +208,11 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 
 	var queryVec []float32
 	if s.embedder != nil {
-		queryVec, _ = s.embedder.Embed(query)
+		var embedErr error
+		queryVec, embedErr = s.embedder.Embed(query)
+		if embedErr != nil {
+			fmt.Fprintf(os.Stderr, "warn: search embed failed, falling back to BM25-only: %v\n", embedErr)
+		}
 	}
 	results, err := s.searcher.Search(hybrid.SearchOpts{
 		Query:        query,

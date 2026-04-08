@@ -20,6 +20,7 @@ import (
 	tuidashboard "github.com/xoai/sage-wiki/internal/tui/dashboard"
 	"github.com/xoai/sage-wiki/internal/web"
 	"github.com/xoai/sage-wiki/internal/query"
+	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/vectors"
 	"github.com/xoai/sage-wiki/internal/wiki"
@@ -352,11 +353,31 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	vecStore := vectors.NewStore(db)
 	searcher := hybrid.NewSearcher(memStore, vecStore)
 
+	// 加载配置以获取 embed 和搜索权重设置
+	cfg, cfgErr := config.Load(filepath.Join(dir, "config.yaml"))
+
+	var queryVec []float32
+	var bm25W, vecW float64
+	if cfgErr == nil {
+		embedder := embed.NewFromConfig(cfg)
+		if embedder != nil {
+			var embedErr error
+			queryVec, embedErr = embedder.Embed(queryStr)
+			if embedErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: embed failed, using BM25-only: %v\n", embedErr)
+			}
+		}
+		bm25W = cfg.Search.HybridWeightBM25
+		vecW = cfg.Search.HybridWeightVector
+	}
+
 	results, err := searcher.Search(hybrid.SearchOpts{
-		Query: queryStr,
-		Tags:  tags,
-		Limit: limit,
-	}, nil)
+		Query:        queryStr,
+		Tags:         tags,
+		Limit:        limit,
+		BM25Weight:   bm25W,
+		VectorWeight: vecW,
+	}, queryVec)
 	if err != nil {
 		return err
 	}
