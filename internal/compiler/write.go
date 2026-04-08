@@ -16,7 +16,6 @@ import (
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
-	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -105,30 +104,23 @@ func writeOneArticle(
 		existingContent = string(data)
 	}
 
+	// Load summary content for each source to ground the article in real data
+	sourceContext := loadSourceSummaries(projectDir, outputDir, concept.Sources)
+
 	// Build prompt
 	relatedNames := findRelatedConcepts(concept)
-	prompt, err := prompts.Render("write_article", prompts.WriteArticleData{
-		ConceptName:     formatConceptName(concept.Name),
-		ConceptID:       concept.Name,
-		Sources:         strings.Join(concept.Sources, ", "),
-		RelatedConcepts: relatedNames,
-		ExistingArticle: existingContent,
-		Aliases:         strings.Join(concept.Aliases, ", "),
-		SourceList:      strings.Join(concept.Sources, ", "),
-		RelatedList:     strings.Join(relatedNames, ", "),
-		Confidence:      "medium",
-		MaxTokens:       maxTokens,
-	})
-	if err != nil {
-		result.Error = fmt.Errorf("render write_article prompt: %w", err)
-		return result
-	}
+	prompt := buildArticlePrompt(concept, existingContent, relatedNames, language, sourceContext)
 
-	systemPrompt := "You are a wiki author writing comprehensive, precise articles for a personal knowledge base. Use [[wikilinks]] for cross-references. Do not include YAML frontmatter."
+	systemPrompt := `You are a wiki author writing articles for a personal knowledge base. Your articles must be GROUNDED in the source summaries provided — do NOT add generic textbook knowledge that is not supported by the sources.
+
+Rules:
+1. ONLY describe what the source documents actually contain. If a source describes a specific project implementation, describe THAT implementation, not the general concept from Wikipedia.
+2. Use [[wikilinks]] in lowercase-hyphenated format for related concepts.
+3. Output raw Markdown only. Do NOT wrap output in code fences. Do NOT include YAML frontmatter.
+4. Start directly with the first section heading.`
 	if language != "" {
-		systemPrompt += fmt.Sprintf(" Write ALL content in %s.", languageDisplayName(language))
+		systemPrompt += fmt.Sprintf("\n5. Write ALL content (including section titles) in %s.", languageDisplayName(language))
 	}
-	systemPrompt += "\nIMPORTANT: Output raw Markdown only. Do NOT wrap your output in ```markdown``` or any other code fence."
 
 	resp, err := client.ChatCompletion([]llm.Message{
 		{Role: "system", Content: systemPrompt},
@@ -150,8 +142,18 @@ func writeOneArticle(
 	// Extract LLM-judged fields (confidence + any custom fields from config)
 	fields, articleContent := extractFields(articleContent, articleFields)
 
+	// Detect empty articles (LLM returned only whitespace or frontmatter-only)
+	if len(strings.TrimSpace(articleContent)) < 50 {
+		log.Warn("article body too short, possible LLM failure", "concept", concept.Name, "bodyLen", len(strings.TrimSpace(articleContent)))
+		result.Error = fmt.Errorf("article body empty or too short (%d chars)", len(strings.TrimSpace(articleContent)))
+		return result
+	}
+
 	// Build frontmatter: ground-truth fields + LLM-judged fields
 	articleContent = buildFrontmatter(concept, fields, articleFields, userTZ) + "\n\n" + articleContent
+
+	// Normalize confidence values to enum (high/medium/low)
+	articleContent = normalizeConfidence(articleContent)
 
 	// Note: wikilinks are kept even if targets don't exist yet.
 	// Future compiles will create the missing articles, and the links
@@ -228,6 +230,70 @@ func writeOneArticle(
 	}
 
 	return result
+}
+
+func buildArticlePrompt(concept ExtractedConcept, existing string, related []string, language string, sourceContext string) string {
+	var b strings.Builder
+
+	b.WriteString(fmt.Sprintf("Write a wiki article about: %s\n", formatConceptName(concept.Name)))
+	b.WriteString(fmt.Sprintf("Concept ID: %s\n", concept.Name))
+
+	if len(concept.Aliases) > 0 {
+		b.WriteString(fmt.Sprintf("Also known as: %s\n", strings.Join(concept.Aliases, ", ")))
+	}
+
+	if len(related) > 0 {
+		b.WriteString(fmt.Sprintf("Related concepts: %s\n", strings.Join(related, ", ")))
+	}
+
+	// Inject source summaries — this is the key context that prevents hallucination
+	if sourceContext != "" {
+		b.WriteString("\n--- SOURCE SUMMARIES (base your article ONLY on this content) ---\n")
+		b.WriteString(sourceContext)
+		b.WriteString("\n--- END SOURCE SUMMARIES ---\n")
+	}
+
+	if existing != "" {
+		b.WriteString("\n## Existing article (update/expand):\n")
+		b.WriteString(existing)
+		b.WriteString("\n")
+	}
+
+	// Section titles: use language-appropriate headings
+	sectionDef := "## Definition"
+	sectionHow := "## How it works"
+	sectionVariants := "## Variants"
+	sectionTradeoffs := "## Trade-offs"
+	sectionSeeAlso := "## See also"
+	if language == "zh" || language == "zh-cn" || language == "chinese" {
+		sectionDef = "## 定义"
+		sectionHow = "## 工作原理"
+		sectionVariants = "## 变体"
+		sectionTradeoffs = "## 权衡"
+		sectionSeeAlso = "## 另见"
+	}
+
+	b.WriteString(fmt.Sprintf(`
+Write the article with these sections:
+1. %s — what this concept means in the context of the source documents
+2. %s — how it is actually implemented (cite specifics from the sources)
+3. %s — variations mentioned in the sources, if any
+4. %s — limitations or trade-offs noted in the sources
+5. %s — [[wikilinks]] to related concepts
+
+CRITICAL: Base your article strictly on the source summaries above. Do NOT add generic textbook knowledge, industry examples, or tools/frameworks not mentioned in the sources. If the sources describe a project-specific implementation, describe THAT implementation.
+
+Do NOT include YAML frontmatter.
+Do NOT wrap output in code fences.
+Start directly with %s.
+
+Wikilink rules:
+- Use [[concept-name]] format (lowercase-hyphenated)
+- Link concepts that deserve standalone articles
+- Do NOT link generic terms or math notation
+`, sectionDef, sectionHow, sectionVariants, sectionTradeoffs, sectionSeeAlso, sectionDef))
+
+	return b.String()
 }
 
 func buildFrontmatter(concept ExtractedConcept, fields map[string]string, fieldOrder []string, loc *time.Location) string {
@@ -418,6 +484,35 @@ func extractRelations(conceptID string, content string, ontStore *ontology.Store
 	}
 }
 
+// loadSourceSummaries reads the summary files for the given source paths.
+// This provides the LLM with actual source content to ground articles in reality.
+func loadSourceSummaries(projectDir, outputDir string, sources []string) string {
+	var parts []string
+	summariesDir := filepath.Join(projectDir, outputDir, "summaries")
+
+	for _, src := range sources {
+		// Source path is like "raw/架构文档/TECH_STACK.md" → summary is "wiki/summaries/TECH_STACK.md"
+		base := filepath.Base(src)
+		summaryPath := filepath.Join(summariesDir, base)
+
+		data, err := os.ReadFile(summaryPath)
+		if err != nil {
+			continue
+		}
+
+		content := string(data)
+		// Strip frontmatter from summary before injecting
+		content = stripFrontmatter(content)
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+
+		parts = append(parts, fmt.Sprintf("### Source: %s\n%s", src, strings.TrimSpace(content)))
+	}
+
+	return strings.Join(parts, "\n\n")
+}
+
 func sanitizeID(s string) string {
 	return strings.NewReplacer("/", "-", "\\", "-", ".", "-", " ", "-").Replace(s)
 }
@@ -431,6 +526,21 @@ func stripOuterCodeFence(content string) string {
 		return strings.TrimSpace(m[1])
 	}
 	return content
+}
+
+// stripFrontmatter removes YAML frontmatter (--- ... ---) from the beginning of content.
+func stripFrontmatter(content string) string {
+	trimmed := strings.TrimLeft(content, "\n \t")
+	if !strings.HasPrefix(trimmed, "---") {
+		return content
+	}
+	// Find the closing ---
+	rest := trimmed[3:]
+	idx := strings.Index(rest, "\n---")
+	if idx == -1 {
+		return content
+	}
+	return strings.TrimLeft(rest[idx+4:], "\n")
 }
 
 // languageDisplayName returns a human-readable language name for prompts.
