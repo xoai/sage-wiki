@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"unicode"
 
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/llm"
@@ -271,8 +272,10 @@ func quoteYAMLList(items []string) string {
 func formatConceptName(name string) string {
 	words := strings.Split(name, "-")
 	for i, w := range words {
-		if len(w) > 0 {
-			words[i] = strings.ToUpper(w[:1]) + w[1:]
+		runes := []rune(w)
+		if len(runes) > 0 {
+			runes[0] = unicode.ToUpper(runes[0])
+			words[i] = string(runes)
 		}
 	}
 	return strings.Join(words, " ")
