@@ -14,11 +14,13 @@ const rrfK = 60 // Standard RRF constant (Cormack et al. 2009)
 
 // SearchOpts configures a hybrid search.
 type SearchOpts struct {
-	Query      string
-	Tags       []string          // AND pre-filter
-	BoostTags  []string          // soft post-ranking boost
-	Limit      int
-	Timestamps map[string]time.Time // optional: ID → last_updated for recency decay
+	Query        string
+	Tags         []string              // AND pre-filter
+	BoostTags    []string              // soft post-ranking boost
+	Limit        int
+	Timestamps   map[string]time.Time  // optional: ID → last_updated for recency decay
+	BM25Weight   float64               // RRF weight for BM25 results (default 1.0)
+	VectorWeight float64               // RRF weight for vector results (default 1.0)
 }
 
 // SearchResult represents a hybrid search result.
@@ -92,12 +94,21 @@ func (s *Searcher) Search(opts SearchOpts, queryVec []float32) ([]SearchResult, 
 	// Calculate RRF scores with boosts
 	var results []SearchResult
 	for _, entry := range scores {
+		bm25W := opts.BM25Weight
+		if bm25W <= 0 {
+			bm25W = 1.0
+		}
+		vecW := opts.VectorWeight
+		if vecW <= 0 {
+			vecW = 1.0
+		}
+
 		score := 0.0
 		if entry.bm25Rank > 0 {
-			score += 1.0 / float64(rrfK+entry.bm25Rank)
+			score += bm25W / float64(rrfK+entry.bm25Rank)
 		}
 		if entry.vectorRank > 0 {
-			score += 1.0 / float64(rrfK+entry.vectorRank)
+			score += vecW / float64(rrfK+entry.vectorRank)
 		}
 
 		// Tag boost: +3% per matching boost tag, cap 15%
