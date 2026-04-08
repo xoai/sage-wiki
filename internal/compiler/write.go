@@ -309,12 +309,12 @@ func extractRelations(conceptID string, content string, ontStore *ontology.Store
 		keywords []string
 		relation string
 	}{
-		{[]string{"implements", "implementation of", "is an implementation"}, ontology.RelImplements},
-		{[]string{"extends", "extension of", "builds on", "builds upon"}, ontology.RelExtends},
-		{[]string{"optimizes", "optimization of", "improves upon", "faster than"}, ontology.RelOptimizes},
-		{[]string{"contradicts", "conflicts with", "disagrees with", "challenges"}, ontology.RelContradicts},
-		{[]string{"prerequisite", "requires knowledge of", "depends on", "built on top of"}, ontology.RelPrerequisiteOf},
-		{[]string{"trade-off", "tradeoff", "trades off", "at the cost of"}, ontology.RelTradesOff},
+		{[]string{"implements", "implementation of", "is an implementation", "实现了", "实现方式"}, ontology.RelImplements},
+		{[]string{"extends", "extension of", "builds on", "builds upon", "扩展了", "基于"}, ontology.RelExtends},
+		{[]string{"optimizes", "optimization of", "improves upon", "faster than", "优化了", "改进了", "提升了"}, ontology.RelOptimizes},
+		{[]string{"contradicts", "conflicts with", "disagrees with", "challenges", "矛盾", "冲突", "挑战了"}, ontology.RelContradicts},
+		{[]string{"prerequisite", "requires knowledge of", "depends on", "built on top of", "前提", "依赖于", "前置条件"}, ontology.RelPrerequisiteOf},
+		{[]string{"trade-off", "tradeoff", "trades off", "at the cost of", "取舍", "权衡", "代价是"}, ontology.RelTradesOff},
 	}
 
 	for target := range linkedConcepts {
