@@ -11,6 +11,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
@@ -30,6 +31,7 @@ type Server struct {
 	ont        *ontology.Store
 	searcher   *hybrid.Searcher
 	cfg        *config.Config
+	embedder   embed.Embedder
 }
 
 // NewServer creates an MCP server with read tools registered.
@@ -59,6 +61,7 @@ func NewServer(projectDir string) (*Server, error) {
 		ont:        ont,
 		searcher:   searcher,
 		cfg:        cfg,
+		embedder:   embed.NewFromConfig(cfg),
 	}
 
 	mcpServer := server.NewMCPServer(
@@ -203,11 +206,17 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 		}
 	}
 
+	var queryVec []float32
+	if s.embedder != nil {
+		queryVec, _ = s.embedder.Embed(query)
+	}
 	results, err := s.searcher.Search(hybrid.SearchOpts{
-		Query: query,
-		Tags:  tags,
-		Limit: limit,
-	}, nil)
+		Query:        query,
+		Tags:         tags,
+		Limit:        limit,
+		BM25Weight:   s.cfg.Search.HybridWeightBM25,
+		VectorWeight: s.cfg.Search.HybridWeightVector,
+	}, queryVec)
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
