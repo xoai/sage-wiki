@@ -8,6 +8,8 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -87,6 +89,7 @@ func (c *Client) ChatCompletion(messages []Message, opts CallOpts) (*Response, e
 			if err != nil {
 				return nil, fmt.Errorf("llm: parse response: %w", err)
 			}
+			result.Content = stripThinkTags(result.Content)
 			return result, nil
 		}
 
@@ -199,6 +202,15 @@ func (r *rateLimiter) wait() {
 		time.Sleep(r.interval - elapsed)
 	}
 	r.lastCall = time.Now()
+}
+
+// stripThinkTags removes <think>...</think> blocks from LLM responses.
+// Some models (e.g. MiniMax) include reasoning traces that should not appear in output.
+var thinkTagRe = regexp.MustCompile(`(?s)<think>.*?</think>\s*`)
+
+func stripThinkTags(s string) string {
+	s = thinkTagRe.ReplaceAllString(s, "")
+	return strings.TrimSpace(s)
 }
 
 // jsonBody creates a JSON request body. Panics on marshal failure
