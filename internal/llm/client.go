@@ -31,11 +31,19 @@ type CallOpts struct {
 	Temperature float64
 }
 
+// Usage holds detailed token usage breakdown.
+type Usage struct {
+	InputTokens  int
+	OutputTokens int
+	CachedTokens int // tokens served from cache (reduced cost)
+}
+
 // Response holds the LLM response.
 type Response struct {
 	Content    string
 	Model      string
 	TokensUsed int
+	Usage      Usage // detailed breakdown
 }
 
 // Client is a provider-agnostic LLM client.
@@ -43,6 +51,9 @@ type Client struct {
 	provider Provider
 	limiter  *rateLimiter
 	client   http.Client
+	tracker  *CostTracker // optional cost tracking
+	pass     string       // current compiler pass name (for tracking)
+	cacheID  string       // active cache ID (empty = no caching)
 }
 
 // NewClient creates a new LLM client for the given provider.
@@ -64,7 +75,17 @@ func NewClient(providerName string, apiKey string, baseURL string, rateLimit int
 }
 
 // ChatCompletion sends a chat completion request with retry on rate limits.
+// If a cache is active (via SetupCache), automatically uses the cached path.
 func (c *Client) ChatCompletion(messages []Message, opts CallOpts) (*Response, error) {
+	if c.cacheID != "" {
+		return c.ChatCompletionCached(c.cacheID, messages, opts)
+	}
+	return c.chatCompletionDirect(messages, opts)
+}
+
+// chatCompletionDirect sends a request without checking cacheID.
+// Used by ChatCompletion and as the fallback path for ChatCompletionCached.
+func (c *Client) chatCompletionDirect(messages []Message, opts CallOpts) (*Response, error) {
 	var lastErr error
 
 	for attempt := 0; attempt < 4; attempt++ {
@@ -90,6 +111,7 @@ func (c *Client) ChatCompletion(messages []Message, opts CallOpts) (*Response, e
 				return nil, fmt.Errorf("llm: parse response: %w", err)
 			}
 			result.Content = stripThinkTags(result.Content)
+			c.trackUsage(result.Model, result.Usage)
 			return result, nil
 		}
 
@@ -128,6 +150,23 @@ func (c *Client) ChatCompletionWithImage(messages []Message, prompt string, imag
 // ProviderName returns the provider name.
 func (c *Client) ProviderName() string {
 	return c.provider.Name()
+}
+
+// SetTracker attaches a cost tracker. All subsequent calls are tracked.
+func (c *Client) SetTracker(tracker *CostTracker) {
+	c.tracker = tracker
+}
+
+// SetPass sets the current compiler pass name for cost tracking.
+func (c *Client) SetPass(pass string) {
+	c.pass = pass
+}
+
+// trackUsage records token usage if a tracker is attached.
+func (c *Client) trackUsage(model string, usage Usage) {
+	if c.tracker != nil {
+		c.tracker.Track(c.pass, model, usage, false)
+	}
 }
 
 // Provider defines the interface for LLM provider adapters.

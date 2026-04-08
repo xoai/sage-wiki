@@ -27,8 +27,9 @@ type fileStatus struct {
 
 // CompileCompleteMsg signals a compile finished.
 type CompileCompleteMsg struct {
-	result *compiler.CompileResult
-	err    error
+	result    *compiler.CompileResult
+	err       error
+	costInfo  string // formatted cost summary (single line)
 }
 
 // fileChangeMsg signals output files changed (for watch mode).
@@ -59,6 +60,7 @@ type Model struct {
 	watching   bool
 	lastResult *compiler.CompileResult
 	lastError  error
+	costInfo   string // cost report summary line
 	snapshot   string // source dir hash for change detection
 
 	projectDir  string
@@ -157,6 +159,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.compiling = false
 		m.lastResult = msg.result
 		m.lastError = msg.err
+		m.costInfo = msg.costInfo
 		m.watching = true
 		m.scanOutputFiles()
 		m.snapshot = m.dirSnapshot()
@@ -283,8 +286,12 @@ func (m Model) renderFileList() string {
 func (m Model) statusInfo() string {
 	if m.lastResult != nil {
 		r := m.lastResult
-		return fmt.Sprintf("%d summarized, %d concepts, %d articles",
+		info := fmt.Sprintf("%d summarized, %d concepts, %d articles",
 			r.Summarized, r.ConceptsExtracted, r.ArticlesWritten)
+		if m.costInfo != "" {
+			info += " | " + m.costInfo
+		}
+		return info
 	}
 	return ""
 }
@@ -295,7 +302,14 @@ func (m Model) runCompile() tea.Cmd {
 	m.compiling = true
 	return func() tea.Msg {
 		result, err := compiler.Compile(m.projectDir, compiler.CompileOpts{})
-		return CompileCompleteMsg{result: result, err: err}
+		var costLine string
+		if result != nil && result.CostReport != nil {
+			costLine = fmt.Sprintf("~$%.4f", result.CostReport.EstimatedCost)
+			if result.CostReport.CacheSavings > 0 {
+				costLine += fmt.Sprintf(" (saved $%.4f)", result.CostReport.CacheSavings)
+			}
+		}
+		return CompileCompleteMsg{result: result, err: err, costInfo: costLine}
 	}
 }
 

@@ -106,7 +106,12 @@ func (p *openaiProvider) ParseResponse(body []byte) (*Response, error) {
 		} `json:"choices"`
 		Model string `json:"model"`
 		Usage struct {
-			TotalTokens int `json:"total_tokens"`
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+			PromptTokensDetails struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
 		} `json:"usage"`
 	}
 
@@ -122,5 +127,10 @@ func (p *openaiProvider) ParseResponse(body []byte) (*Response, error) {
 		Content:    result.Choices[0].Message.Content,
 		Model:      result.Model,
 		TokensUsed: result.Usage.TotalTokens,
+		Usage: Usage{
+			InputTokens:  result.Usage.PromptTokens,
+			OutputTokens: result.Usage.CompletionTokens,
+			CachedTokens: result.Usage.PromptTokensDetails.CachedTokens,
+		},
 	}, nil
 }

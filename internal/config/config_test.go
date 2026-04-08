@@ -219,6 +219,78 @@ func TestResolvePaths(t *testing.T) {
 	}
 }
 
+func TestCostConfigFields(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := `
+version: 1
+project: cost-test
+sources:
+  - path: raw
+    type: auto
+    watch: true
+output: wiki
+api:
+  provider: anthropic
+  api_key: sk-test
+compiler:
+  mode: batch
+  estimate_before: true
+  prompt_cache: false
+  batch_threshold: 20
+  token_price_per_million: 2.5
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if cfg.Compiler.Mode != "batch" {
+		t.Errorf("expected mode 'batch', got %q", cfg.Compiler.Mode)
+	}
+	if !cfg.Compiler.EstimateBefore {
+		t.Error("expected estimate_before true")
+	}
+	if cfg.Compiler.PromptCacheEnabled() {
+		t.Error("expected prompt_cache disabled")
+	}
+	if cfg.Compiler.BatchThreshold != 20 {
+		t.Errorf("expected batch_threshold 20, got %d", cfg.Compiler.BatchThreshold)
+	}
+	if cfg.Compiler.TokenPriceOverride != 2.5 {
+		t.Errorf("expected token_price 2.5, got %f", cfg.Compiler.TokenPriceOverride)
+	}
+}
+
+func TestCostConfigDefaults(t *testing.T) {
+	cfg := Defaults()
+	// prompt_cache defaults to true (nil pointer = true)
+	if !cfg.Compiler.PromptCacheEnabled() {
+		t.Error("expected prompt_cache enabled by default")
+	}
+	if cfg.Compiler.Mode != "" {
+		t.Errorf("expected empty default mode, got %q", cfg.Compiler.Mode)
+	}
+}
+
+func TestInvalidCompilerMode(t *testing.T) {
+	cfg := Config{
+		Project: "test",
+		Output:  "wiki",
+		Sources: []Source{{Path: "raw"}},
+		Compiler: CompilerConfig{Mode: "turbo"},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Error("expected validation error for invalid mode")
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)
 }

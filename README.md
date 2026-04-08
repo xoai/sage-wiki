@@ -90,7 +90,7 @@ sage-wiki compile --watch
 | Command | Description |
 |---------|------------|
 | `sage-wiki init [--vault]` | Initialize project (greenfield or vault overlay) |
-| `sage-wiki compile [--watch] [--dry-run]` | Compile sources into wiki articles |
+| `sage-wiki compile [--watch] [--dry-run] [--batch] [--estimate] [--no-cache]` | Compile sources into wiki articles |
 | `sage-wiki serve [--transport stdio\|sse]` | Start MCP server for LLM agents |
 | `sage-wiki serve --ui [--port 3333]` | Start web UI (requires `-tags webui` build) |
 | `sage-wiki lint [--fix] [--pass name]` | Run linting passes |
@@ -198,6 +198,11 @@ compiler:
   article_max_tokens: 4000
   auto_commit: true           # git commit after compile
   auto_lint: true             # run lint after compile
+  # mode: standard            # standard, batch, or auto
+  # estimate_before: false    # prompt with cost estimate before compiling
+  # prompt_cache: true        # enable prompt caching (default: true)
+  # batch_threshold: 10       # min sources for auto-batch mode
+  # token_price_per_million: 0  # override pricing (0 = use built-in)
 
 search:
   hybrid_weight_bm25: 0.7    # BM25 vs vector weight
@@ -208,6 +213,29 @@ serve:
   transport: stdio            # stdio or sse
   port: 3333                  # SSE mode only
 ```
+
+## Cost Optimization
+
+sage-wiki tracks token usage and estimates cost for every compile. Three strategies to reduce cost:
+
+**Prompt caching** (default: on) — Reuses system prompts across LLM calls within a compile pass. Anthropic and Gemini cache explicitly; OpenAI caches automatically. Saves 50-90% on input tokens.
+
+**Batch API** — Submit all sources as a single async batch for 50% cost reduction. Available for Anthropic and OpenAI.
+
+```bash
+sage-wiki compile --batch       # submit batch, checkpoint, exit
+sage-wiki compile               # poll status, retrieve when done
+```
+
+**Cost estimation** — Preview cost before committing:
+
+```bash
+sage-wiki compile --estimate    # show cost breakdown, exit
+```
+
+Or set `compiler.estimate_before: true` in config to prompt every time.
+
+**Auto mode** — Set `compiler.mode: auto` and `compiler.batch_threshold: 10` to automatically use batch when compiling 10+ sources.
 
 ## Customizing Prompts
 
@@ -326,7 +354,7 @@ python3 eval.py ./test-fixture
 - **Storage:** SQLite with FTS5 (BM25 search) + BLOB vectors (cosine similarity)
 - **Ontology:** Typed entity-relation graph with BFS traversal and cycle detection
 - **Search:** Reciprocal Rank Fusion (RRF) combining BM25 + vector + tag boost + recency decay
-- **Compiler:** 5-pass pipeline (diff, summarize, extract concepts, write articles, images)
+- **Compiler:** 5-pass pipeline (diff, summarize, extract concepts, write articles, images) with prompt caching, batch API, and cost tracking
 - **MCP:** 14 tools (5 read, 7 write, 2 compound) via stdio or SSE
 - **TUI:** bubbletea + glamour 4-tab terminal dashboard (browse, search, Q&A, compile)
 - **Web UI:** Preact + Tailwind CSS embedded via `go:embed` with build tag (`-tags webui`)

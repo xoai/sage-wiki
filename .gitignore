@@ -1,6 +1,13 @@
+# Claude
 .claude/
 CLAUDE.md
+.mcp.json
+
+# Sage
 .sage/
+.sage-memory/
 sage/
+
+# Build
 /sage-wiki
 bin/

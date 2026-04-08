@@ -14,6 +14,8 @@ import (
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/linter"
+	"github.com/xoai/sage-wiki/internal/llm"
+	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
 	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
 	"github.com/xoai/sage-wiki/internal/prompts"
@@ -127,6 +129,9 @@ func init() {
 	compileCmd.Flags().Bool("fresh", false, "Ignore checkpoint, clean compile")
 	compileCmd.Flags().Bool("re-embed", false, "Re-generate embeddings for all entries without recompiling")
 	compileCmd.Flags().Bool("re-extract", false, "Re-run concept extraction and article writing from existing summaries")
+	compileCmd.Flags().Bool("estimate", false, "Show cost estimate without compiling")
+	compileCmd.Flags().Bool("batch", false, "Use batch API for 50% cost reduction (async)")
+	compileCmd.Flags().Bool("no-cache", false, "Disable prompt caching for this run")
 
 	// Serve flags
 	serveCmd.Flags().String("transport", "stdio", "Transport: stdio or sse")
@@ -242,14 +247,29 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	estimate, _ := cmd.Flags().GetBool("estimate")
+	if estimate {
+		return runEstimate(dir)
+	}
+
 	if watch {
 		fmt.Println("Watching for changes... (Ctrl+C to stop)")
 		return compiler.Watch(dir, 2)
 	}
 
+	batch, _ := cmd.Flags().GetBool("batch")
+	noCache, _ := cmd.Flags().GetBool("no-cache")
+
+	// Interactive cost estimate prompt if config.compiler.estimate_before is true
+	if err := maybePromptEstimate(dir); err != nil {
+		return err
+	}
+
 	result, err := compiler.Compile(dir, compiler.CompileOpts{
-		DryRun: dryRun,
-		Fresh:  fresh,
+		DryRun:  dryRun,
+		Fresh:   fresh,
+		Batch:   batch,
+		NoCache: noCache,
 	})
 	if err != nil {
 		return err
@@ -458,6 +478,115 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	if result.HasErrors() {
 		return fmt.Errorf("doctor found errors")
 	}
+	return nil
+}
+
+// maybePromptEstimate shows a cost estimate and asks for confirmation
+// if config.compiler.estimate_before is true.
+func maybePromptEstimate(dir string) error {
+	cfgPath := filepath.Join(dir, "config.yaml")
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return nil // non-fatal — compile will catch config errors
+	}
+	if !cfg.Compiler.EstimateBefore {
+		return nil
+	}
+
+	mfPath := filepath.Join(dir, ".manifest.json")
+	mf, err := manifest.Load(mfPath)
+	if err != nil {
+		return nil
+	}
+
+	diff, err := compiler.Diff(dir, cfg, mf)
+	if err != nil {
+		return nil
+	}
+
+	totalSources := len(diff.Added) + len(diff.Modified)
+	if totalSources == 0 {
+		return nil
+	}
+
+	var totalBytes int
+	for _, s := range append(diff.Added, diff.Modified...) {
+		absPath := filepath.Join(dir, s.Path)
+		info, err := os.Stat(absPath)
+		if err == nil {
+			totalBytes += int(info.Size())
+		}
+	}
+
+	model := cfg.Models.Summarize
+	if model == "" {
+		model = "gemini-2.5-flash"
+	}
+
+	_, cost := llm.EstimateFromBytes(totalBytes, cfg.API.Provider, model, cfg.Compiler.TokenPriceOverride)
+
+	fmt.Printf("Estimated: ~$%.4f for %d sources. Proceed? [y/n] ", cost, totalSources)
+	var answer string
+	fmt.Scanln(&answer)
+	if answer != "y" && answer != "Y" && answer != "yes" {
+		return fmt.Errorf("compilation cancelled by user")
+	}
+	return nil
+}
+
+func runEstimate(dir string) error {
+	cfgPath := filepath.Join(dir, "config.yaml")
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return err
+	}
+
+	mfPath := filepath.Join(dir, ".manifest.json")
+	mf, err := manifest.Load(mfPath)
+	if err != nil {
+		return err
+	}
+
+	diff, err := compiler.Diff(dir, cfg, mf)
+	if err != nil {
+		return err
+	}
+
+	totalSources := len(diff.Added) + len(diff.Modified)
+	if totalSources == 0 {
+		fmt.Println("Nothing to compile — wiki is up to date.")
+		return nil
+	}
+
+	// Count total bytes of source content
+	var totalBytes int
+	for _, s := range append(diff.Added, diff.Modified...) {
+		absPath := filepath.Join(dir, s.Path)
+		info, err := os.Stat(absPath)
+		if err == nil {
+			totalBytes += int(info.Size())
+		}
+	}
+
+	model := cfg.Models.Summarize
+	if model == "" {
+		model = "gemini-2.5-flash"
+	}
+
+	tokens, cost := llm.EstimateFromBytes(totalBytes, cfg.API.Provider, model, cfg.Compiler.TokenPriceOverride)
+
+	fmt.Printf("\n📊 Cost estimate for %d sources (%d new, %d modified)\n",
+		totalSources, len(diff.Added), len(diff.Modified))
+	fmt.Printf("   Model:    %s (%s)\n", model, cfg.API.Provider)
+	fmt.Printf("   Tokens:   ~%d input (estimated)\n", tokens)
+	fmt.Printf("   Cost:     ~$%.4f (standard mode)\n", cost)
+	fmt.Printf("   Batch:    ~$%.4f (50%% discount, if available)\n", cost*0.5)
+	fmt.Printf("   Cached:   ~$%.4f (with prompt caching)\n", cost*0.3)
+	fmt.Println()
+	fmt.Println("   Note: estimates are approximate. Actual cost depends on")
+	fmt.Println("   content complexity, output length, and provider pricing.")
+	fmt.Println()
+
 	return nil
 }
 

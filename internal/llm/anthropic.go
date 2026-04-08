@@ -95,6 +95,72 @@ func (p *anthropicProvider) FormatStreamRequest(messages []Message, opts CallOpt
 	return p.makeRequest(body)
 }
 
+// --- CachingProvider implementation ---
+
+func (p *anthropicProvider) SetupCache(systemPrompt string, model string) (string, error) {
+	// Anthropic caching is per-request via cache_control — no setup needed
+	return "", nil
+}
+
+func (p *anthropicProvider) FormatCachedRequest(cacheID string, messages []Message, opts CallOpts) (*http.Request, error) {
+	var systemContent []map[string]any
+	var apiMessages []any
+
+	for _, m := range messages {
+		if m.Role == "system" {
+			// System message with cache_control for prompt caching
+			systemContent = append(systemContent, map[string]any{
+				"type":          "text",
+				"text":          m.Content,
+				"cache_control": map[string]string{"type": "ephemeral"},
+			})
+			continue
+		}
+		if m.ImageBase64 != "" {
+			apiMessages = append(apiMessages, map[string]any{
+				"role": m.Role,
+				"content": []map[string]any{
+					{"type": "image", "source": map[string]string{
+						"type":       "base64",
+						"media_type": m.ImageMime,
+						"data":       m.ImageBase64,
+					}},
+					{"type": "text", "text": m.Content},
+				},
+			})
+		} else {
+			apiMessages = append(apiMessages, map[string]string{
+				"role":    m.Role,
+				"content": m.Content,
+			})
+		}
+	}
+
+	maxTokens := opts.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 4096
+	}
+
+	body := map[string]any{
+		"model":      opts.Model,
+		"messages":   apiMessages,
+		"max_tokens": maxTokens,
+	}
+	if len(systemContent) > 0 {
+		body["system"] = systemContent
+	}
+	if opts.Temperature > 0 {
+		body["temperature"] = opts.Temperature
+	}
+
+	return p.makeRequest(body)
+}
+
+func (p *anthropicProvider) TeardownCache(cacheID string) error {
+	// Anthropic caches auto-expire (5min TTL) — no cleanup needed
+	return nil
+}
+
 func (p *anthropicProvider) ParseStreamChunk(data []byte) (string, bool) {
 	var chunk struct {
 		Type  string `json:"type"`
@@ -123,8 +189,10 @@ func (p *anthropicProvider) ParseResponse(body []byte) (*Response, error) {
 		} `json:"content"`
 		Model string `json:"model"`
 		Usage struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
+			InputTokens              int `json:"input_tokens"`
+			OutputTokens             int `json:"output_tokens"`
+			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 		} `json:"usage"`
 	}
 
@@ -147,5 +215,10 @@ func (p *anthropicProvider) ParseResponse(body []byte) (*Response, error) {
 		Content:    text,
 		Model:      result.Model,
 		TokensUsed: result.Usage.InputTokens + result.Usage.OutputTokens,
+		Usage: Usage{
+			InputTokens:  result.Usage.InputTokens,
+			OutputTokens: result.Usage.OutputTokens,
+			CachedTokens: result.Usage.CacheReadInputTokens,
+		},
 	}, nil
 }

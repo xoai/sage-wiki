@@ -61,12 +61,17 @@ type EmbedConfig struct {
 }
 
 type CompilerConfig struct {
-	MaxParallel      int  `yaml:"max_parallel"`
-	DebounceSeconds  int  `yaml:"debounce_seconds"`
-	SummaryMaxTokens int  `yaml:"summary_max_tokens"`
-	ArticleMaxTokens int  `yaml:"article_max_tokens"`
-	AutoCommit       bool `yaml:"auto_commit"`
-	AutoLint         bool `yaml:"auto_lint"`
+	MaxParallel      int     `yaml:"max_parallel"`
+	DebounceSeconds  int     `yaml:"debounce_seconds"`
+	SummaryMaxTokens int     `yaml:"summary_max_tokens"`
+	ArticleMaxTokens int     `yaml:"article_max_tokens"`
+	AutoCommit       bool    `yaml:"auto_commit"`
+	AutoLint         bool    `yaml:"auto_lint"`
+	Mode             string  `yaml:"mode,omitempty"`              // standard, batch, or auto
+	EstimateBefore   bool    `yaml:"estimate_before,omitempty"`   // prompt with cost estimate before compiling
+	PromptCache      *bool   `yaml:"prompt_cache,omitempty"`      // enable prompt caching (default: true)
+	BatchThreshold   int     `yaml:"batch_threshold,omitempty"`   // min sources to auto-select batch mode
+	TokenPriceOverride float64 `yaml:"token_price_per_million,omitempty"` // override price per 1M input tokens
 }
 
 type SearchConfig struct {
@@ -113,6 +118,14 @@ func Defaults() Config {
 			Port:      3333,
 		},
 	}
+}
+
+// PromptCacheEnabled returns whether prompt caching is enabled (default: true).
+func (c *CompilerConfig) PromptCacheEnabled() bool {
+	if c.PromptCache == nil {
+		return true
+	}
+	return *c.PromptCache
 }
 
 // Load reads and parses a config file, expanding environment variables.
@@ -168,6 +181,12 @@ func (c *Config) Validate() error {
 	if c.Serve.Transport != "" {
 		if c.Serve.Transport != "stdio" && c.Serve.Transport != "sse" {
 			return fmt.Errorf("config: invalid transport %q (valid: stdio, sse)", c.Serve.Transport)
+		}
+	}
+	if c.Compiler.Mode != "" {
+		validModes := map[string]bool{"standard": true, "batch": true, "auto": true}
+		if !validModes[c.Compiler.Mode] {
+			return fmt.Errorf("config: invalid compiler.mode %q (valid: standard, batch, auto)", c.Compiler.Mode)
 		}
 	}
 	return nil
