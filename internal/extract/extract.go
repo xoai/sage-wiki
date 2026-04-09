@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/xoai/sage-wiki/internal/config"
 )
 
 // SourceContent holds extracted text from a source file.
@@ -258,8 +260,18 @@ func splitByParagraphs(text string, maxTokens int) []Chunk {
 	return chunks
 }
 
-// DetectSourceType guesses source type from file extension.
-func DetectSourceType(path string) string {
+// DetectSourceType detects the source type from file path, optional content
+// head text, and optional config-driven type signals.
+// When typeSignals is nil or empty, falls back to extension-only detection.
+func DetectSourceType(path string, contentHead string, typeSignals []config.TypeSignal) string {
+	// Try config-driven signals first
+	for _, sig := range typeSignals {
+		if matchesSignal(path, contentHead, sig) {
+			return sig.Type
+		}
+	}
+
+	// Fallback to extension-based detection
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
 	case ".pdf":
@@ -286,4 +298,33 @@ func DetectSourceType(path string) string {
 		}
 		return "article"
 	}
+}
+
+// matchesSignal checks if a file matches a type signal by filename keywords
+// or content keywords.
+func matchesSignal(path, contentHead string, sig config.TypeSignal) bool {
+	filenameLower := strings.ToLower(filepath.Base(path))
+
+	// Filename keyword match — any one keyword is enough
+	for _, kw := range sig.FilenameKeywords {
+		if strings.Contains(filenameLower, strings.ToLower(kw)) {
+			return true
+		}
+	}
+
+	// Content keyword match — must hit MinContentHits threshold
+	if contentHead != "" && sig.MinContentHits > 0 {
+		contentLower := strings.ToLower(contentHead)
+		hits := 0
+		for _, kw := range sig.ContentKeywords {
+			if strings.Contains(contentLower, strings.ToLower(kw)) {
+				hits++
+			}
+		}
+		if hits >= sig.MinContentHits {
+			return true
+		}
+	}
+
+	return false
 }

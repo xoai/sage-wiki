@@ -848,7 +848,7 @@ func removeFromPending(state *CompileState, path string) {
 }
 
 func extractType(path string) string {
-	return extract.DetectSourceType(path)
+	return extract.DetectSourceType(path, "", nil)
 }
 
 func timeNow() string {
