@@ -8,6 +8,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
+	"github.com/xoai/sage-wiki/internal/prompts"
 )
 
 // ExtractedConcept represents a concept identified by the LLM.
@@ -79,7 +80,13 @@ func ExtractConcepts(
 			dedup = append(dedup, c.Name)
 		}
 
-		prompt := fmt.Sprintf(`Extract concepts from these summaries of recently added/modified sources.
+		prompt, renderErr := prompts.Render("extract_concepts", prompts.ExtractData{
+			ExistingConcepts: strings.Join(dedup, ", "),
+			Summaries:        strings.Join(summaryTexts, "\n\n---\n\n"),
+		})
+		if renderErr != nil {
+			log.Warn("template render failed, using legacy prompt", "error", renderErr)
+			prompt = fmt.Sprintf(`Extract concepts from these summaries of recently added/modified sources.
 
 ## Existing concepts (do not duplicate — merge with these when appropriate):
 %s
@@ -102,9 +109,10 @@ IMPORTANT filtering rules:
 
 Merge with existing concepts when you detect aliases or synonyms.
 Output ONLY a JSON array of objects. No markdown, no explanation.`,
-			strings.Join(dedup, ", "),
-			strings.Join(summaryTexts, "\n\n---\n\n"),
-		)
+				strings.Join(dedup, ", "),
+				strings.Join(summaryTexts, "\n\n---\n\n"),
+			)
+		}
 
 		resp, err := client.ChatCompletion([]llm.Message{
 			{Role: "system", Content: "You are a concept extraction system for a knowledge wiki. Output valid JSON only."},
