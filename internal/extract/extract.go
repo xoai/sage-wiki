@@ -34,7 +34,11 @@ func Extract(path string, sourceType string) (*SourceContent, error) {
 	case ext == ".md":
 		return extractMarkdown(path, sourceType)
 	case ext == ".pdf":
-		return extractPDF(path)
+		sc, err := extractPDF(path)
+		if err == nil && sourceType != "" {
+			sc.Type = sourceType
+		}
+		return sc, err
 	case ext == ".docx":
 		return extractDocx(path)
 	case ext == ".xlsx":
@@ -300,14 +304,14 @@ func DetectSourceType(path string, contentHead string, typeSignals []config.Type
 	}
 }
 
-// matchesSignal checks if a file matches a type signal by path keywords
-// (matched against full path including directory names) or content keywords.
+// matchesSignal checks if a file matches a type signal by filename keywords
+// or content keywords (first 500 chars, including PDF first-page text).
 func matchesSignal(path, contentHead string, sig config.TypeSignal) bool {
-	pathLower := strings.ToLower(path)
+	filenameLower := strings.ToLower(filepath.Base(path))
 
-	// Path keyword match — checks full path including directory names
+	// Filename keyword match — any one keyword is enough
 	for _, kw := range sig.FilenameKeywords {
-		if strings.Contains(pathLower, strings.ToLower(kw)) {
+		if strings.Contains(filenameLower, strings.ToLower(kw)) {
 			return true
 		}
 	}
