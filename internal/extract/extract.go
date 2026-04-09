@@ -300,14 +300,14 @@ func DetectSourceType(path string, contentHead string, typeSignals []config.Type
 	}
 }
 
-// matchesSignal checks if a file matches a type signal by filename keywords
-// or content keywords.
+// matchesSignal checks if a file matches a type signal by path keywords
+// (matched against full path including directory names) or content keywords.
 func matchesSignal(path, contentHead string, sig config.TypeSignal) bool {
-	filenameLower := strings.ToLower(filepath.Base(path))
+	pathLower := strings.ToLower(path)
 
-	// Filename keyword match — any one keyword is enough
+	// Path keyword match — checks full path including directory names
 	for _, kw := range sig.FilenameKeywords {
-		if strings.Contains(filenameLower, strings.ToLower(kw)) {
+		if strings.Contains(pathLower, strings.ToLower(kw)) {
 			return true
 		}
 	}
