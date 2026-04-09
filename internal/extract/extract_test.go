@@ -189,3 +189,35 @@ func TestDetectSourceType(t *testing.T) {
 		}
 	}
 }
+
+func TestReadHead(t *testing.T) {
+	dir := t.TempDir()
+
+	// ASCII file
+	path := filepath.Join(dir, "test.txt")
+	os.WriteFile(path, []byte("Hello, World! This is a test file with some content."), 0644)
+	got := ReadHead(path, 5)
+	if got != "Hello" {
+		t.Errorf("ReadHead(5) = %q, want %q", got, "Hello")
+	}
+
+	// Chinese content
+	cnPath := filepath.Join(dir, "chinese.txt")
+	os.WriteFile(cnPath, []byte("第一条 为了规范证券发行"), 0644)
+	got = ReadHead(cnPath, 10)
+	if len([]rune(got)) > 10 {
+		t.Errorf("ReadHead(10) returned %d runes, want <= 10", len([]rune(got)))
+	}
+
+	// Non-existent file
+	got = ReadHead("/nonexistent/file.txt", 100)
+	if got != "" {
+		t.Errorf("ReadHead(nonexistent) = %q, want empty", got)
+	}
+
+	// File shorter than limit
+	got = ReadHead(path, 10000)
+	if got != "Hello, World! This is a test file with some content." {
+		t.Errorf("ReadHead(10000) = %q, want full content", got)
+	}
+}
