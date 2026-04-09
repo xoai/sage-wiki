@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -288,6 +289,114 @@ func TestInvalidCompilerMode(t *testing.T) {
 	err := cfg.Validate()
 	if err == nil {
 		t.Error("expected validation error for invalid mode")
+	}
+}
+
+func TestTypeSignalParsing(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := `
+version: 1
+project: test-wiki
+sources:
+  - path: raw
+    type: auto
+    watch: true
+output: wiki
+type_signals:
+  - type: regulation
+    filename_keywords: ["法规", "办法"]
+    content_keywords: ["第一条", "第二条"]
+    min_content_hits: 2
+  - type: research
+    filename_keywords: ["研报"]
+    content_keywords: ["投资评级"]
+    min_content_hits: 1
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(cfg.TypeSignals) != 2 {
+		t.Fatalf("expected 2 type signals, got %d", len(cfg.TypeSignals))
+	}
+	if cfg.TypeSignals[0].Type != "regulation" {
+		t.Errorf("expected type 'regulation', got %q", cfg.TypeSignals[0].Type)
+	}
+	if len(cfg.TypeSignals[0].FilenameKeywords) != 2 {
+		t.Errorf("expected 2 filename keywords, got %d", len(cfg.TypeSignals[0].FilenameKeywords))
+	}
+	if cfg.TypeSignals[0].MinContentHits != 2 {
+		t.Errorf("expected min_content_hits 2, got %d", cfg.TypeSignals[0].MinContentHits)
+	}
+}
+
+func TestOntologyConfigParsing(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := `
+version: 1
+project: test-wiki
+sources:
+  - path: raw
+    type: auto
+    watch: true
+output: wiki
+ontology:
+  max_relation_types: 20
+  max_content_types: 10
+  relation_types:
+    - name: implements
+      synonyms: ["实现了", "implementation of"]
+    - name: amends
+      synonyms: ["修订", "废止"]
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Ontology == nil {
+		t.Fatal("expected ontology config")
+	}
+	if cfg.Ontology.MaxRelationTypes != 20 {
+		t.Errorf("expected max 20, got %d", cfg.Ontology.MaxRelationTypes)
+	}
+	if len(cfg.Ontology.RelationTypes) != 2 {
+		t.Fatalf("expected 2 relation types, got %d", len(cfg.Ontology.RelationTypes))
+	}
+	if cfg.Ontology.RelationTypes[1].Name != "amends" {
+		t.Errorf("expected 'amends', got %q", cfg.Ontology.RelationTypes[1].Name)
+	}
+}
+
+func TestValidateOntologyLimits(t *testing.T) {
+	cfg := Defaults()
+	cfg.Project = "test"
+
+	rels := make([]RelationTypeDef, 21)
+	for i := range rels {
+		rels[i] = RelationTypeDef{Name: fmt.Sprintf("rel_%d", i)}
+	}
+	cfg.Ontology = &OntologyConfig{
+		MaxRelationTypes: 20,
+		RelationTypes:    rels,
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Error("expected validation error for exceeding max_relation_types")
 	}
 }
 
