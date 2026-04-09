@@ -30,6 +30,15 @@ type Config struct {
 	Linting     LintingConfig  `yaml:"linting"`
 	Serve       ServeConfig    `yaml:"serve"`
 	Ontology    OntologyConfig `yaml:"ontology,omitempty"`
+	TypeSignals []TypeSignal   `yaml:"type_signals,omitempty"`
+}
+
+// TypeSignal defines keywords for content-type detection.
+type TypeSignal struct {
+	Type             string   `yaml:"type"`
+	FilenameKeywords []string `yaml:"filename_keywords"`
+	ContentKeywords  []string `yaml:"content_keywords"`
+	MinContentHits   int      `yaml:"min_content_hits"`
 }
 
 type VaultConfig struct {
@@ -243,6 +252,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("config: invalid compiler.timezone %q: %w", c.Compiler.Timezone, err)
 		}
 		c.Compiler.resolvedTZ = loc
+	}
+	if len(c.TypeSignals) > 10 {
+		return fmt.Errorf("config: type_signals count %d exceeds maximum 10", len(c.TypeSignals))
 	}
 	return nil
 }
