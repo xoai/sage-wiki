@@ -283,6 +283,20 @@ Add to `.mcp.json`:
 sage-wiki serve --transport sse --port 3333
 ```
 
+## Knowledge Capture from AI Conversations
+
+sage-wiki runs as an MCP server, so you can capture knowledge directly from your AI conversations. Connect it to Claude Code, ChatGPT, Cursor, or any MCP client — then just ask:
+
+> "Save what we just figured out about connection pooling to my wiki"
+
+> "Capture the key decisions from this debugging session"
+
+The `wiki_capture` tool extracts knowledge items (decisions, discoveries, corrections) from conversation text via your LLM, writes them as source files, and queues them for compilation. Noise (greetings, retries, dead ends) is filtered out automatically.
+
+For single facts, `wiki_learn` stores a nugget directly. For full documents, `wiki_add_source` ingests a file. Run `wiki_compile` to process everything into articles.
+
+See the full setup guide: [MCP Knowledge Capture Guide](docs/guides/mcp-knowledge-capture.md)
+
 ## Benchmarks
 
 Evaluated on a real wiki compiled from 1,107 sources (49.4 MB database, 2,832 wiki files).
@@ -355,7 +369,7 @@ python3 eval.py ./test-fixture
 - **Ontology:** Typed entity-relation graph with BFS traversal and cycle detection
 - **Search:** Reciprocal Rank Fusion (RRF) combining BM25 + vector + tag boost + recency decay
 - **Compiler:** 5-pass pipeline (diff, summarize, extract concepts, write articles, images) with prompt caching, batch API, and cost tracking
-- **MCP:** 14 tools (5 read, 7 write, 2 compound) via stdio or SSE
+- **MCP:** 15 tools (5 read, 8 write, 2 compound) via stdio or SSE, including `wiki_capture` for knowledge extraction from conversations
 - **TUI:** bubbletea + glamour 4-tab terminal dashboard (browse, search, Q&A, compile)
 - **Web UI:** Preact + Tailwind CSS embedded via `go:embed` with build tag (`-tags webui`)
 

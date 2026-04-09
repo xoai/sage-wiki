@@ -184,6 +184,13 @@ type CaptionData struct {
 	SourcePath string
 }
 
+// CaptureData holds data for the knowledge capture template.
+// Content is passed separately in the user message, not in the template.
+type CaptureData struct {
+	Context string
+	Tags    string
+}
+
 // Available returns the names of all loaded templates.
 func Available() []string {
 	var names []string

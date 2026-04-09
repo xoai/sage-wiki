@@ -29,7 +29,7 @@ export function GraphView({ currentArticle, onNavigate }: Props) {
     const height = container.clientHeight;
 
     // Create graph instance
-    const graph = ForceGraph2D()(container)
+    const graph = new ForceGraph2D(container)
       .width(width)
       .height(height)
       .nodeLabel((node: any) => node.name)

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'preact/hooks';
+import { useState, useEffect } from 'preact/hooks';
 import type { Ref } from 'preact';
 import { fetchTree, fetchSearch, type TreeData, type SearchHit } from '../lib/api';
 

@@ -128,6 +128,7 @@ func (s *Server) CallTool(ctx context.Context, name string, req mcp.CallToolRequ
 		"wiki_compile_diff":  s.handleCompileDiff,
 		"wiki_compile":       s.handleCompile,
 		"wiki_lint":          s.handleLint,
+		"wiki_capture":       s.handleCapture,
 	}
 	if h, ok := handlers[name]; ok {
 		r, _ := h(ctx, req)

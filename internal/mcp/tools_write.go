@@ -3,19 +3,26 @@ package mcp
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
+	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
 	gitpkg "github.com/xoai/sage-wiki/internal/git"
 	"github.com/xoai/sage-wiki/internal/linter"
+	"github.com/xoai/sage-wiki/internal/llm"
+	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/prompts"
 )
 
 func (s *Server) registerWriteTools() {
@@ -83,6 +90,16 @@ func (s *Server) registerWriteTools() {
 			mcplib.WithDescription("Show added/modified/removed source files compared to the manifest."),
 		),
 		s.handleCompileDiff,
+	)
+
+	s.mcp.AddTool(
+		mcplib.NewTool("wiki_capture",
+			mcplib.WithDescription("Capture knowledge from a conversation or text. Extracts key learnings via LLM and stores them as wiki sources for compilation."),
+			mcplib.WithString("content", mcplib.Required(), mcplib.Description("Conversation excerpt or text to extract knowledge from (max 100KB)")),
+			mcplib.WithString("context", mcplib.Description("What the conversation was about")),
+			mcplib.WithString("tags", mcplib.Description("Comma-separated tags for captured items")),
+		),
+		s.handleCapture,
 	)
 }
 
@@ -266,6 +283,217 @@ func (s *Server) handleLearn(ctx context.Context, req mcplib.CallToolRequest) (*
 		return errorResult(fmt.Sprintf("store failed: %v", err)), nil
 	}
 	return textResult(fmt.Sprintf("Learning stored: [%s] %s", learnType, truncate(content, 80))), nil
+}
+
+const maxCaptureSize = 100 * 1024 // 100KB
+
+func (s *Server) handleCapture(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	args := req.GetArguments()
+	content, _ := args["content"].(string)
+	if content == "" {
+		return errorResult("content is required"), nil
+	}
+	if len(content) > maxCaptureSize {
+		return errorResult(fmt.Sprintf("content too large (%d bytes, max %d)", len(content), maxCaptureSize)), nil
+	}
+
+	captureCtx, _ := args["context"].(string)
+	tagsStr, _ := args["tags"].(string)
+
+	// Ensure captures directory exists
+	capturesDir := filepath.Join(s.projectDir, "raw", "captures")
+	if err := os.MkdirAll(capturesDir, 0755); err != nil {
+		return errorResult(fmt.Sprintf("create captures dir: %v", err)), nil
+	}
+
+	// Try LLM extraction
+	items, err := extractKnowledgeItems(s.cfg, content, captureCtx, tagsStr)
+	if err != nil {
+		// Fallback: store raw content as single file
+		log.Warn("capture: LLM extraction failed, storing raw", "error", err)
+		path, writeErr := writeRawCapture(s.projectDir, content, captureCtx, tagsStr)
+		if writeErr != nil {
+			return errorResult(fmt.Sprintf("write failed: %v", writeErr)), nil
+		}
+		return textResult(fmt.Sprintf("LLM extraction failed (%v). Raw content saved to %s", err, path)), nil
+	}
+
+	if len(items) == 0 {
+		return textResult("No knowledge items found worth extracting."), nil
+	}
+
+	// Write each item as a source file
+	var titles []string
+	mf, _ := manifest.Load(filepath.Join(s.projectDir, ".manifest.json"))
+	usedSlugs := map[string]int{}
+
+	for _, item := range items {
+		slug := slugify(item.Title)
+		if slug == "" {
+			slug = fmt.Sprintf("capture-%d", time.Now().UnixNano())
+		}
+		// Disambiguate duplicate slugs
+		if n, exists := usedSlugs[slug]; exists {
+			usedSlugs[slug] = n + 1
+			slug = fmt.Sprintf("%s-%d", slug, n+1)
+		} else {
+			usedSlugs[slug] = 1
+		}
+		relPath := filepath.Join("raw", "captures", slug+".md")
+		absPath := filepath.Join(s.projectDir, relPath)
+
+		// Defense-in-depth: verify path stays within project
+		absProject, _ := filepath.Abs(s.projectDir)
+		absChecked, _ := filepath.Abs(absPath)
+		if !isSubpath(absProject, absChecked) {
+			log.Warn("capture: path traversal blocked", "slug", slug)
+			continue
+		}
+
+		frontmatter := fmt.Sprintf("---\nsource: mcp-capture\ncaptured_at: %s\n", time.Now().UTC().Format(time.RFC3339))
+		if tagsStr != "" {
+			frontmatter += fmt.Sprintf("tags: [%s]\n", tagsStr)
+		}
+		if captureCtx != "" {
+			frontmatter += fmt.Sprintf("context: %q\n", captureCtx)
+		}
+		frontmatter += "---\n\n"
+
+		fileContent := frontmatter + "# " + item.Title + "\n\n" + item.Content + "\n"
+		if err := os.WriteFile(absPath, []byte(fileContent), 0644); err != nil {
+			log.Warn("capture: write failed", "path", relPath, "error", err)
+			continue
+		}
+
+		// Update manifest
+		if mf != nil {
+			hash := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(fileContent)))
+			mf.AddSource(relPath, hash, "article", int64(len(fileContent)))
+		}
+		titles = append(titles, item.Title)
+	}
+
+	if mf != nil {
+		if err := mf.Save(filepath.Join(s.projectDir, ".manifest.json")); err != nil {
+			log.Warn("capture: manifest save failed", "error", err)
+		}
+	}
+
+	return textResult(fmt.Sprintf("Captured %d items: %s\nRun `wiki_compile` to process them into articles.", len(titles), strings.Join(titles, ", "))), nil
+}
+
+type capturedItem struct {
+	Title   string `json:"title"`
+	Content string `json:"content"`
+}
+
+func extractKnowledgeItems(cfg *config.Config, content, captureCtx, tags string) ([]capturedItem, error) {
+	if cfg.API.Provider == "" || cfg.API.APIKey == "" {
+		return nil, fmt.Errorf("LLM not configured (no api.provider or api.api_key)")
+	}
+
+	client, err := llm.NewClient(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, cfg.API.RateLimit)
+	if err != nil {
+		return nil, fmt.Errorf("create LLM client: %w", err)
+	}
+
+	prompt, err := prompts.Render("capture_knowledge", prompts.CaptureData{
+		Context: captureCtx,
+		Tags:    tags,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("render prompt: %w", err)
+	}
+
+	model := cfg.Models.Summarize
+	if model == "" {
+		model = "gpt-4o-mini"
+	}
+
+	resp, err := client.ChatCompletion([]llm.Message{
+		{Role: "system", Content: "You are a knowledge extraction assistant. Return only valid JSON."},
+		{Role: "user", Content: prompt + "\n\n" + content},
+	}, llm.CallOpts{Model: model, MaxTokens: 4096})
+	if err != nil {
+		return nil, fmt.Errorf("LLM call: %w", err)
+	}
+
+	// Strip markdown code fences if present
+	text := strings.TrimSpace(resp.Content)
+	text = stripJSONFences(text)
+
+	var items []capturedItem
+	if err := json.Unmarshal([]byte(text), &items); err != nil {
+		return nil, fmt.Errorf("parse LLM response: %w (raw: %s)", err, truncate(text, 200))
+	}
+
+	return items, nil
+}
+
+func writeRawCapture(projectDir, content, captureCtx, tags string) (string, error) {
+	capturesDir := filepath.Join(projectDir, "raw", "captures")
+	os.MkdirAll(capturesDir, 0755)
+
+	slug := fmt.Sprintf("raw-%s", time.Now().Format("20060102-150405"))
+	relPath := filepath.Join("raw", "captures", slug+".md")
+	absPath := filepath.Join(projectDir, relPath)
+
+	// Defense-in-depth: verify path stays within project
+	absProject, _ := filepath.Abs(projectDir)
+	absChecked, _ := filepath.Abs(absPath)
+	if !isSubpath(absProject, absChecked) {
+		return "", fmt.Errorf("path traversal blocked: %s", relPath)
+	}
+
+	frontmatter := fmt.Sprintf("---\nsource: mcp-capture\ncaptured_at: %s\nraw: true\n", time.Now().UTC().Format(time.RFC3339))
+	if tags != "" {
+		frontmatter += fmt.Sprintf("tags: [%s]\n", tags)
+	}
+	if captureCtx != "" {
+		frontmatter += fmt.Sprintf("context: %q\n", captureCtx)
+	}
+	frontmatter += "---\n\n"
+
+	if err := os.WriteFile(absPath, []byte(frontmatter+content+"\n"), 0644); err != nil {
+		return "", err
+	}
+	return relPath, nil
+}
+
+var nonAlphanumRe = regexp.MustCompile(`[^a-z0-9]+`)
+
+func slugify(s string) string {
+	s = strings.ToLower(s)
+	// Keep ASCII letters/digits, replace everything else with hyphens
+	var buf strings.Builder
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			buf.WriteRune(r)
+		} else {
+			buf.WriteByte('-')
+		}
+	}
+	s = nonAlphanumRe.ReplaceAllString(buf.String(), "-")
+	s = strings.Trim(s, "-")
+	if len(s) > 80 {
+		s = s[:80]
+		s = strings.TrimRight(s, "-")
+	}
+	return s
+}
+
+func stripJSONFences(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "```json") {
+		s = strings.TrimPrefix(s, "```json")
+		s = strings.TrimSuffix(s, "```")
+		s = strings.TrimSpace(s)
+	} else if strings.HasPrefix(s, "```") {
+		s = strings.TrimPrefix(s, "```")
+		s = strings.TrimSuffix(s, "```")
+		s = strings.TrimSpace(s)
+	}
+	return s
 }
 
 func (s *Server) handleCommit(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
