@@ -23,8 +23,8 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 1 {
-		t.Errorf("expected schema version 1, got %d", version)
+	if version != 2 {
+		t.Errorf("expected schema version 2, got %d", version)
 	}
 
 	// Verify tables exist
@@ -62,8 +62,8 @@ func TestIdempotentMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 1 {
-		t.Errorf("expected 1 schema_version row, got %d", count)
+	if count != 2 {
+		t.Errorf("expected 2 schema_version rows, got %d", count)
 	}
 }
 
