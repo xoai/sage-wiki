@@ -111,7 +111,8 @@ func IngestPath(projectDir string, srcPath string) (*IngestResult, error) {
 		return nil, fmt.Errorf("ingest: file not found: %w", err)
 	}
 
-	srcType := extract.DetectSourceType(absPath, "", nil)
+	contentHead := extract.ReadHead(absPath, 500)
+	srcType := extract.DetectSourceType(absPath, contentHead, cfg.TypeSignals)
 	destDir := findSourceFolder(projectDir, cfg, srcType)
 	if destDir == "" {
 		// Fallback to first source folder

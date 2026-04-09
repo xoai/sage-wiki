@@ -288,7 +288,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		memStore.Add(memory.Entry{
 			ID:          sr.SourcePath,
 			Content:     sr.Summary,
-			Tags:        []string{extractType(sr.SourcePath)},
+			Tags:        []string{extractType(sr.SourcePath, cfg.TypeSignals)},
 			ArticlePath: sr.SummaryPath,
 		})
 
@@ -676,7 +676,7 @@ func resumeBatch(
 
 		// Update manifest — ensure source entry exists, then mark compiled
 		if _, exists := mf.Sources[br.CustomID]; !exists {
-			mf.AddSource(br.CustomID, "", extractType(br.CustomID), 0)
+			mf.AddSource(br.CustomID, "", extractType(br.CustomID, cfg.TypeSignals), 0)
 		}
 		mf.MarkCompiled(br.CustomID, summaryPath, nil)
 
@@ -684,7 +684,7 @@ func resumeBatch(
 		memStore.Add(memory.Entry{
 			ID:          br.CustomID,
 			Content:     summaryText,
-			Tags:        []string{extractType(br.CustomID)},
+			Tags:        []string{extractType(br.CustomID, cfg.TypeSignals)},
 			ArticlePath: summaryPath,
 		})
 
@@ -847,8 +847,9 @@ func removeFromPending(state *CompileState, path string) {
 	}
 }
 
-func extractType(path string) string {
-	return extract.DetectSourceType(path, "", nil)
+func extractType(path string, typeSignals []config.TypeSignal) string {
+	contentHead := extract.ReadHead(path, 500)
+	return extract.DetectSourceType(path, contentHead, typeSignals)
 }
 
 func timeNow() string {
