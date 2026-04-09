@@ -12,6 +12,7 @@ import (
 
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/llm"
+	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
@@ -196,6 +197,25 @@ func writeOneArticle(
 }
 
 func buildArticlePrompt(concept ExtractedConcept, existing string, related []string) string {
+	prompt, err := prompts.Render("write_article", prompts.WriteArticleData{
+		ConceptName:     formatConceptName(concept.Name),
+		ConceptID:       concept.Name,
+		Sources:         strings.Join(concept.Sources, ", "),
+		RelatedConcepts: related,
+		ExistingArticle: existing,
+		Learnings:       "",
+		Aliases:         strings.Join(concept.Aliases, ", "),
+		SourceList:      quoteYAMLList(concept.Sources),
+		RelatedList:     strings.Join(related, ", "),
+	})
+	if err != nil {
+		log.Warn("template render failed, using legacy prompt", "error", err)
+		return buildArticlePromptLegacy(concept, existing, related)
+	}
+	return prompt
+}
+
+func buildArticlePromptLegacy(concept ExtractedConcept, existing string, related []string) string {
 	var b strings.Builder
 
 	b.WriteString(fmt.Sprintf("Write a comprehensive wiki article about: %s\n\n", formatConceptName(concept.Name)))
