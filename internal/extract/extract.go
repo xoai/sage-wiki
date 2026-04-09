@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 // SourceContent holds extracted text from a source file.
@@ -57,9 +58,9 @@ func Extract(path string, sourceType string) (*SourceContent, error) {
 }
 
 // ChunkIfNeeded splits content into chunks if it exceeds maxTokens.
-// Uses a rough estimate of 4 chars per token.
+// Uses adaptive estimation: ~1.5 chars/token for CJK-heavy text, ~4 chars/token for ASCII.
 func ChunkIfNeeded(content *SourceContent, maxTokens int) {
-	estimatedTokens := len(content.Text) / 4
+	estimatedTokens := estimateTokenCount(content.Text)
 	if estimatedTokens <= maxTokens || maxTokens <= 0 {
 		content.Chunks = []Chunk{{Index: 0, Text: content.Text}}
 		content.ChunkCount = 1
@@ -195,7 +196,7 @@ func splitByHeadings(text string, maxTokens int) []Chunk {
 		isHeading := strings.HasPrefix(line, "# ") || strings.HasPrefix(line, "## ") || strings.HasPrefix(line, "### ")
 
 		// Check if adding this line would exceed limit
-		estimatedTokens := (current.Len() + len(line)) / 4
+		estimatedTokens := estimateTokenCount(current.String() + line)
 		if estimatedTokens > maxTokens && current.Len() > 0 {
 			flush()
 		}
@@ -213,6 +214,22 @@ func splitByHeadings(text string, maxTokens int) []Chunk {
 
 	flush()
 	return chunks
+}
+
+// estimateTokenCount provides a more accurate token estimate for mixed CJK/ASCII text.
+// CJK characters average ~1.5 tokens each; ASCII words average ~1 token per 4 chars.
+func estimateTokenCount(text string) int {
+	cjkChars := 0
+	asciiChars := 0
+	for _, r := range text {
+		if unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hiragana, r) || unicode.Is(unicode.Katakana, r) || unicode.Is(unicode.Hangul, r) {
+			cjkChars++
+		} else {
+			asciiChars++
+		}
+	}
+	// CJK: ~1.5 tokens per character; ASCII: ~0.25 tokens per character (4 chars/token)
+	return int(float64(cjkChars)*1.5) + asciiChars/4
 }
 
 // stripHeadingPrefix removes markdown heading markers (# ## ###) from a line.
