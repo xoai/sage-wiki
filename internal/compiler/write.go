@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unicode"
 
 	"github.com/xoai/sage-wiki/internal/embed"
@@ -39,6 +40,7 @@ func WriteArticles(
 	vecStore *vectors.Store,
 	ontStore *ontology.Store,
 	embedder embed.Embedder,
+	userTZ *time.Location,
 ) []ArticleResult {
 	if maxParallel <= 0 {
 		maxParallel = 4
@@ -58,7 +60,7 @@ func WriteArticles(
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			result := writeOneArticle(projectDir, outputDir, c, client, model, maxTokens, memStore, vecStore, ontStore, embedder)
+			result := writeOneArticle(projectDir, outputDir, c, client, model, maxTokens, memStore, vecStore, ontStore, embedder, userTZ)
 			results[idx] = result
 
 			n := int(done.Add(1))
@@ -85,6 +87,7 @@ func writeOneArticle(
 	vecStore *vectors.Store,
 	ontStore *ontology.Store,
 	embedder embed.Embedder,
+	userTZ *time.Location,
 ) ArticleResult {
 	result := ArticleResult{ConceptName: concept.Name}
 
@@ -128,7 +131,7 @@ func writeOneArticle(
 
 	// Ensure frontmatter exists
 	if !strings.HasPrefix(articleContent, "---") {
-		articleContent = buildFrontmatter(concept) + "\n\n" + articleContent
+		articleContent = buildFrontmatter(concept, userTZ) + "\n\n" + articleContent
 	}
 
 	// Normalize confidence values to enum (high/medium/low)
@@ -211,7 +214,7 @@ func writeOneArticle(
 	return result
 }
 
-func buildFrontmatter(concept ExtractedConcept) string {
+func buildFrontmatter(concept ExtractedConcept, loc *time.Location) string {
 	aliases := quoteYAMLList(concept.Aliases)
 	sources := quoteYAMLList(concept.Sources)
 
@@ -221,7 +224,7 @@ aliases: %s
 sources: %s
 confidence: medium
 created_at: %s
----`, concept.Name, aliases, sources, timeNow())
+---`, concept.Name, aliases, sources, timeNow(loc))
 }
 
 // quoteYAMLList produces a YAML list with properly quoted values.

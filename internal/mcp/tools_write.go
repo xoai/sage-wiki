@@ -161,7 +161,7 @@ func (s *Server) handleWriteSummary(ctx context.Context, req mcplib.CallToolRequ
 	}
 	os.MkdirAll(filepath.Dir(absPath), 0755)
 
-	frontmatter := fmt.Sprintf("---\nsource: %s\ncompiled_at: %s\n---\n\n", source, time.Now().UTC().Format(time.RFC3339))
+	frontmatter := fmt.Sprintf("---\nsource: %s\ncompiled_at: %s\n---\n\n", source, s.cfg.Compiler.UserNow())
 	if err := os.WriteFile(absPath, []byte(frontmatter+content), 0644); err != nil {
 		return errorResult(fmt.Sprintf("write failed: %v", err)), nil
 	}
@@ -311,7 +311,7 @@ func (s *Server) handleCapture(ctx context.Context, req mcplib.CallToolRequest) 
 	if err != nil {
 		// Fallback: store raw content as single file
 		log.Warn("capture: LLM extraction failed, storing raw", "error", err)
-		path, writeErr := writeRawCapture(s.projectDir, content, captureCtx, tagsStr)
+		path, writeErr := writeRawCapture(s.projectDir, content, captureCtx, tagsStr, s.cfg.Compiler.UserNow())
 		if writeErr != nil {
 			return errorResult(fmt.Sprintf("write failed: %v", writeErr)), nil
 		}
@@ -350,7 +350,7 @@ func (s *Server) handleCapture(ctx context.Context, req mcplib.CallToolRequest) 
 			continue
 		}
 
-		frontmatter := fmt.Sprintf("---\nsource: mcp-capture\ncaptured_at: %s\n", time.Now().UTC().Format(time.RFC3339))
+		frontmatter := fmt.Sprintf("---\nsource: mcp-capture\ncaptured_at: %s\n", s.cfg.Compiler.UserNow())
 		if tagsStr != "" {
 			frontmatter += fmt.Sprintf("tags: [%s]\n", tagsStr)
 		}
@@ -430,7 +430,7 @@ func extractKnowledgeItems(cfg *config.Config, content, captureCtx, tags string)
 	return items, nil
 }
 
-func writeRawCapture(projectDir, content, captureCtx, tags string) (string, error) {
+func writeRawCapture(projectDir, content, captureCtx, tags, userNow string) (string, error) {
 	capturesDir := filepath.Join(projectDir, "raw", "captures")
 	os.MkdirAll(capturesDir, 0755)
 
@@ -445,7 +445,7 @@ func writeRawCapture(projectDir, content, captureCtx, tags string) (string, erro
 		return "", fmt.Errorf("path traversal blocked: %s", relPath)
 	}
 
-	frontmatter := fmt.Sprintf("---\nsource: mcp-capture\ncaptured_at: %s\nraw: true\n", time.Now().UTC().Format(time.RFC3339))
+	frontmatter := fmt.Sprintf("---\nsource: mcp-capture\ncaptured_at: %s\nraw: true\n", userNow)
 	if tags != "" {
 		frontmatter += fmt.Sprintf("tags: [%s]\n", tags)
 	}

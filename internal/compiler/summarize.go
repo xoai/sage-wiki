@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/extract"
 	"github.com/xoai/sage-wiki/internal/llm"
@@ -34,6 +35,7 @@ func Summarize(
 	model string,
 	maxTokens int,
 	maxParallel int,
+	userTZ *time.Location,
 ) []SummaryResult {
 	if maxParallel <= 0 {
 		maxParallel = 4
@@ -53,7 +55,7 @@ func Summarize(
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			result := summarizeOne(projectDir, outputDir, info, client, model, maxTokens)
+			result := summarizeOne(projectDir, outputDir, info, client, model, maxTokens, userTZ)
 			results[idx] = result
 
 			n := int(done.Add(1))
@@ -76,6 +78,7 @@ func summarizeOne(
 	client *llm.Client,
 	model string,
 	maxTokens int,
+	userTZ *time.Location,
 ) SummaryResult {
 	result := SummaryResult{SourcePath: info.Path}
 
@@ -97,7 +100,7 @@ func summarizeOne(
 			return result
 		}
 		summaryText = text
-		return writeSummaryFile(projectDir, outputDir, info, content, summaryText, result)
+		return writeSummaryFile(projectDir, outputDir, info, content, summaryText, result, userTZ)
 	}
 
 	// Chunk if needed
@@ -174,10 +177,10 @@ func summarizeOne(
 		summaryText = resp.Content
 	}
 
-	return writeSummaryFile(projectDir, outputDir, info, content, summaryText, result)
+	return writeSummaryFile(projectDir, outputDir, info, content, summaryText, result, userTZ)
 }
 
-func writeSummaryFile(projectDir, outputDir string, info SourceInfo, content *extract.SourceContent, summaryText string, result SummaryResult) SummaryResult {
+func writeSummaryFile(projectDir, outputDir string, info SourceInfo, content *extract.SourceContent, summaryText string, result SummaryResult, loc *time.Location) SummaryResult {
 	summaryDir := filepath.Join(projectDir, outputDir, "summaries")
 	os.MkdirAll(summaryDir, 0755)
 
@@ -192,7 +195,7 @@ compiled_at: %s
 chunk_count: %d
 ---
 
-`, info.Path, content.Type, timeNow(), content.ChunkCount)
+`, info.Path, content.Type, timeNow(loc), content.ChunkCount)
 
 	if err := os.WriteFile(absOutputPath, []byte(frontmatter+summaryText), 0644); err != nil {
 		result.Error = fmt.Errorf("write summary: %w", err)
