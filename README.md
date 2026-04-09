@@ -203,6 +203,7 @@ compiler:
   # prompt_cache: true        # enable prompt caching (default: true)
   # batch_threshold: 10       # min sources for auto-batch mode
   # token_price_per_million: 0  # override pricing (0 = use built-in)
+  # timezone: Asia/Shanghai   # IANA timezone for user-facing timestamps (default: UTC)
 
 search:
   hybrid_weight_bm25: 0.7    # BM25 vs vector weight

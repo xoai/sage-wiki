@@ -61,7 +61,7 @@ func IngestURL(projectDir string, url string) (*IngestResult, error) {
 
 	// Convert to markdown-ish format (basic: wrap in frontmatter)
 	content := fmt.Sprintf("---\nsource_url: %s\ningested_at: %s\n---\n\n%s",
-		url, time.Now().UTC().Format(time.RFC3339), string(body))
+		url, cfg.Compiler.UserNow(), string(body))
 
 	// Find first article-type source folder
 	destDir := findSourceFolder(projectDir, cfg, "article")

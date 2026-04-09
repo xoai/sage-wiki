@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/xoai/sage-wiki/internal/manifest"
@@ -300,7 +301,7 @@ func TestCaptureFallbackRaw(t *testing.T) {
 	wiki.InitGreenfield(dir, "test", "gemini-2.5-flash")
 
 	// Write raw capture directly (simulates LLM failure fallback)
-	path, err := writeRawCapture(dir, "some knowledge from a chat", "debugging session", "go,testing")
+	path, err := writeRawCapture(dir, "some knowledge from a chat", "debugging session", "go,testing", time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		t.Fatalf("writeRawCapture: %v", err)
 	}

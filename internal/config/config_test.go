@@ -175,6 +175,15 @@ func TestValidation(t *testing.T) {
 			wantErr: "invalid transport",
 		},
 		{
+			name:    "invalid timezone",
+			cfg:     Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Compiler: CompilerConfig{Timezone: "Not/A/Zone"}},
+			wantErr: "invalid compiler.timezone",
+		},
+		{
+			name: "valid timezone",
+			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Compiler: CompilerConfig{Timezone: "Asia/Shanghai"}},
+		},
+		{
 			name: "valid minimal",
 			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}},
 		},
@@ -397,6 +406,51 @@ func TestValidateOntologyLimits(t *testing.T) {
 	err := cfg.Validate()
 	if err == nil {
 		t.Error("expected validation error for exceeding max_relation_types")
+	}
+}
+
+func TestUserTimeLocation(t *testing.T) {
+	// Default (empty) returns UTC
+	c1 := CompilerConfig{}
+	if c1.UserTimeLocation().String() != "UTC" {
+		t.Errorf("expected UTC, got %s", c1.UserTimeLocation())
+	}
+
+	// Valid IANA timezone (fresh struct — sync.Once is per-instance)
+	c2 := CompilerConfig{Timezone: "Asia/Shanghai"}
+	loc := c2.UserTimeLocation()
+	if loc.String() != "Asia/Shanghai" {
+		t.Errorf("expected Asia/Shanghai, got %s", loc)
+	}
+
+	// UserNow should contain the timezone offset
+	now := c2.UserNow()
+	if now == "" {
+		t.Error("UserNow returned empty string")
+	}
+	// Should NOT end with Z (UTC)
+	if now[len(now)-1] == 'Z' {
+		t.Error("expected non-UTC timezone offset, got Z")
+	}
+
+	// Invalid timezone falls back to UTC
+	c3 := CompilerConfig{Timezone: "Invalid/Zone"}
+	if c3.UserTimeLocation().String() != "UTC" {
+		t.Errorf("expected UTC fallback, got %s", c3.UserTimeLocation())
+	}
+
+	// Validate() path: timezone resolved and cached during validation
+	cfg2 := Config{
+		Project: "test",
+		Output:  "wiki",
+		Sources: []Source{{Path: "raw"}},
+		Compiler: CompilerConfig{Timezone: "America/New_York"},
+	}
+	if err := cfg2.Validate(); err != nil {
+		t.Fatalf("Validate failed: %v", err)
+	}
+	if cfg2.Compiler.UserTimeLocation().String() != "America/New_York" {
+		t.Errorf("expected America/New_York after Validate, got %s", cfg2.Compiler.UserTimeLocation())
 	}
 }
 

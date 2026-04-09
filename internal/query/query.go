@@ -119,7 +119,7 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 	vecStore := vectors.NewStore(db)
 	ontStore := ontology.NewStore(db)
 	embedder := embed.NewFromConfig(cfg)
-	outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder)
+	outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow())
 	if err != nil {
 		log.Warn("auto-filing failed", "error", err)
 	} else {
@@ -216,13 +216,13 @@ func SaveAnswer(projectDir string, question string, answer string, sources []str
 		Sources:  sources,
 		Format:   "markdown",
 	}
-	return autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder)
+	return autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow())
 }
 
 // autoFile saves the query result to wiki/outputs/ with frontmatter.
 func autoFile(projectDir string, outputDir string, result *QueryResult,
 	memStore *memory.Store, vecStore *vectors.Store, ontStore *ontology.Store,
-	embedder embed.Embedder) (string, error) {
+	embedder embed.Embedder, userNow string) (string, error) {
 
 	outputsDir := filepath.Join(projectDir, outputDir, "outputs")
 	os.MkdirAll(outputsDir, 0755)
@@ -240,7 +240,7 @@ created_at: %s
 format: %s
 ---
 
-`, result.Question, strings.Join(result.Sources, ", "), time.Now().UTC().Format(time.RFC3339), result.Format)
+`, result.Question, strings.Join(result.Sources, ", "), userNow, result.Format)
 
 	if err := os.WriteFile(absPath, []byte(frontmatter+result.Answer), 0644); err != nil {
 		return "", err
@@ -350,7 +350,7 @@ func StreamQuery(ctx context.Context, projectDir string, question string, topK i
 		vecStore := vectors.NewStore(db)
 		ontStore := ontology.NewStore(db)
 		embedder := embed.NewFromConfig(cfg)
-		if outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder); err != nil {
+		if outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow()); err != nil {
 			log.Warn("stream auto-filing failed", "error", err)
 		} else {
 			log.Info("stream query result filed", "path", outputPath)

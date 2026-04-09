@@ -58,7 +58,7 @@ func (c *Client) ChatCompletionStream(ctx context.Context, messages []Message, o
 	for scanner.Scan() {
 		// Check for context cancellation
 		if ctx.Err() != nil {
-			return &Response{Content: fullContent.String(), Model: opts.Model}, ctx.Err()
+			return &Response{Content: stripThinkTags(fullContent.String()), Model: opts.Model}, ctx.Err()
 		}
 
 		line := scanner.Text()
@@ -83,11 +83,11 @@ func (c *Client) ChatCompletionStream(ctx context.Context, messages []Message, o
 	}
 
 	if err := scanner.Err(); err != nil {
-		return &Response{Content: fullContent.String(), Model: opts.Model}, fmt.Errorf("llm: stream read error: %w", err)
+		return &Response{Content: stripThinkTags(fullContent.String()), Model: opts.Model}, fmt.Errorf("llm: stream read error: %w", err)
 	}
 
 	return &Response{
-		Content: fullContent.String(),
+		Content: stripThinkTags(fullContent.String()),
 		Model:   opts.Model,
 	}, nil
 }

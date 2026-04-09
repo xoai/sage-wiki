@@ -232,3 +232,59 @@ func TestOllamaUsesOpenAIFormat(t *testing.T) {
 		t.Errorf("ollama should use openai provider, got %s", client.ProviderName())
 	}
 }
+
+func TestStripThinkTags(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"no tags", "Hello world", "Hello world"},
+		{"simple tag", "<think>reasoning</think>Answer", "Answer"},
+		{"multiline tag", "<think>\nstep 1\nstep 2\n</think>\nResult", "Result"},
+		{"tag with trailing whitespace", "<think>internal</think>  \n\nContent here", "Content here"},
+		{"multiple tags", "<think>first</think>A<think>second</think>B", "AB"},
+		{"empty after strip", "<think>only reasoning</think>", ""},
+		{"no think tags just content", "plain text without tags", "plain text without tags"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripThinkTags(tt.in)
+			if got != tt.want {
+				t.Errorf("stripThinkTags(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestChatCompletionStripsThinkTags(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]string{"content": "<think>I need to figure this out</think>\nThe answer is 42."}},
+			},
+			"model": "deepseek-v3",
+			"usage": map[string]int{"total_tokens": 50},
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewClient("openai", "sk-test", server.URL, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := client.ChatCompletion([]Message{
+		{Role: "user", Content: "test"},
+	}, CallOpts{Model: "deepseek-v3"})
+
+	if err != nil {
+		t.Fatalf("ChatCompletion: %v", err)
+	}
+	if strings.Contains(resp.Content, "<think>") {
+		t.Errorf("think tags not stripped: %q", resp.Content)
+	}
+	if resp.Content != "The answer is 42." {
+		t.Errorf("unexpected content: %q", resp.Content)
+	}
+}

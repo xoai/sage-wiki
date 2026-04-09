@@ -77,10 +77,18 @@ func NewClient(providerName string, apiKey string, baseURL string, rateLimit int
 // ChatCompletion sends a chat completion request with retry on rate limits.
 // If a cache is active (via SetupCache), automatically uses the cached path.
 func (c *Client) ChatCompletion(messages []Message, opts CallOpts) (*Response, error) {
+	var resp *Response
+	var err error
 	if c.cacheID != "" {
-		return c.ChatCompletionCached(c.cacheID, messages, opts)
+		resp, err = c.ChatCompletionCached(c.cacheID, messages, opts)
+	} else {
+		resp, err = c.chatCompletionDirect(messages, opts)
 	}
-	return c.chatCompletionDirect(messages, opts)
+	if err != nil {
+		return nil, err
+	}
+	resp.Content = stripThinkTags(resp.Content)
+	return resp, nil
 }
 
 // chatCompletionDirect sends a request without checking cacheID.
@@ -261,3 +269,4 @@ func jsonBody(v any) *bytes.Buffer {
 	}
 	return bytes.NewBuffer(data)
 }
+

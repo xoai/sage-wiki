@@ -195,7 +195,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	if state == nil {
 		state = &CompileState{
 			CompileID: time.Now().Format("20060102-150405"),
-			StartedAt: timeNow(),
+			StartedAt: time.Now().UTC().Format(time.RFC3339),
 			Pass:      1,
 		}
 	}
@@ -251,7 +251,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		maxTokens = 2000
 	}
 
-	summaries := Summarize(projectDir, cfg.Output, toProcess, client, model, maxTokens, cfg.Compiler.MaxParallel)
+	summaries := Summarize(projectDir, cfg.Output, toProcess, client, model, maxTokens, cfg.Compiler.MaxParallel, cfg.Compiler.UserTimeLocation())
 
 	for _, sr := range summaries {
 		if sr.Error != nil {
@@ -363,7 +363,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 					writeCacheID, _ = client.SetupCache("You are a knowledge base article writer. Write comprehensive, well-structured wiki articles.", writeModel)
 				}
 				progress.StartPhase("Pass 3: Write articles", len(concepts))
-				articles := WriteArticles(projectDir, cfg.Output, concepts, client, writeModel, articleMaxTokens, cfg.Compiler.MaxParallel, memStore, vecStore, ontStore, embedder)
+				articles := WriteArticles(projectDir, cfg.Output, concepts, client, writeModel, articleMaxTokens, cfg.Compiler.MaxParallel, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserTimeLocation())
 
 				for _, ar := range articles {
 					if ar.Error != nil {
@@ -397,7 +397,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	}
 
 	// Write CHANGELOG entry
-	if err := writeChangelog(projectDir, cfg.Output, result); err != nil {
+	if err := writeChangelog(projectDir, cfg.Output, result, cfg.Compiler.UserTimeLocation()); err != nil {
 		log.Warn("failed to write CHANGELOG", "error", err)
 	}
 
@@ -526,16 +526,17 @@ func submitBatch(
 	}
 
 	// Save checkpoint
+	utcNow := time.Now().UTC().Format(time.RFC3339)
 	state := &CompileState{
 		CompileID: time.Now().Format("20060102-150405"),
-		StartedAt: timeNow(),
+		StartedAt: utcNow,
 		Pass:      1,
 		Pending:   pending,
 		Batch: &BatchState{
 			BatchID:     batchID,
 			Provider:    client.ProviderName(),
 			Pass:        "summarize",
-			SubmittedAt: timeNow(),
+			SubmittedAt: utcNow,
 		},
 	}
 	if err := saveCompileState(statePath, state); err != nil {
@@ -664,7 +665,7 @@ func resumeBatch(
 		summaryPath := filepath.Join(cfg.Output, "summaries", baseName+".md")
 		absOutputPath := filepath.Join(projectDir, summaryPath)
 
-		frontmatter := fmt.Sprintf("---\nsource: %s\ncompiled_at: %s\nbatch: true\n---\n\n", br.CustomID, timeNow())
+		frontmatter := fmt.Sprintf("---\nsource: %s\ncompiled_at: %s\nbatch: true\n---\n\n", br.CustomID, timeNow(cfg.Compiler.UserTimeLocation()))
 		if err := os.WriteFile(absOutputPath, []byte(frontmatter+summaryText), 0644); err != nil {
 			result.Errors++
 			progress.ItemError(br.CustomID, err)
@@ -758,7 +759,7 @@ func resumeBatch(
 				client.SetPass("write")
 				writeCacheID, _ := client.SetupCache("You are a knowledge base article writer. Write comprehensive, well-structured wiki articles.", writeModel)
 				progress.StartPhase("Pass 3: Write articles", len(concepts))
-				articles := WriteArticles(projectDir, cfg.Output, concepts, client, writeModel, articleMaxTokens, cfg.Compiler.MaxParallel, memStore, vecStore, ontStore, embedder)
+				articles := WriteArticles(projectDir, cfg.Output, concepts, client, writeModel, articleMaxTokens, cfg.Compiler.MaxParallel, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserTimeLocation())
 
 				for _, ar := range articles {
 					if ar.Error != nil {
@@ -783,7 +784,7 @@ func resumeBatch(
 		return nil, fmt.Errorf("compile: save manifest: %w", err)
 	}
 
-	if err := writeChangelog(projectDir, cfg.Output, result); err != nil {
+	if err := writeChangelog(projectDir, cfg.Output, result, cfg.Compiler.UserTimeLocation()); err != nil {
 		log.Warn("failed to write CHANGELOG", "error", err)
 	}
 
@@ -852,8 +853,10 @@ func extractType(path string, typeSignals []config.TypeSignal) string {
 	return extract.DetectSourceType(path, contentHead, typeSignals)
 }
 
-func timeNow() string {
-	return time.Now().UTC().Format(time.RFC3339)
+// timeNow returns the current time in RFC3339 using the given timezone.
+// Used for user-facing timestamps (frontmatter, changelog).
+func timeNow(loc *time.Location) string {
+	return time.Now().In(loc).Format(time.RFC3339)
 }
 
 func filterSuccessful(summaries []SummaryResult) []SummaryResult {
@@ -866,11 +869,11 @@ func filterSuccessful(summaries []SummaryResult) []SummaryResult {
 	return result
 }
 
-func writeChangelog(projectDir string, outputDir string, result *CompileResult) error {
+func writeChangelog(projectDir string, outputDir string, result *CompileResult, loc *time.Location) error {
 	changelogPath := filepath.Join(projectDir, outputDir, "CHANGELOG.md")
 
 	entry := fmt.Sprintf("## %s\n\n- Added: %d sources\n- Modified: %d sources\n- Removed: %d sources\n- Summarized: %d\n- Concepts extracted: %d\n- Articles written: %d\n- Errors: %d\n\n",
-		timeNow(), result.Added, result.Modified, result.Removed,
+		timeNow(loc), result.Added, result.Modified, result.Removed,
 		result.Summarized, result.ConceptsExtracted, result.ArticlesWritten, result.Errors)
 
 	// Prepend to existing changelog

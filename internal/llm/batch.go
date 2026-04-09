@@ -285,7 +285,7 @@ func parseAnthropicBatchResults(r io.Reader) ([]BatchResult, error) {
 				}
 			}
 			br.Response = &Response{
-				Content:    text,
+				Content:    stripThinkTags(text),
 				Model:      entry.Result.Message.Model,
 				TokensUsed: entry.Result.Message.Usage.InputTokens + entry.Result.Message.Usage.OutputTokens,
 				Usage: Usage{
@@ -537,7 +537,7 @@ func parseOpenAIBatchResults(r io.Reader) ([]BatchResult, error) {
 		br := BatchResult{CustomID: entry.CustomID}
 		if entry.Response.StatusCode == 200 && len(entry.Response.Body.Choices) > 0 {
 			br.Response = &Response{
-				Content:    entry.Response.Body.Choices[0].Message.Content,
+				Content:    stripThinkTags(entry.Response.Body.Choices[0].Message.Content),
 				Model:      entry.Response.Body.Model,
 				TokensUsed: entry.Response.Body.Usage.TotalTokens,
 				Usage: Usage{

@@ -2,7 +2,7 @@ You are a wiki author writing a comprehensive article about a concept.
 
 Concept: {{.ConceptName}}
 Sources: {{.Sources}}
-Related concepts: {{.RelatedConcepts}}
+Related concepts: {{.RelatedList}}
 
 {{if .ExistingArticle}}
 ## Existing article (update/expand):

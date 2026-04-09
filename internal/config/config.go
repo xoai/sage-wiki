@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -74,6 +75,9 @@ type CompilerConfig struct {
 	PromptCache      *bool   `yaml:"prompt_cache,omitempty"`      // enable prompt caching (default: true)
 	BatchThreshold   int     `yaml:"batch_threshold,omitempty"`   // min sources to auto-select batch mode
 	TokenPriceOverride float64 `yaml:"token_price_per_million,omitempty"` // override price per 1M input tokens
+	Timezone         string  `yaml:"timezone,omitempty"`          // IANA timezone for user-facing timestamps (default: UTC)
+
+	resolvedTZ *time.Location `yaml:"-"` // cached by Validate(); not serialized
 }
 
 type SearchConfig struct {
@@ -149,6 +153,26 @@ func (c *CompilerConfig) PromptCacheEnabled() bool {
 		return true
 	}
 	return *c.PromptCache
+}
+
+// UserTimeLocation returns the configured timezone for user-facing timestamps.
+// Returns the cached location set by Validate(), or resolves from Timezone string.
+// Defaults to UTC if Timezone is empty or invalid.
+func (c *CompilerConfig) UserTimeLocation() *time.Location {
+	if c.resolvedTZ != nil {
+		return c.resolvedTZ
+	}
+	if c.Timezone != "" {
+		if loc, err := time.LoadLocation(c.Timezone); err == nil {
+			return loc
+		}
+	}
+	return time.UTC
+}
+
+// UserNow returns the current time formatted in RFC3339 using the configured timezone.
+func (c *CompilerConfig) UserNow() string {
+	return time.Now().In(c.UserTimeLocation()).Format(time.RFC3339)
 }
 
 // Load reads and parses a config file, expanding environment variables.
@@ -231,7 +255,13 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("config: type_signals count %d exceeds max_content_types %d",
 			len(c.TypeSignals), maxCt)
 	}
-
+	if c.Compiler.Timezone != "" {
+		loc, err := time.LoadLocation(c.Compiler.Timezone)
+		if err != nil {
+			return fmt.Errorf("config: invalid compiler.timezone %q: %w", c.Compiler.Timezone, err)
+		}
+		c.Compiler.resolvedTZ = loc
+	}
 	return nil
 }
 

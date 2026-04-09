@@ -15,4 +15,4 @@ For each concept, provide:
 - type: concept, technique, or claim
 
 Merge with existing concepts when appropriate (detect aliases).
-Output as JSON array.
+Output ONLY a JSON array of objects. No markdown, no explanation.
