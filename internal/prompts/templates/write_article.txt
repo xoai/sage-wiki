@@ -33,15 +33,9 @@ List related concepts as [[wikilinks]]:
 {{range .RelatedConcepts}}- [[{{.}}]]
 {{end}}
 
-Use YAML frontmatter at the top:
-```yaml
----
-concept: {{.ConceptID}}
-aliases: [{{.Aliases}}]
-sources: [{{.SourceList}}]
-related: [{{.RelatedList}}]
-confidence: {{.Confidence}}
----
-```
+Do NOT include YAML frontmatter — it will be added automatically.
+
+At the very end of your response, add exactly one line assessing your confidence:
+Confidence: high, medium, or low
 
 Keep under {{.MaxTokens}} tokens. Be precise and factual.

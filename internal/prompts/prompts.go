@@ -124,7 +124,13 @@ func ScaffoldDefaults(dir string) error {
 			continue
 		}
 
-		header := fmt.Sprintf("# %s\n# This file customizes the sage-wiki %s prompt.\n# Edit freely — sage-wiki will use this instead of the built-in default.\n# Delete this file to revert to the default.\n#\n# Available variables: {{.SourcePath}}, {{.SourceType}}, {{.MaxTokens}}\n# See: https://github.com/xoai/sage-wiki\n\n", outName, strings.TrimSuffix(outName, ".md"))
+		vars := "{{.SourcePath}}, {{.SourceType}}, {{.MaxTokens}}"
+		if strings.Contains(outName, "write-article") {
+			vars = "{{.ConceptName}}, {{.ConceptID}}, {{.Sources}}, {{.Aliases}}, {{.RelatedList}}, {{.ExistingArticle}}, {{.Learnings}}, {{.MaxTokens}}, {{.Confidence}}"
+		} else if strings.Contains(outName, "extract-concepts") {
+			vars = "{{.ExistingConcepts}}, {{.Summaries}}"
+		}
+		header := fmt.Sprintf("# %s\n# This file customizes the sage-wiki %s prompt.\n# Edit freely — sage-wiki will use this instead of the built-in default.\n# Delete this file to revert to the default.\n#\n# Available variables: %s\n# See: https://github.com/xoai/sage-wiki\n\n", outName, strings.TrimSuffix(outName, ".md"), vars)
 
 		if err := os.WriteFile(outPath, []byte(header+string(data)), 0644); err != nil {
 			return fmt.Errorf("prompts: scaffold %s: %w", outName, err)

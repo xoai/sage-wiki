@@ -206,3 +206,127 @@ func TestCompileStateRoundtrip(t *testing.T) {
 		t.Errorf("expected 1 failed, got %d", len(loaded.Failed))
 	}
 }
+
+func TestExtractFields(t *testing.T) {
+	tests := []struct {
+		name       string
+		in         string
+		fields     []string
+		wantFields map[string]string
+		wantBody   string
+	}{
+		{
+			name:       "confidence only",
+			in:         "# Article\n\nContent here.\n\nConfidence: high",
+			fields:     nil,
+			wantFields: map[string]string{"confidence": "high"},
+			wantBody:   "# Article\n\nContent here.",
+		},
+		{
+			name:       "confidence with bold markdown",
+			in:         "# Article\n\n**Confidence:** low",
+			fields:     nil,
+			wantFields: map[string]string{"confidence": "low"},
+			wantBody:   "# Article",
+		},
+		{
+			name:       "no confidence defaults to medium",
+			in:         "# Article\n\nJust content.",
+			fields:     nil,
+			wantFields: map[string]string{"confidence": "medium"},
+			wantBody:   "# Article\n\nJust content.",
+		},
+		{
+			name:       "custom fields extracted",
+			in:         "Content.\n\nLanguage: English\nDomain: machine learning\nConfidence: high",
+			fields:     []string{"language", "domain"},
+			wantFields: map[string]string{"confidence": "high", "language": "English", "domain": "machine learning"},
+			wantBody:   "Content.",
+		},
+		{
+			name:       "custom field missing gets omitted",
+			in:         "Content.\n\nConfidence: low",
+			fields:     []string{"language"},
+			wantFields: map[string]string{"confidence": "low"},
+			wantBody:   "Content.",
+		},
+		{
+			name:       "confidence with numeric value normalized",
+			in:         "Content.\n\nConfidence: 4/5",
+			fields:     nil,
+			wantFields: map[string]string{"confidence": "medium"},
+			wantBody:   "Content.",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fields, body := extractFields(tt.in, tt.fields)
+			for k, want := range tt.wantFields {
+				if got := fields[k]; got != want {
+					t.Errorf("fields[%q] = %q, want %q", k, got, want)
+				}
+			}
+			// Check no unexpected fields (except confidence which always exists)
+			for k := range fields {
+				if _, expected := tt.wantFields[k]; !expected {
+					t.Errorf("unexpected field %q = %q", k, fields[k])
+				}
+			}
+			if body != tt.wantBody {
+				t.Errorf("body = %q, want %q", body, tt.wantBody)
+			}
+		})
+	}
+}
+
+func TestStripLLMFrontmatter(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "no frontmatter",
+			in:   "# Article\n\nContent here.",
+			want: "# Article\n\nContent here.",
+		},
+		{
+			name: "bare frontmatter",
+			in:   "---\nconcept: test\nconfidence: high\n---\n\n# Article\n\nContent.",
+			want: "# Article\n\nContent.",
+		},
+		{
+			name: "code-fenced frontmatter",
+			in:   "```yaml\n---\nconcept: test\nconfidence: high\n---\n```\n\n# Article\n\nContent.",
+			want: "# Article\n\nContent.",
+		},
+		{
+			name: "code-fenced then bare",
+			in:   "```yaml\n---\nconcept: test\n---\n```\n---\nconcept: test2\n---\n\nContent.",
+			want: "Content.",
+		},
+		{
+			name: "empty after strip",
+			in:   "---\nconcept: test\n---",
+			want: "",
+		},
+		{
+			name: "content before frontmatter preserved",
+			in:   "Here is the article:\n---\nconcept: test\n---\n\nContent.",
+			want: "Here is the article:\n---\nconcept: test\n---\n\nContent.",
+		},
+		{
+			name: "horizontal rule in body preserved",
+			in:   "---\nconcept: test\n---\n\n# Heading\n\nParagraph\n\n---\n\nMore content.",
+			want: "# Heading\n\nParagraph\n\n---\n\nMore content.",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripLLMFrontmatter(tt.in)
+			if got != tt.want {
+				t.Errorf("stripLLMFrontmatter() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

@@ -222,6 +222,10 @@ compiler:
   article_max_tokens: 4000
   auto_commit: true
   auto_lint: true
+  # timezone: Asia/Shanghai   # IANA timezone for user-facing timestamps (default: UTC)
+  # article_fields:           # custom frontmatter fields extracted from LLM response
+  #   - language
+  #   - domain
 
 search:
   hybrid_weight_bm25: 0.7

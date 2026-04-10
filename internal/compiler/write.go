@@ -42,6 +42,7 @@ func WriteArticles(
 	ontStore *ontology.Store,
 	embedder embed.Embedder,
 	userTZ *time.Location,
+	articleFields []string,
 ) []ArticleResult {
 	if maxParallel <= 0 {
 		maxParallel = 4
@@ -61,7 +62,7 @@ func WriteArticles(
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			result := writeOneArticle(projectDir, outputDir, c, client, model, maxTokens, memStore, vecStore, ontStore, embedder, userTZ)
+			result := writeOneArticle(projectDir, outputDir, c, client, model, maxTokens, memStore, vecStore, ontStore, embedder, userTZ, articleFields)
 			results[idx] = result
 
 			n := int(done.Add(1))
@@ -89,6 +90,7 @@ func writeOneArticle(
 	ontStore *ontology.Store,
 	embedder embed.Embedder,
 	userTZ *time.Location,
+	articleFields []string,
 ) ArticleResult {
 	result := ArticleResult{ConceptName: concept.Name}
 
@@ -120,7 +122,7 @@ func writeOneArticle(
 	}
 
 	resp, err := client.ChatCompletion([]llm.Message{
-		{Role: "system", Content: "You are a wiki author writing comprehensive, precise articles for a personal knowledge base. Use YAML frontmatter and [[wikilinks]]."},
+		{Role: "system", Content: "You are a wiki author writing comprehensive, precise articles for a personal knowledge base. Use [[wikilinks]] for cross-references. Do not include YAML frontmatter."},
 		{Role: "user", Content: prompt},
 	}, llm.CallOpts{Model: model, MaxTokens: maxTokens})
 	if err != nil {
@@ -130,13 +132,14 @@ func writeOneArticle(
 
 	articleContent := resp.Content
 
-	// Ensure frontmatter exists
-	if !strings.HasPrefix(articleContent, "---") {
-		articleContent = buildFrontmatter(concept, userTZ) + "\n\n" + articleContent
-	}
+	// Strip any LLM-generated frontmatter — code builds frontmatter from ground-truth data.
+	articleContent = stripLLMFrontmatter(articleContent)
 
-	// Normalize confidence values to enum (high/medium/low)
-	articleContent = normalizeConfidence(articleContent)
+	// Extract LLM-judged fields (confidence + any custom fields from config)
+	fields, articleContent := extractFields(articleContent, articleFields)
+
+	// Build frontmatter: ground-truth fields + LLM-judged fields
+	articleContent = buildFrontmatter(concept, fields, articleFields, userTZ) + "\n\n" + articleContent
 
 	// Note: wikilinks are kept even if targets don't exist yet.
 	// Future compiles will create the missing articles, and the links
@@ -215,17 +218,126 @@ func writeOneArticle(
 	return result
 }
 
-func buildFrontmatter(concept ExtractedConcept, loc *time.Location) string {
+func buildFrontmatter(concept ExtractedConcept, fields map[string]string, fieldOrder []string, loc *time.Location) string {
 	aliases := quoteYAMLList(concept.Aliases)
 	sources := quoteYAMLList(concept.Sources)
 
-	return fmt.Sprintf(`---
-concept: %s
-aliases: %s
-sources: %s
-confidence: medium
-created_at: %s
----`, concept.Name, aliases, sources, timeNow(loc))
+	confidence := fields["confidence"]
+	if confidence == "" {
+		confidence = "medium"
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "---\nconcept: %s\naliases: %s\nsources: %s\nconfidence: %s",
+		concept.Name, aliases, sources, confidence)
+
+	// Append custom fields in declared order (deterministic)
+	for _, k := range fieldOrder {
+		if v := fields[k]; v != "" {
+			fmt.Fprintf(&b, "\n%s: %s", k, v)
+		}
+	}
+
+	fmt.Fprintf(&b, "\ncreated_at: %s\n---", timeNow(loc))
+	return b.String()
+}
+
+// extractFields scans the tail of the LLM response for "Key: value" lines matching
+// the given field names, removes them from the body, and returns a map of extracted values.
+// Only the last 15 lines are scanned to avoid false positives in article body text.
+// "confidence" is always extracted and normalized via mapConfidence.
+// LLMs may format keys with bold markdown (**Key:** or **Key**:), which is handled.
+func extractFields(content string, fieldNames []string) (fields map[string]string, cleaned string) {
+	// Build lookup set: always include "confidence"
+	want := map[string]bool{"confidence": true}
+	for _, f := range fieldNames {
+		want[strings.ToLower(strings.TrimSpace(f))] = true
+	}
+
+	fields = make(map[string]string)
+	lines := strings.Split(content, "\n")
+
+	// Only scan the last 15 lines to avoid false positives in article body
+	scanStart := 0
+	if len(lines) > 15 {
+		scanStart = len(lines) - 15
+	}
+
+	var kept []string
+	kept = append(kept, lines[:scanStart]...)
+
+	for _, line := range lines[scanStart:] {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+
+		// Strip bold/backtick markdown: **Key:** value, **Key**: value, `Key`: value
+		stripped := strings.TrimLeft(lower, "*`")
+		stripped = strings.TrimSpace(stripped)
+
+		matched := false
+		for name := range want {
+			// Match "name:" or "name**:" or "name`:" patterns
+			prefix := name + ":"
+			altPrefix := name + "**:"
+			if strings.HasPrefix(stripped, prefix) || strings.HasPrefix(stripped, altPrefix) {
+				// Extract value after the colon
+				colonIdx := strings.Index(lower, ":")
+				if colonIdx >= 0 {
+					value := strings.TrimSpace(trimmed[colonIdx+1:])
+					value = strings.Trim(value, "*` ")
+					if name == "confidence" {
+						value = mapConfidence(value)
+					}
+					fields[name] = value
+				}
+				matched = true
+				break
+			}
+		}
+
+		if !matched {
+			kept = append(kept, line)
+		}
+	}
+
+	// Default confidence if not found
+	if _, ok := fields["confidence"]; !ok {
+		fields["confidence"] = "medium"
+	}
+
+	return fields, strings.TrimSpace(strings.Join(kept, "\n"))
+}
+
+// stripLLMFrontmatter removes any frontmatter block the LLM may have generated.
+// Handles bare (---\n...\n---) and code-fenced (```yaml\n---\n...\n---\n```) formats.
+func stripLLMFrontmatter(content string) string {
+	s := strings.TrimSpace(content)
+
+	// Case 1: code-fenced frontmatter — ```yaml\n---\n...\n---\n```
+	if strings.HasPrefix(s, "```") {
+		// Find the closing fence
+		firstNewline := strings.Index(s, "\n")
+		if firstNewline < 0 {
+			return s
+		}
+		rest := s[firstNewline+1:]
+		closeFence := strings.Index(rest, "```")
+		if closeFence >= 0 {
+			s = strings.TrimSpace(rest[closeFence+3:])
+			// The inner block may itself be bare frontmatter — fall through
+		}
+	}
+
+	// Case 2: bare frontmatter — ---\n...\n---
+	if strings.HasPrefix(s, "---") {
+		// Find the closing ---
+		after := s[3:]
+		if idx := strings.Index(after, "\n---"); idx >= 0 {
+			s = strings.TrimSpace(after[idx+4:])
+		}
+	}
+
+	return s
 }
 
 // quoteYAMLList produces a YAML list with properly quoted values.
@@ -323,23 +435,6 @@ func extractRelations(conceptID string, content string, ontStore *ontology.Store
 
 func sanitizeID(s string) string {
 	return strings.NewReplacer("/", "-", "\\", "-", ".", "-", " ", "-").Replace(s)
-}
-
-// normalizeConfidence replaces non-standard confidence values in frontmatter
-// with the enum (high/medium/low).
-func normalizeConfidence(content string) string {
-	// Find confidence line in frontmatter
-	lines := strings.Split(content, "\n")
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "confidence:") {
-			value := strings.TrimSpace(strings.TrimPrefix(trimmed, "confidence:"))
-			normalized := mapConfidence(value)
-			lines[i] = "confidence: " + normalized
-			break
-		}
-	}
-	return strings.Join(lines, "\n")
 }
 
 func mapConfidence(value string) string {

@@ -75,7 +75,8 @@ type CompilerConfig struct {
 	PromptCache      *bool   `yaml:"prompt_cache,omitempty"`      // enable prompt caching (default: true)
 	BatchThreshold   int     `yaml:"batch_threshold,omitempty"`   // min sources to auto-select batch mode
 	TokenPriceOverride float64 `yaml:"token_price_per_million,omitempty"` // override price per 1M input tokens
-	Timezone         string  `yaml:"timezone,omitempty"`          // IANA timezone for user-facing timestamps (default: UTC)
+	Timezone         string   `yaml:"timezone,omitempty"`          // IANA timezone for user-facing timestamps (default: UTC)
+	ArticleFields    []string `yaml:"article_fields,omitempty"`    // custom frontmatter fields extracted from LLM response
 
 	resolvedTZ *time.Location `yaml:"-"` // cached by Validate(); not serialized
 }
