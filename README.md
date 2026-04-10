@@ -216,7 +216,27 @@ search:
 serve:
   transport: stdio            # stdio or sse
   port: 3333                  # SSE mode only
+
+# Ontology relation types (optional)
+# Extend built-in types with additional synonyms or add custom relation types.
+# ontology:
+#   relations:
+#     - name: implements           # extend built-in with more synonyms
+#       synonyms: ["thực hiện", "triển khai"]
+#     - name: regulates            # add a custom relation type
+#       synonyms: ["regulates", "regulated by", "调控"]
 ```
+
+### Configurable Relations
+
+The ontology has 8 built-in relation types: `implements`, `extends`, `optimizes`, `contradicts`, `cites`, `prerequisite_of`, `trades_off`, `derived_from`. Each has default keyword synonyms used for automatic extraction.
+
+You can customize relations via `ontology.relations` in `config.yaml`:
+
+- **Extend a built-in type** — add synonyms (e.g., multilingual keywords) to an existing type. The default synonyms are kept; yours are appended.
+- **Add a custom type** — define a new relation name with its keyword synonyms. Relation names must be lowercase `[a-z][a-z0-9_]*`.
+
+Zero config = identical to current behavior. Existing databases are migrated automatically on first open. See the [full guide](docs/guides/configurable-relations.md) for domain-specific examples, built-in synonym tables, and how extraction works.
 
 ## Cost Optimization
 

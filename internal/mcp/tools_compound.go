@@ -8,6 +8,7 @@ import (
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/linter"
+	"github.com/xoai/sage-wiki/internal/ontology"
 )
 
 func (s *Server) registerCompoundTools() {
@@ -55,11 +56,13 @@ func (s *Server) handleLint(ctx context.Context, req mcplib.CallToolRequest) (*m
 	passName, _ := args["pass"].(string)
 	fix, _ := args["fix"].(bool)
 
+	merged := ontology.MergedRelations(s.cfg.Ontology.Relations)
 	lintCtx := &linter.LintContext{
-		ProjectDir: s.projectDir,
-		OutputDir:  s.cfg.Output,
-		DBPath:     filepath.Join(s.projectDir, ".sage", "wiki.db"),
-		DB:         s.db,
+		ProjectDir:     s.projectDir,
+		OutputDir:      s.cfg.Output,
+		DBPath:         filepath.Join(s.projectDir, ".sage", "wiki.db"),
+		DB:             s.db,
+		ValidRelations: ontology.ValidRelationNames(merged),
 	}
 
 	runner := linter.NewRunner()

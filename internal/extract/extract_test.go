@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/xoai/sage-wiki/internal/config"
 )
 
 func TestExtractMarkdown(t *testing.T) {
@@ -165,6 +163,70 @@ func TestExtractEmail(t *testing.T) {
 	}
 }
 
+func TestEstimateTokensEmpty(t *testing.T) {
+	if EstimateTokens("") != 0 {
+		t.Errorf("expected 0 for empty string, got %d", EstimateTokens(""))
+	}
+}
+
+func TestEstimateTokensWhitespace(t *testing.T) {
+	tokens := EstimateTokens("   \n\t  ")
+	if tokens != 1 { // 7 chars / 4 = 1
+		t.Errorf("expected 1 for whitespace, got %d", tokens)
+	}
+}
+
+func TestEstimateTokensSingleCJK(t *testing.T) {
+	tokens := EstimateTokens("你")
+	if tokens != 1 { // int(1 * 1.5) = 1
+		t.Errorf("expected 1 for single CJK char, got %d", tokens)
+	}
+}
+
+func TestEstimateTokensLatin(t *testing.T) {
+	// 400 chars of ASCII → ~100 tokens
+	text := strings.Repeat("abcd", 100)
+	tokens := EstimateTokens(text)
+	if tokens < 90 || tokens > 110 {
+		t.Errorf("expected ~100 tokens for 400 Latin chars, got %d", tokens)
+	}
+}
+
+func TestEstimateTokensCJK(t *testing.T) {
+	// 100 CJK characters → ~150 tokens
+	text := strings.Repeat("自注意力机制", 17) // 102 CJK chars
+	tokens := EstimateTokens(text)
+	if tokens < 140 || tokens > 160 {
+		t.Errorf("expected ~150 tokens for ~100 CJK chars, got %d", tokens)
+	}
+}
+
+func TestEstimateTokensMixed(t *testing.T) {
+	// Mix of CJK and Latin
+	text := "Self-Attention 自注意力机制 computes representations 计算表示"
+	tokens := EstimateTokens(text)
+	// 9 CJK chars (~13.5 tokens) + ~40 Latin chars (~10 tokens) ≈ 23
+	if tokens < 15 || tokens > 35 {
+		t.Errorf("expected ~23 tokens for mixed text, got %d", tokens)
+	}
+}
+
+func TestChunkCJKText(t *testing.T) {
+	// CJK text with paragraph breaks — should chunk based on token estimation
+	// Each paragraph: 10 CJK chars ≈ 15 tokens. 20 paragraphs ≈ 300 tokens.
+	var paragraphs []string
+	for i := 0; i < 20; i++ {
+		paragraphs = append(paragraphs, "这是一段中文测试文本内容。")
+	}
+	cjkText := strings.Join(paragraphs, "\n\n")
+	content := &SourceContent{Text: cjkText}
+	ChunkIfNeeded(content, 50) // 50 token limit → should produce ~6 chunks
+
+	if content.ChunkCount < 3 {
+		t.Errorf("expected 3+ chunks for CJK paragraphs at 50 token limit, got %d", content.ChunkCount)
+	}
+}
+
 func TestDetectSourceType(t *testing.T) {
 	// Backward compat: nil signals = extension-only
 	tests := []struct {
@@ -186,15 +248,15 @@ func TestDetectSourceType(t *testing.T) {
 		{"transcript.vtt", "article"},
 	}
 	for _, tt := range tests {
-		got := DetectSourceType(tt.path, "", nil)
+		got := DetectSourceTypeWithSignals(tt.path, "", nil)
 		if got != tt.expected {
-			t.Errorf("DetectSourceType(%s, \"\", nil) = %s, want %s", tt.path, got, tt.expected)
+			t.Errorf("DetectSourceTypeWithSignals(%s, \"\", nil) = %s, want %s", tt.path, got, tt.expected)
 		}
 	}
 }
 
 func TestDetectSourceTypeWithSignals(t *testing.T) {
-	signals := []config.TypeSignal{
+	signals := []TypeSignal{
 		{
 			Type:             "regulation",
 			FilenameKeywords: []string{"法规", "办法"},
@@ -227,9 +289,9 @@ func TestDetectSourceTypeWithSignals(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := DetectSourceType(tt.path, tt.contentHead, signals)
+			got := DetectSourceTypeWithSignals(tt.path, tt.contentHead, signals)
 			if got != tt.expected {
-				t.Errorf("DetectSourceType(%s) = %s, want %s", tt.name, got, tt.expected)
+				t.Errorf("DetectSourceTypeWithSignals(%s) = %s, want %s", tt.name, got, tt.expected)
 			}
 		})
 	}

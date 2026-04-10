@@ -1,0 +1,12 @@
+.git
+.github
+.sage
+.sage-memory
+*.db
+*.md
+!go.md
+docs
+sage
+web/node_modules
+Dockerfile
+.dockerignore

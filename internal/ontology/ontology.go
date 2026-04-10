@@ -67,12 +67,21 @@ type TraverseOpts struct {
 
 // Store manages ontology entities and relations.
 type Store struct {
-	db *storage.DB
+	db             *storage.DB
+	validRelations map[string]bool
 }
 
-// NewStore creates an ontology store.
-func NewStore(db *storage.DB) *Store {
-	return &Store{db: db}
+// NewStore creates an ontology store with application-layer relation validation.
+// validRelations lists the allowed relation type names. If nil, all types are accepted.
+func NewStore(db *storage.DB, validRelations []string) *Store {
+	s := &Store{db: db}
+	if validRelations != nil {
+		s.validRelations = make(map[string]bool, len(validRelations))
+		for _, r := range validRelations {
+			s.validRelations[r] = true
+		}
+	}
+	return s
 }
 
 // AddEntity creates a new entity.
@@ -169,6 +178,9 @@ func (s *Store) DeleteEntity(id string) error {
 func (s *Store) AddRelation(r Relation) error {
 	if r.SourceID == r.TargetID {
 		return fmt.Errorf("ontology: self-loops not allowed (entity %q)", r.SourceID)
+	}
+	if s.validRelations != nil && !s.validRelations[r.Relation] {
+		return fmt.Errorf("ontology: unknown relation type %q", r.Relation)
 	}
 	if r.CreatedAt == "" {
 		r.CreatedAt = time.Now().UTC().Format(time.RFC3339)

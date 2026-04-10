@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -184,6 +183,29 @@ func TestValidation(t *testing.T) {
 			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Compiler: CompilerConfig{Timezone: "Asia/Shanghai"}},
 		},
 		{
+			name:    "invalid relation name uppercase",
+			cfg:     Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Ontology: OntologyConfig{Relations: []RelationConfig{{Name: "Extends"}}}},
+			wantErr: "invalid name",
+		},
+		{
+			name:    "invalid relation name empty",
+			cfg:     Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Ontology: OntologyConfig{Relations: []RelationConfig{{Name: ""}}}},
+			wantErr: "name is required",
+		},
+		{
+			name:    "invalid relation name special chars",
+			cfg:     Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Ontology: OntologyConfig{Relations: []RelationConfig{{Name: "has-space"}}}},
+			wantErr: "invalid name",
+		},
+		{
+			name: "valid relation names",
+			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Ontology: OntologyConfig{Relations: []RelationConfig{{Name: "regulates", Synonyms: []string{"regulates"}}, {Name: "implements"}}}},
+		},
+		{
+			name: "valid empty ontology",
+			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Ontology: OntologyConfig{}},
+		},
+		{
 			name: "valid minimal",
 			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}},
 		},
@@ -359,9 +381,7 @@ sources:
     watch: true
 output: wiki
 ontology:
-  max_relation_types: 20
-  max_content_types: 10
-  relation_types:
+  relations:
     - name: implements
       synonyms: ["实现了", "implementation of"]
     - name: amends
@@ -376,36 +396,27 @@ ontology:
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Ontology == nil {
-		t.Fatal("expected ontology config")
+	if len(cfg.Ontology.Relations) != 2 {
+		t.Fatalf("expected 2 relations, got %d", len(cfg.Ontology.Relations))
 	}
-	if cfg.Ontology.MaxRelationTypes != 20 {
-		t.Errorf("expected max 20, got %d", cfg.Ontology.MaxRelationTypes)
-	}
-	if len(cfg.Ontology.RelationTypes) != 2 {
-		t.Fatalf("expected 2 relation types, got %d", len(cfg.Ontology.RelationTypes))
-	}
-	if cfg.Ontology.RelationTypes[1].Name != "amends" {
-		t.Errorf("expected 'amends', got %q", cfg.Ontology.RelationTypes[1].Name)
+	if cfg.Ontology.Relations[1].Name != "amends" {
+		t.Errorf("expected 'amends', got %q", cfg.Ontology.Relations[1].Name)
 	}
 }
 
-func TestValidateOntologyLimits(t *testing.T) {
+func TestValidateOntologyRelationName(t *testing.T) {
 	cfg := Defaults()
 	cfg.Project = "test"
 
-	rels := make([]RelationTypeDef, 21)
-	for i := range rels {
-		rels[i] = RelationTypeDef{Name: fmt.Sprintf("rel_%d", i)}
-	}
-	cfg.Ontology = &OntologyConfig{
-		MaxRelationTypes: 20,
-		RelationTypes:    rels,
+	cfg.Ontology = OntologyConfig{
+		Relations: []RelationConfig{
+			{Name: "INVALID-NAME"},
+		},
 	}
 
 	err := cfg.Validate()
 	if err == nil {
-		t.Error("expected validation error for exceeding max_relation_types")
+		t.Error("expected validation error for invalid relation name")
 	}
 }
 

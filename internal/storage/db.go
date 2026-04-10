@@ -3,7 +3,6 @@ package storage
 import (
 	"database/sql"
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/xoai/sage-wiki/internal/log"
@@ -65,11 +64,6 @@ func Open(path string) (*DB, error) {
 	if err := db.migrate(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("storage.Open: migrate: %w", err)
-	}
-
-	// Remove CHECK constraint from relations table if present (legacy DBs)
-	if err := db.MigrateRelationsDropCheck(); err != nil {
-		log.Warn("relations CHECK migration failed", "error", err)
 	}
 
 	log.Info("database opened", "path", path)
@@ -143,7 +137,7 @@ func (db *DB) migrate() error {
 
 	migrations := []string{
 		migrationV1,
-		migrationV2RelationsDropCheck,
+		migrationV2,
 	}
 
 	for i := version; i < len(migrations); i++ {
@@ -194,7 +188,7 @@ CREATE TABLE IF NOT EXISTS entities (
 	updated_at TEXT
 );
 
--- Ontology: relations (validation at application layer via ontology.ValidRelation)
+-- Ontology: relations
 CREATE TABLE IF NOT EXISTS relations (
 	id TEXT PRIMARY KEY,
 	source_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
@@ -220,62 +214,24 @@ CREATE TABLE IF NOT EXISTS learnings (
 );
 `
 
-// migrationV2RelationsDropCheck bumps schema version; the actual CHECK
-// constraint removal is handled by MigrateRelationsDropCheck() in Open().
-const migrationV2RelationsDropCheck = `SELECT 1;`
+// migrationV2 removes the CHECK constraint on relations.relation to support custom types.
+// SQLite doesn't support ALTER TABLE DROP CONSTRAINT, so we recreate the table.
+const migrationV2 = `
+CREATE TABLE IF NOT EXISTS relations_new (
+	id TEXT PRIMARY KEY,
+	source_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+	target_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+	relation TEXT NOT NULL,
+	metadata JSON,
+	created_at TEXT,
+	UNIQUE(source_id, target_id, relation)
+);
 
-// MigrateRelationsDropCheck detects if the relations table has a CHECK
-// constraint and rebuilds it without the constraint.
-func (db *DB) MigrateRelationsDropCheck() error {
-	var tableSql string
-	err := db.read.QueryRow(
-		"SELECT sql FROM sqlite_master WHERE type='table' AND name='relations'",
-	).Scan(&tableSql)
-	if err != nil {
-		return nil // table doesn't exist yet
-	}
+INSERT OR IGNORE INTO relations_new SELECT * FROM relations;
+DROP TABLE IF EXISTS relations;
+ALTER TABLE relations_new RENAME TO relations;
 
-	if !strings.Contains(tableSql, "CHECK") {
-		return nil // already migrated
-	}
-
-	log.Info("migrating relations table to remove CHECK constraint")
-
-	return db.WriteTx(func(tx *sql.Tx) error {
-		if _, err := tx.Exec("ALTER TABLE relations RENAME TO relations_old"); err != nil {
-			return fmt.Errorf("migrate: rename: %w", err)
-		}
-
-		if _, err := tx.Exec(`CREATE TABLE relations (
-			id TEXT PRIMARY KEY,
-			source_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-			target_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-			relation TEXT NOT NULL,
-			metadata JSON,
-			created_at TEXT,
-			UNIQUE(source_id, target_id, relation)
-		)`); err != nil {
-			return fmt.Errorf("migrate: create: %w", err)
-		}
-
-		if _, err := tx.Exec("INSERT INTO relations SELECT * FROM relations_old"); err != nil {
-			return fmt.Errorf("migrate: copy: %w", err)
-		}
-
-		if _, err := tx.Exec("DROP TABLE relations_old"); err != nil {
-			return fmt.Errorf("migrate: drop old: %w", err)
-		}
-
-		if _, err := tx.Exec("CREATE INDEX IF NOT EXISTS idx_relations_source ON relations(source_id)"); err != nil {
-			return fmt.Errorf("migrate: index source: %w", err)
-		}
-		if _, err := tx.Exec("CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_id)"); err != nil {
-			return fmt.Errorf("migrate: index target: %w", err)
-		}
-		if _, err := tx.Exec("CREATE INDEX IF NOT EXISTS idx_relations_type ON relations(relation)"); err != nil {
-			return fmt.Errorf("migrate: index type: %w", err)
-		}
-
-		return nil
-	})
-}
+CREATE INDEX IF NOT EXISTS idx_relations_source ON relations(source_id);
+CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_id);
+CREATE INDEX IF NOT EXISTS idx_relations_type ON relations(relation);
+`

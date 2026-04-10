@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
@@ -15,9 +16,10 @@ func setupLintProject(t *testing.T) (string, *LintContext) {
 	wiki.InitGreenfield(dir, "test", "gemini-2.5-flash")
 
 	ctx := &LintContext{
-		ProjectDir: dir,
-		OutputDir:  "wiki",
-		DBPath:     filepath.Join(dir, ".sage", "wiki.db"),
+		ProjectDir:     dir,
+		OutputDir:      "wiki",
+		DBPath:         filepath.Join(dir, ".sage", "wiki.db"),
+		ValidRelations: ontology.ValidRelationNames(ontology.BuiltinRelations),
 	}
 	return dir, ctx
 }

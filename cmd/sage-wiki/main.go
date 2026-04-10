@@ -19,6 +19,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
 	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
+	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/prompts"
 	tuidashboard "github.com/xoai/sage-wiki/internal/tui/dashboard"
 	"github.com/xoai/sage-wiki/internal/web"
@@ -336,10 +337,12 @@ func runLint(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	merged := ontology.MergedRelations(cfg.Ontology.Relations)
 	ctx := &linter.LintContext{
-		ProjectDir: dir,
-		OutputDir:  cfg.Output,
-		DBPath:     filepath.Join(dir, ".sage", "wiki.db"),
+		ProjectDir:     dir,
+		OutputDir:      cfg.Output,
+		DBPath:         filepath.Join(dir, ".sage", "wiki.db"),
+		ValidRelations: ontology.ValidRelationNames(merged),
 	}
 
 	runner := linter.NewRunner()

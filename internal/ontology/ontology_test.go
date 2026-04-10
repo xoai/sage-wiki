@@ -15,7 +15,7 @@ func setupTestDB(t *testing.T) *Store {
 		t.Fatalf("open db: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	return NewStore(db)
+	return NewStore(db, ValidRelationNames(BuiltinRelations))
 }
 
 func TestAddAndGetEntity(t *testing.T) {
@@ -104,6 +104,72 @@ func TestAddRelation(t *testing.T) {
 	}
 	if rels[0].Relation != RelImplements {
 		t.Errorf("expected implements, got %q", rels[0].Relation)
+	}
+}
+
+func TestUnknownRelationRejected(t *testing.T) {
+	store := setupTestDB(t)
+
+	store.AddEntity(Entity{ID: "e1", Type: TypeConcept, Name: "A"})
+	store.AddEntity(Entity{ID: "e2", Type: TypeConcept, Name: "B"})
+
+	err := store.AddRelation(Relation{
+		ID:       "r1",
+		SourceID: "e1",
+		TargetID: "e2",
+		Relation: "unknown_type",
+	})
+	if err == nil {
+		t.Error("expected error for unknown relation type")
+	}
+}
+
+func TestCustomRelationAccepted(t *testing.T) {
+	dir := t.TempDir()
+	db, err := storage.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	// Include a custom relation type
+	validNames := append(ValidRelationNames(BuiltinRelations), "regulates")
+	store := NewStore(db, validNames)
+
+	store.AddEntity(Entity{ID: "e1", Type: TypeConcept, Name: "A"})
+	store.AddEntity(Entity{ID: "e2", Type: TypeConcept, Name: "B"})
+
+	err = store.AddRelation(Relation{
+		ID:       "r1",
+		SourceID: "e1",
+		TargetID: "e2",
+		Relation: "regulates",
+	})
+	if err != nil {
+		t.Fatalf("expected custom relation to be accepted: %v", err)
+	}
+}
+
+func TestNilValidRelationsAcceptsAll(t *testing.T) {
+	dir := t.TempDir()
+	db, err := storage.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	store := NewStore(db, nil)
+	store.AddEntity(Entity{ID: "e1", Type: TypeConcept, Name: "A"})
+	store.AddEntity(Entity{ID: "e2", Type: TypeConcept, Name: "B"})
+
+	err = store.AddRelation(Relation{
+		ID:       "r1",
+		SourceID: "e1",
+		TargetID: "e2",
+		Relation: "anything_goes",
+	})
+	if err != nil {
+		t.Fatalf("nil validRelations should accept all: %v", err)
 	}
 }
 

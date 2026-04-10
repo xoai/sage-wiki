@@ -50,7 +50,8 @@ func NewServer(projectDir string) (*Server, error) {
 
 	mem := memory.NewStore(db)
 	vec := vectors.NewStore(db)
-	ont := ontology.NewStore(db)
+	merged := ontology.MergedRelations(cfg.Ontology.Relations)
+	ont := ontology.NewStore(db, ontology.ValidRelationNames(merged))
 	searcher := hybrid.NewSearcher(mem, vec)
 
 	s := &Server{

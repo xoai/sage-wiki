@@ -71,7 +71,7 @@ func Diff(projectDir string, cfg *config.Config, mf *manifest.Manifest) (*DiffRe
 			current[relPath] = SourceInfo{
 				Path: relPath,
 				Hash: hash,
-				Type: extract.DetectSourceType(path, contentHead, cfg.TypeSignals),
+				Type: extract.DetectSourceTypeWithSignals(path, contentHead, convertSignals(cfg.TypeSignals)),
 				Size: info.Size(),
 			}
 			return nil

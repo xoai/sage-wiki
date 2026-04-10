@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+var relationNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 // Config represents the sage-wiki project configuration.
 type Config struct {
@@ -26,8 +29,8 @@ type Config struct {
 	Search      SearchConfig   `yaml:"search"`
 	Linting     LintingConfig  `yaml:"linting"`
 	Serve       ServeConfig    `yaml:"serve"`
-	TypeSignals []TypeSignal    `yaml:"type_signals,omitempty"`
-	Ontology    *OntologyConfig `yaml:"ontology,omitempty"`
+	Ontology    OntologyConfig `yaml:"ontology,omitempty"`
+	TypeSignals []TypeSignal   `yaml:"type_signals,omitempty"`
 }
 
 type VaultConfig struct {
@@ -97,25 +100,25 @@ type ServeConfig struct {
 	Port      int    `yaml:"port"`
 }
 
-// TypeSignal defines keywords for content-type detection.
+// TypeSignal defines a content-based type detection rule.
+// Files are matched by filename keywords and/or content keywords.
 type TypeSignal struct {
 	Type             string   `yaml:"type"`
-	FilenameKeywords []string `yaml:"filename_keywords"`
-	ContentKeywords  []string `yaml:"content_keywords"`
-	MinContentHits   int      `yaml:"min_content_hits"`
+	Pattern          string   `yaml:"pattern,omitempty"`           // simple substring match (legacy)
+	FilenameKeywords []string `yaml:"filename_keywords,omitempty"` // keywords matched against filename
+	ContentKeywords  []string `yaml:"content_keywords,omitempty"`  // keywords matched against content head
+	MinContentHits   int      `yaml:"min_content_hits,omitempty"`  // minimum content keyword matches required
 }
 
-// RelationTypeDef defines an ontology relation type with synonyms.
-type RelationTypeDef struct {
-	Name     string   `yaml:"name"`
-	Synonyms []string `yaml:"synonyms,omitempty"`
-}
-
-// OntologyConfig defines configurable ontology settings.
+// OntologyConfig configures ontology relation types.
 type OntologyConfig struct {
-	RelationTypes    []RelationTypeDef `yaml:"relation_types"`
-	MaxRelationTypes int               `yaml:"max_relation_types"`
-	MaxContentTypes  int               `yaml:"max_content_types"`
+	Relations []RelationConfig `yaml:"relations,omitempty"`
+}
+
+// RelationConfig defines a custom or extended relation type.
+type RelationConfig struct {
+	Name     string   `yaml:"name"`
+	Synonyms []string `yaml:"synonyms"`
 }
 
 // Defaults returns a Config with sensible defaults for greenfield mode.
@@ -237,24 +240,13 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("config: invalid compiler.mode %q (valid: standard, batch, auto)", c.Compiler.Mode)
 		}
 	}
-	// Validate ontology limits
-	if c.Ontology != nil {
-		maxRel := c.Ontology.MaxRelationTypes
-		if maxRel <= 0 {
-			maxRel = 20
+	for _, r := range c.Ontology.Relations {
+		if r.Name == "" {
+			return fmt.Errorf("config: ontology.relations: name is required")
 		}
-		if len(c.Ontology.RelationTypes) > maxRel {
-			return fmt.Errorf("config: relation_types count %d exceeds max_relation_types %d",
-				len(c.Ontology.RelationTypes), maxRel)
+		if !relationNameRe.MatchString(r.Name) {
+			return fmt.Errorf("config: ontology.relations: invalid name %q (must match [a-z][a-z0-9_]*)", r.Name)
 		}
-	}
-	maxCt := 10 // default
-	if c.Ontology != nil && c.Ontology.MaxContentTypes > 0 {
-		maxCt = c.Ontology.MaxContentTypes
-	}
-	if len(c.TypeSignals) > maxCt {
-		return fmt.Errorf("config: type_signals count %d exceeds max_content_types %d",
-			len(c.TypeSignals), maxCt)
 	}
 	if c.Compiler.Timezone != "" {
 		loc, err := time.LoadLocation(c.Compiler.Timezone)
