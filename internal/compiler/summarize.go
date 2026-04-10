@@ -209,8 +209,11 @@ func summarizeImage(projectDir string, info SourceInfo, client *llm.Client, mode
 
 const (
 	// minChunkTokenBudget is the minimum output tokens per chunk summary.
-	// Below this, LLMs produce empty or unusable output.
-	minChunkTokenBudget = 200
+	// Reasoning models (MiniMax, DeepSeek) use ~100-200 tokens for <think>
+	// traces, so 200 is too low — the model exhausts the budget on reasoning
+	// with nothing left for actual content. 500 leaves ~300 tokens for output
+	// after think overhead, producing usable summaries (~200 CJK characters).
+	minChunkTokenBudget = 500
 
 	// synthesisGroupSize is the max number of summaries per synthesis call.
 	// Keeps each synthesis step at a manageable compression ratio (~8x).
