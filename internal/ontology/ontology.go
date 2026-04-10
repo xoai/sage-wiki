@@ -67,13 +67,15 @@ type TraverseOpts struct {
 
 // Store manages ontology entities and relations.
 type Store struct {
-	db             *storage.DB
-	validRelations map[string]bool
+	db               *storage.DB
+	validRelations   map[string]bool
+	validEntityTypes map[string]bool
 }
 
-// NewStore creates an ontology store with application-layer relation validation.
+// NewStore creates an ontology store with application-layer type validation.
 // validRelations lists the allowed relation type names. If nil, all types are accepted.
-func NewStore(db *storage.DB, validRelations []string) *Store {
+// validEntityTypes lists the allowed entity type names. If nil, all types are accepted.
+func NewStore(db *storage.DB, validRelations []string, validEntityTypes []string) *Store {
 	s := &Store{db: db}
 	if validRelations != nil {
 		s.validRelations = make(map[string]bool, len(validRelations))
@@ -81,11 +83,20 @@ func NewStore(db *storage.DB, validRelations []string) *Store {
 			s.validRelations[r] = true
 		}
 	}
+	if validEntityTypes != nil {
+		s.validEntityTypes = make(map[string]bool, len(validEntityTypes))
+		for _, t := range validEntityTypes {
+			s.validEntityTypes[t] = true
+		}
+	}
 	return s
 }
 
 // AddEntity creates a new entity.
 func (s *Store) AddEntity(e Entity) error {
+	if s.validEntityTypes != nil && !s.validEntityTypes[e.Type] {
+		return fmt.Errorf("ontology: unknown entity type %q", e.Type)
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if e.CreatedAt == "" {
 		e.CreatedAt = now

@@ -82,7 +82,8 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
 	merged := ontology.MergedRelations(cfg.Ontology.Relations)
-	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged))
+	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
 	embedder := embed.NewFromConfig(cfg)
 
 	// Pass 2: Concept extraction

@@ -15,7 +15,7 @@ func setupTestDB(t *testing.T) *Store {
 		t.Fatalf("open db: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	return NewStore(db, ValidRelationNames(BuiltinRelations))
+	return NewStore(db, ValidRelationNames(BuiltinRelations), ValidEntityTypeNames(BuiltinEntityTypes))
 }
 
 func TestAddAndGetEntity(t *testing.T) {
@@ -134,7 +134,7 @@ func TestCustomRelationAccepted(t *testing.T) {
 
 	// Include a custom relation type
 	validNames := append(ValidRelationNames(BuiltinRelations), "regulates")
-	store := NewStore(db, validNames)
+	store := NewStore(db, validNames, ValidEntityTypeNames(BuiltinEntityTypes))
 
 	store.AddEntity(Entity{ID: "e1", Type: TypeConcept, Name: "A"})
 	store.AddEntity(Entity{ID: "e2", Type: TypeConcept, Name: "B"})
@@ -158,7 +158,7 @@ func TestNilValidRelationsAcceptsAll(t *testing.T) {
 	}
 	defer db.Close()
 
-	store := NewStore(db, nil)
+	store := NewStore(db, nil, nil)
 	store.AddEntity(Entity{ID: "e1", Type: TypeConcept, Name: "A"})
 	store.AddEntity(Entity{ID: "e2", Type: TypeConcept, Name: "B"})
 

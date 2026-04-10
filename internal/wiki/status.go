@@ -91,7 +91,7 @@ func GetStatus(projectDir string, stores *Stores) (*StatusInfo, error) {
 
 		memStore = memory.NewStore(db)
 		vecStore = vectors.NewStore(db)
-		ontStore = ontology.NewStore(db, ontology.ValidRelationNames(ontology.MergedRelations(cfg.Ontology.Relations)))
+		ontStore = ontology.NewStore(db, ontology.ValidRelationNames(ontology.MergedRelations(cfg.Ontology.Relations)), ontology.ValidEntityTypeNames(ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)))
 	}
 
 	info.EntryCount, _ = memStore.Count()

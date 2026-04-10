@@ -16,10 +16,11 @@ func setupLintProject(t *testing.T) (string, *LintContext) {
 	wiki.InitGreenfield(dir, "test", "gemini-2.5-flash")
 
 	ctx := &LintContext{
-		ProjectDir:     dir,
-		OutputDir:      "wiki",
-		DBPath:         filepath.Join(dir, ".sage", "wiki.db"),
-		ValidRelations: ontology.ValidRelationNames(ontology.BuiltinRelations),
+		ProjectDir:       dir,
+		OutputDir:        "wiki",
+		DBPath:           filepath.Join(dir, ".sage", "wiki.db"),
+		ValidRelations:   ontology.ValidRelationNames(ontology.BuiltinRelations),
+		ValidEntityTypes: ontology.ValidEntityTypeNames(ontology.BuiltinEntityTypes),
 	}
 	return dir, ctx
 }
