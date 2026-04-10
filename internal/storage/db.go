@@ -239,7 +239,12 @@ CREATE INDEX IF NOT EXISTS idx_relations_type ON relations(relation);
 
 // migrationV3 removes the CHECK constraint on entities.type to support custom entity types.
 // Same pattern as migrationV2: recreate table without constraint, migrate data, rebuild indexes.
+// Foreign keys are disabled during the migration to prevent data loss when
+// dropping and recreating the entities table (relations FK references become
+// temporarily invalid).
 const migrationV3 = `
+PRAGMA foreign_keys = OFF;
+
 CREATE TABLE IF NOT EXISTS entities_new (
 	id TEXT PRIMARY KEY,
 	type TEXT NOT NULL,
@@ -273,4 +278,6 @@ ALTER TABLE relations_rebuild RENAME TO relations;
 CREATE INDEX IF NOT EXISTS idx_relations_source ON relations(source_id);
 CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_id);
 CREATE INDEX IF NOT EXISTS idx_relations_type ON relations(relation);
+
+PRAGMA foreign_keys = ON;
 `
