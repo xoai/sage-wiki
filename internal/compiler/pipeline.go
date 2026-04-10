@@ -356,7 +356,8 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 				}
 
 				merged := ontology.MergedRelations(cfg.Ontology.Relations)
-				ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged))
+				mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+				ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
 
 				client.SetPass("write")
 				var writeCacheID string
@@ -758,7 +759,8 @@ func resumeBatch(
 				}
 
 				merged := ontology.MergedRelations(cfg.Ontology.Relations)
-				ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged))
+				mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+				ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
 				client.SetPass("write")
 				writeCacheID, _ := client.SetupCache("You are a knowledge base article writer. Write comprehensive, well-structured wiki articles.", writeModel)
 				relPatterns := ontology.RelationPatterns(merged)

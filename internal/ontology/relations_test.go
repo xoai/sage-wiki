@@ -155,7 +155,7 @@ func TestZeroConfigSameBehavior(t *testing.T) {
 	}
 	defer db.Close()
 
-	store := NewStore(db, names)
+	store := NewStore(db, names, ValidEntityTypeNames(BuiltinEntityTypes))
 	store.AddEntity(Entity{ID: "a", Type: TypeConcept, Name: "A"})
 	store.AddEntity(Entity{ID: "b", Type: TypeConcept, Name: "B"})
 
@@ -199,7 +199,7 @@ func TestCustomRelationEndToEnd(t *testing.T) {
 	}
 	defer db.Close()
 
-	store := NewStore(db, names)
+	store := NewStore(db, names, ValidEntityTypeNames(BuiltinEntityTypes))
 	store.AddEntity(Entity{ID: "gene-a", Type: TypeConcept, Name: "Gene A"})
 	store.AddEntity(Entity{ID: "gene-b", Type: TypeConcept, Name: "Gene B"})
 
@@ -257,7 +257,7 @@ func TestAddRelationInvalidTypeError(t *testing.T) {
 	defer db.Close()
 
 	names := ValidRelationNames(MergedRelations(nil))
-	store := NewStore(db, names)
+	store := NewStore(db, names, ValidEntityTypeNames(BuiltinEntityTypes))
 	store.AddEntity(Entity{ID: "a", Type: TypeConcept, Name: "A"})
 	store.AddEntity(Entity{ID: "b", Type: TypeConcept, Name: "B"})
 

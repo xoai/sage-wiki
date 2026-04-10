@@ -138,6 +138,7 @@ func (db *DB) migrate() error {
 	migrations := []string{
 		migrationV1,
 		migrationV2,
+		migrationV3,
 	}
 
 	for i := version; i < len(migrations); i++ {
@@ -230,6 +231,44 @@ CREATE TABLE IF NOT EXISTS relations_new (
 INSERT OR IGNORE INTO relations_new SELECT * FROM relations;
 DROP TABLE IF EXISTS relations;
 ALTER TABLE relations_new RENAME TO relations;
+
+CREATE INDEX IF NOT EXISTS idx_relations_source ON relations(source_id);
+CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_id);
+CREATE INDEX IF NOT EXISTS idx_relations_type ON relations(relation);
+`
+
+// migrationV3 removes the CHECK constraint on entities.type to support custom entity types.
+// Same pattern as migrationV2: recreate table without constraint, migrate data, rebuild indexes.
+const migrationV3 = `
+CREATE TABLE IF NOT EXISTS entities_new (
+	id TEXT PRIMARY KEY,
+	type TEXT NOT NULL,
+	name TEXT NOT NULL,
+	definition TEXT,
+	article_path TEXT,
+	metadata JSON,
+	created_at TEXT,
+	updated_at TEXT
+);
+
+INSERT OR IGNORE INTO entities_new SELECT * FROM entities;
+DROP TABLE IF EXISTS entities;
+ALTER TABLE entities_new RENAME TO entities;
+
+-- Recreate relations table to restore CASCADE DELETE on the new entities table
+CREATE TABLE IF NOT EXISTS relations_rebuild (
+	id TEXT PRIMARY KEY,
+	source_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+	target_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+	relation TEXT NOT NULL,
+	metadata JSON,
+	created_at TEXT,
+	UNIQUE(source_id, target_id, relation)
+);
+
+INSERT OR IGNORE INTO relations_rebuild SELECT * FROM relations;
+DROP TABLE IF EXISTS relations;
+ALTER TABLE relations_rebuild RENAME TO relations;
 
 CREATE INDEX IF NOT EXISTS idx_relations_source ON relations(source_id);
 CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_id);
