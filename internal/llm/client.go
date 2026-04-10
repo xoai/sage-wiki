@@ -252,11 +252,22 @@ func (r *rateLimiter) wait() {
 
 // stripThinkTags removes <think>...</think> blocks from LLM responses.
 // Some models (e.g. MiniMax) include reasoning traces that should not appear in output.
+// When the model puts ALL content inside think tags (common with reasoning models
+// under tight token budgets), falls back to extracting the think content rather
+// than returning empty.
 var thinkTagRe = regexp.MustCompile(`(?s)<think>.*?</think>\s*`)
+var thinkContentRe = regexp.MustCompile(`(?s)<think>(.*?)</think>`)
 
 func stripThinkTags(s string) string {
-	s = thinkTagRe.ReplaceAllString(s, "")
-	return strings.TrimSpace(s)
+	stripped := strings.TrimSpace(thinkTagRe.ReplaceAllString(s, ""))
+	if stripped != "" {
+		return stripped
+	}
+	// Fallback: extract content from inside first think block
+	if m := thinkContentRe.FindStringSubmatch(s); len(m) > 1 {
+		return strings.TrimSpace(m[1])
+	}
+	return stripped
 }
 
 // jsonBody creates a JSON request body. Panics on marshal failure
