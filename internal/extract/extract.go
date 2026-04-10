@@ -80,6 +80,8 @@ func isCJK(r rune) bool {
 }
 
 // ChunkIfNeeded splits content into chunks if it exceeds maxTokens.
+// Uses adaptive estimation: ~1.5 chars/token for CJK-heavy text, ~4 chars/token for ASCII.
+// For table-heavy documents, uses table-aware splitting that preserves table headers.
 func ChunkIfNeeded(content *SourceContent, maxTokens int) {
 	estimatedTokens := EstimateTokens(content.Text)
 	if estimatedTokens <= maxTokens || maxTokens <= 0 {
@@ -88,8 +90,9 @@ func ChunkIfNeeded(content *SourceContent, maxTokens int) {
 		return
 	}
 
-	// Split markdown by headings
-	if strings.Contains(content.Text, "\n## ") || strings.Contains(content.Text, "\n# ") {
+	if isTableHeavy(content.Text) {
+		content.Chunks = splitByTableBlocks(content.Text, maxTokens)
+	} else if strings.Contains(content.Text, "\n## ") || strings.Contains(content.Text, "\n# ") {
 		content.Chunks = splitByHeadings(content.Text, maxTokens)
 	} else {
 		content.Chunks = splitByParagraphs(content.Text, maxTokens)
@@ -193,6 +196,31 @@ func isCodeFile(ext string) bool {
 	return codeExts[ext]
 }
 
+// IsTableHeavy returns true if the content is dominated by markdown table rows.
+// More than 50% of non-empty lines are table rows (|...|...|).
+func IsTableHeavy(sc *SourceContent) bool {
+	return isTableHeavy(sc.Text)
+}
+
+func isTableHeavy(text string) bool {
+	lines := strings.Split(text, "\n")
+	total, tableRows := 0, 0
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		if trimmed == "" {
+			continue
+		}
+		total++
+		if strings.HasPrefix(trimmed, "|") && strings.Count(trimmed, "|") >= 3 {
+			tableRows++
+		}
+	}
+	if total == 0 {
+		return false
+	}
+	return float64(tableRows)/float64(total) >= 0.5
+}
+
 // splitByHeadings splits markdown text on heading boundaries.
 func splitByHeadings(text string, maxTokens int) []Chunk {
 	lines := strings.Split(text, "\n")
@@ -240,6 +268,7 @@ func splitByHeadings(text string, maxTokens int) []Chunk {
 	return chunks
 }
 
+
 // stripHeadingPrefix removes markdown heading markers (# ## ###) from a line.
 func stripHeadingPrefix(line string) string {
 	i := 0
@@ -280,6 +309,70 @@ func splitByParagraphs(text string, maxTokens int) []Chunk {
 			Index: chunkIdx,
 			Text:  strings.TrimSpace(current.String()),
 		})
+	}
+
+	return chunks
+}
+
+// splitByTableBlocks splits table-heavy documents on row boundaries,
+// preserving table headers (first 2 lines: column names + separator) in each chunk.
+func splitByTableBlocks(text string, maxTokens int) []Chunk {
+	lines := strings.Split(text, "\n")
+	var chunks []Chunk
+	var current strings.Builder
+	chunkIdx := 0
+
+	// Detect the first table header (column names + separator line)
+	var tableHeader string
+	headerDetected := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !headerDetected && strings.HasPrefix(trimmed, "|") && strings.Count(trimmed, "|") >= 3 {
+			// Check if next line is a separator (|---|---|)
+			if i+1 < len(lines) {
+				nextTrimmed := strings.TrimSpace(lines[i+1])
+				if strings.HasPrefix(nextTrimmed, "|") && strings.Contains(nextTrimmed, "---") {
+					tableHeader = line + "\n" + lines[i+1] + "\n"
+					headerDetected = true
+				}
+			}
+			break
+		}
+	}
+
+	flush := func() {
+		t := strings.TrimSpace(current.String())
+		if t != "" {
+			chunks = append(chunks, Chunk{
+				Index: chunkIdx,
+				Text:  t,
+			})
+			chunkIdx++
+		}
+		current.Reset()
+		// Inject table header into next chunk so LLM knows column semantics
+		if tableHeader != "" && chunkIdx > 0 {
+			current.WriteString(tableHeader)
+		}
+	}
+
+	for _, line := range lines {
+		if EstimateTokens(current.String()+line) > maxTokens && current.Len() > 0 {
+			flush()
+		}
+		current.WriteString(line)
+		current.WriteString("\n")
+	}
+
+	// Flush remaining
+	if current.Len() > 0 {
+		t := strings.TrimSpace(current.String())
+		if t != "" {
+			chunks = append(chunks, Chunk{
+				Index: chunkIdx,
+				Text:  t,
+			})
+		}
 	}
 
 	return chunks

@@ -1,0 +1,32 @@
+You are a research assistant creating a structured summary of a reference document.
+
+Source file: {{.SourcePath}}
+Source type: {{.SourceType}}
+
+This document appears to be a STRUCTURED REFERENCE (registry, dictionary, catalog, specification, or rule set) rather than a narrative article. It likely contains multiple discrete entries, definitions, or rules.
+
+Summarize with this structure:
+
+## Overview
+1-2 sentences: what this document is, how many entries/items it contains, and its organizational structure.
+
+## Entries
+For EACH discrete entry (metric, field, rule, API endpoint, config item, etc.), preserve:
+- **Name/ID**: the exact identifier
+- **Definition**: what it means, in one sentence
+- **Key details**: formula, SQL, constraints, allowed values, or other specifics that would be lost in a narrative summary
+- **Caveats**: any warnings, edge cases, or gotchas noted in the source
+
+Use the SAME structure the source document uses. If entries have SQL, include the SQL. If entries have formulas, include the formulas. If entries have value ranges, include them.
+
+Do NOT merge entries into a narrative paragraph. Each entry must remain individually addressable.
+
+## Cross-cutting patterns
+Note any patterns, conventions, or rules that apply across all entries (e.g., "all metrics use NULLIF for division-by-zero protection").
+
+Keep the summary under {{.MaxTokens}} tokens. If the document has too many entries to fit, prioritize:
+1. Entries with complex formulas or non-obvious definitions
+2. Entries with caveats or warnings
+3. Omit trivial entries (simple counts, straightforward ratios) with a note "N additional straightforward entries omitted"
+
+Use precise language. Preserve technical terminology exactly as the source uses it.
