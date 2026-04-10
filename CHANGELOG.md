@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.1.2 — 2026-04-10
+
+### Docker & Self-Hosting
+
+- **Dockerfile** — Multi-stage build (Node + Go + Alpine) with web UI embedded. Runs as non-root user (UID 1000). ~24MB binary on Alpine base.
+- **Docker CI** — GitHub Actions workflow builds multi-arch images (`linux/amd64` + `linux/arm64`) and pushes to both GHCR (`ghcr.io/xoai/sage-wiki`) and Docker Hub (`xoai/sage-wiki`) on push to `main` and version tags.
+- **Self-hosting guide** — Comprehensive guide at `docs/guides/self-hosted-server.md` covering Docker Compose, Syncthing-based sync, LLM provider config (including OpenAI-compatible with custom `base_url`, local Ollama/vLLM), reverse proxy with HTTPS, VPS deployment, and Raspberry Pi/ARM.
+
+### Configurable Ontology Relations
+
+- **`ontology.relations` config section** — Extend built-in relation types with additional synonyms (e.g., multilingual keywords) or add custom domain-specific relation types. Relation names validated at config load (`^[a-z][a-z0-9_]*$`).
+- **Two-tier merge** — 8 built-in types always present; config entries either append synonyms to a built-in or create a new type.
+- **Application-layer validation** — SQL CHECK constraint replaced with `AddRelation()` validation from merged config. All 12 `NewStore` call sites updated.
+- **DB migration** — `migrationV2` automatically removes the CHECK constraint from existing databases on first open.
+- **Guide** — `docs/guides/configurable-relations.md` with domain examples (biology, software architecture, humanities) and built-in synonym tables.
+
+### New Config Fields
+
+```yaml
+ontology:
+  relations:
+    - name: implements
+      synonyms: ["thực hiện", "triển khai"]   # extend built-in with multilingual synonyms
+    - name: regulates
+      synonyms: ["regulates", "regulated by"]  # add a custom relation type
+```
+
+### Fixes
+
+- **Chunk synthesis for large sources** — Files with 60+ chunks no longer fail. Enforces minimum 200-token per-chunk budget with automatic chunk grouping. Hierarchical synthesis reduces summaries in tiers of 8 instead of one flat pass, enabling 1000+ page documents. Empty LLM responses now treated as errors instead of silent propagation. (#20)
+- **CJK-aware token estimation** — Token estimator now counts CJK characters (Han, Hangul, Katakana, Hiragana) at 1.5 tokens/char instead of flat 4 chars/token, fixing 2.5x underestimate for Chinese/Japanese/Korean text. Affects chunking accuracy for all CJK-heavy documents.
+- **Custom prompts in `--re-extract`** — `ReExtract()` now loads prompt overrides from `prompts/` directory, matching the main `Compile()` path. (#23)
+- **Duplicate frontmatter** — Eliminated duplicate YAML frontmatter in generated articles when LLM response already contains frontmatter.
+- **`<think>` tag stripping** — LLM responses containing `<think>...</think>` reasoning tags (common with DeepSeek, QwQ) are now stripped across all code paths.
+- **Prompt template wiring** — Pass 2 (concept extraction) and Pass 3 (article writing) now use `prompts.Render()` for custom prompt overrides instead of hardcoded strings.
+- **Timezone support** — `compiler.timezone` config option for user-facing timestamps in generated frontmatter (IANA format, e.g., `Asia/Shanghai`).
+
+### Community Contributions
+
+- Chinese keywords for ontology relation extraction (@kailunguu-code, #11)
+- Vector search wired into hybrid search for MCP and CLI (@kailunguu-code, #9)
+- UTF-8 safe concept name formatting for CJK characters (@kailunguu-code, #8)
+
+### Binaries
+
+| Platform | Binary |
+|----------|--------|
+| Linux amd64 | `sage-wiki-linux-amd64` |
+| Linux arm64 | `sage-wiki-linux-arm64` |
+| macOS amd64 (Intel) | `sage-wiki-darwin-amd64` |
+| macOS arm64 (Apple Silicon) | `sage-wiki-darwin-arm64` |
+| Windows amd64 | `sage-wiki-windows-amd64.exe` |
+| Windows arm64 | `sage-wiki-windows-arm64.exe` |
+
+### Docker
+
+```bash
+docker pull ghcr.io/xoai/sage-wiki:v0.1.2
+docker pull xoai/sage-wiki:v0.1.2
+```
+
 ## 0.1.1 — 2026-04-08
 
 ### Interactive TUI Dashboard

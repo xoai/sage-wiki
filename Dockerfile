@@ -12,7 +12,7 @@ WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-COPY --from=webui /build/web/dist ./web/dist
+COPY --from=webui /build/internal/web/dist ./internal/web/dist
 RUN CGO_ENABLED=0 go build -tags webui -ldflags="-s -w" -o sage-wiki ./cmd/sage-wiki
 
 # Stage 3: Runtime

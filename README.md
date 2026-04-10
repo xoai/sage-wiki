@@ -85,6 +85,27 @@ sage-wiki compile
 sage-wiki compile --watch
 ```
 
+### Docker
+
+```bash
+# Pull from GitHub Container Registry
+docker pull ghcr.io/xoai/sage-wiki:latest
+
+# Or from Docker Hub
+docker pull xoai/sage-wiki:latest
+
+# Run with your wiki directory mounted
+docker run -d -p 3333:3333 -v ./my-wiki:/wiki -e GEMINI_API_KEY=... ghcr.io/xoai/sage-wiki
+
+# Or build from source
+docker build -t sage-wiki .
+docker run -d -p 3333:3333 -v ./my-wiki:/wiki -e GEMINI_API_KEY=... sage-wiki
+```
+
+Available tags: `:latest` (main branch), `:v1.0.0` (releases), `:sha-abc1234` (specific commits). Multi-arch: `linux/amd64` and `linux/arm64`.
+
+See the [self-hosting guide](docs/guides/self-hosted-server.md) for Docker Compose, Syncthing sync, reverse proxy, and LLM provider setup.
+
 ## Commands
 
 | Command | Description |

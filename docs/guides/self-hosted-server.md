@@ -7,8 +7,11 @@ This guide covers Docker setup, file syncing, and common deployment patterns.
 ## Quick Start with Docker
 
 ```bash
-# Build the image
-docker build -t sage-wiki .
+# Pull from GitHub Container Registry
+docker pull ghcr.io/xoai/sage-wiki:latest
+
+# Or from Docker Hub
+docker pull xoai/sage-wiki:latest
 
 # Run with your wiki directory mounted
 docker run -d \
@@ -16,12 +19,32 @@ docker run -d \
   -p 3333:3333 \
   -v /path/to/your/wiki:/wiki \
   -e GEMINI_API_KEY=your-key-here \
-  sage-wiki
+  ghcr.io/xoai/sage-wiki
 ```
 
 Open `http://your-server:3333` in a browser. That's it.
 
 The default command starts the web UI server. Your wiki directory is mounted at `/wiki` inside the container.
+
+### Available tags
+
+| Tag | When | Use case |
+|-----|------|----------|
+| `:latest` | Every push to `main` | Living on the edge |
+| `:v1.0.0` | GitHub Releases | Stable, predictable |
+| `:sha-abc1234` | Every push | Pinning a specific build |
+
+Multi-arch images: `linux/amd64` and `linux/arm64` (Raspberry Pi, ARM servers).
+
+### Building from source
+
+If you prefer to build locally:
+
+```bash
+git clone https://github.com/xoai/sage-wiki.git
+cd sage-wiki
+docker build -t sage-wiki .
+```
 
 ## Docker Compose
 
@@ -31,9 +54,9 @@ For a more complete setup with auto-restart and persistent data:
 # docker-compose.yml
 services:
   sage-wiki:
-    build: .
-    # Or use a pre-built image:
-    # image: ghcr.io/xoai/sage-wiki:latest
+    image: ghcr.io/xoai/sage-wiki:latest
+    # Or build from source:
+    # build: .
     ports:
       - "3333:3333"
     volumes:
@@ -56,22 +79,22 @@ The default entrypoint is `sage-wiki`. Override the command for different modes:
 
 ```bash
 # Web UI (default)
-docker run -v ./wiki:/wiki -p 3333:3333 -e GEMINI_API_KEY=... sage-wiki
+docker run -v ./wiki:/wiki -p 3333:3333 -e GEMINI_API_KEY=... ghcr.io/xoai/sage-wiki
 
 # Compile once and exit
-docker run -v ./wiki:/wiki -e GEMINI_API_KEY=... sage-wiki compile
+docker run -v ./wiki:/wiki -e GEMINI_API_KEY=... ghcr.io/xoai/sage-wiki compile
 
 # Watch mode — recompile on file changes
-docker run -v ./wiki:/wiki -e GEMINI_API_KEY=... sage-wiki compile --watch
+docker run -v ./wiki:/wiki -e GEMINI_API_KEY=... ghcr.io/xoai/sage-wiki compile --watch
 
 # MCP server (SSE transport for remote agents)
-docker run -v ./wiki:/wiki -p 3333:3333 -e GEMINI_API_KEY=... sage-wiki serve --transport sse --port 3333
+docker run -v ./wiki:/wiki -p 3333:3333 -e GEMINI_API_KEY=... ghcr.io/xoai/sage-wiki serve --transport sse --port 3333
 
 # Query your wiki
-docker run -v ./wiki:/wiki -e GEMINI_API_KEY=... sage-wiki query "What is self-attention?"
+docker run -v ./wiki:/wiki -e GEMINI_API_KEY=... ghcr.io/xoai/sage-wiki query "What is self-attention?"
 
 # Interactive shell (override entrypoint)
-docker run -it --entrypoint sh -v ./wiki:/wiki sage-wiki
+docker run -it --entrypoint sh -v ./wiki:/wiki ghcr.io/xoai/sage-wiki
 ```
 
 ## Syncing with Syncthing
@@ -336,15 +359,10 @@ Minimal steps for a fresh Ubuntu/Debian VPS:
 # Install Docker
 curl -fsSL https://get.docker.com | sh
 
-# Clone and build
-git clone https://github.com/xoai/sage-wiki.git
-cd sage-wiki
-docker build -t sage-wiki .
-
 # Initialize a wiki project
 mkdir -p ~/my-wiki/raw
 cd ~/my-wiki
-docker run -v .:/wiki sage-wiki init --model gemini-2.5-flash
+docker run --rm -v .:/wiki ghcr.io/xoai/sage-wiki init --model gemini-2.5-flash
 
 # Set your API key
 export GEMINI_API_KEY=your-key-here
@@ -356,7 +374,7 @@ docker run -d \
   -v ~/my-wiki:/wiki \
   -e GEMINI_API_KEY \
   --restart unless-stopped \
-  sage-wiki
+  ghcr.io/xoai/sage-wiki
 ```
 
 ## Raspberry Pi / ARM
