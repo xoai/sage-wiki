@@ -118,7 +118,6 @@ func (c *Client) chatCompletionDirect(messages []Message, opts CallOpts) (*Respo
 			if err != nil {
 				return nil, fmt.Errorf("llm: parse response: %w", err)
 			}
-			result.Content = stripThinkTags(result.Content)
 			c.trackUsage(result.Model, result.Usage)
 			return result, nil
 		}
