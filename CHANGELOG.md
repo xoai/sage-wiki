@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.1.3 — 2026-04-11
+
+### Graph-Enhanced Retrieval
+
+- **4-signal graph relevance scorer** — New `internal/graph/` package scores candidate articles using four signals: direct ontology relations (×3.0), shared source documents via `cites` edges (×4.0), Adamic-Adar common neighbors (×1.5), and entity type affinity (×1.0). Uses only the SQLite ontology store — no manifest loading at query time.
+- **Graph-expanded context** — After hybrid search, the graph scorer finds related articles missed by keyword/vector search and adds them to the LLM synthesis context. Applied as post-processing in `buildQueryContext()` so both enhanced (chunk-level) and document-level search paths benefit.
+- **Token budget control** — Query context capped at configurable `context_max_tokens` (default 8000). Articles truncated at 4000 tokens each (chars/4 estimation). Greedy filling from highest-scored down.
+
+### Source Provenance
+
+- **CLI `sage-wiki provenance`** — Given a source path, shows all generated articles. Given a concept name, shows contributing sources. Auto-detects direction.
+- **MCP `wiki_provenance` tool** — Parameters: `source` or `article`. Returns JSON provenance mapping. Registered in read tools and CallTool dispatch.
+- **Web API `GET /api/provenance`** — Query params `?source=path` or `?article=name`. Loads manifest from disk for each request.
+- **Manifest helpers** — `ArticlesFromSource(path)` reverse-lookup (O(n) scan, fine for typical wikis) and `SourcesForArticle(name)` direct lookup.
+
+### Cascade Awareness
+
+- **Orphan detection on source removal** — When a source is removed during compile, affected concepts are identified *before* the manifest entry is deleted. Single-source concepts are flagged as orphaned with a log warning. Multi-source concepts get their sources list updated.
+- **`--prune` flag** — Opt-in destructive cleanup: `sage-wiki compile --prune` deletes orphaned article files, removes FTS5/vector/ontology entries, and cleans up the manifest. Warn-only by default.
+
+### Ontology Helpers
+
+- **`EntityDegree(id)`** — Returns total relation count (inbound + outbound) for an entity. Used by Adamic-Adar scoring.
+- **`EntitiesCiting(targetID)`** — Reverse `cites` lookup: finds all concepts that cite a source entity.
+- **`CitedBy(entityID)`** — Forward `cites` lookup: finds all source entities that a concept cites.
+
+### New Config Fields
+
+```yaml
+search:
+  graph_expansion: true        # enable graph-based context expansion (default: true)
+  graph_max_expand: 10         # max articles added via graph
+  graph_depth: 2               # ontology traversal depth
+  context_max_tokens: 8000     # token budget for query context
+  weight_direct_link: 3.0      # graph signal weights
+  weight_source_overlap: 4.0
+  weight_common_neighbor: 1.5
+  weight_type_affinity: 1.0
+```
+
+All fields optional with sensible defaults. `graph_expansion` uses `*bool` pattern (like `query_expansion`, `rerank`) — nil defaults to true. Existing configs work unchanged.
+
+---
+
 ## 0.1.2 — 2026-04-10
 
 ### Docker & Self-Hosting

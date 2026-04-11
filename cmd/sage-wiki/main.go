@@ -123,6 +123,14 @@ var tuiCmd = &cobra.Command{
 	RunE:  runTUI,
 }
 
+var provenanceCmd = &cobra.Command{
+	Use:   "provenance [source-or-concept]",
+	Short: "Show source-article provenance mappings",
+	Long:  "Given a source path, shows generated articles. Given a concept name, shows contributing sources.",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runProvenance,
+}
+
 func init() {
 	rootCmd.PersistentFlags().StringVar(&projectDir, "project", ".", "Project directory")
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Config file path (default: <project>/config.yaml)")
@@ -143,6 +151,7 @@ func init() {
 	compileCmd.Flags().Bool("estimate", false, "Show cost estimate without compiling")
 	compileCmd.Flags().Bool("batch", false, "Use batch API for 50% cost reduction (async)")
 	compileCmd.Flags().Bool("no-cache", false, "Disable prompt caching for this run")
+	compileCmd.Flags().Bool("prune", false, "Delete orphaned articles when their sole source is removed")
 
 	// Serve flags
 	serveCmd.Flags().String("transport", "stdio", "Transport: stdio or sse")
@@ -159,7 +168,7 @@ func init() {
 	searchCmd.Flags().StringSlice("tags", nil, "Filter by tags")
 	searchCmd.Flags().Int("limit", 10, "Maximum results")
 
-	rootCmd.AddCommand(initCmd, compileCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, hubCmd)
+	rootCmd.AddCommand(initCmd, compileCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, hubCmd)
 }
 
 // Placeholder implementations — will be filled in subsequent tasks
@@ -270,6 +279,7 @@ func runCompile(cmd *cobra.Command, args []string) error {
 
 	batch, _ := cmd.Flags().GetBool("batch")
 	noCache, _ := cmd.Flags().GetBool("no-cache")
+	prune, _ := cmd.Flags().GetBool("prune")
 
 	// Interactive cost estimate prompt if config.compiler.estimate_before is true
 	if err := maybePromptEstimate(dir); err != nil {
@@ -281,6 +291,7 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		Fresh:   fresh,
 		Batch:   batch,
 		NoCache: noCache,
+		Prune:   prune,
 	})
 	if err != nil {
 		return err
@@ -629,4 +640,46 @@ func runEstimate(dir string) error {
 func runTUI(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
 	return tuidashboard.Run(dir)
+}
+
+func runProvenance(cmd *cobra.Command, args []string) error {
+	dir, _ := filepath.Abs(projectDir)
+	mfPath := filepath.Join(dir, ".manifest.json")
+	mf, err := manifest.Load(mfPath)
+	if err != nil {
+		return fmt.Errorf("provenance: load manifest: %w", err)
+	}
+
+	target := args[0]
+
+	// Auto-detect: is it a source or a concept?
+	if _, ok := mf.Sources[target]; ok {
+		// Source → show articles
+		articles := mf.ArticlesFromSource(target)
+		if len(articles) == 0 {
+			fmt.Printf("No articles generated from source: %s\n", target)
+			return nil
+		}
+		fmt.Printf("Articles from source %s:\n", target)
+		for _, name := range articles {
+			c := mf.Concepts[name]
+			fmt.Printf("  %s → %s\n", name, c.ArticlePath)
+		}
+		return nil
+	}
+
+	if c, ok := mf.Concepts[target]; ok {
+		// Concept → show sources
+		if len(c.Sources) == 0 {
+			fmt.Printf("No sources for concept: %s\n", target)
+			return nil
+		}
+		fmt.Printf("Sources for concept %s:\n", target)
+		for _, s := range c.Sources {
+			fmt.Printf("  %s\n", s)
+		}
+		return nil
+	}
+
+	return fmt.Errorf("provenance: %q not found in sources or concepts. Use a source path (e.g. raw/paper.pdf) or concept name (e.g. attention)", target)
 }

@@ -9,7 +9,7 @@ Drop in your papers, articles, and notes. sage-wiki compiles them into a structu
 - **Your sources in, a wiki out.** Add documents to a folder. The LLM reads, summarizes, extracts concepts, and writes interconnected articles.
 - **Compounding knowledge.** Every new source enriches existing articles. The wiki gets smarter as it grows.
 - **Works with your tools.** Opens natively in Obsidian. Connects to any LLM agent via MCP. Runs as a single binary — nothing to install beyond the API key.
-- **Ask your wiki questions.** Search across everything with hybrid BM25 + semantic search, or ask natural language questions and get cited answers.
+- **Ask your wiki questions.** Enhanced search with chunk-level indexing, LLM query expansion, and re-ranking. Ask natural language questions and get cited answers.
 
 https://github.com/user-attachments/assets/c35ee202-e9df-4ccd-b520-8f057163ff26
 
@@ -111,7 +111,7 @@ See the [self-hosting guide](docs/guides/self-hosted-server.md) for Docker Compo
 | Command | Description |
 |---------|------------|
 | `sage-wiki init [--vault]` | Initialize project (greenfield or vault overlay) |
-| `sage-wiki compile [--watch] [--dry-run] [--batch] [--estimate] [--no-cache]` | Compile sources into wiki articles |
+| `sage-wiki compile [--watch] [--dry-run] [--batch] [--estimate] [--no-cache] [--prune]` | Compile sources into wiki articles |
 | `sage-wiki serve [--transport stdio\|sse]` | Start MCP server for LLM agents |
 | `sage-wiki serve --ui [--port 3333]` | Start web UI (requires `-tags webui` build) |
 | `sage-wiki lint [--fix] [--pass name]` | Run linting passes |
@@ -120,6 +120,7 @@ See the [self-hosting guide](docs/guides/self-hosted-server.md) for Docker Compo
 | `sage-wiki tui` | Launch interactive terminal dashboard |
 | `sage-wiki ingest <url\|path>` | Add a source |
 | `sage-wiki status` | Wiki stats and health |
+| `sage-wiki provenance <source-or-concept>` | Show source↔article provenance mappings |
 | `sage-wiki doctor` | Validate config and connectivity |
 | `sage-wiki diff` | Show pending source changes against manifest |
 | `sage-wiki list` | List wiki entities, concepts, or sources |
@@ -241,6 +242,17 @@ search:
   hybrid_weight_bm25: 0.7    # BM25 vs vector weight
   hybrid_weight_vector: 0.3
   default_limit: 10
+  # query_expansion: true     # LLM query expansion for Q&A (default: true)
+  # rerank: true              # LLM re-ranking for Q&A (default: true)
+  # chunk_size: 800           # tokens per chunk for indexing (100-5000)
+  # graph_expansion: true     # graph-based context expansion for Q&A (default: true)
+  # graph_max_expand: 10      # max articles added via graph expansion
+  # graph_depth: 2            # ontology traversal depth (1-5)
+  # context_max_tokens: 8000  # token budget for query context
+  # weight_direct_link: 3.0   # graph signal: ontology relation between concepts
+  # weight_source_overlap: 4.0 # graph signal: shared source documents
+  # weight_common_neighbor: 1.5 # graph signal: Adamic-Adar common neighbors
+  # weight_type_affinity: 1.0  # graph signal: entity type pair bonus
 
 serve:
   transport: stdio            # stdio or sse
@@ -289,6 +301,27 @@ sage-wiki compile --estimate    # show cost breakdown, exit
 Or set `compiler.estimate_before: true` in config to prompt every time.
 
 **Auto mode** — Set `compiler.mode: auto` and `compiler.batch_threshold: 10` to automatically use batch when compiling 10+ sources.
+
+## Search Quality
+
+sage-wiki uses an enhanced search pipeline for Q&A queries, inspired by analyzing [qmd](https://github.com/dmayboroda/qmd)'s retrieval approach:
+
+- **Chunk-level indexing** — Articles are split into ~800-token chunks, each with its own FTS5 entry and vector embedding. A search for "flash attention" finds the relevant paragraph inside a 3000-token Transformer article.
+- **LLM query expansion** — A single LLM call generates keyword rewrites (for BM25), semantic rewrites (for vector search), and a hypothetical answer (for embedding similarity). A strong-signal check skips expansion when the top BM25 result is already confident.
+- **LLM re-ranking** — Top 15 candidates are scored by the LLM for relevance. Position-aware blending protects high-confidence retrieval results (ranks 1-3 get 75% retrieval weight, ranks 11+ get 60% reranker weight).
+- **BM25-prefiltered vector search** — Vector comparisons are limited to chunks from BM25 candidate documents, capping cosine computations at ~250 regardless of wiki size.
+- **Graph-enhanced context expansion** — After retrieval, a 4-signal graph scorer finds related articles via the ontology: direct relations (×3.0), shared source documents (×4.0), common neighbors via Adamic-Adar (×1.5), and entity type affinity (×1.0). This surfaces articles that are structurally related but missed by keyword/vector search.
+- **Token budget control** — Query context is capped at a configurable token limit (default 8000), with articles truncated at 4000 tokens each. Greedy filling prioritizes the highest-scored articles.
+
+| | sage-wiki | qmd |
+|---|---|---|
+| Chunk search | FTS5 + vector (dual-channel) | Vector-only |
+| Query expansion | LLM-based (lex/vec/hyde) | LLM-based |
+| Re-ranking | LLM + position-aware blending | Cross-encoder |
+| Graph context | 4-signal graph expansion + 1-hop traversal | No graph |
+| Cost per query | Free (Ollama) / ~$0.0006 (cloud) | Free (local GGUF) |
+
+Zero config = all features enabled. With Ollama or other local models, enhanced search is completely free — re-ranking is auto-disabled (local models struggle with structured JSON scoring) but chunk-level search and query expansion still work. With cloud LLMs, the additional cost is negligible (~$0.0006/query). Both expansion and re-ranking can be toggled via config. See the [full search quality guide](docs/guides/search-quality.md) for configuration, cost breakdown, and detailed comparison.
 
 ## Customizing Prompts
 
@@ -460,9 +493,9 @@ python3 eval.py ./test-fixture
 
 - **Storage:** SQLite with FTS5 (BM25 search) + BLOB vectors (cosine similarity)
 - **Ontology:** Typed entity-relation graph with BFS traversal and cycle detection
-- **Search:** Reciprocal Rank Fusion (RRF) combining BM25 + vector + tag boost + recency decay
-- **Compiler:** 5-pass pipeline (diff, summarize, extract concepts, write articles, images) with prompt caching, batch API, and cost tracking
-- **MCP:** 15 tools (5 read, 8 write, 2 compound) via stdio or SSE, including `wiki_capture` for knowledge extraction from conversations
+- **Search:** Enhanced pipeline with chunk-level FTS5 + vector indexing, LLM query expansion, LLM re-ranking, RRF fusion, and 4-signal graph expansion. Falls back to document-level BM25 + vector + tag boost + recency decay
+- **Compiler:** 5-pass pipeline (diff, summarize, extract concepts, write articles, images) with prompt caching, batch API, cost tracking, and cascade awareness for source removal
+- **MCP:** 16 tools (6 read, 8 write, 2 compound) via stdio or SSE, including `wiki_capture` for knowledge extraction and `wiki_provenance` for source↔article mappings
 - **TUI:** bubbletea + glamour 4-tab terminal dashboard (browse, search, Q&A, compile)
 - **Web UI:** Preact + Tailwind CSS embedded via `go:embed` with build tag (`-tags webui`)
 

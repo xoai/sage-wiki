@@ -1,6 +1,7 @@
 package vectors
 
 import (
+	"database/sql"
 	"math"
 	"path/filepath"
 	"testing"
@@ -139,5 +140,81 @@ func TestEncodeDecodRoundtrip(t *testing.T) {
 		if math.Abs(float64(original[i]-decoded[i])) > 0.0001 {
 			t.Errorf("roundtrip mismatch at %d: %f vs %f", i, original[i], decoded[i])
 		}
+	}
+}
+
+func TestChunkVectorUpsertAndSearch(t *testing.T) {
+	db, store := setupTestDB(t)
+
+	// Insert chunk vectors via transaction
+	db.WriteTx(func(tx *sql.Tx) error {
+		store.UpsertChunk(tx, "c1", "doc1", []float32{1, 0, 0})
+		store.UpsertChunk(tx, "c2", "doc1", []float32{0.9, 0.1, 0})
+		store.UpsertChunk(tx, "c3", "doc2", []float32{0, 1, 0})
+		return nil
+	})
+
+	// Brute-force search
+	results, err := store.SearchChunks([]float32{1, 0, 0}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+	if results[0].ChunkID != "c1" {
+		t.Errorf("expected c1 first, got %s", results[0].ChunkID)
+	}
+	if results[0].DocID != "doc1" {
+		t.Errorf("expected doc1, got %s", results[0].DocID)
+	}
+}
+
+func TestChunkVectorFilteredSearch(t *testing.T) {
+	db, store := setupTestDB(t)
+
+	db.WriteTx(func(tx *sql.Tx) error {
+		store.UpsertChunk(tx, "c1", "doc1", []float32{1, 0, 0})
+		store.UpsertChunk(tx, "c2", "doc2", []float32{0.9, 0.1, 0})
+		store.UpsertChunk(tx, "c3", "doc3", []float32{0.8, 0.2, 0})
+		return nil
+	})
+
+	// Filtered search should only return chunks from doc1
+	results, err := store.SearchChunksFiltered([]float32{1, 0, 0}, []string{"doc1"}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result (filtered to doc1), got %d", len(results))
+	}
+	if results[0].ChunkID != "c1" {
+		t.Errorf("expected c1, got %s", results[0].ChunkID)
+	}
+
+	// Empty doc IDs returns nil
+	results, err = store.SearchChunksFiltered([]float32{1, 0, 0}, nil, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results != nil {
+		t.Errorf("expected nil for empty docIDs, got %d results", len(results))
+	}
+}
+
+func TestDeleteDocChunkVectors(t *testing.T) {
+	db, store := setupTestDB(t)
+
+	db.WriteTx(func(tx *sql.Tx) error {
+		store.UpsertChunk(tx, "c1", "doc1", []float32{1, 0, 0})
+		store.UpsertChunk(tx, "c2", "doc1", []float32{0, 1, 0})
+		return nil
+	})
+
+	store.DeleteDocChunkVectors("doc1")
+
+	results, _ := store.SearchChunks([]float32{1, 0, 0}, 10)
+	if len(results) != 0 {
+		t.Errorf("expected 0 after delete, got %d", len(results))
 	}
 }

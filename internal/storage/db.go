@@ -138,6 +138,7 @@ func (db *DB) migrate() error {
 	migrations := []string{
 		migrationV1,
 		migrationV2,
+		migrationV3,
 	}
 
 	for i := version; i < len(migrations); i++ {
@@ -234,4 +235,36 @@ ALTER TABLE relations_new RENAME TO relations;
 CREATE INDEX IF NOT EXISTS idx_relations_source ON relations(source_id);
 CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_id);
 CREATE INDEX IF NOT EXISTS idx_relations_type ON relations(relation);
+`
+
+// migrationV3 adds chunk-level indexing tables for enhanced search.
+const migrationV3 = `
+-- Chunk metadata (IDs, positions, content)
+CREATE TABLE IF NOT EXISTS chunks_meta (
+	chunk_id TEXT PRIMARY KEY,
+	doc_id TEXT NOT NULL,
+	chunk_index INTEGER NOT NULL,
+	heading TEXT,
+	content TEXT NOT NULL,
+	start_offset INTEGER,
+	end_offset INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks_meta(doc_id);
+
+-- FTS5 for chunk search (regular table, stores its own copy of text)
+-- chunk_id is UNINDEXED so it doesn't pollute BM25 rankings but is available for JOIN
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+	chunk_id UNINDEXED,
+	heading, content,
+	tokenize='porter unicode61'
+);
+
+-- Chunk vector embeddings
+CREATE TABLE IF NOT EXISTS vec_chunks (
+	chunk_id TEXT PRIMARY KEY,
+	doc_id TEXT NOT NULL,
+	embedding BLOB NOT NULL,
+	dimensions INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_vec_chunks_doc ON vec_chunks(doc_id);
 `

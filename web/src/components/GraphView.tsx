@@ -21,6 +21,7 @@ export function GraphView({ currentArticle, onNavigate }: Props) {
   const [loading, setLoading] = useState(true);
   const [nodeCount, setNodeCount] = useState(0);
 
+  // Create graph instance once
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -28,30 +29,41 @@ export function GraphView({ currentArticle, onNavigate }: Props) {
     const width = container.clientWidth;
     const height = container.clientHeight;
 
-    // Create graph instance
+    const isOverview = !currentArticle;
+
     const graph = new ForceGraph2D(container)
       .width(width)
       .height(height)
       .nodeLabel((node: any) => node.name)
       .nodeColor((node: any) => {
-        if (currentArticle && node.id === currentArticle) return '#ef4444'; // red for current
+        if (currentArticle && node.id === currentArticle) return '#ef4444';
         return TYPE_COLORS[node.type] || '#6b7280';
       })
       .nodeVal((node: any) => Math.max(2, Math.min(8, node.connections || 1)))
       .linkColor(() => 'rgba(156, 163, 175, 0.3)')
       .linkWidth(0.5)
-      .linkDirectionalArrowLength(3)
+      // Disable arrows on overview (saves per-frame trig for 1000+ edges)
+      .linkDirectionalArrowLength(isOverview ? 0 : 3)
       .linkDirectionalArrowRelPos(1)
       .onNodeClick((node: any) => {
         const path = `concepts/${node.id}.md`;
         onNavigate(path);
       })
-      .cooldownTicks(100)
-      .onEngineStop(() => graph.zoomToFit(400, 40));
+      // Performance: fast convergence + hard time cap
+      .d3AlphaDecay(0.05)
+      .d3VelocityDecay(0.5)
+      .warmupTicks(isOverview ? 100 : 50)
+      .cooldownTicks(200)
+      .cooldownTime(5000)
+      .onEngineStop(() => {
+        graph.zoomToFit(400, 40);
+        // Stop the requestAnimationFrame render loop to save CPU
+        graph.pauseAnimation();
+      });
 
     graphRef.current = graph;
 
-    // Fetch data — use neighborhood if current article, else full graph
+    // Fetch data
     const fetchData = currentArticle
       ? fetchGraph(currentArticle, 3)
       : fetchGraph();
@@ -60,7 +72,6 @@ export function GraphView({ currentArticle, onNavigate }: Props) {
       setNodeCount(data.total);
       setLoading(false);
 
-      // Transform to force-graph format
       const graphData = {
         nodes: data.nodes.map(n => ({ ...n })),
         links: data.edges.map(e => ({
@@ -73,17 +84,25 @@ export function GraphView({ currentArticle, onNavigate }: Props) {
       graph.graphData(graphData);
     }).catch(() => setLoading(false));
 
-    // Handle resize
+    // Handle resize with debounce
+    let resizeTimer: any;
     const observer = new ResizeObserver(() => {
-      if (containerRef.current) {
-        graph.width(containerRef.current.clientWidth);
-        graph.height(containerRef.current.clientHeight);
-      }
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        if (containerRef.current) {
+          graph.width(containerRef.current.clientWidth);
+          graph.height(containerRef.current.clientHeight);
+          // Resume briefly for re-layout after resize
+          graph.resumeAnimation();
+        }
+      }, 150);
     });
     observer.observe(container);
 
     return () => {
+      clearTimeout(resizeTimer);
       observer.disconnect();
+      graph.pauseAnimation();
       graph._destructor?.();
     };
   }, [currentArticle]);

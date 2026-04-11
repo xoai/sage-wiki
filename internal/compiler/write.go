@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,11 +13,13 @@ import (
 	"unicode"
 
 	"github.com/xoai/sage-wiki/internal/embed"
+	"github.com/xoai/sage-wiki/internal/extract"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/prompts"
+	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -27,23 +30,29 @@ type ArticleResult struct {
 	Error       error
 }
 
+// ArticleWriteOpts bundles all parameters for WriteArticles / writeOneArticle.
+type ArticleWriteOpts struct {
+	ProjectDir       string
+	OutputDir        string
+	Client           *llm.Client
+	Model            string
+	MaxTokens        int
+	MaxParallel      int
+	MemStore         *memory.Store
+	VecStore         *vectors.Store
+	OntStore         *ontology.Store
+	ChunkStore       *memory.ChunkStore
+	DB               *storage.DB
+	Embedder         embed.Embedder
+	UserTZ           *time.Location
+	ArticleFields    []string
+	RelationPatterns []ontology.RelationPattern
+	ChunkSize        int // tokens per chunk (default 800)
+}
+
 // WriteArticles runs Pass 3: write concept articles with ontology edges.
-func WriteArticles(
-	projectDir string,
-	outputDir string,
-	concepts []ExtractedConcept,
-	client *llm.Client,
-	model string,
-	maxTokens int,
-	maxParallel int,
-	memStore *memory.Store,
-	vecStore *vectors.Store,
-	ontStore *ontology.Store,
-	embedder embed.Embedder,
-	userTZ *time.Location,
-	articleFields []string,
-	relationPatterns []ontology.RelationPattern,
-) []ArticleResult {
+func WriteArticles(opts ArticleWriteOpts, concepts []ExtractedConcept) []ArticleResult {
+	maxParallel := opts.MaxParallel
 	if maxParallel <= 0 {
 		maxParallel = 4
 	}
@@ -62,7 +71,7 @@ func WriteArticles(
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			result := writeOneArticle(projectDir, outputDir, c, client, model, maxTokens, memStore, vecStore, ontStore, embedder, userTZ, articleFields, relationPatterns)
+			result := writeOneArticle(opts, c)
 			results[idx] = result
 
 			n := int(done.Add(1))
@@ -78,26 +87,12 @@ func WriteArticles(
 	return results
 }
 
-func writeOneArticle(
-	projectDir string,
-	outputDir string,
-	concept ExtractedConcept,
-	client *llm.Client,
-	model string,
-	maxTokens int,
-	memStore *memory.Store,
-	vecStore *vectors.Store,
-	ontStore *ontology.Store,
-	embedder embed.Embedder,
-	userTZ *time.Location,
-	articleFields []string,
-	relationPatterns []ontology.RelationPattern,
-) ArticleResult {
+func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept) ArticleResult {
 	result := ArticleResult{ConceptName: concept.Name}
 
 	// Check for existing article
-	articlePath := filepath.Join(outputDir, "concepts", concept.Name+".md")
-	absPath := filepath.Join(projectDir, articlePath)
+	articlePath := filepath.Join(opts.OutputDir, "concepts", concept.Name+".md")
+	absPath := filepath.Join(opts.ProjectDir, articlePath)
 	var existingContent string
 	if data, err := os.ReadFile(absPath); err == nil {
 		existingContent = string(data)
@@ -115,17 +110,17 @@ func writeOneArticle(
 		SourceList:      strings.Join(concept.Sources, ", "),
 		RelatedList:     strings.Join(relatedNames, ", "),
 		Confidence:      "medium",
-		MaxTokens:       maxTokens,
+		MaxTokens:       opts.MaxTokens,
 	})
 	if err != nil {
 		result.Error = fmt.Errorf("render write_article prompt: %w", err)
 		return result
 	}
 
-	resp, err := client.ChatCompletion([]llm.Message{
+	resp, err := opts.Client.ChatCompletion([]llm.Message{
 		{Role: "system", Content: "You are a wiki author writing comprehensive, precise articles for a personal knowledge base. Use [[wikilinks]] for cross-references. Do not include YAML frontmatter."},
 		{Role: "user", Content: prompt},
-	}, llm.CallOpts{Model: model, MaxTokens: maxTokens})
+	}, llm.CallOpts{Model: opts.Model, MaxTokens: opts.MaxTokens})
 	if err != nil {
 		result.Error = fmt.Errorf("llm call: %w", err)
 		return result
@@ -137,17 +132,17 @@ func writeOneArticle(
 	articleContent = stripLLMFrontmatter(articleContent)
 
 	// Extract LLM-judged fields (confidence + any custom fields from config)
-	fields, articleContent := extractFields(articleContent, articleFields)
+	fields, articleContent := extractFields(articleContent, opts.ArticleFields)
 
 	// Build frontmatter: ground-truth fields + LLM-judged fields
-	articleContent = buildFrontmatter(concept, fields, articleFields, userTZ) + "\n\n" + articleContent
+	articleContent = buildFrontmatter(concept, fields, opts.ArticleFields, opts.UserTZ) + "\n\n" + articleContent
 
 	// Note: wikilinks are kept even if targets don't exist yet.
 	// Future compiles will create the missing articles, and the links
 	// will resolve naturally. Broken links are surfaced by `sage-wiki lint`.
 
 	// Write article file
-	articleDir := filepath.Join(projectDir, outputDir, "concepts")
+	articleDir := filepath.Join(opts.ProjectDir, opts.OutputDir, "concepts")
 	os.MkdirAll(articleDir, 0755)
 
 	if err := os.WriteFile(absPath, []byte(articleContent), 0644); err != nil {
@@ -164,7 +159,7 @@ func writeOneArticle(
 		entityType = ontology.TypeClaim
 	}
 
-	if err := ontStore.AddEntity(ontology.Entity{
+	if err := opts.OntStore.AddEntity(ontology.Entity{
 		ID:          concept.Name,
 		Type:        entityType,
 		Name:        formatConceptName(concept.Name),
@@ -176,14 +171,14 @@ func writeOneArticle(
 	// Create source citation relations
 	for _, src := range concept.Sources {
 		// Create source entity if not exists
-		if err := ontStore.AddEntity(ontology.Entity{
+		if err := opts.OntStore.AddEntity(ontology.Entity{
 			ID:   src,
 			Type: ontology.TypeSource,
 			Name: filepath.Base(src),
 		}); err != nil {
 			log.Warn("failed to create source entity", "source", src, "error", err)
 		}
-		if err := ontStore.AddRelation(ontology.Relation{
+		if err := opts.OntStore.AddRelation(ontology.Relation{
 			ID:       concept.Name + "-cites-" + sanitizeID(src),
 			SourceID: concept.Name,
 			TargetID: src,
@@ -194,10 +189,10 @@ func writeOneArticle(
 	}
 
 	// Extract typed relations from article text
-	extractRelations(concept.Name, articleContent, ontStore, relationPatterns)
+	extractRelations(concept.Name, articleContent, opts.OntStore, opts.RelationPatterns)
 
 	// Index in FTS5
-	if err := memStore.Add(memory.Entry{
+	if err := opts.MemStore.Add(memory.Entry{
 		ID:          "concept:" + concept.Name,
 		Content:     articleContent,
 		Tags:        append([]string{entityType}, concept.Aliases...),
@@ -207,12 +202,72 @@ func writeOneArticle(
 	}
 
 	// Generate embedding
-	if embedder != nil {
-		vec, err := embedder.Embed(articleContent)
+	if opts.Embedder != nil {
+		vec, err := opts.Embedder.Embed(articleContent)
 		if err != nil {
 			log.Warn("embedding failed for article", "concept", concept.Name, "error", err)
 		} else {
-			vecStore.Upsert("concept:"+concept.Name, vec)
+			opts.VecStore.Upsert("concept:"+concept.Name, vec)
+		}
+	}
+
+	// Index chunks for enhanced search
+	if opts.ChunkStore != nil && opts.DB != nil {
+		chunkSize := opts.ChunkSize
+		if chunkSize <= 0 {
+			chunkSize = 800
+		}
+		docID := "concept:" + concept.Name
+		chunks := extract.ChunkText(articleContent, chunkSize)
+
+		// Embed all chunks FIRST (API calls outside transaction)
+		var chunkEmbeddings [][]float32
+		if opts.Embedder != nil {
+			chunkEmbeddings = make([][]float32, len(chunks))
+			for i, c := range chunks {
+				vec, err := opts.Embedder.Embed(c.Text)
+				if err != nil {
+					log.Warn("chunk embedding failed", "concept", concept.Name, "chunk", i, "error", err)
+				} else {
+					chunkEmbeddings[i] = vec
+				}
+			}
+		}
+
+		// Single WriteTx: delete old + insert new
+		if err := opts.DB.WriteTx(func(tx *sql.Tx) error {
+			if err := opts.ChunkStore.DeleteDocChunks(tx, docID); err != nil {
+				return err
+			}
+
+			entries := make([]memory.ChunkEntry, len(chunks))
+			for i, c := range chunks {
+				entries[i] = memory.ChunkEntry{
+					ChunkID:    fmt.Sprintf("%s:c%d", docID, i),
+					ChunkIndex: c.Index,
+					Heading:    c.Heading,
+					Content:    c.Text,
+				}
+			}
+
+			if err := opts.ChunkStore.IndexChunks(tx, docID, entries); err != nil {
+				return err
+			}
+
+			// Insert pre-computed chunk embeddings
+			if chunkEmbeddings != nil {
+				for i, emb := range chunkEmbeddings {
+					if emb != nil {
+						if err := opts.VecStore.UpsertChunk(tx, entries[i].ChunkID, docID, emb); err != nil {
+							log.Warn("chunk vector upsert failed", "chunk", entries[i].ChunkID, "error", err)
+						}
+					}
+				}
+			}
+
+			return nil
+		}); err != nil {
+			log.Error("chunk indexing failed", "concept", concept.Name, "error", err)
 		}
 	}
 

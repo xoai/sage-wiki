@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/xoai/sage-wiki/internal/storage"
 )
@@ -83,6 +84,142 @@ func (s *Store) Search(query []float32, limit int) ([]VectorResult, error) {
 	}
 
 	return results, rows.Err()
+}
+
+// UpsertChunk stores or replaces a chunk vector within an existing transaction.
+func (s *Store) UpsertChunk(tx *sql.Tx, chunkID string, docID string, embedding []float32) error {
+	blob := encodeFloat32s(embedding)
+	_, err := tx.Exec(
+		`INSERT INTO vec_chunks (chunk_id, doc_id, embedding, dimensions) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(chunk_id) DO UPDATE SET embedding=excluded.embedding, dimensions=excluded.dimensions`,
+		chunkID, docID, blob, len(embedding),
+	)
+	return err
+}
+
+// SearchChunks performs brute-force cosine similarity search on chunk vectors.
+func (s *Store) SearchChunks(query []float32, limit int) ([]ChunkVectorResult, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+
+	rows, err := s.db.ReadDB().Query("SELECT chunk_id, doc_id, embedding, dimensions FROM vec_chunks")
+	if err != nil {
+		return nil, fmt.Errorf("vectors.SearchChunks: %w", err)
+	}
+	defer rows.Close()
+
+	var results []ChunkVectorResult
+	for rows.Next() {
+		var chunkID, docID string
+		var blob []byte
+		var dims int
+		if err := rows.Scan(&chunkID, &docID, &blob, &dims); err != nil {
+			return nil, err
+		}
+		vec := decodeFloat32s(blob)
+		if len(vec) != len(query) {
+			continue
+		}
+		score := CosineSimilarity(query, vec)
+		results = insertChunkSorted(results, ChunkVectorResult{ChunkID: chunkID, DocID: docID, Score: score}, limit)
+	}
+
+	for i := range results {
+		results[i].Rank = i + 1
+	}
+	return results, rows.Err()
+}
+
+// SearchChunksFiltered performs cosine search only on chunks belonging to the given doc IDs.
+// This is the BM25-prefiltered path that caps vector comparisons.
+func (s *Store) SearchChunksFiltered(query []float32, docIDs []string, limit int) ([]ChunkVectorResult, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if len(docIDs) == 0 {
+		return nil, nil
+	}
+
+	// Cap doc IDs to 100
+	if len(docIDs) > 100 {
+		docIDs = docIDs[:100]
+	}
+
+	// Build query with IN clause
+	ph := make([]string, len(docIDs))
+	args := make([]any, len(docIDs))
+	for i, id := range docIDs {
+		ph[i] = "?"
+		args[i] = id
+	}
+	sqlStr := fmt.Sprintf(
+		"SELECT chunk_id, doc_id, embedding, dimensions FROM vec_chunks WHERE doc_id IN (%s)",
+		strings.Join(ph, ","),
+	)
+
+	rows, err := s.db.ReadDB().Query(sqlStr, args...)
+	if err != nil {
+		return nil, fmt.Errorf("vectors.SearchChunksFiltered: %w", err)
+	}
+	defer rows.Close()
+
+	var results []ChunkVectorResult
+	for rows.Next() {
+		var chunkID, docID string
+		var blob []byte
+		var dims int
+		if err := rows.Scan(&chunkID, &docID, &blob, &dims); err != nil {
+			return nil, err
+		}
+		vec := decodeFloat32s(blob)
+		if len(vec) != len(query) {
+			continue
+		}
+		score := CosineSimilarity(query, vec)
+		results = insertChunkSorted(results, ChunkVectorResult{ChunkID: chunkID, DocID: docID, Score: score}, limit)
+	}
+
+	for i := range results {
+		results[i].Rank = i + 1
+	}
+	return results, rows.Err()
+}
+
+// DeleteDocChunkVectors removes all chunk vectors for a document.
+func (s *Store) DeleteDocChunkVectors(docID string) error {
+	return s.db.WriteTx(func(tx *sql.Tx) error {
+		_, err := tx.Exec("DELETE FROM vec_chunks WHERE doc_id = ?", docID)
+		return err
+	})
+}
+
+// ChunkVectorResult represents a chunk cosine similarity search result.
+type ChunkVectorResult struct {
+	ChunkID string
+	DocID   string
+	Score   float64
+	Rank    int
+}
+
+// insertChunkSorted maintains a sorted slice of top-k chunk results (descending by score).
+func insertChunkSorted(results []ChunkVectorResult, item ChunkVectorResult, limit int) []ChunkVectorResult {
+	pos := len(results)
+	for pos > 0 && results[pos-1].Score < item.Score {
+		pos--
+	}
+	if pos >= limit {
+		return results
+	}
+	if len(results) < limit {
+		results = append(results, ChunkVectorResult{})
+	}
+	copy(results[pos+1:], results[pos:])
+	results[pos] = item
+	if len(results) > limit {
+		results = results[:limit]
+	}
+	return results
 }
 
 // Count returns the total number of stored vectors.

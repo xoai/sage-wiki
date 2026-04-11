@@ -79,6 +79,14 @@ func isCJK(r rune) bool {
 		unicode.Is(unicode.Hiragana, r)
 }
 
+// ChunkText is a convenience wrapper that chunks raw text without needing a SourceContent.
+// It creates a temporary SourceContent, calls ChunkIfNeeded, and returns the resulting chunks.
+func ChunkText(text string, maxTokens int) []Chunk {
+	sc := &SourceContent{Text: text}
+	ChunkIfNeeded(sc, maxTokens)
+	return sc.Chunks
+}
+
 // ChunkIfNeeded splits content into chunks if it exceeds maxTokens.
 func ChunkIfNeeded(content *SourceContent, maxTokens int) {
 	estimatedTokens := EstimateTokens(content.Text)

@@ -10,6 +10,10 @@ import (
 	"testing"
 
 	"github.com/xoai/sage-wiki/internal/manifest"
+	"github.com/xoai/sage-wiki/internal/memory"
+	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/vectors"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
 
@@ -204,6 +208,176 @@ func TestCompileStateRoundtrip(t *testing.T) {
 	}
 	if len(loaded.Failed) != 1 {
 		t.Errorf("expected 1 failed, got %d", len(loaded.Failed))
+	}
+}
+
+func TestHandleRemovedSources_SingleSourcePrune(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create article file on disk
+	conceptDir := filepath.Join(dir, "wiki", "concepts")
+	os.MkdirAll(conceptDir, 0755)
+	articlePath := filepath.Join("wiki", "concepts", "attention.md")
+	os.WriteFile(filepath.Join(dir, articlePath), []byte("# Attention\nContent."), 0644)
+
+	// Set up DB with stores
+	db, err := storage.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	memStore := memory.NewStore(db)
+	vecStore := vectors.NewStore(db)
+	ontStore := ontology.NewStore(db, nil)
+
+	// Index the article in FTS5 and ontology
+	memStore.Add(memory.Entry{ID: "concept:attention", Content: "Attention content", Tags: []string{"concept"}, ArticlePath: articlePath})
+	ontStore.AddEntity(ontology.Entity{ID: "attention", Type: "concept", Name: "Attention", ArticlePath: articlePath})
+
+	// Set up manifest
+	mf := manifest.New()
+	mf.AddSource("raw/paper.pdf", "sha256:abc", "paper", 5000)
+	mf.AddConcept("attention", articlePath, []string{"raw/paper.pdf"})
+
+	// Execute cascade with prune=true
+	handleRemovedSources(dir, []string{"raw/paper.pdf"}, mf, memStore, vecStore, ontStore, true)
+
+	// Verify: article file deleted from disk
+	if _, err := os.Stat(filepath.Join(dir, articlePath)); !os.IsNotExist(err) {
+		t.Error("expected article file to be deleted")
+	}
+
+	// Verify: FTS5 entry removed
+	results, _ := memStore.Search("attention", nil, 10)
+	if len(results) != 0 {
+		t.Errorf("expected 0 FTS5 results after prune, got %d", len(results))
+	}
+
+	// Verify: ontology entity removed
+	e, _ := ontStore.GetEntity("attention")
+	if e != nil {
+		t.Error("expected ontology entity to be deleted")
+	}
+
+	// Verify: manifest cleaned
+	if mf.ConceptCount() != 0 {
+		t.Errorf("expected 0 concepts in manifest, got %d", mf.ConceptCount())
+	}
+	if mf.SourceCount() != 0 {
+		t.Errorf("expected 0 sources in manifest, got %d", mf.SourceCount())
+	}
+}
+
+func TestHandleRemovedSources_SingleSourceNoPrune(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create article file
+	conceptDir := filepath.Join(dir, "wiki", "concepts")
+	os.MkdirAll(conceptDir, 0755)
+	articlePath := filepath.Join("wiki", "concepts", "attention.md")
+	os.WriteFile(filepath.Join(dir, articlePath), []byte("# Attention"), 0644)
+
+	db, err := storage.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	memStore := memory.NewStore(db)
+	vecStore := vectors.NewStore(db)
+	ontStore := ontology.NewStore(db, nil)
+
+	memStore.Add(memory.Entry{ID: "concept:attention", Content: "Attention", Tags: []string{"concept"}, ArticlePath: articlePath})
+	ontStore.AddEntity(ontology.Entity{ID: "attention", Type: "concept", Name: "Attention", ArticlePath: articlePath})
+
+	mf := manifest.New()
+	mf.AddSource("raw/paper.pdf", "sha256:abc", "paper", 5000)
+	mf.AddConcept("attention", articlePath, []string{"raw/paper.pdf"})
+
+	// Execute cascade with prune=false (warn only)
+	handleRemovedSources(dir, []string{"raw/paper.pdf"}, mf, memStore, vecStore, ontStore, false)
+
+	// Verify: article file still exists (no prune)
+	if _, err := os.Stat(filepath.Join(dir, articlePath)); os.IsNotExist(err) {
+		t.Error("article file should NOT be deleted without --prune")
+	}
+
+	// Verify: FTS5 entry still exists
+	results, _ := memStore.Search("attention", nil, 10)
+	if len(results) != 1 {
+		t.Errorf("expected 1 FTS5 result (not pruned), got %d", len(results))
+	}
+
+	// Verify: concept still in manifest (orphaned but not deleted)
+	if mf.ConceptCount() != 1 {
+		t.Errorf("expected 1 concept (orphaned, not pruned), got %d", mf.ConceptCount())
+	}
+
+	// Verify: source removed from manifest
+	if mf.SourceCount() != 0 {
+		t.Errorf("expected 0 sources, got %d", mf.SourceCount())
+	}
+}
+
+func TestHandleRemovedSources_MultiSource(t *testing.T) {
+	dir := t.TempDir()
+
+	db, err := storage.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	memStore := memory.NewStore(db)
+	vecStore := vectors.NewStore(db)
+	ontStore := ontology.NewStore(db, nil)
+
+	mf := manifest.New()
+	mf.AddSource("raw/paper.pdf", "sha256:abc", "paper", 5000)
+	mf.AddSource("raw/notes.md", "sha256:def", "article", 1000)
+	mf.AddConcept("attention", "wiki/concepts/attention.md", []string{"raw/paper.pdf", "raw/notes.md"})
+
+	// Remove one source — concept should survive with updated sources
+	handleRemovedSources(dir, []string{"raw/paper.pdf"}, mf, memStore, vecStore, ontStore, true)
+
+	if mf.ConceptCount() != 1 {
+		t.Fatalf("expected 1 concept (survived), got %d", mf.ConceptCount())
+	}
+	c := mf.Concepts["attention"]
+	if len(c.Sources) != 1 || c.Sources[0] != "raw/notes.md" {
+		t.Errorf("expected sources [raw/notes.md], got %v", c.Sources)
+	}
+	if mf.SourceCount() != 1 {
+		t.Errorf("expected 1 source remaining, got %d", mf.SourceCount())
+	}
+}
+
+func TestHandleRemovedSources_NoOrphans(t *testing.T) {
+	dir := t.TempDir()
+
+	db, err := storage.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	memStore := memory.NewStore(db)
+	vecStore := vectors.NewStore(db)
+	ontStore := ontology.NewStore(db, nil)
+
+	mf := manifest.New()
+	mf.AddSource("raw/paper.pdf", "sha256:abc", "paper", 5000)
+	mf.AddConcept("lstm", "wiki/concepts/lstm.md", []string{"raw/other.pdf"})
+
+	// Remove a source that doesn't affect any concept
+	handleRemovedSources(dir, []string{"raw/paper.pdf"}, mf, memStore, vecStore, ontStore, true)
+
+	if mf.ConceptCount() != 1 {
+		t.Errorf("expected 1 concept unchanged, got %d", mf.ConceptCount())
+	}
+	if mf.SourceCount() != 0 {
+		t.Errorf("expected 0 sources (removed), got %d", mf.SourceCount())
 	}
 }
 

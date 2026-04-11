@@ -18,6 +18,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/query"
@@ -83,6 +84,7 @@ func (s *WebServer) Handler() http.Handler {
 	mux.HandleFunc("/api/graph", s.handleGraph)
 	mux.HandleFunc("/api/files/", s.handleFile)
 	mux.HandleFunc("/api/query", s.handleQuery)
+	mux.HandleFunc("/api/provenance", s.handleProvenance)
 	mux.HandleFunc("/ws", s.handleWebSocket)
 
 	// Static files + SPA fallback
@@ -398,21 +400,46 @@ func (s *WebServer) handleGraph(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else {
-		// Full graph
+		// Full graph — exclude source entities (noise in overview)
 		allEntities, _ := s.ont.ListEntities("")
-		for _, e := range allEntities {
-			rels, _ := s.ont.GetRelations(e.ID, ontology.Both, "")
-			nodes = append(nodes, node{ID: e.ID, Type: e.Type, Name: e.Name, Connections: len(rels)})
+
+		// Pre-compute connection counts in a single query (avoids N+1)
+		connCounts := make(map[string]int)
+		countRows, err := s.db.ReadDB().Query(`
+			SELECT id, cnt FROM (
+				SELECT source_id AS id, COUNT(*) AS cnt FROM relations GROUP BY source_id
+				UNION ALL
+				SELECT target_id AS id, COUNT(*) AS cnt FROM relations GROUP BY target_id
+			) GROUP BY id`)
+		if err == nil {
+			defer countRows.Close()
+			for countRows.Next() {
+				var id string
+				var cnt int
+				countRows.Scan(&id, &cnt)
+				connCounts[id] += cnt
+			}
 		}
 
-		// All relations
+		entitySet := make(map[string]bool)
+		for _, e := range allEntities {
+			if e.Type == "source" {
+				continue // skip source nodes from overview graph
+			}
+			entitySet[e.ID] = true
+			nodes = append(nodes, node{ID: e.ID, Type: e.Type, Name: e.Name, Connections: connCounts[e.ID]})
+		}
+
+		// All relations (only between non-source entities)
 		rows, err := s.db.ReadDB().Query("SELECT source_id, target_id, relation FROM relations")
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
 				var e edge
 				rows.Scan(&e.Source, &e.Target, &e.Relation)
-				edges = append(edges, e)
+				if entitySet[e.Source] && entitySet[e.Target] {
+					edges = append(edges, e)
+				}
 			}
 		}
 	}
@@ -644,6 +671,42 @@ func defaultStaticHandler(projectDir string) http.HandlerFunc {
 		}
 		http.NotFound(w, r)
 	}
+}
+
+func (s *WebServer) handleProvenance(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	source := r.URL.Query().Get("source")
+	article := r.URL.Query().Get("article")
+
+	if source == "" && article == "" {
+		http.Error(w, "either 'source' or 'article' query parameter required", http.StatusBadRequest)
+		return
+	}
+
+	mfPath := filepath.Join(s.projectDir, ".manifest.json")
+	mf, err := manifest.Load(mfPath)
+	if err != nil {
+		http.Error(w, "failed to load manifest", http.StatusInternalServerError)
+		return
+	}
+
+	if source != "" {
+		articles := mf.ArticlesFromSource(source)
+		items := make([]map[string]string, 0, len(articles))
+		for _, name := range articles {
+			c := mf.Concepts[name]
+			items = append(items, map[string]string{"concept": name, "article_path": c.ArticlePath})
+		}
+		writeJSON(w, map[string]any{"source": source, "articles": items, "total": len(items)})
+		return
+	}
+
+	sources := mf.SourcesForArticle(article)
+	writeJSON(w, map[string]any{"article": article, "sources": sources, "total": len(sources)})
 }
 
 // --- Helpers ---
