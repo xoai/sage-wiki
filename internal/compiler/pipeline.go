@@ -194,7 +194,8 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	chunkStore := memory.NewChunkStore(db)
 
 	merged := ontology.MergedRelations(cfg.Ontology.Relations)
-	pipelineOntStore := ontology.NewStore(db, ontology.ValidRelationNames(merged))
+	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+	pipelineOntStore := ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
 
 	// Backfill chunk index if needed (after migration, before first compile)
 	if chunkStore.NeedsBackfill(memStore) {
@@ -369,7 +370,8 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 				}
 
 				merged := ontology.MergedRelations(cfg.Ontology.Relations)
-				ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged))
+				mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+				ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
 
 				client.SetPass("write")
 				var writeCacheID string
@@ -785,7 +787,8 @@ func resumeBatch(
 				}
 
 				merged := ontology.MergedRelations(cfg.Ontology.Relations)
-				ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged))
+				mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+				ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
 				client.SetPass("write")
 				writeCacheID, _ := client.SetupCache("You are a knowledge base article writer. Write comprehensive, well-structured wiki articles.", writeModel)
 				relPatterns := ontology.RelationPatterns(merged)

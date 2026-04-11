@@ -75,7 +75,7 @@ func TestComputeGraphExpansion_EmptySeeds(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	ont := ontology.NewStore(db, nil)
+	ont := ontology.NewStore(db, nil, nil)
 
 	expanded := computeGraphExpansion(cfg, ont, nil)
 	if expanded != nil {
@@ -90,7 +90,7 @@ func TestComputeGraphExpansion_WithGraph(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	ont := ontology.NewStore(db, nil)
+	ont := ontology.NewStore(db, nil, nil)
 
 	// Build graph: attention --extends--> transformer, both cite same source
 	ont.AddEntity(ontology.Entity{ID: "attention", Type: "concept", Name: "Attention", ArticlePath: "wiki/concepts/attention.md"})
@@ -134,7 +134,7 @@ func TestComputeGraphExpansion_DisabledByConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	ont := ontology.NewStore(db, nil)
+	ont := ontology.NewStore(db, nil, nil)
 
 	ont.AddEntity(ontology.Entity{ID: "attention", Type: "concept", Name: "Attention", ArticlePath: "wiki/concepts/attention.md"})
 	ont.AddEntity(ontology.Entity{ID: "transformer", Type: "concept", Name: "Transformer", ArticlePath: "wiki/concepts/transformer.md"})

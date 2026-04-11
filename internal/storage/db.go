@@ -237,9 +237,52 @@ CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_id);
 CREATE INDEX IF NOT EXISTS idx_relations_type ON relations(relation);
 `
 
-// migrationV3 adds chunk-level indexing tables for enhanced search.
+// migrationV3 removes the CHECK constraint on entities.type to support custom entity types
+// AND adds chunk-level indexing tables for enhanced search.
+// Foreign keys are disabled during the migration to prevent data loss when
+// dropping and recreating the entities table (relations FK references become
+// temporarily invalid).
 const migrationV3 = `
--- Chunk metadata (IDs, positions, content)
+PRAGMA foreign_keys = OFF;
+
+-- Part A: Remove CHECK constraint on entities.type for custom entity types
+CREATE TABLE IF NOT EXISTS entities_new (
+	id TEXT PRIMARY KEY,
+	type TEXT NOT NULL,
+	name TEXT NOT NULL,
+	definition TEXT,
+	article_path TEXT,
+	metadata JSON,
+	created_at TEXT,
+	updated_at TEXT
+);
+
+INSERT OR IGNORE INTO entities_new SELECT * FROM entities;
+DROP TABLE IF EXISTS entities;
+ALTER TABLE entities_new RENAME TO entities;
+
+-- Recreate relations table to restore CASCADE DELETE on the new entities table
+CREATE TABLE IF NOT EXISTS relations_rebuild (
+	id TEXT PRIMARY KEY,
+	source_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+	target_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+	relation TEXT NOT NULL,
+	metadata JSON,
+	created_at TEXT,
+	UNIQUE(source_id, target_id, relation)
+);
+
+INSERT OR IGNORE INTO relations_rebuild SELECT * FROM relations;
+DROP TABLE IF EXISTS relations;
+ALTER TABLE relations_rebuild RENAME TO relations;
+
+CREATE INDEX IF NOT EXISTS idx_relations_source ON relations(source_id);
+CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_id);
+CREATE INDEX IF NOT EXISTS idx_relations_type ON relations(relation);
+
+PRAGMA foreign_keys = ON;
+
+-- Part B: Chunk-level indexing for enhanced search
 CREATE TABLE IF NOT EXISTS chunks_meta (
 	chunk_id TEXT PRIMARY KEY,
 	doc_id TEXT NOT NULL,
@@ -251,15 +294,12 @@ CREATE TABLE IF NOT EXISTS chunks_meta (
 );
 CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks_meta(doc_id);
 
--- FTS5 for chunk search (regular table, stores its own copy of text)
--- chunk_id is UNINDEXED so it doesn't pollute BM25 rankings but is available for JOIN
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
 	chunk_id UNINDEXED,
 	heading, content,
 	tokenize='porter unicode61'
 );
 
--- Chunk vector embeddings
 CREATE TABLE IF NOT EXISTS vec_chunks (
 	chunk_id TEXT PRIMARY KEY,
 	doc_id TEXT NOT NULL,

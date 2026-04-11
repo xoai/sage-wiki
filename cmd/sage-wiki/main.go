@@ -348,12 +348,14 @@ func runLint(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	merged := ontology.MergedRelations(cfg.Ontology.Relations)
+	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
+	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 	ctx := &linter.LintContext{
-		ProjectDir:     dir,
-		OutputDir:      cfg.Output,
-		DBPath:         filepath.Join(dir, ".sage", "wiki.db"),
-		ValidRelations: ontology.ValidRelationNames(merged),
+		ProjectDir:       dir,
+		OutputDir:        cfg.Output,
+		DBPath:           filepath.Join(dir, ".sage", "wiki.db"),
+		ValidRelations:   ontology.ValidRelationNames(mergedRels),
+		ValidEntityTypes: ontology.ValidEntityTypeNames(mergedTypes),
 	}
 
 	runner := linter.NewRunner()

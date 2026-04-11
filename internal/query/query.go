@@ -121,7 +121,7 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 	// Auto-file to outputs/
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
-	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(ontology.MergedRelations(cfg.Ontology.Relations)))
+	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(ontology.MergedRelations(cfg.Ontology.Relations)), ontology.ValidEntityTypeNames(ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)))
 	embedder := embed.NewFromConfig(cfg)
 	chunkStore := memory.NewChunkStore(db)
 	outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault()})
@@ -139,7 +139,7 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 func buildQueryContext(projectDir string, question string, topK int, cfg *config.Config, db *storage.DB) (string, []string, error) {
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
-	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(ontology.MergedRelations(cfg.Ontology.Relations)))
+	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(ontology.MergedRelations(cfg.Ontology.Relations)), ontology.ValidEntityTypeNames(ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)))
 	chunkStore := memory.NewChunkStore(db)
 	embedder := embed.NewFromConfig(cfg)
 
@@ -440,7 +440,7 @@ func SaveAnswer(projectDir string, question string, answer string, sources []str
 	}
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
-	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(ontology.MergedRelations(cfg.Ontology.Relations)))
+	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(ontology.MergedRelations(cfg.Ontology.Relations)), ontology.ValidEntityTypeNames(ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)))
 	embedder := embed.NewFromConfig(cfg)
 	chunkStore := memory.NewChunkStore(db)
 	result := &QueryResult{
@@ -638,7 +638,7 @@ func StreamQuery(ctx context.Context, projectDir string, question string, topK i
 		}
 		memStore := memory.NewStore(db)
 		vecStore := vectors.NewStore(db)
-		ontStore := ontology.NewStore(db, ontology.ValidRelationNames(ontology.MergedRelations(cfg.Ontology.Relations)))
+		ontStore := ontology.NewStore(db, ontology.ValidRelationNames(ontology.MergedRelations(cfg.Ontology.Relations)), ontology.ValidEntityTypeNames(ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)))
 		embedder := embed.NewFromConfig(cfg)
 		chunkStore := memory.NewChunkStore(db)
 		if outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault()}); err != nil {

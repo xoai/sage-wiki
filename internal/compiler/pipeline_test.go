@@ -229,7 +229,7 @@ func TestHandleRemovedSources_SingleSourcePrune(t *testing.T) {
 
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
-	ontStore := ontology.NewStore(db, nil)
+	ontStore := ontology.NewStore(db, nil, nil)
 
 	// Index the article in FTS5 and ontology
 	memStore.Add(memory.Entry{ID: "concept:attention", Content: "Attention content", Tags: []string{"concept"}, ArticlePath: articlePath})
@@ -286,7 +286,7 @@ func TestHandleRemovedSources_SingleSourceNoPrune(t *testing.T) {
 
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
-	ontStore := ontology.NewStore(db, nil)
+	ontStore := ontology.NewStore(db, nil, nil)
 
 	memStore.Add(memory.Entry{ID: "concept:attention", Content: "Attention", Tags: []string{"concept"}, ArticlePath: articlePath})
 	ontStore.AddEntity(ontology.Entity{ID: "attention", Type: "concept", Name: "Attention", ArticlePath: articlePath})
@@ -331,7 +331,7 @@ func TestHandleRemovedSources_MultiSource(t *testing.T) {
 
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
-	ontStore := ontology.NewStore(db, nil)
+	ontStore := ontology.NewStore(db, nil, nil)
 
 	mf := manifest.New()
 	mf.AddSource("raw/paper.pdf", "sha256:abc", "paper", 5000)
@@ -364,7 +364,7 @@ func TestHandleRemovedSources_NoOrphans(t *testing.T) {
 
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
-	ontStore := ontology.NewStore(db, nil)
+	ontStore := ontology.NewStore(db, nil, nil)
 
 	mf := manifest.New()
 	mf.AddSource("raw/paper.pdf", "sha256:abc", "paper", 5000)

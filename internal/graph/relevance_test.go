@@ -16,7 +16,7 @@ func setupTestStore(t *testing.T) *ontology.Store {
 		t.Fatalf("open db: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	return ontology.NewStore(db, ontology.ValidRelationNames(ontology.BuiltinRelations))
+	return ontology.NewStore(db, ontology.ValidRelationNames(ontology.BuiltinRelations), ontology.ValidEntityTypeNames(ontology.BuiltinEntityTypes))
 }
 
 // buildTestGraph creates:

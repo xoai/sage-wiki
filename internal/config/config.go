@@ -11,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var relationNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+var typeNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 // Config represents the sage-wiki project configuration.
 type Config struct {
@@ -205,15 +205,22 @@ type ServeConfig struct {
 	Port      int    `yaml:"port"`
 }
 
-// OntologyConfig configures ontology relation types.
+// OntologyConfig configures ontology relation and entity types.
 type OntologyConfig struct {
-	Relations []RelationConfig `yaml:"relations,omitempty"`
+	Relations   []RelationConfig   `yaml:"relations,omitempty"`
+	EntityTypes []EntityTypeConfig `yaml:"entity_types,omitempty"`
 }
 
 // RelationConfig defines a custom or extended relation type.
 type RelationConfig struct {
 	Name     string   `yaml:"name"`
 	Synonyms []string `yaml:"synonyms"`
+}
+
+// EntityTypeConfig defines a custom or extended entity type.
+type EntityTypeConfig struct {
+	Name        string `yaml:"name"`
+	Description string `yaml:"description,omitempty"`
 }
 
 // Defaults returns a Config with sensible defaults for greenfield mode.
@@ -339,8 +346,16 @@ func (c *Config) Validate() error {
 		if r.Name == "" {
 			return fmt.Errorf("config: ontology.relations: name is required")
 		}
-		if !relationNameRe.MatchString(r.Name) {
+		if !typeNameRe.MatchString(r.Name) {
 			return fmt.Errorf("config: ontology.relations: invalid name %q (must match [a-z][a-z0-9_]*)", r.Name)
+		}
+	}
+	for _, et := range c.Ontology.EntityTypes {
+		if et.Name == "" {
+			return fmt.Errorf("config: ontology.entity_types: name is required")
+		}
+		if !typeNameRe.MatchString(et.Name) {
+			return fmt.Errorf("config: ontology.entity_types: invalid name %q (must match [a-z][a-z0-9_]*)", et.Name)
 		}
 	}
 	if c.Search.ChunkSize != 0 && (c.Search.ChunkSize < 100 || c.Search.ChunkSize > 5000) {
