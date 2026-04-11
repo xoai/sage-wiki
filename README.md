@@ -126,6 +126,7 @@ See the [self-hosting guide](docs/guides/self-hosted-server.md) for Docker Compo
 | `sage-wiki list` | List wiki entities, concepts, or sources |
 | `sage-wiki write <summary\|article>` | Write a summary or article |
 | `sage-wiki ontology <query\|list\|add>` | Query, list, and manage the ontology graph |
+| `sage-wiki hub <add\|remove\|search\|status\|list\|compile>` | Multi-project hub commands |
 | `sage-wiki learn "text"` | Store a learning entry |
 | `sage-wiki capture "text"` | Capture knowledge from text |
 | `sage-wiki add-source <path>` | Register a source file in the manifest |

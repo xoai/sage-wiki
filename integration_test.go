@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/xoai/sage-wiki/internal/hub"
 	"github.com/xoai/sage-wiki/internal/linter"
 	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
 	"github.com/xoai/sage-wiki/internal/memory"
@@ -206,7 +207,28 @@ Self-attention computes contextual representations.
 		t.Logf("lint findings: %d", len(results))
 	})
 
-	// Step 12: Learn via StoreLearning (no API needed)
+	// Step 12: Hub add + list (no API needed)
+	t.Run("hub_add_list", func(t *testing.T) {
+		hubCfg := hub.New()
+		overwritten := hubCfg.AddProject("test-project", hub.Project{
+			Path: dir, Searchable: true,
+		})
+		if overwritten {
+			t.Error("first add should return false")
+		}
+		overwritten = hubCfg.AddProject("test-project", hub.Project{
+			Path: dir, Searchable: true, Description: "updated",
+		})
+		if !overwritten {
+			t.Error("second add should return true (overwrite)")
+		}
+		projects := hubCfg.SearchableProjects()
+		if len(projects) != 1 {
+			t.Errorf("expected 1 searchable project, got %d", len(projects))
+		}
+	})
+
+	// Step 13: Learn via StoreLearning (no API needed)
 	t.Run("learn", func(t *testing.T) {
 		db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
 		if err != nil {
