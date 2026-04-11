@@ -136,3 +136,28 @@ func TestSynthesizeHierarchicalSingleSummary(t *testing.T) {
 		t.Errorf("expected pass-through, got %q", result)
 	}
 }
+
+func TestValidateSummary(t *testing.T) {
+	tests := []struct {
+		name    string
+		text    string
+		wantErr bool
+	}{
+		{"empty", "", true},
+		{"too short", "This is short.", true},
+		{"exactly 100 chars", string(make([]rune, 100)), false},
+		{"valid summary", "这是一个足够长的摘要文本，包含了足够多的内容来通过最低质量检查。" +
+			"我们需要确保摘要有足够的信息量，不能太短。这段文字需要超过一百个字符的最低要求才能通过验证。" +
+			"所以我们在这里添加更多的内容来确保它足够长。", false},
+		{"whitespace padded but short content", "   short   ", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateSummary(tt.text)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateSummary(%q): got err=%v, wantErr=%v", tt.name, err, tt.wantErr)
+			}
+		})
+	}
+}

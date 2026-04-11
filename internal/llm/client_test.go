@@ -223,6 +223,22 @@ func TestBackoffDelay(t *testing.T) {
 	}
 }
 
+func TestIsRetryable(t *testing.T) {
+	retryable := []int{429, 500, 502, 503}
+	for _, code := range retryable {
+		if !isRetryable(code) {
+			t.Errorf("expected %d to be retryable", code)
+		}
+	}
+
+	notRetryable := []int{200, 400, 401, 403, 404, 422}
+	for _, code := range notRetryable {
+		if isRetryable(code) {
+			t.Errorf("expected %d to NOT be retryable", code)
+		}
+	}
+}
+
 func TestOllamaUsesOpenAIFormat(t *testing.T) {
 	client, err := NewClient("ollama", "", "", 0)
 	if err != nil {

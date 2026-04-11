@@ -75,8 +75,8 @@ func TestCompileWithMockLLM(t *testing.T) {
 			// Pass 3: article writing
 			content = "---\nconcept: test-concept\n---\n\n# Test Concept\n\nA test concept."
 		} else {
-			// Pass 1: summarization
-			content = "## Key claims\nTest claim.\n\n## Concepts\ntest-concept"
+			// Pass 1: summarization (must be ≥100 chars to pass quality validation)
+			content = "## Key claims\n\nThis document discusses the main concepts and findings related to the test subject matter.\n\n## Concepts\n\ntest-concept: A fundamental concept extracted from the source material."
 		}
 
 		json.NewEncoder(w).Encode(map[string]any{
