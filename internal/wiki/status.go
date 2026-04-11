@@ -105,8 +105,8 @@ func GetStatus(projectDir string, stores *Stores) (*StatusInfo, error) {
 	if embedder != nil {
 		info.EmbedProvider = embedder.Name()
 		info.EmbedDims = embedder.Dimensions()
-		// Check dimension mismatch
-		if info.VectorDims > 0 && info.VectorDims != embedder.Dimensions() {
+		// Check dimension mismatch (0 means unknown — skip check)
+		if info.VectorDims > 0 && info.EmbedDims > 0 && info.VectorDims != info.EmbedDims {
 			info.DimMismatch = true
 		}
 	} else {
