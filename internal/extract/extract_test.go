@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xoai/sage-wiki/internal/config"
 )
 
 func TestExtractMarkdown(t *testing.T) {
@@ -247,9 +249,46 @@ func TestDetectSourceType(t *testing.T) {
 		{"transcript.vtt", "article"},
 	}
 	for _, tt := range tests {
-		got := DetectSourceType(tt.path)
+		got := DetectSourceType(tt.path, "", nil)
 		if got != tt.expected {
 			t.Errorf("DetectSourceType(%s) = %s, want %s", tt.path, got, tt.expected)
 		}
+	}
+}
+
+func TestDetectSourceTypeWithSignals(t *testing.T) {
+	signals := []config.TypeSignal{
+		{
+			Type:             "regulation",
+			FilenameKeywords: []string{"法规", "办法"},
+			ContentKeywords:  []string{"第一条", "第二条"},
+			MinContentHits:   2,
+		},
+		{
+			Type:             "research",
+			FilenameKeywords: []string{"研报"},
+			ContentKeywords:  []string{"投资评级"},
+			MinContentHits:   1,
+		},
+	}
+
+	// Filename match
+	if got := DetectSourceType("证券法规汇编.pdf", "", signals); got != "regulation" {
+		t.Errorf("filename match: got %s, want regulation", got)
+	}
+
+	// Content match
+	if got := DetectSourceType("unknown.pdf", "第一条 本办法 第二条", signals); got != "regulation" {
+		t.Errorf("content match: got %s, want regulation", got)
+	}
+
+	// Content below threshold
+	if got := DetectSourceType("unknown.pdf", "第一条 只有一个关键词", signals); got != "paper" {
+		t.Errorf("below threshold: got %s, want paper (fallback)", got)
+	}
+
+	// No signals — fallback
+	if got := DetectSourceType("test.pdf", "", nil); got != "paper" {
+		t.Errorf("no signals: got %s, want paper", got)
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode"
+
+	"github.com/xoai/sage-wiki/internal/config"
 )
 
 // SourceContent holds extracted text from a source file.
@@ -33,7 +35,11 @@ func Extract(path string, sourceType string) (*SourceContent, error) {
 	case ext == ".md":
 		return extractMarkdown(path, sourceType)
 	case ext == ".pdf":
-		return extractPDF(path)
+		sc, err := extractPDF(path)
+		if err == nil && sourceType != "" {
+			sc.Type = sourceType
+		}
+		return sc, err
 	case ext == ".docx":
 		return extractDocx(path)
 	case ext == ".xlsx":
@@ -293,8 +299,18 @@ func splitByParagraphs(text string, maxTokens int) []Chunk {
 	return chunks
 }
 
-// DetectSourceType guesses source type from file extension.
-func DetectSourceType(path string) string {
+// DetectSourceType detects the source type from file path, optional content
+// head text, and optional config-driven type signals.
+// When typeSignals is nil or empty, falls back to extension-only detection.
+func DetectSourceType(path string, contentHead string, typeSignals []config.TypeSignal) string {
+	// Try config-driven signals first
+	for _, sig := range typeSignals {
+		if matchesSignal(path, contentHead, sig) {
+			return sig.Type
+		}
+	}
+
+	// Fallback to extension-based detection
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
 	case ".pdf":
@@ -321,4 +337,33 @@ func DetectSourceType(path string) string {
 		}
 		return "article"
 	}
+}
+
+// matchesSignal checks if a file matches a type signal by filename keywords
+// or content keywords (first 500 chars, including PDF first-page text).
+func matchesSignal(path, contentHead string, sig config.TypeSignal) bool {
+	filenameLower := strings.ToLower(filepath.Base(path))
+
+	// Filename keyword match — any one keyword is enough
+	for _, kw := range sig.FilenameKeywords {
+		if strings.Contains(filenameLower, strings.ToLower(kw)) {
+			return true
+		}
+	}
+
+	// Content keyword match — must hit MinContentHits threshold
+	if contentHead != "" && sig.MinContentHits > 0 {
+		contentLower := strings.ToLower(contentHead)
+		hits := 0
+		for _, kw := range sig.ContentKeywords {
+			if strings.Contains(contentLower, strings.ToLower(kw)) {
+				hits++
+			}
+		}
+		if hits >= sig.MinContentHits {
+			return true
+		}
+	}
+
+	return false
 }
