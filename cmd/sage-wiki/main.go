@@ -38,8 +38,15 @@ var (
 )
 
 func main() {
+	rootCmd.SilenceErrors = true
+	rootCmd.SilenceUsage = true
+
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		if outputFormat == "json" {
+			fmt.Println(cli.FormatJSON(false, nil, err.Error()))
+		} else {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+		}
 		os.Exit(1)
 	}
 }

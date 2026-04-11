@@ -118,11 +118,14 @@ func runHubAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	name := cfg.Project
-	hubCfg.AddProject(name, hub.Project{
+	overwritten := hubCfg.AddProject(name, hub.Project{
 		Path:        dir,
 		Description: cfg.Description,
 		Searchable:  true,
 	})
+	if overwritten {
+		fmt.Fprintf(cmd.ErrOrStderr(), "info: project %q already existed, overwriting\n", name)
+	}
 	if err := hubCfg.Save(hub.DefaultPath()); err != nil {
 		if outputFormat == "json" {
 			fmt.Println(cli.FormatJSON(false, nil, err.Error()))

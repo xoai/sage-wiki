@@ -47,8 +47,11 @@ func (c *HubConfig) Save(path string) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-func (c *HubConfig) AddProject(name string, p Project) {
+// AddProject adds or updates a project. Returns true if it overwrote an existing entry.
+func (c *HubConfig) AddProject(name string, p Project) bool {
+	_, existed := c.Projects[name]
 	c.Projects[name] = p
+	return existed
 }
 
 func (c *HubConfig) RemoveProject(name string) {

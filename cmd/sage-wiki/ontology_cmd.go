@@ -28,6 +28,12 @@ var ontologyAddCmd = &cobra.Command{
 	RunE:  runOntologyAdd,
 }
 
+var ontologyListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List entities or relations",
+	RunE:  runOntologyList,
+}
+
 func init() {
 	ontologyQueryCmd.Flags().String("entity", "", "Entity ID to start from")
 	ontologyQueryCmd.Flags().String("relation", "", "Filter by relation type")
@@ -42,7 +48,12 @@ func init() {
 	ontologyAddCmd.Flags().String("entity-type", "concept", "Entity type")
 	ontologyAddCmd.Flags().String("entity-name", "", "Human-readable name")
 
-	ontologyCmd.AddCommand(ontologyQueryCmd, ontologyAddCmd)
+	ontologyListCmd.Flags().String("type", "entities", "What to list: entities or relations")
+	ontologyListCmd.Flags().String("entity-type", "", "Filter entities by type (concept, source, etc.)")
+	ontologyListCmd.Flags().String("relation-type", "", "Filter relations by type")
+	ontologyListCmd.Flags().Int("limit", 100, "Maximum results")
+
+	ontologyCmd.AddCommand(ontologyQueryCmd, ontologyAddCmd, ontologyListCmd)
 }
 
 func openOntStore(dir string) (*storage.DB, *ontology.Store, error) {
@@ -180,4 +191,67 @@ func runOntologyAdd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	return fmt.Errorf("%s", errMsg)
+}
+
+func runOntologyList(cmd *cobra.Command, args []string) error {
+	dir, _ := filepath.Abs(projectDir)
+	listType, _ := cmd.Flags().GetString("type")
+	limit, _ := cmd.Flags().GetInt("limit")
+
+	db, ont, err := openOntStore(dir)
+	if err != nil {
+		if outputFormat == "json" {
+			fmt.Println(cli.FormatJSON(false, nil, err.Error()))
+			return nil
+		}
+		return err
+	}
+	defer db.Close()
+
+	switch listType {
+	case "entities":
+		entityType, _ := cmd.Flags().GetString("entity-type")
+		entities, err := ont.ListEntities(entityType)
+		if err != nil {
+			if outputFormat == "json" {
+				fmt.Println(cli.FormatJSON(false, nil, err.Error()))
+				return nil
+			}
+			return err
+		}
+		if limit > 0 && len(entities) > limit {
+			entities = entities[:limit]
+		}
+		if outputFormat == "json" {
+			fmt.Println(cli.FormatJSON(true, entities, ""))
+			return nil
+		}
+		fmt.Printf("Entities: %d\n", len(entities))
+		for _, e := range entities {
+			fmt.Printf("  [%s] %s (%s)\n", e.Type, e.Name, e.ID)
+		}
+
+	case "relations":
+		relType, _ := cmd.Flags().GetString("relation-type")
+		rels, err := ont.ListRelations(relType, limit)
+		if err != nil {
+			if outputFormat == "json" {
+				fmt.Println(cli.FormatJSON(false, nil, err.Error()))
+				return nil
+			}
+			return err
+		}
+		if outputFormat == "json" {
+			fmt.Println(cli.FormatJSON(true, rels, ""))
+			return nil
+		}
+		fmt.Printf("Relations: %d\n", len(rels))
+		for _, r := range rels {
+			fmt.Printf("  %s -[%s]-> %s\n", r.SourceID, r.Relation, r.TargetID)
+		}
+
+	default:
+		return fmt.Errorf("unknown list type %q, use 'entities' or 'relations'", listType)
+	}
+	return nil
 }
