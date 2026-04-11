@@ -10,6 +10,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/log"
 	"strings"
 
+	"github.com/xoai/sage-wiki/internal/cli"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
@@ -30,14 +31,22 @@ import (
 )
 
 var (
-	projectDir string
-	configPath string
-	verbosity  int
+	projectDir   string
+	configPath   string
+	verbosity    int
+	outputFormat string
 )
 
 func main() {
+	rootCmd.SilenceErrors = true
+	rootCmd.SilenceUsage = true
+
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		if outputFormat == "json" {
+			fmt.Println(cli.FormatJSON(false, nil, err.Error()))
+		} else {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+		}
 		os.Exit(1)
 	}
 }
@@ -126,6 +135,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&projectDir, "project", ".", "Project directory")
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Config file path (default: <project>/config.yaml)")
 	rootCmd.PersistentFlags().CountVarP(&verbosity, "verbose", "v", "Increase log verbosity (-v for info, -vv for debug)")
+	rootCmd.PersistentFlags().StringVar(&outputFormat, "format", "text", "Output format: text or json")
 
 	// Init flags
 	initCmd.Flags().Bool("vault", false, "Initialize as vault overlay on existing Obsidian vault")
@@ -158,7 +168,7 @@ func init() {
 	searchCmd.Flags().StringSlice("tags", nil, "Filter by tags")
 	searchCmd.Flags().Int("limit", 10, "Maximum results")
 
-	rootCmd.AddCommand(initCmd, compileCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd)
+	rootCmd.AddCommand(initCmd, compileCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, hubCmd)
 }
 
 // Placeholder implementations — will be filled in subsequent tasks
@@ -287,6 +297,11 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if outputFormat == "json" {
+		fmt.Println(cli.FormatJSON(true, result, ""))
+		return nil
+	}
+
 	fmt.Printf("Compile complete: +%d added, ~%d modified, -%d removed, %d summarized, %d concepts, %d articles",
 		result.Added, result.Modified, result.Removed, result.Summarized,
 		result.ConceptsExtracted, result.ArticlesWritten)
@@ -362,6 +377,11 @@ func runLint(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if outputFormat == "json" {
+		fmt.Println(cli.FormatJSON(true, results, ""))
+		return nil
+	}
+
 	fmt.Print(linter.FormatFindings(results))
 
 	if err := linter.SaveReport(dir, results); err != nil {
@@ -409,6 +429,11 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if outputFormat == "json" {
+		fmt.Println(cli.FormatJSON(true, results, ""))
+		return nil
+	}
+
 	if len(results) == 0 {
 		fmt.Println("No results found.")
 		return nil
@@ -450,9 +475,17 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
 	info, err := wiki.GetStatus(dir, nil)
 	if err != nil {
+		if outputFormat == "json" {
+			fmt.Println(cli.FormatJSON(false, nil, err.Error()))
+			return nil
+		}
 		return err
 	}
-	fmt.Print(wiki.FormatStatus(info))
+	if outputFormat == "json" {
+		fmt.Println(cli.FormatJSON(true, info, ""))
+	} else {
+		fmt.Print(wiki.FormatStatus(info))
+	}
 	return nil
 }
 

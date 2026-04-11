@@ -48,6 +48,11 @@ func Diff(projectDir string, cfg *config.Config, mf *manifest.Manifest) (*DiffRe
 				return nil
 			}
 
+			// 跳过隐藏文件（.DS_Store 等）
+			if strings.HasPrefix(d.Name(), ".") {
+				return nil
+			}
+
 			// Get relative path from project root
 			relPath, _ := filepath.Rel(projectDir, path)
 
