@@ -32,6 +32,7 @@ type Server struct {
 	searcher   *hybrid.Searcher
 	embedder   embed.Embedder
 	cfg        *config.Config
+	language   string
 }
 
 // NewServer creates an MCP server with read tools registered.
@@ -64,6 +65,7 @@ func NewServer(projectDir string) (*Server, error) {
 		searcher:   searcher,
 		embedder:   embed.NewFromConfig(cfg),
 		cfg:        cfg,
+		language:   cfg.Language,
 	}
 
 	mcpServer := server.NewMCPServer(
@@ -131,6 +133,7 @@ func (s *Server) CallTool(ctx context.Context, name string, req mcp.CallToolRequ
 		"wiki_compile":       s.handleCompile,
 		"wiki_lint":          s.handleLint,
 		"wiki_capture":       s.handleCapture,
+		"wiki_provenance":    s.handleProvenance,
 	}
 	if h, ok := handlers[name]; ok {
 		r, _ := h(ctx, req)
@@ -187,6 +190,16 @@ func (s *Server) registerReadTools() {
 			mcp.WithString("type", mcp.Description("Filter by entity type: concept, technique, source, claim, artifact")),
 		),
 		s.handleList,
+	)
+
+	// wiki_provenance
+	s.mcp.AddTool(
+		mcp.NewTool("wiki_provenance",
+			mcp.WithDescription("Show source-article provenance. Given a source path, returns generated articles. Given an article/concept name, returns contributing sources."),
+			mcp.WithString("source", mcp.Description("Source file path (e.g. raw/paper.pdf)")),
+			mcp.WithString("article", mcp.Description("Concept/article name (e.g. attention)")),
+		),
+		s.handleProvenance,
 	)
 }
 
@@ -333,6 +346,40 @@ func (s *Server) handleList(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 		"total":         len(items),
 		"source_count":  mf.SourceCount(),
 		"concept_count": mf.ConceptCount(),
+	}
+
+	data, _ := json.MarshalIndent(result, "", "  ")
+	return textResult(string(data)), nil
+}
+
+func (s *Server) handleProvenance(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+	source, _ := args["source"].(string)
+	article, _ := args["article"].(string)
+
+	if source == "" && article == "" {
+		return errorResult("either 'source' or 'article' parameter is required"), nil
+	}
+
+	mfPath := filepath.Join(s.projectDir, ".manifest.json")
+	mf, err := manifest.Load(mfPath)
+	if err != nil {
+		return errorResult(fmt.Sprintf("load manifest: %v", err)), nil
+	}
+
+	var result map[string]any
+
+	if source != "" {
+		articles := mf.ArticlesFromSource(source)
+		items := make([]map[string]string, 0, len(articles))
+		for _, name := range articles {
+			c := mf.Concepts[name]
+			items = append(items, map[string]string{"concept": name, "article_path": c.ArticlePath})
+		}
+		result = map[string]any{"source": source, "articles": items, "total": len(items)}
+	} else {
+		sources := mf.SourcesForArticle(article)
+		result = map[string]any{"article": article, "sources": sources, "total": len(sources)}
 	}
 
 	data, _ := json.MarshalIndent(result, "", "  ")

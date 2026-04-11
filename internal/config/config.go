@@ -18,6 +18,7 @@ type Config struct {
 	Version     int          `yaml:"version"`
 	Project     string       `yaml:"project"`
 	Description string       `yaml:"description"`
+	Language    string       `yaml:"language,omitempty"`
 	Vault       *VaultConfig `yaml:"vault,omitempty"`
 	Sources     []Source     `yaml:"sources"`
 	Output      string       `yaml:"output"`
@@ -87,6 +88,111 @@ type SearchConfig struct {
 	HybridWeightBM25   float64 `yaml:"hybrid_weight_bm25"`
 	HybridWeightVector float64 `yaml:"hybrid_weight_vector"`
 	DefaultLimit       int     `yaml:"default_limit"`
+	QueryExpansion     *bool   `yaml:"query_expansion,omitempty"` // enable LLM query expansion (default: true)
+	Rerank             *bool   `yaml:"rerank,omitempty"`          // enable LLM re-ranking (default: true)
+	ChunkSize          int     `yaml:"chunk_size,omitempty"`      // tokens per chunk for indexing (default: 800)
+
+	// Graph-enhanced retrieval
+	GraphExpansion       *bool   `yaml:"graph_expansion,omitempty"`        // enable graph-based context expansion (default: true)
+	GraphMaxExpand       int     `yaml:"graph_max_expand,omitempty"`       // max articles added via graph (default: 10)
+	GraphDepth           int     `yaml:"graph_depth,omitempty"`            // traversal depth for expansion (default: 2)
+	ContextMaxTokens     int     `yaml:"context_max_tokens,omitempty"`     // token budget for query context (default: 8000)
+	WeightDirectLink     *float64 `yaml:"weight_direct_link,omitempty"`     // graph signal weight (default: 3.0, set 0 to disable)
+	WeightSourceOverlap  *float64 `yaml:"weight_source_overlap,omitempty"`  // graph signal weight (default: 4.0, set 0 to disable)
+	WeightCommonNeighbor *float64 `yaml:"weight_common_neighbor,omitempty"` // graph signal weight (default: 1.5, set 0 to disable)
+	WeightTypeAffinity   *float64 `yaml:"weight_type_affinity,omitempty"`   // graph signal weight (default: 1.0, set 0 to disable)
+}
+
+// QueryExpansionEnabled returns whether query expansion is enabled (default: true).
+func (s SearchConfig) QueryExpansionEnabled() bool {
+	if s.QueryExpansion == nil {
+		return true
+	}
+	return *s.QueryExpansion
+}
+
+// RerankEnabled returns whether re-ranking is enabled (default: true).
+func (s SearchConfig) RerankEnabled() bool {
+	if s.Rerank == nil {
+		return true
+	}
+	return *s.Rerank
+}
+
+// ChunkSizeOrDefault returns the chunk size or 800 if not set.
+func (s SearchConfig) ChunkSizeOrDefault() int {
+	if s.ChunkSize <= 0 {
+		return 800
+	}
+	return s.ChunkSize
+}
+
+// GraphExpansionEnabled returns whether graph expansion is enabled (default: true).
+func (s SearchConfig) GraphExpansionEnabled() bool {
+	if s.GraphExpansion == nil {
+		return true
+	}
+	return *s.GraphExpansion
+}
+
+// GraphMaxExpandOrDefault returns the max expand or 10 if not set.
+func (s SearchConfig) GraphMaxExpandOrDefault() int {
+	if s.GraphMaxExpand <= 0 {
+		return 10
+	}
+	return s.GraphMaxExpand
+}
+
+// GraphDepthOrDefault returns the graph depth or 2 if not set.
+func (s SearchConfig) GraphDepthOrDefault() int {
+	if s.GraphDepth <= 0 {
+		return 2
+	}
+	return s.GraphDepth
+}
+
+// ContextMaxTokensOrDefault returns the context token budget or 8000 if not set.
+func (s SearchConfig) ContextMaxTokensOrDefault() int {
+	if s.ContextMaxTokens <= 0 {
+		return 8000
+	}
+	return s.ContextMaxTokens
+}
+
+// WeightDirectLinkOrDefault returns the direct link weight or 3.0 if not set.
+// Explicit 0 disables this signal.
+func (s SearchConfig) WeightDirectLinkOrDefault() float64 {
+	if s.WeightDirectLink == nil {
+		return 3.0
+	}
+	return *s.WeightDirectLink
+}
+
+// WeightSourceOverlapOrDefault returns the source overlap weight or 4.0 if not set.
+// Explicit 0 disables this signal.
+func (s SearchConfig) WeightSourceOverlapOrDefault() float64 {
+	if s.WeightSourceOverlap == nil {
+		return 4.0
+	}
+	return *s.WeightSourceOverlap
+}
+
+// WeightCommonNeighborOrDefault returns the common neighbor weight or 1.5 if not set.
+// Explicit 0 disables this signal.
+func (s SearchConfig) WeightCommonNeighborOrDefault() float64 {
+	if s.WeightCommonNeighbor == nil {
+		return 1.5
+	}
+	return *s.WeightCommonNeighbor
+}
+
+// WeightTypeAffinityOrDefault returns the type affinity weight or 1.0 if not set.
+// Explicit 0 disables this signal.
+func (s SearchConfig) WeightTypeAffinityOrDefault() float64 {
+	if s.WeightTypeAffinity == nil {
+		return 1.0
+	}
+	return *s.WeightTypeAffinity
 }
 
 type LintingConfig struct {
@@ -251,6 +357,9 @@ func (c *Config) Validate() error {
 		if !typeNameRe.MatchString(et.Name) {
 			return fmt.Errorf("config: ontology.entity_types: invalid name %q (must match [a-z][a-z0-9_]*)", et.Name)
 		}
+	}
+	if c.Search.ChunkSize != 0 && (c.Search.ChunkSize < 100 || c.Search.ChunkSize > 5000) {
+		return fmt.Errorf("config: search.chunk_size must be 100-5000, got %d", c.Search.ChunkSize)
 	}
 	if c.Compiler.Timezone != "" {
 		loc, err := time.LoadLocation(c.Compiler.Timezone)

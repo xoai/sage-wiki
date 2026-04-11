@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { Sidebar } from './components/Sidebar';
 import { ArticleView } from './components/ArticleView';
+import { GraphView } from './components/GraphView';
 import { connectHotReload } from './lib/hotreload';
 import './style.css';
 
@@ -82,7 +83,7 @@ export function App() {
 
       {/* Sidebar */}
       <div class={`${sidebarOpen ? 'block' : 'hidden'} lg:block`}>
-        <Sidebar onNavigate={navigate} currentPath={currentPath || undefined} theme={theme} onToggleTheme={toggleTheme} reloadKey={reloadKey} searchRef={searchRef} />
+        <Sidebar onNavigate={navigate} onHome={() => { setCurrentPath(null); window.history.pushState({}, '', '/wiki/'); }} currentPath={currentPath || undefined} theme={theme} onToggleTheme={toggleTheme} reloadKey={reloadKey} searchRef={searchRef} />
       </div>
 
       {/* Main content */}
@@ -90,11 +91,8 @@ export function App() {
         {currentPath ? (
           <ArticleView path={currentPath} onNavigate={navigate} reloadKey={reloadKey} />
         ) : (
-          <div class="flex-1 flex items-center justify-center text-gray-400">
-            <div class="text-center">
-              <h2 class="text-2xl mb-2">sage-wiki</h2>
-              <p>Select an article from the sidebar to start reading.</p>
-            </div>
+          <div class="flex-1 h-full">
+            <GraphView onNavigate={navigate} />
           </div>
         )}
       </main>

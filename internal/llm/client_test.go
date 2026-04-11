@@ -244,8 +244,16 @@ func TestStripThinkTags(t *testing.T) {
 		{"multiline tag", "<think>\nstep 1\nstep 2\n</think>\nResult", "Result"},
 		{"tag with trailing whitespace", "<think>internal</think>  \n\nContent here", "Content here"},
 		{"multiple tags", "<think>first</think>A<think>second</think>B", "AB"},
-		{"empty after strip", "<think>only reasoning</think>", ""},
 		{"no think tags just content", "plain text without tags", "plain text without tags"},
+		// Fallback: when strip produces empty, extract think content
+		{"fallback single think", "<think>only reasoning</think>", "only reasoning"},
+		{"fallback with whitespace", "<think>  content  </think>   ", "content"},
+		{"fallback multiline think", "<think>\nline 1\nline 2\n</think>", "line 1\nline 2"},
+		{"fallback first of multiple", "<think>first</think><think>second</think>", "first"},
+		// Edge cases
+		{"empty string", "", ""},
+		{"just whitespace", "   ", ""},
+		{"nested angle brackets", "<think>a<b>c</b>d</think>Real", "Real"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

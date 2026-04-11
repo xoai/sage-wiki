@@ -132,10 +132,23 @@ func TestIsIgnored(t *testing.T) {
 		ignore  []string
 		want    bool
 	}{
+		// Prefix match
 		{"Personal/diary.md", []string{"Personal"}, true},
 		{"Clippings/article.md", []string{"Personal"}, false},
 		{"_wiki/concepts/test.md", []string{"_wiki"}, true},
 		{"raw/article.md", []string{"Personal", "Templates"}, false},
+		// Nested folder match
+		{"raw/project/assets/image.png", []string{"assets"}, true},
+		// Trailing segment match
+		{"raw/project/assets", []string{"assets"}, true},
+		// Glob extension match
+		{"raw/photo.png", []string{"*.png"}, true},
+		// Glob case-insensitive
+		{"raw/photo.PNG", []string{"*.png"}, true},
+		// Glob no-match
+		{"raw/something.md", []string{"*.png"}, false},
+		// Partial name should NOT match (regression guard)
+		{"raw/biology.md", []string{"log"}, false},
 	}
 	for _, tt := range tests {
 		got := isIgnored(tt.path, tt.ignore)

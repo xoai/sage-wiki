@@ -28,6 +28,7 @@ type CompileOpts struct {
 	Fresh    bool              // ignore checkpoint
 	Batch    bool              // use batch API (async, 50% discount)
 	NoCache  bool              // disable prompt caching
+	Prune    bool              // delete orphaned articles when sources removed
 	Tracker  *llm.CostTracker  // optional cost tracker
 }
 
@@ -190,6 +191,19 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
 	embedder := embed.NewFromConfig(cfg)
+	chunkStore := memory.NewChunkStore(db)
+
+	merged := ontology.MergedRelations(cfg.Ontology.Relations)
+	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+	pipelineOntStore := ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
+
+	// Backfill chunk index if needed (after migration, before first compile)
+	if chunkStore.NeedsBackfill(memStore) {
+		log.Info("chunk index empty with existing articles — running backfill")
+		if err := BackfillChunks(projectDir, cfg.Output, cfg.Search.ChunkSizeOrDefault(), chunkStore, vecStore, embedder, db); err != nil {
+			log.Warn("chunk backfill failed", "error", err)
+		}
+	}
 
 	// Initialize checkpoint state
 	if state == nil {
@@ -251,7 +265,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		maxTokens = 2000
 	}
 
-	summaries := Summarize(projectDir, cfg.Output, toProcess, client, model, maxTokens, cfg.Compiler.MaxParallel, cfg.Compiler.UserTimeLocation())
+	summaries := Summarize(projectDir, cfg.Output, toProcess, client, model, maxTokens, cfg.Compiler.MaxParallel, cfg.Compiler.UserTimeLocation(), cfg.Language)
 
 	for _, sr := range summaries {
 		if sr.Error != nil {
@@ -366,7 +380,25 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 				}
 				relPatterns := ontology.RelationPatterns(merged)
 				progress.StartPhase("Pass 3: Write articles", len(concepts))
-				articles := WriteArticles(projectDir, cfg.Output, concepts, client, writeModel, articleMaxTokens, cfg.Compiler.MaxParallel, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserTimeLocation(), cfg.Compiler.ArticleFields, relPatterns)
+				articles := WriteArticles(ArticleWriteOpts{
+					ProjectDir:       projectDir,
+					OutputDir:        cfg.Output,
+					Client:           client,
+					Model:            writeModel,
+					MaxTokens:        articleMaxTokens,
+					MaxParallel:      cfg.Compiler.MaxParallel,
+					MemStore:         memStore,
+					VecStore:         vecStore,
+					OntStore:         ontStore,
+					ChunkStore:       chunkStore,
+					DB:               db,
+					Embedder:         embedder,
+					UserTZ:           cfg.Compiler.UserTimeLocation(),
+					ArticleFields:    cfg.Compiler.ArticleFields,
+					RelationPatterns: relPatterns,
+					ChunkSize:        cfg.Search.ChunkSizeOrDefault(),
+					Language:         cfg.Language,
+				}, concepts)
 
 				for _, ar := range articles {
 					if ar.Error != nil {
@@ -386,13 +418,8 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	// Pass 4: Image extraction (placeholder)
 	ExtractImages(projectDir, cfg.Output, toProcess)
 
-	// Handle removed sources
-	for _, removed := range diff.Removed {
-		mf.RemoveSource(removed)
-		memStore.Delete(removed)
-		vecStore.Delete(removed)
-		log.Info("removed source", "path", removed)
-	}
+	// Handle removed sources — detect orphans BEFORE removing from manifest
+	handleRemovedSources(projectDir, diff.Removed, mf, memStore, vecStore, pipelineOntStore, opts.Prune)
 
 	// Save manifest
 	if err := mf.Save(mfPath); err != nil {
@@ -487,7 +514,7 @@ func submitBatch(
 		}
 
 		templateName := "summarize_" + content.Type
-		if _, err := prompts.Render(templateName, prompts.SummarizeData{}); err != nil {
+		if _, err := prompts.Render(templateName, prompts.SummarizeData{}, ""); err != nil {
 			templateName = "summarize_article"
 		}
 
@@ -495,7 +522,7 @@ func submitBatch(
 			SourcePath: src.Path,
 			SourceType: content.Type,
 			MaxTokens:  maxTokens,
-		})
+		}, cfg.Language)
 		if err != nil {
 			log.Warn("batch: skip source (prompt render failed)", "path", src.Path, "error", err)
 			continue
@@ -624,6 +651,7 @@ func resumeBatch(
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
 	embedder := embed.NewFromConfig(cfg)
+	chunkStore := memory.NewChunkStore(db)
 
 	progress := NewProgress()
 	mfPath := filepath.Join(projectDir, ".manifest.json")
@@ -765,7 +793,25 @@ func resumeBatch(
 				writeCacheID, _ := client.SetupCache("You are a knowledge base article writer. Write comprehensive, well-structured wiki articles.", writeModel)
 				relPatterns := ontology.RelationPatterns(merged)
 				progress.StartPhase("Pass 3: Write articles", len(concepts))
-				articles := WriteArticles(projectDir, cfg.Output, concepts, client, writeModel, articleMaxTokens, cfg.Compiler.MaxParallel, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserTimeLocation(), cfg.Compiler.ArticleFields, relPatterns)
+				articles := WriteArticles(ArticleWriteOpts{
+					ProjectDir:       projectDir,
+					OutputDir:        cfg.Output,
+					Client:           client,
+					Model:            writeModel,
+					MaxTokens:        articleMaxTokens,
+					MaxParallel:      cfg.Compiler.MaxParallel,
+					MemStore:         memStore,
+					VecStore:         vecStore,
+					OntStore:         ontStore,
+					ChunkStore:       chunkStore,
+					DB:               db,
+					Embedder:         embedder,
+					UserTZ:           cfg.Compiler.UserTimeLocation(),
+					ArticleFields:    cfg.Compiler.ArticleFields,
+					RelationPatterns: relPatterns,
+					ChunkSize:        cfg.Search.ChunkSizeOrDefault(),
+					Language:         cfg.Language,
+				}, concepts)
 
 				for _, ar := range articles {
 					if ar.Error != nil {
@@ -872,6 +918,57 @@ func filterSuccessful(summaries []SummaryResult) []SummaryResult {
 		}
 	}
 	return result
+}
+
+// handleRemovedSources processes removed source files, detecting orphaned articles
+// and optionally pruning them. Must be called BEFORE mf.RemoveSource() since it
+// needs the manifest entries to look up affected concepts.
+func handleRemovedSources(projectDir string, removed []string, mf *manifest.Manifest,
+	memStore *memory.Store, vecStore *vectors.Store, ontStore *ontology.Store, prune bool) {
+
+	for _, removedPath := range removed {
+		affectedConcepts := mf.ArticlesFromSource(removedPath)
+		for _, conceptName := range affectedConcepts {
+			concept, ok := mf.Concepts[conceptName]
+			if !ok {
+				continue
+			}
+			if len(concept.Sources) <= 1 {
+				log.Warn("article orphaned (sole source removed)",
+					"concept", conceptName,
+					"article", concept.ArticlePath,
+					"source", removedPath)
+				if prune {
+					articleAbs := filepath.Join(projectDir, concept.ArticlePath)
+					if err := os.Remove(articleAbs); err != nil && !os.IsNotExist(err) {
+						log.Warn("failed to delete orphaned article", "path", articleAbs, "error", err)
+					} else {
+						log.Info("pruned orphaned article", "concept", conceptName, "path", concept.ArticlePath)
+					}
+					memStore.Delete("concept:" + conceptName)
+					vecStore.Delete("concept:" + conceptName)
+					ontStore.DeleteEntity(conceptName)
+					delete(mf.Concepts, conceptName)
+				}
+			} else {
+				var updated []string
+				for _, s := range concept.Sources {
+					if s != removedPath {
+						updated = append(updated, s)
+					}
+				}
+				concept.Sources = updated
+				mf.Concepts[conceptName] = concept
+				log.Info("updated concept sources (removed source)",
+					"concept", conceptName, "remaining_sources", len(updated))
+			}
+		}
+
+		mf.RemoveSource(removedPath)
+		memStore.Delete(removedPath)
+		vecStore.Delete(removedPath)
+		log.Info("removed source", "path", removedPath)
+	}
 }
 
 func writeChangelog(projectDir string, outputDir string, result *CompileResult, loc *time.Location) error {

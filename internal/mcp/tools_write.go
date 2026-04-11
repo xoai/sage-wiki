@@ -400,7 +400,7 @@ func extractKnowledgeItems(cfg *config.Config, content, captureCtx, tags string)
 	prompt, err := prompts.Render("capture_knowledge", prompts.CaptureData{
 		Context: captureCtx,
 		Tags:    tags,
-	})
+	}, cfg.Language)
 	if err != nil {
 		return nil, fmt.Errorf("render prompt: %w", err)
 	}

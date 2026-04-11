@@ -237,14 +237,15 @@ CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_id);
 CREATE INDEX IF NOT EXISTS idx_relations_type ON relations(relation);
 `
 
-// migrationV3 removes the CHECK constraint on entities.type to support custom entity types.
-// Same pattern as migrationV2: recreate table without constraint, migrate data, rebuild indexes.
+// migrationV3 removes the CHECK constraint on entities.type to support custom entity types
+// AND adds chunk-level indexing tables for enhanced search.
 // Foreign keys are disabled during the migration to prevent data loss when
 // dropping and recreating the entities table (relations FK references become
 // temporarily invalid).
 const migrationV3 = `
 PRAGMA foreign_keys = OFF;
 
+-- Part A: Remove CHECK constraint on entities.type for custom entity types
 CREATE TABLE IF NOT EXISTS entities_new (
 	id TEXT PRIMARY KEY,
 	type TEXT NOT NULL,
@@ -280,4 +281,30 @@ CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_id);
 CREATE INDEX IF NOT EXISTS idx_relations_type ON relations(relation);
 
 PRAGMA foreign_keys = ON;
+
+-- Part B: Chunk-level indexing for enhanced search
+CREATE TABLE IF NOT EXISTS chunks_meta (
+	chunk_id TEXT PRIMARY KEY,
+	doc_id TEXT NOT NULL,
+	chunk_index INTEGER NOT NULL,
+	heading TEXT,
+	content TEXT NOT NULL,
+	start_offset INTEGER,
+	end_offset INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks_meta(doc_id);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+	chunk_id UNINDEXED,
+	heading, content,
+	tokenize='porter unicode61'
+);
+
+CREATE TABLE IF NOT EXISTS vec_chunks (
+	chunk_id TEXT PRIMARY KEY,
+	doc_id TEXT NOT NULL,
+	embedding BLOB NOT NULL,
+	dimensions INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_vec_chunks_doc ON vec_chunks(doc_id);
 `

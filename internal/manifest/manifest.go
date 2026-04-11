@@ -126,6 +126,28 @@ func (m *Manifest) PendingSources() map[string]Source {
 	return pending
 }
 
+// ArticlesFromSource returns concept names whose Sources list contains the given path.
+func (m *Manifest) ArticlesFromSource(sourcePath string) []string {
+	var names []string
+	for name, c := range m.Concepts {
+		for _, s := range c.Sources {
+			if s == sourcePath {
+				names = append(names, name)
+				break
+			}
+		}
+	}
+	return names
+}
+
+// SourcesForArticle returns the source paths for a given concept name.
+func (m *Manifest) SourcesForArticle(conceptName string) []string {
+	if c, ok := m.Concepts[conceptName]; ok {
+		return c.Sources
+	}
+	return nil
+}
+
 // SourceCount returns the total number of tracked sources.
 func (m *Manifest) SourceCount() int {
 	return len(m.Sources)

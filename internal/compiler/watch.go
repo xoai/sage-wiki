@@ -183,11 +183,13 @@ func scanSnapshot(sourcePaths []string, ignore []string) map[string]string {
 				return nil
 			}
 
-			// Check ignore list
-			for _, ign := range ignore {
-				if strings.Contains(path, ign) {
-					return nil
-				}
+			// Use relative path for consistent ignore matching with Diff
+			relPath, relErr := filepath.Rel(dir, path)
+			if relErr != nil {
+				relPath = path
+			}
+			if isIgnored(relPath, ignore) {
+				return nil
 			}
 
 			hash := quickHash(path)

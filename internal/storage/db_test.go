@@ -28,7 +28,7 @@ func TestOpenAndMigrate(t *testing.T) {
 	}
 
 	// Verify tables exist
-	tables := []string{"entries", "vec_entries", "entities", "relations", "learnings"}
+	tables := []string{"entries", "vec_entries", "entities", "relations", "learnings", "chunks_meta", "chunks_fts", "vec_chunks"}
 	for _, table := range tables {
 		var name string
 		err := db.ReadDB().QueryRow(

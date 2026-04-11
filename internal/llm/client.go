@@ -250,6 +250,26 @@ func (r *rateLimiter) wait() {
 	r.lastCall = time.Now()
 }
 
+// stripThinkTags removes <think>...</think> blocks from LLM responses.
+// Some models (e.g. MiniMax) include reasoning traces that should not appear in output.
+// When the model puts ALL content inside think tags (common with reasoning models
+// under tight token budgets), falls back to extracting the think content rather
+// than returning empty.
+var thinkTagRe = regexp.MustCompile(`(?s)<think>.*?</think>\s*`)
+var thinkContentRe = regexp.MustCompile(`(?s)<think>(.*?)</think>`)
+
+func stripThinkTags(s string) string {
+	stripped := strings.TrimSpace(thinkTagRe.ReplaceAllString(s, ""))
+	if stripped != "" {
+		return stripped
+	}
+	// Fallback: extract content from inside first think block
+	if m := thinkContentRe.FindStringSubmatch(s); len(m) > 1 {
+		return strings.TrimSpace(m[1])
+	}
+	return stripped
+}
+
 // jsonBody creates a JSON request body. Panics on marshal failure
 // since we only marshal known map structures.
 func jsonBody(v any) *bytes.Buffer {
@@ -258,12 +278,4 @@ func jsonBody(v any) *bytes.Buffer {
 		panic(fmt.Sprintf("llm: failed to marshal request body: %v", err))
 	}
 	return bytes.NewBuffer(data)
-}
-
-// stripThinkTags removes <think>...</think> reasoning traces from LLM responses.
-// Some models (DeepSeek, MiniMax) include these in output.
-var thinkTagRe = regexp.MustCompile(`(?s)<think>.*?</think>\s*`)
-
-func stripThinkTags(s string) string {
-	return strings.TrimSpace(thinkTagRe.ReplaceAllString(s, ""))
 }

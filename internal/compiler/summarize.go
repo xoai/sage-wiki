@@ -36,6 +36,7 @@ func Summarize(
 	maxTokens int,
 	maxParallel int,
 	userTZ *time.Location,
+	language string,
 ) []SummaryResult {
 	if maxParallel <= 0 {
 		maxParallel = 4
@@ -55,7 +56,7 @@ func Summarize(
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			result := summarizeOne(projectDir, outputDir, info, client, model, maxTokens, userTZ)
+			result := summarizeOne(projectDir, outputDir, info, client, model, maxTokens, userTZ, language)
 			results[idx] = result
 
 			n := int(done.Add(1))
@@ -79,6 +80,7 @@ func summarizeOne(
 	model string,
 	maxTokens int,
 	userTZ *time.Location,
+	language string,
 ) SummaryResult {
 	result := SummaryResult{SourcePath: info.Path}
 
@@ -109,7 +111,7 @@ func summarizeOne(
 
 	// Select prompt template — try type-specific first, fall back to article
 	templateName := "summarize_" + content.Type
-	if _, err := prompts.Render(templateName, prompts.SummarizeData{}); err != nil {
+	if _, err := prompts.Render(templateName, prompts.SummarizeData{}, ""); err != nil {
 		templateName = "summarize_article" // fallback for unknown types
 	}
 
@@ -119,7 +121,7 @@ func summarizeOne(
 			SourcePath: info.Path,
 			SourceType: content.Type,
 			MaxTokens:  maxTokens,
-		})
+		}, language)
 		if err != nil {
 			result.Error = fmt.Errorf("render prompt: %w", err)
 			return result
@@ -137,7 +139,7 @@ func summarizeOne(
 		summaryText = resp.Content
 	} else {
 		// Multi-chunk: summarize each chunk, then synthesize hierarchically
-		chunkSummaries, err := summarizeChunks(content.Chunks, info, templateName, content.Type, client, model, maxTokens)
+		chunkSummaries, err := summarizeChunks(content.Chunks, info, templateName, content.Type, client, model, maxTokens, language)
 		if err != nil {
 			result.Error = err
 			return result
@@ -209,8 +211,11 @@ func summarizeImage(projectDir string, info SourceInfo, client *llm.Client, mode
 
 const (
 	// minChunkTokenBudget is the minimum output tokens per chunk summary.
-	// Below this, LLMs produce empty or unusable output.
-	minChunkTokenBudget = 200
+	// Reasoning models (MiniMax, DeepSeek) use ~100-200 tokens for <think>
+	// traces, so 200 is too low — the model exhausts the budget on reasoning
+	// with nothing left for actual content. 500 leaves ~300 tokens for output
+	// after think overhead, producing usable summaries (~200 CJK characters).
+	minChunkTokenBudget = 500
 
 	// synthesisGroupSize is the max number of summaries per synthesis call.
 	// Keeps each synthesis step at a manageable compression ratio (~8x).
@@ -228,6 +233,7 @@ func summarizeChunks(
 	client *llm.Client,
 	model string,
 	maxTokens int,
+	language string,
 ) ([]string, error) {
 	// Group chunks if per-chunk budget is too low
 	groups := groupChunks(chunks, maxTokens)
@@ -260,7 +266,7 @@ func summarizeChunks(
 			SourcePath: info.Path,
 			SourceType: sourceType,
 			MaxTokens:  perGroupBudget,
-		})
+		}, language)
 		if err != nil {
 			return nil, fmt.Errorf("group %d render prompt: %w", gi, err)
 		}

@@ -357,3 +357,62 @@ func (s *Store) RelationCount() (int, error) {
 	err := s.db.ReadDB().QueryRow("SELECT COUNT(*) FROM relations").Scan(&count)
 	return count, err
 }
+
+// EntityDegree returns the total number of relations (inbound + outbound) for an entity.
+func (s *Store) EntityDegree(id string) (int, error) {
+	var count int
+	err := s.db.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM relations WHERE source_id=? OR target_id=?", id, id,
+	).Scan(&count)
+	return count, err
+}
+
+// EntitiesCiting returns all entities that have a "cites" relation pointing TO targetID.
+// This is the reverse lookup: "which concepts cite this source?"
+func (s *Store) EntitiesCiting(targetID string) ([]Entity, error) {
+	rows, err := s.db.ReadDB().Query(
+		`SELECT e.id, e.type, e.name, COALESCE(e.definition,''), COALESCE(e.article_path,''), e.created_at, e.updated_at
+		 FROM entities e
+		 JOIN relations r ON r.source_id = e.id
+		 WHERE r.target_id=? AND r.relation=?`, targetID, RelCites,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entities []Entity
+	for rows.Next() {
+		var e Entity
+		if err := rows.Scan(&e.ID, &e.Type, &e.Name, &e.Definition, &e.ArticlePath, &e.CreatedAt, &e.UpdatedAt); err != nil {
+			return nil, err
+		}
+		entities = append(entities, e)
+	}
+	return entities, rows.Err()
+}
+
+// CitedBy returns all entities that entityID cites (forward "cites" lookup).
+// This answers: "which sources does this concept cite?"
+func (s *Store) CitedBy(entityID string) ([]Entity, error) {
+	rows, err := s.db.ReadDB().Query(
+		`SELECT e.id, e.type, e.name, COALESCE(e.definition,''), COALESCE(e.article_path,''), e.created_at, e.updated_at
+		 FROM entities e
+		 JOIN relations r ON r.target_id = e.id
+		 WHERE r.source_id=? AND r.relation=?`, entityID, RelCites,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entities []Entity
+	for rows.Next() {
+		var e Entity
+		if err := rows.Scan(&e.ID, &e.Type, &e.Name, &e.Definition, &e.ArticlePath, &e.CreatedAt, &e.UpdatedAt); err != nil {
+			return nil, err
+		}
+		entities = append(entities, e)
+	}
+	return entities, rows.Err()
+}

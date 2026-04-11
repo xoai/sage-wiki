@@ -329,6 +329,89 @@ func TestCascadeDelete(t *testing.T) {
 	}
 }
 
+func TestEntityDegree(t *testing.T) {
+	store := setupTestDB(t)
+
+	store.AddEntity(Entity{ID: "a", Type: TypeConcept, Name: "A"})
+	store.AddEntity(Entity{ID: "b", Type: TypeConcept, Name: "B"})
+	store.AddEntity(Entity{ID: "c", Type: TypeConcept, Name: "C"})
+	store.AddRelation(Relation{ID: "r1", SourceID: "a", TargetID: "b", Relation: RelExtends})
+	store.AddRelation(Relation{ID: "r2", SourceID: "c", TargetID: "a", Relation: RelImplements})
+
+	deg, err := store.EntityDegree("a")
+	if err != nil {
+		t.Fatalf("EntityDegree: %v", err)
+	}
+	if deg != 2 {
+		t.Errorf("expected degree 2 (1 outbound + 1 inbound), got %d", deg)
+	}
+
+	deg, _ = store.EntityDegree("b")
+	if deg != 1 {
+		t.Errorf("expected degree 1, got %d", deg)
+	}
+
+	// Nonexistent entity
+	deg, _ = store.EntityDegree("nonexistent")
+	if deg != 0 {
+		t.Errorf("expected degree 0 for nonexistent, got %d", deg)
+	}
+}
+
+func TestEntitiesCiting(t *testing.T) {
+	store := setupTestDB(t)
+
+	// Two concepts cite the same source
+	store.AddEntity(Entity{ID: "attention", Type: TypeConcept, Name: "Attention", ArticlePath: "wiki/concepts/attention.md"})
+	store.AddEntity(Entity{ID: "transformer", Type: TypeConcept, Name: "Transformer", ArticlePath: "wiki/concepts/transformer.md"})
+	store.AddEntity(Entity{ID: "raw/paper.pdf", Type: TypeSource, Name: "paper.pdf"})
+
+	store.AddRelation(Relation{ID: "c1", SourceID: "attention", TargetID: "raw/paper.pdf", Relation: RelCites})
+	store.AddRelation(Relation{ID: "c2", SourceID: "transformer", TargetID: "raw/paper.pdf", Relation: RelCites})
+
+	entities, err := store.EntitiesCiting("raw/paper.pdf")
+	if err != nil {
+		t.Fatalf("EntitiesCiting: %v", err)
+	}
+	if len(entities) != 2 {
+		t.Fatalf("expected 2 citing entities, got %d", len(entities))
+	}
+
+	// Non-cites relation should not appear
+	store.AddEntity(Entity{ID: "lstm", Type: TypeConcept, Name: "LSTM"})
+	store.AddRelation(Relation{ID: "r1", SourceID: "lstm", TargetID: "raw/paper.pdf", Relation: RelExtends})
+
+	entities, _ = store.EntitiesCiting("raw/paper.pdf")
+	if len(entities) != 2 {
+		t.Errorf("expected 2 (non-cites excluded), got %d", len(entities))
+	}
+}
+
+func TestCitedBy(t *testing.T) {
+	store := setupTestDB(t)
+
+	store.AddEntity(Entity{ID: "attention", Type: TypeConcept, Name: "Attention"})
+	store.AddEntity(Entity{ID: "raw/paper.pdf", Type: TypeSource, Name: "paper.pdf"})
+	store.AddEntity(Entity{ID: "raw/notes.md", Type: TypeSource, Name: "notes.md"})
+
+	store.AddRelation(Relation{ID: "c1", SourceID: "attention", TargetID: "raw/paper.pdf", Relation: RelCites})
+	store.AddRelation(Relation{ID: "c2", SourceID: "attention", TargetID: "raw/notes.md", Relation: RelCites})
+
+	sources, err := store.CitedBy("attention")
+	if err != nil {
+		t.Fatalf("CitedBy: %v", err)
+	}
+	if len(sources) != 2 {
+		t.Errorf("expected 2 cited sources, got %d", len(sources))
+	}
+
+	// Nonexistent entity
+	sources, _ = store.CitedBy("nonexistent")
+	if len(sources) != 0 {
+		t.Errorf("expected 0 for nonexistent, got %d", len(sources))
+	}
+}
+
 func entityIDs(entities []Entity) []string {
 	ids := make([]string, len(entities))
 	for i, e := range entities {

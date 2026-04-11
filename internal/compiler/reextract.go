@@ -85,6 +85,7 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
 	embedder := embed.NewFromConfig(cfg)
+	chunkStore := memory.NewChunkStore(db)
 
 	// Pass 2: Concept extraction
 	extractModel := cfg.Models.Extract
@@ -117,7 +118,25 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 
 		relPatterns := ontology.RelationPatterns(merged)
 		log.Info("Pass 3: writing articles", "concepts", len(concepts))
-		articles := WriteArticles(projectDir, cfg.Output, concepts, client, writeModel, articleMaxTokens, cfg.Compiler.MaxParallel, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserTimeLocation(), cfg.Compiler.ArticleFields, relPatterns)
+		articles := WriteArticles(ArticleWriteOpts{
+			ProjectDir:       projectDir,
+			OutputDir:        cfg.Output,
+			Client:           client,
+			Model:            writeModel,
+			MaxTokens:        articleMaxTokens,
+			MaxParallel:      cfg.Compiler.MaxParallel,
+			MemStore:         memStore,
+			VecStore:         vecStore,
+			OntStore:         ontStore,
+			ChunkStore:       chunkStore,
+			DB:               db,
+			Embedder:         embedder,
+			UserTZ:           cfg.Compiler.UserTimeLocation(),
+			ArticleFields:    cfg.Compiler.ArticleFields,
+			RelationPatterns: relPatterns,
+			ChunkSize:        cfg.Search.ChunkSizeOrDefault(),
+			Language:         cfg.Language,
+		}, concepts)
 
 		for _, ar := range articles {
 			if ar.Error != nil {

@@ -4,6 +4,7 @@ import { fetchTree, fetchSearch, type TreeData, type SearchHit } from '../lib/ap
 
 interface Props {
   onNavigate: (path: string) => void;
+  onHome: () => void;
   currentPath?: string;
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
@@ -11,7 +12,7 @@ interface Props {
   searchRef?: Ref<HTMLInputElement>;
 }
 
-export function Sidebar({ onNavigate, currentPath, theme, onToggleTheme, reloadKey, searchRef }: Props) {
+export function Sidebar({ onNavigate, onHome, currentPath, theme, onToggleTheme, reloadKey, searchRef }: Props) {
   const [tree, setTree] = useState<TreeData | null>(null);
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<SearchHit[]>([]);
@@ -41,7 +42,7 @@ export function Sidebar({ onNavigate, currentPath, theme, onToggleTheme, reloadK
       {/* Header */}
       <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <h1 class="text-lg font-semibold text-gray-900 dark:text-white">
-          sage-wiki
+          <a href="/wiki/" onClick={(e) => { e.preventDefault(); onHome(); }} class="hover:text-blue-500 cursor-pointer">sage-wiki</a>
         </h1>
         <button
           onClick={onToggleTheme}
