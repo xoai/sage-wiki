@@ -87,8 +87,9 @@ sage-wiki learn "注册制改革的核心变化是从核准制转向注册制" -
 
 **`sage-wiki capture`** — 快速捕获（替代 wiki_capture）
 ```bash
-sage-wiki capture --url "https://..." --project ~/wiki/
 sage-wiki capture --text "..." --project ~/wiki/
+sage-wiki capture --file notes.md --project ~/wiki/
+# sage-wiki capture --url "https://..." --project ~/wiki/  (future: URL capture)
 ```
 
 #### 不需要 CLI 化的
