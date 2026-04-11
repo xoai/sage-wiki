@@ -8,9 +8,12 @@ import (
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/xoai/sage-wiki/internal/hub"
+	"github.com/xoai/sage-wiki/internal/linter"
 	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
 
@@ -185,6 +188,78 @@ Self-attention computes contextual representations.
 		dims, _ := srv.VecStore().Dimensions()
 		if dims != 4 {
 			t.Errorf("expected 4 dimensions, got %d", dims)
+		}
+	})
+
+	// Step 11: Lint (no API needed)
+	t.Run("lint", func(t *testing.T) {
+		runner := linter.NewRunner()
+		ctx := &linter.LintContext{
+			ProjectDir:     dir,
+			OutputDir:      "wiki",
+			DBPath:         filepath.Join(dir, ".sage", "wiki.db"),
+			ValidRelations: []string{"implements", "optimizes"},
+		}
+		results, err := runner.Run(ctx, "", false)
+		if err != nil {
+			t.Fatalf("lint: %v", err)
+		}
+		t.Logf("lint findings: %d", len(results))
+	})
+
+	// Step 12: Hub add + list (no API needed)
+	t.Run("hub_add_list", func(t *testing.T) {
+		hubCfg := hub.New()
+		overwritten := hubCfg.AddProject("test-project", hub.Project{
+			Path: dir, Searchable: true,
+		})
+		if overwritten {
+			t.Error("first add should return false")
+		}
+		overwritten = hubCfg.AddProject("test-project", hub.Project{
+			Path: dir, Searchable: true, Description: "updated",
+		})
+		if !overwritten {
+			t.Error("second add should return true (overwrite)")
+		}
+		projects := hubCfg.SearchableProjects()
+		if len(projects) != 1 {
+			t.Errorf("expected 1 searchable project, got %d", len(projects))
+		}
+	})
+
+	// Step 13: Learn via StoreLearning (no API needed)
+	t.Run("learn", func(t *testing.T) {
+		db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+		if err != nil {
+			t.Fatalf("open db: %v", err)
+		}
+		defer db.Close()
+		err = linter.StoreLearning(db, "gotcha", "integration test learning", "test", "integration")
+		if err != nil {
+			t.Fatalf("StoreLearning: %v", err)
+		}
+	})
+
+	// Step 14: Ontology list (no API needed)
+	t.Run("ontology_list_entities", func(t *testing.T) {
+		entities, err := srv.OntStore().ListEntities("concept")
+		if err != nil {
+			t.Fatalf("ListEntities: %v", err)
+		}
+		if len(entities) != 2 {
+			t.Errorf("expected 2 concept entities, got %d", len(entities))
+		}
+	})
+
+	// Step 15: Ontology list relations (no API needed)
+	t.Run("ontology_list_relations", func(t *testing.T) {
+		rels, err := srv.OntStore().ListRelations("", 100)
+		if err != nil {
+			t.Fatalf("ListRelations: %v", err)
+		}
+		if len(rels) != 2 {
+			t.Errorf("expected 2 relations, got %d", len(rels))
 		}
 	})
 }
