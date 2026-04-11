@@ -122,11 +122,11 @@ func (c *Client) chatCompletionDirect(messages []Message, opts CallOpts) (*Respo
 			return result, nil
 		}
 
-		if resp.StatusCode == 429 {
+		if isRetryable(resp.StatusCode) {
 			delay := backoffDelay(attempt)
-			log.Warn("rate limited, retrying", "attempt", attempt+1, "delay", delay)
+			log.Warn("retryable error, retrying", "status", resp.StatusCode, "attempt", attempt+1, "delay", delay)
 			time.Sleep(delay)
-			lastErr = fmt.Errorf("rate limited (429): %s", string(body))
+			lastErr = fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 			continue
 		}
 
@@ -213,6 +213,12 @@ func defaultRateLimit(provider string) int {
 	default:
 		return 30
 	}
+}
+
+// isRetryable returns true for HTTP status codes that warrant automatic retry.
+// Covers rate limits (429) and transient server errors (500, 502, 503).
+func isRetryable(statusCode int) bool {
+	return statusCode == 429 || statusCode == 500 || statusCode == 502 || statusCode == 503
 }
 
 // backoffDelay returns exponential backoff with jitter, capped at 60s.

@@ -46,9 +46,16 @@ func Summarize(
 	sem := make(chan struct{}, maxParallel)
 	var wg sync.WaitGroup
 	var done atomic.Int32
+	var consecutiveErrors atomic.Int32
 	total := len(sources)
+	stopped := false
 
 	for i, src := range sources {
+		if stopped {
+			results[i] = SummaryResult{SourcePath: src.Path, Error: fmt.Errorf("skipped: circuit breaker triggered")}
+			continue
+		}
+
 		wg.Add(1)
 		sem <- struct{}{}
 
@@ -61,8 +68,14 @@ func Summarize(
 
 			n := int(done.Add(1))
 			if result.Error != nil {
+				errCount := consecutiveErrors.Add(1)
 				log.Error("summarize failed", "progress", fmt.Sprintf("%d/%d", n, total), "source", info.Path, "error", result.Error)
+				if errCount >= 5 {
+					log.Error("circuit breaker: 5 consecutive failures, skipping remaining sources")
+					stopped = true
+				}
 			} else {
+				consecutiveErrors.Store(0)
 				log.Info("summarized", "progress", fmt.Sprintf("%d/%d", n, total), "source", info.Path)
 			}
 		}(i, src)
@@ -153,7 +166,23 @@ func summarizeOne(
 		}
 	}
 
+	if err := validateSummary(summaryText); err != nil {
+		result.Error = fmt.Errorf("summary quality check failed for %s: %w", info.Path, err)
+		return result
+	}
+
 	return writeSummaryFile(projectDir, outputDir, info, content, summaryText, result, userTZ)
+}
+
+// validateSummary checks minimum quality thresholds for a generated summary.
+// Returns an error if the summary is too short or lacks basic structure,
+// causing the source to be marked as failed and retried on next compile.
+func validateSummary(text string) error {
+	runes := []rune(strings.TrimSpace(text))
+	if len(runes) < 100 {
+		return fmt.Errorf("summary too short (%d chars, minimum 100)", len(runes))
+	}
+	return nil
 }
 
 func writeSummaryFile(projectDir, outputDir string, info SourceInfo, content *extract.SourceContent, summaryText string, result SummaryResult, loc *time.Location) SummaryResult {

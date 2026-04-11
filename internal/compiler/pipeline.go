@@ -41,6 +41,7 @@ type CompileResult struct {
 	ConceptsExtracted  int
 	ArticlesWritten    int
 	Errors             int
+	EmbedErrors        int
 	CostReport         *llm.CostReport // nil if no LLM calls were made
 }
 
@@ -310,6 +311,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 			vec, err := embedder.Embed(sr.Summary)
 			if err != nil {
 				log.Warn("embedding failed", "source", sr.SourcePath, "error", err)
+				result.EmbedErrors++
 			} else {
 				vecStore.Upsert(sr.SourcePath, vec)
 			}
@@ -427,6 +429,15 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	// Write CHANGELOG entry
 	if err := writeChangelog(projectDir, cfg.Output, result, cfg.Compiler.UserTimeLocation()); err != nil {
 		log.Warn("failed to write CHANGELOG", "error", err)
+	}
+
+	// FTS/vector consistency check
+	if result.EmbedErrors > 0 {
+		ftsCount, _ := memStore.Count()
+		vecCount, _ := vecStore.Count()
+		if ftsCount != vecCount {
+			log.Warn("FTS/vector mismatch after compile", "fts", ftsCount, "vec", vecCount, "embed_errors", result.EmbedErrors)
+		}
 	}
 
 	// Clean up checkpoint on success
