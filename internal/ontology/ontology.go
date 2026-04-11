@@ -405,3 +405,36 @@ func (s *Store) CitedBy(entityID string) ([]Entity, error) {
 	}
 	return entities, rows.Err()
 }
+
+// ListRelations returns relations, optionally filtered by type, with a limit.
+func (s *Store) ListRelations(relationType string, limit int) ([]Relation, error) {
+	var rows *sql.Rows
+	var err error
+	if relationType != "" {
+		rows, err = s.db.ReadDB().Query(
+			`SELECT id, source_id, target_id, relation, created_at
+			 FROM relations WHERE relation=? ORDER BY created_at DESC LIMIT ?`,
+			relationType, limit,
+		)
+	} else {
+		rows, err = s.db.ReadDB().Query(
+			`SELECT id, source_id, target_id, relation, created_at
+			 FROM relations ORDER BY created_at DESC LIMIT ?`,
+			limit,
+		)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rels []Relation
+	for rows.Next() {
+		var r Relation
+		if err := rows.Scan(&r.ID, &r.SourceID, &r.TargetID, &r.Relation, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		rels = append(rels, r)
+	}
+	return rels, rows.Err()
+}
