@@ -141,7 +141,7 @@ func (s *Store) UpdateEntity(e Entity) error {
 // GetEntity retrieves an entity by ID.
 func (s *Store) GetEntity(id string) (*Entity, error) {
 	row := s.db.ReadDB().QueryRow(
-		`SELECT id, type, name, COALESCE(definition,''), COALESCE(article_path,''), created_at, updated_at
+		`SELECT id, type, name, COALESCE(definition,''), COALESCE(article_path,''), COALESCE(created_at,''), COALESCE(updated_at,'')
 		 FROM entities WHERE id=?`, id,
 	)
 	var e Entity
@@ -160,12 +160,12 @@ func (s *Store) ListEntities(entityType string) ([]Entity, error) {
 	var err error
 	if entityType != "" {
 		rows, err = s.db.ReadDB().Query(
-			`SELECT id, type, name, COALESCE(definition,''), COALESCE(article_path,''), created_at, updated_at
+			`SELECT id, type, name, COALESCE(definition,''), COALESCE(article_path,''), COALESCE(created_at,''), COALESCE(updated_at,'')
 			 FROM entities WHERE type=? ORDER BY name`, entityType,
 		)
 	} else {
 		rows, err = s.db.ReadDB().Query(
-			`SELECT id, type, name, COALESCE(definition,''), COALESCE(article_path,''), created_at, updated_at
+			`SELECT id, type, name, COALESCE(definition,''), COALESCE(article_path,''), COALESCE(created_at,''), COALESCE(updated_at,'')
 			 FROM entities ORDER BY name`,
 		)
 	}
@@ -223,13 +223,13 @@ func (s *Store) GetRelations(entityID string, direction Direction, relationType 
 
 	switch direction {
 	case Outbound:
-		query = "SELECT id, source_id, target_id, relation, created_at FROM relations WHERE source_id=?"
+		query = "SELECT COALESCE(id,''), source_id, target_id, relation, COALESCE(created_at,'') FROM relations WHERE source_id=?"
 		args = []any{entityID}
 	case Inbound:
-		query = "SELECT id, source_id, target_id, relation, created_at FROM relations WHERE target_id=?"
+		query = "SELECT COALESCE(id,''), source_id, target_id, relation, COALESCE(created_at,'') FROM relations WHERE target_id=?"
 		args = []any{entityID}
 	case Both:
-		query = "SELECT id, source_id, target_id, relation, created_at FROM relations WHERE source_id=? OR target_id=?"
+		query = "SELECT COALESCE(id,''), source_id, target_id, relation, COALESCE(created_at,'') FROM relations WHERE source_id=? OR target_id=?"
 		args = []any{entityID, entityID}
 	}
 
@@ -380,7 +380,7 @@ func (s *Store) EntityDegree(id string) (int, error) {
 // This is the reverse lookup: "which concepts cite this source?"
 func (s *Store) EntitiesCiting(targetID string) ([]Entity, error) {
 	rows, err := s.db.ReadDB().Query(
-		`SELECT e.id, e.type, e.name, COALESCE(e.definition,''), COALESCE(e.article_path,''), e.created_at, e.updated_at
+		`SELECT e.id, e.type, e.name, COALESCE(e.definition,''), COALESCE(e.article_path,''), COALESCE(e.created_at,''), COALESCE(e.updated_at,'')
 		 FROM entities e
 		 JOIN relations r ON r.source_id = e.id
 		 WHERE r.target_id=? AND r.relation=?`, targetID, RelCites,
@@ -405,7 +405,7 @@ func (s *Store) EntitiesCiting(targetID string) ([]Entity, error) {
 // This answers: "which sources does this concept cite?"
 func (s *Store) CitedBy(entityID string) ([]Entity, error) {
 	rows, err := s.db.ReadDB().Query(
-		`SELECT e.id, e.type, e.name, COALESCE(e.definition,''), COALESCE(e.article_path,''), e.created_at, e.updated_at
+		`SELECT e.id, e.type, e.name, COALESCE(e.definition,''), COALESCE(e.article_path,''), COALESCE(e.created_at,''), COALESCE(e.updated_at,'')
 		 FROM entities e
 		 JOIN relations r ON r.target_id = e.id
 		 WHERE r.source_id=? AND r.relation=?`, entityID, RelCites,

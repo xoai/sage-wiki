@@ -207,7 +207,7 @@ type ServeConfig struct {
 
 // OntologyConfig configures ontology relation and entity types.
 type OntologyConfig struct {
-	Relations   []RelationConfig   `yaml:"relations,omitempty"`
+	Relations   []RelationConfig   `yaml:"relation_types,omitempty"`
 	EntityTypes []EntityTypeConfig `yaml:"entity_types,omitempty"`
 }
 
