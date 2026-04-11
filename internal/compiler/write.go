@@ -152,12 +152,11 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept) ArticleRes
 	}
 	result.ArticlePath = articlePath
 
-	// Create ontology entity
-	entityType := ontology.TypeConcept
-	if concept.Type == "technique" {
-		entityType = ontology.TypeTechnique
-	} else if concept.Type == "claim" {
-		entityType = ontology.TypeClaim
+	// Create ontology entity — pass through LLM-assigned type if valid,
+	// fall back to concept for unknown or empty types.
+	entityType := concept.Type
+	if entityType == "" || !opts.OntStore.IsValidType(entityType) {
+		entityType = ontology.TypeConcept
 	}
 
 	if err := opts.OntStore.AddEntity(ontology.Entity{

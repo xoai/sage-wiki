@@ -41,7 +41,8 @@ type LintContext struct {
 	OutputDir      string
 	DBPath         string
 	DB             *storage.DB // shared DB connection (optional — opened from DBPath if nil)
-	ValidRelations []string    // valid ontology relation type names
+	ValidRelations   []string // valid ontology relation type names
+	ValidEntityTypes []string // valid ontology entity type names
 }
 
 // LintResult holds the aggregated output of a lint run.

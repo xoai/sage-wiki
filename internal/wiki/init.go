@@ -236,16 +236,24 @@ serve:
   transport: stdio      # stdio or sse
   port: 3333            # SSE mode only
 
-# Ontology relation types (optional)
+# Ontology types (optional)
 # Extend built-in types with additional synonyms or add custom types.
-# Built-in types: implements, extends, optimizes, contradicts, cites,
-#                 prerequisite_of, trades_off, derived_from
+#
+# Built-in relation types: implements, extends, optimizes, contradicts, cites,
+#                          prerequisite_of, trades_off, derived_from
+# Built-in entity types: concept, technique, source, claim, artifact
+#
 # ontology:
 #   relations:
 #     - name: implements
 #       synonyms: ["thực hiện", "triển khai"]   # add Vietnamese synonyms
 #     - name: regulates
 #       synonyms: ["regulates", "regulated by", "调控", "调节"]
+#   entity_types:
+#     - name: conversation
+#       description: "A dialogue or discussion"
+#     - name: decision
+#       description: "A recorded decision with rationale"
 `, project, description, model, model, model, model, model)
 }
 
@@ -303,12 +311,15 @@ search:
 serve:
   transport: stdio
 
-# Ontology relation types (optional)
+# Ontology types (optional)
 # ontology:
 #   relations:
 #     - name: implements
 #       synonyms: ["thực hiện", "triển khai"]
 #     - name: regulates
 #       synonyms: ["regulates", "regulated by"]
+#   entity_types:
+#     - name: conversation
+#     - name: decision
 `, project, project, sourcesYAML, output, ignoreYAML, model, model, model, model, model)
 }

@@ -145,7 +145,7 @@ func (p *OrphansPass) Run(ctx *LintContext) ([]Finding, error) {
 		return nil, nil
 	}
 
-	ontStore := ontology.NewStore(ctx.DB, ctx.ValidRelations)
+	ontStore := ontology.NewStore(ctx.DB, ctx.ValidRelations, ctx.ValidEntityTypes)
 
 	entities, err := ontStore.ListEntities("")
 	if err != nil {
@@ -228,7 +228,7 @@ func (p *ConnectionsPass) Run(ctx *LintContext) ([]Finding, error) {
 	}
 
 	vecStore := vectors.NewStore(ctx.DB)
-	ontStore := ontology.NewStore(ctx.DB, ctx.ValidRelations)
+	ontStore := ontology.NewStore(ctx.DB, ctx.ValidRelations, ctx.ValidEntityTypes)
 
 	// Get all concept entities with vectors
 	concepts, err := ontStore.ListEntities("concept")

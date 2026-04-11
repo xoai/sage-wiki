@@ -202,6 +202,20 @@ func TestValidation(t *testing.T) {
 			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Ontology: OntologyConfig{Relations: []RelationConfig{{Name: "regulates", Synonyms: []string{"regulates"}}, {Name: "implements"}}}},
 		},
 		{
+			name:    "invalid entity type name uppercase",
+			cfg:     Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Ontology: OntologyConfig{EntityTypes: []EntityTypeConfig{{Name: "Concept"}}}},
+			wantErr: "invalid name",
+		},
+		{
+			name:    "invalid entity type name empty",
+			cfg:     Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Ontology: OntologyConfig{EntityTypes: []EntityTypeConfig{{Name: ""}}}},
+			wantErr: "name is required",
+		},
+		{
+			name: "valid entity type names",
+			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Ontology: OntologyConfig{EntityTypes: []EntityTypeConfig{{Name: "conversation"}, {Name: "decision"}}}},
+		},
+		{
 			name: "valid empty ontology",
 			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Ontology: OntologyConfig{}},
 		},

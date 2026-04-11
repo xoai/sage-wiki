@@ -56,8 +56,9 @@ func NewWebServer(projectDir string) (*WebServer, error) {
 
 	mem := memory.NewStore(db)
 	vec := vectors.NewStore(db)
-	merged := ontology.MergedRelations(cfg.Ontology.Relations)
-	ont := ontology.NewStore(db, ontology.ValidRelationNames(merged))
+	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
+	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+	ont := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
 	searcher := hybrid.NewSearcher(mem, vec)
 
 	return &WebServer{

@@ -67,13 +67,15 @@ type TraverseOpts struct {
 
 // Store manages ontology entities and relations.
 type Store struct {
-	db             *storage.DB
-	validRelations map[string]bool
+	db               *storage.DB
+	validRelations   map[string]bool
+	validEntityTypes map[string]bool
 }
 
-// NewStore creates an ontology store with application-layer relation validation.
+// NewStore creates an ontology store with application-layer type validation.
 // validRelations lists the allowed relation type names. If nil, all types are accepted.
-func NewStore(db *storage.DB, validRelations []string) *Store {
+// validEntityTypes lists the allowed entity type names. If nil, all types are accepted.
+func NewStore(db *storage.DB, validRelations []string, validEntityTypes []string) *Store {
 	s := &Store{db: db}
 	if validRelations != nil {
 		s.validRelations = make(map[string]bool, len(validRelations))
@@ -81,11 +83,29 @@ func NewStore(db *storage.DB, validRelations []string) *Store {
 			s.validRelations[r] = true
 		}
 	}
+	if validEntityTypes != nil {
+		s.validEntityTypes = make(map[string]bool, len(validEntityTypes))
+		for _, t := range validEntityTypes {
+			s.validEntityTypes[t] = true
+		}
+	}
 	return s
+}
+
+// IsValidType returns true if the given type is in the valid entity types list.
+// When no validation list is configured, all types are accepted.
+func (s *Store) IsValidType(t string) bool {
+	if s.validEntityTypes == nil {
+		return true
+	}
+	return s.validEntityTypes[t]
 }
 
 // AddEntity creates a new entity.
 func (s *Store) AddEntity(e Entity) error {
+	if s.validEntityTypes != nil && !s.validEntityTypes[e.Type] {
+		return fmt.Errorf("ontology: unknown entity type %q", e.Type)
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if e.CreatedAt == "" {
 		e.CreatedAt = now
@@ -121,7 +141,7 @@ func (s *Store) UpdateEntity(e Entity) error {
 // GetEntity retrieves an entity by ID.
 func (s *Store) GetEntity(id string) (*Entity, error) {
 	row := s.db.ReadDB().QueryRow(
-		`SELECT id, type, name, COALESCE(definition,''), COALESCE(article_path,''), created_at, updated_at
+		`SELECT id, type, name, COALESCE(definition,''), COALESCE(article_path,''), COALESCE(created_at,''), COALESCE(updated_at,'')
 		 FROM entities WHERE id=?`, id,
 	)
 	var e Entity
@@ -140,12 +160,12 @@ func (s *Store) ListEntities(entityType string) ([]Entity, error) {
 	var err error
 	if entityType != "" {
 		rows, err = s.db.ReadDB().Query(
-			`SELECT id, type, name, COALESCE(definition,''), COALESCE(article_path,''), created_at, updated_at
+			`SELECT id, type, name, COALESCE(definition,''), COALESCE(article_path,''), COALESCE(created_at,''), COALESCE(updated_at,'')
 			 FROM entities WHERE type=? ORDER BY name`, entityType,
 		)
 	} else {
 		rows, err = s.db.ReadDB().Query(
-			`SELECT id, type, name, COALESCE(definition,''), COALESCE(article_path,''), created_at, updated_at
+			`SELECT id, type, name, COALESCE(definition,''), COALESCE(article_path,''), COALESCE(created_at,''), COALESCE(updated_at,'')
 			 FROM entities ORDER BY name`,
 		)
 	}
@@ -203,13 +223,13 @@ func (s *Store) GetRelations(entityID string, direction Direction, relationType 
 
 	switch direction {
 	case Outbound:
-		query = "SELECT id, source_id, target_id, relation, created_at FROM relations WHERE source_id=?"
+		query = "SELECT COALESCE(id,''), source_id, target_id, relation, COALESCE(created_at,'') FROM relations WHERE source_id=?"
 		args = []any{entityID}
 	case Inbound:
-		query = "SELECT id, source_id, target_id, relation, created_at FROM relations WHERE target_id=?"
+		query = "SELECT COALESCE(id,''), source_id, target_id, relation, COALESCE(created_at,'') FROM relations WHERE target_id=?"
 		args = []any{entityID}
 	case Both:
-		query = "SELECT id, source_id, target_id, relation, created_at FROM relations WHERE source_id=? OR target_id=?"
+		query = "SELECT COALESCE(id,''), source_id, target_id, relation, COALESCE(created_at,'') FROM relations WHERE source_id=? OR target_id=?"
 		args = []any{entityID, entityID}
 	}
 
@@ -360,7 +380,7 @@ func (s *Store) EntityDegree(id string) (int, error) {
 // This is the reverse lookup: "which concepts cite this source?"
 func (s *Store) EntitiesCiting(targetID string) ([]Entity, error) {
 	rows, err := s.db.ReadDB().Query(
-		`SELECT e.id, e.type, e.name, COALESCE(e.definition,''), COALESCE(e.article_path,''), e.created_at, e.updated_at
+		`SELECT e.id, e.type, e.name, COALESCE(e.definition,''), COALESCE(e.article_path,''), COALESCE(e.created_at,''), COALESCE(e.updated_at,'')
 		 FROM entities e
 		 JOIN relations r ON r.source_id = e.id
 		 WHERE r.target_id=? AND r.relation=?`, targetID, RelCites,
@@ -385,7 +405,7 @@ func (s *Store) EntitiesCiting(targetID string) ([]Entity, error) {
 // This answers: "which sources does this concept cite?"
 func (s *Store) CitedBy(entityID string) ([]Entity, error) {
 	rows, err := s.db.ReadDB().Query(
-		`SELECT e.id, e.type, e.name, COALESCE(e.definition,''), COALESCE(e.article_path,''), e.created_at, e.updated_at
+		`SELECT e.id, e.type, e.name, COALESCE(e.definition,''), COALESCE(e.article_path,''), COALESCE(e.created_at,''), COALESCE(e.updated_at,'')
 		 FROM entities e
 		 JOIN relations r ON r.target_id = e.id
 		 WHERE r.source_id=? AND r.relation=?`, entityID, RelCites,

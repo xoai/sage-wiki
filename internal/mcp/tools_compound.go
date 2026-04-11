@@ -56,13 +56,15 @@ func (s *Server) handleLint(ctx context.Context, req mcplib.CallToolRequest) (*m
 	passName, _ := args["pass"].(string)
 	fix, _ := args["fix"].(bool)
 
-	merged := ontology.MergedRelations(s.cfg.Ontology.Relations)
+	mergedRels := ontology.MergedRelations(s.cfg.Ontology.Relations)
+	mergedTypes := ontology.MergedEntityTypes(s.cfg.Ontology.EntityTypes)
 	lintCtx := &linter.LintContext{
-		ProjectDir:     s.projectDir,
-		OutputDir:      s.cfg.Output,
-		DBPath:         filepath.Join(s.projectDir, ".sage", "wiki.db"),
-		DB:             s.db,
-		ValidRelations: ontology.ValidRelationNames(merged),
+		ProjectDir:       s.projectDir,
+		OutputDir:        s.cfg.Output,
+		DBPath:           filepath.Join(s.projectDir, ".sage", "wiki.db"),
+		DB:               s.db,
+		ValidRelations:   ontology.ValidRelationNames(mergedRels),
+		ValidEntityTypes: ontology.ValidEntityTypeNames(mergedTypes),
 	}
 
 	runner := linter.NewRunner()
