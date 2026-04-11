@@ -134,6 +134,7 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 			ArticleFields:    cfg.Compiler.ArticleFields,
 			RelationPatterns: relPatterns,
 			ChunkSize:        cfg.Search.ChunkSizeOrDefault(),
+			Language:         cfg.Language,
 		}, concepts)
 
 		for _, ar := range articles {

@@ -1,3 +1,5 @@
+**English** | [中文](README_zh.md)
+
 # sage-wiki
 
 An implementation of [Andrej Karpathy's idea](https://x.com/karpathy/status/2039805659525644595) for an LLM-compiled personal knowledge base. Developed using [Sage Framework](https://github.com/xoai/sage).

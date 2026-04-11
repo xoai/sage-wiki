@@ -19,6 +19,7 @@ type Config struct {
 	Version     int          `yaml:"version"`
 	Project     string       `yaml:"project"`
 	Description string       `yaml:"description"`
+	Language    string       `yaml:"language,omitempty"`
 	Vault       *VaultConfig `yaml:"vault,omitempty"`
 	Sources     []Source     `yaml:"sources"`
 	Output      string       `yaml:"output"`

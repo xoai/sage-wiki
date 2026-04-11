@@ -48,6 +48,7 @@ type ArticleWriteOpts struct {
 	ArticleFields    []string
 	RelationPatterns []ontology.RelationPattern
 	ChunkSize        int // tokens per chunk (default 800)
+	Language         string
 }
 
 // WriteArticles runs Pass 3: write concept articles with ontology edges.
@@ -111,7 +112,7 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept) ArticleRes
 		RelatedList:     strings.Join(relatedNames, ", "),
 		Confidence:      "medium",
 		MaxTokens:       opts.MaxTokens,
-	})
+	}, opts.Language)
 	if err != nil {
 		result.Error = fmt.Errorf("render write_article prompt: %w", err)
 		return result

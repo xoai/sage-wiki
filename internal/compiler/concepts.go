@@ -83,7 +83,7 @@ func ExtractConcepts(
 		prompt, err := prompts.Render("extract_concepts", prompts.ExtractData{
 			ExistingConcepts: strings.Join(dedup, ", "),
 			Summaries:        strings.Join(summaryTexts, "\n\n---\n\n"),
-		})
+		}, "")
 		if err != nil {
 			log.Error("render extract_concepts prompt failed", "batch", i/conceptBatchSize+1, "error", err)
 			continue

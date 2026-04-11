@@ -264,7 +264,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		maxTokens = 2000
 	}
 
-	summaries := Summarize(projectDir, cfg.Output, toProcess, client, model, maxTokens, cfg.Compiler.MaxParallel, cfg.Compiler.UserTimeLocation())
+	summaries := Summarize(projectDir, cfg.Output, toProcess, client, model, maxTokens, cfg.Compiler.MaxParallel, cfg.Compiler.UserTimeLocation(), cfg.Language)
 
 	for _, sr := range summaries {
 		if sr.Error != nil {
@@ -395,6 +395,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 					ArticleFields:    cfg.Compiler.ArticleFields,
 					RelationPatterns: relPatterns,
 					ChunkSize:        cfg.Search.ChunkSizeOrDefault(),
+					Language:         cfg.Language,
 				}, concepts)
 
 				for _, ar := range articles {
@@ -511,7 +512,7 @@ func submitBatch(
 		}
 
 		templateName := "summarize_" + content.Type
-		if _, err := prompts.Render(templateName, prompts.SummarizeData{}); err != nil {
+		if _, err := prompts.Render(templateName, prompts.SummarizeData{}, ""); err != nil {
 			templateName = "summarize_article"
 		}
 
@@ -519,7 +520,7 @@ func submitBatch(
 			SourcePath: src.Path,
 			SourceType: content.Type,
 			MaxTokens:  maxTokens,
-		})
+		}, cfg.Language)
 		if err != nil {
 			log.Warn("batch: skip source (prompt render failed)", "path", src.Path, "error", err)
 			continue
@@ -806,6 +807,7 @@ func resumeBatch(
 					ArticleFields:    cfg.Compiler.ArticleFields,
 					RelationPatterns: relPatterns,
 					ChunkSize:        cfg.Search.ChunkSizeOrDefault(),
+					Language:         cfg.Language,
 				}, concepts)
 
 				for _, ar := range articles {

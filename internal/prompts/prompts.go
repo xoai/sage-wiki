@@ -87,14 +87,30 @@ func LoadFromDir(dir string) error {
 	return nil
 }
 
+// isJSONTemplate returns true if the rendered template content requires
+// structured JSON output. Detected by convention: the template must contain
+// "Output ONLY a JSON" or "Return ONLY a JSON" (case-insensitive).
+// Language instructions are skipped for these to avoid corrupting the format.
+func isJSONTemplate(rendered string) bool {
+	lower := strings.ToLower(rendered)
+	return strings.Contains(lower, "output only a json") ||
+		strings.Contains(lower, "return only a json")
+}
+
 // Render renders a named template with the given data.
 // Uses user overrides if loaded, otherwise embedded defaults.
-func Render(name string, data any) (string, error) {
+// If language is non-empty, appends a language instruction
+// (except for JSON-output templates, detected by convention).
+func Render(name string, data any, language string) (string, error) {
 	var buf bytes.Buffer
 	if err := activeTemplates.ExecuteTemplate(&buf, name+".txt", data); err != nil {
 		return "", fmt.Errorf("prompts.Render(%s): %w", name, err)
 	}
-	return buf.String(), nil
+	result := buf.String()
+	if language != "" && !isJSONTemplate(result) {
+		result += fmt.Sprintf("\n\nIMPORTANT: Write your entire response in %s. Keep technical terms, code, and proper nouns in their original form.", language)
+	}
+	return result, nil
 }
 
 // ScaffoldDefaults copies all embedded default templates to a directory
@@ -206,7 +222,7 @@ func Available() []string {
 	return names
 }
 
-// Reset restores embedded defaults (useful for testing).
+// Reset restores embedded defaults and clears all state (useful for testing).
 func Reset() {
 	activeTemplates = defaultTemplates
 }

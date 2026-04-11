@@ -32,6 +32,7 @@ type Server struct {
 	searcher   *hybrid.Searcher
 	cfg        *config.Config
 	embedder   embed.Embedder
+	language   string
 }
 
 // NewServer creates an MCP server with read tools registered.
@@ -63,6 +64,7 @@ func NewServer(projectDir string) (*Server, error) {
 		searcher:   searcher,
 		cfg:        cfg,
 		embedder:   embed.NewFromConfig(cfg),
+		language:   cfg.Language,
 	}
 
 	mcpServer := server.NewMCPServer(
