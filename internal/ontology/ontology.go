@@ -92,6 +92,15 @@ func NewStore(db *storage.DB, validRelations []string, validEntityTypes []string
 	return s
 }
 
+// IsValidType returns true if the given type is in the valid entity types list.
+// When no validation list is configured, all types are accepted.
+func (s *Store) IsValidType(t string) bool {
+	if s.validEntityTypes == nil {
+		return true
+	}
+	return s.validEntityTypes[t]
+}
+
 // AddEntity creates a new entity.
 func (s *Store) AddEntity(e Entity) error {
 	if s.validEntityTypes != nil && !s.validEntityTypes[e.Type] {
