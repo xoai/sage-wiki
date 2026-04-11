@@ -179,5 +179,5 @@ func runOntologyAdd(cmd *cobra.Command, args []string) error {
 		fmt.Println(cli.FormatJSON(false, nil, errMsg))
 		return nil
 	}
-	return fmt.Errorf(errMsg)
+	return fmt.Errorf("%s", errMsg)
 }
