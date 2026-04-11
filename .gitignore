@@ -13,4 +13,4 @@ sage/
 
 # Build
 /sage-wiki
-bin/
+bin/__pycache__/
