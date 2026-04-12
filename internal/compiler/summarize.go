@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/extract"
+	"github.com/xoai/sage-wiki/internal/facts"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/prompts"
+	"github.com/xoai/sage-wiki/internal/storage"
 )
 
 // SummaryResult holds the output of summarizing a source.
@@ -114,6 +116,9 @@ func summarizeOne(
 		templateName = "summarize_article" // fallback for unknown types
 	}
 
+	// 查询 facts 注入到 prompt（V6 策略）
+	factsContext := buildFactsContext(projectDir, info.Path)
+
 	if content.ChunkCount <= 1 {
 		// Single-chunk summarization
 		prompt, err := prompts.Render(templateName, prompts.SummarizeData{
@@ -126,9 +131,14 @@ func summarizeOne(
 			return result
 		}
 
+		userContent := prompt + "\n\n---\n\nSource content:\n\n" + content.Text
+		if factsContext != "" {
+			userContent += "\n\n---\n\n" + factsContext
+		}
+
 		resp, err := client.ChatCompletion([]llm.Message{
 			{Role: "system", Content: "You are a research assistant creating structured summaries for a personal knowledge wiki."},
-			{Role: "user", Content: prompt + "\n\n---\n\nSource content:\n\n" + content.Text},
+			{Role: "user", Content: userContent},
 		}, llm.CallOpts{Model: model, MaxTokens: maxTokens})
 		if err != nil {
 			result.Error = fmt.Errorf("llm call: %w", err)
@@ -387,4 +397,54 @@ func detectImageMime(path string) string {
 	default:
 		return "image/png"
 	}
+}
+
+// buildFactsContext 查询 facts 表，按 V6 策略构建注入到 summarize prompt 的上下文。
+func buildFactsContext(projectDir string, sourcePath string) string {
+	dbPath := filepath.Join(projectDir, ".sage", "wiki.db")
+	db, err := storage.Open(dbPath)
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+
+	store := facts.NewStore(db)
+	results, err := store.Query(facts.QueryOpts{Source: sourcePath, Limit: 50})
+	if err != nil || len(results) == 0 {
+		return ""
+	}
+
+	// 按 number_type 分组
+	groups := make(map[string][]facts.Fact)
+	for _, f := range results {
+		nt := f.NumberType
+		if nt == "" {
+			nt = "其他"
+		}
+		groups[nt] = append(groups[nt], f)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("## 该文件的关键数字（共 %d 条）\n\n", len(results)))
+
+	for nt, fList := range groups {
+		// 每个 type 最多 10 条
+		if len(fList) > 10 {
+			fList = fList[:10]
+		}
+		sb.WriteString(fmt.Sprintf("### %s\n", nt))
+		sb.WriteString("| 指标 | 数值 | 来源位置 |\n")
+		sb.WriteString("|------|------|----------|\n")
+		for _, f := range fList {
+			loc := f.SourceLocation
+			if loc == "" {
+				loc = "-"
+			}
+			sb.WriteString(fmt.Sprintf("| %s | %s | %s |\n", f.SemanticLabel, f.Value, loc))
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("要求：摘要中引用数字时使用上述精确数值，不要四舍五入或推测。\n")
+	return sb.String()
 }
