@@ -246,6 +246,7 @@ func summarizeChunks(
 ) ([]string, error) {
 	// Group chunks if per-chunk budget is too low
 	groups := groupChunks(chunks, maxTokens)
+	log.Debug("chunk grouping", "source", info.Path, "chunks", len(chunks), "groups", len(groups), "max_tokens", maxTokens)
 	if len(groups) == 0 {
 		return nil, fmt.Errorf("summarize: no chunk groups for %q", info.Path)
 	}
@@ -280,6 +281,7 @@ func summarizeChunks(
 			return nil, fmt.Errorf("group %d render prompt: %w", gi, err)
 		}
 
+		log.Debug("summarizing group", "source", info.Path, "group", fmt.Sprintf("%d/%d", gi+1, len(groups)), "chunks_in_group", len(group), "budget", perGroupBudget)
 		resp, err := client.ChatCompletion([]llm.Message{
 			{Role: "system", Content: "You are summarizing a section of a larger document."},
 			{Role: "user", Content: prompt + "\n\n---\n\nSection:\n\n" + groupText.String()},
@@ -340,7 +342,11 @@ func synthesizeHierarchical(summaries []string, sourcePath string, client *llm.C
 	if len(summaries) == 0 {
 		return "", fmt.Errorf("synthesize: no summaries to combine for %q", sourcePath)
 	}
+	tier := 0
 	for len(summaries) > 1 {
+		tier++
+		nextGroups := (len(summaries) + synthesisGroupSize - 1) / synthesisGroupSize
+		log.Debug("synthesis tier", "source", sourcePath, "tier", tier, "input_summaries", len(summaries), "output_groups", nextGroups)
 		var nextLevel []string
 
 		for i := 0; i < len(summaries); i += synthesisGroupSize {
