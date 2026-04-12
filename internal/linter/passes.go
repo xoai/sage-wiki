@@ -402,7 +402,7 @@ func (p *StalenessPass) Run(ctx *LintContext) ([]Finding, error) {
 
 // --- NumericContradiction Pass ---
 
-// NumericContradictionPass 读取 .pre-extracted/conflicts.yaml，每个冲突生成一个 Finding。
+// NumericContradictionPass reads .pre-extracted/conflicts.yaml and generates a Finding per conflict.
 type NumericContradictionPass struct{}
 
 func (p *NumericContradictionPass) Name() string       { return "numeric-contradiction" }
@@ -415,7 +415,7 @@ func (p *NumericContradictionPass) Run(ctx *LintContext) ([]Finding, error) {
 	conflictsPath := filepath.Join(ctx.ProjectDir, ".pre-extracted", "conflicts.yaml")
 	data, err := os.ReadFile(conflictsPath)
 	if err != nil {
-		log.Info("lint pass skipped: data source not available", "pass", "numeric-contradiction", "reason", "file-extract not installed")
+		log.Info("lint pass skipped: data source not available", "pass", "numeric-contradiction", "reason", "database not available")
 		return findings, nil
 	}
 
@@ -443,7 +443,7 @@ func (p *NumericContradictionPass) Run(ctx *LintContext) ([]Finding, error) {
 	}
 
 	for _, c := range conflicts.Conflicts {
-		msg := fmt.Sprintf("数字矛盾: %s / %s / %s", c.Entity, c.Label, c.Period)
+		msg := fmt.Sprintf("numeric contradiction: %s / %s / %s", c.Entity, c.Label, c.Period)
 		if c.Description != "" {
 			msg += " — " + c.Description
 		}
@@ -466,7 +466,7 @@ func (p *NumericContradictionPass) Run(ctx *LintContext) ([]Finding, error) {
 
 // --- OrphanFacts Pass ---
 
-// OrphanFactsPass 查 facts 表中 source_file 不存在于 raw/ 的记录。
+// OrphanFactsPass detects facts whose source_file no longer exists in raw/.
 type OrphanFactsPass struct{}
 
 func (p *OrphanFactsPass) Name() string       { return "orphan-facts" }

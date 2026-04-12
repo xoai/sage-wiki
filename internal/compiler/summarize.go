@@ -44,6 +44,16 @@ func Summarize(
 		maxParallel = 4
 	}
 
+	// Open facts DB once for all sources (graceful degradation if unavailable)
+	dbPath := filepath.Join(projectDir, ".sage", "wiki.db")
+	factsDB, err := storage.Open(dbPath)
+	if err != nil {
+		factsDB = nil
+	}
+	if factsDB != nil {
+		defer factsDB.Close()
+	}
+
 	results := make([]SummaryResult, len(sources))
 	sem := make(chan struct{}, maxParallel)
 	var wg sync.WaitGroup
@@ -58,7 +68,7 @@ func Summarize(
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			result := summarizeOne(projectDir, outputDir, info, client, model, maxTokens, userTZ, language)
+			result := summarizeOne(projectDir, outputDir, info, client, model, maxTokens, userTZ, language, factsDB)
 			results[idx] = result
 
 			n := int(done.Add(1))
@@ -83,6 +93,7 @@ func summarizeOne(
 	maxTokens int,
 	userTZ *time.Location,
 	language string,
+	factsDB *storage.DB,
 ) SummaryResult {
 	result := SummaryResult{SourcePath: info.Path}
 
@@ -116,8 +127,8 @@ func summarizeOne(
 		templateName = "summarize_article" // fallback for unknown types
 	}
 
-	// 查询 facts 注入到 prompt（V6 策略）
-	factsContext := buildFactsContext(projectDir, info.Path)
+	// Query facts for prompt injection (V6 strategy)
+	factsContext := buildFactsContext(factsDB, info.Path)
 
 	if content.ChunkCount <= 1 {
 		// Single-chunk summarization
@@ -405,14 +416,11 @@ func detectImageMime(path string) string {
 	}
 }
 
-// buildFactsContext 查询 facts 表，按 V6 策略构建注入到 summarize prompt 的上下文。
-func buildFactsContext(projectDir string, sourcePath string) string {
-	dbPath := filepath.Join(projectDir, ".sage", "wiki.db")
-	db, err := storage.Open(dbPath)
-	if err != nil {
+// buildFactsContext queries the facts table and builds context for the summarize prompt (V6 strategy).
+func buildFactsContext(db *storage.DB, sourcePath string) string {
+	if db == nil {
 		return ""
 	}
-	defer db.Close()
 
 	store := facts.NewStore(db)
 	results, err := store.Query(facts.QueryOpts{Source: sourcePath, Limit: 50})
@@ -420,27 +428,27 @@ func buildFactsContext(projectDir string, sourcePath string) string {
 		return ""
 	}
 
-	// 按 number_type 分组
+	// group by number_type
 	groups := make(map[string][]facts.Fact)
 	for _, f := range results {
 		nt := f.NumberType
 		if nt == "" {
-			nt = "其他"
+			nt = "other"
 		}
 		groups[nt] = append(groups[nt], f)
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## 该文件的关键数字（共 %d 条）\n\n", len(results)))
+	sb.WriteString(fmt.Sprintf("## Key numbers for this file (%d total)\n\n", len(results)))
 
 	for nt, fList := range groups {
-		// 每个 type 最多 10 条
+		// max 10 per type
 		if len(fList) > 10 {
 			fList = fList[:10]
 		}
 		sb.WriteString(fmt.Sprintf("### %s\n", nt))
-		sb.WriteString("| 指标 | 数值 | 来源位置 |\n")
-		sb.WriteString("|------|------|----------|\n")
+		sb.WriteString("| Metric | Value | Source Location |\n")
+		sb.WriteString("|--------|-------|-----------------|\n")
 		for _, f := range fList {
 			loc := f.SourceLocation
 			if loc == "" {
@@ -451,6 +459,6 @@ func buildFactsContext(projectDir string, sourcePath string) string {
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString("要求：摘要中引用数字时使用上述精确数值，不要四舍五入或推测。\n")
+	sb.WriteString("Requirement: when citing numbers in the summary, use the exact values above. Do not round or estimate.\n")
 	return sb.String()
 }
