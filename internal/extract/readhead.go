@@ -10,6 +10,9 @@ import (
 	"github.com/ledongthuc/pdf"
 )
 
+// DefaultHeadRunes is the default number of runes to read for content-based type detection.
+const DefaultHeadRunes = 500
+
 // ReadHead reads the first maxRunes runes from a file.
 // For PDF files, extracts text from the first page using pdftotext (poppler)
 // with fallback to the Go PDF library.
@@ -40,8 +43,8 @@ func readHeadPDFToText(path string, maxRunes int) string {
 		return "" // pdftotext not installed
 	}
 
-	// -l 1: first page only, "-": stdout
-	out, err := exec.Command(pdftotext, "-l", "1", path, "-").Output()
+	// -l 1: first page only, "--": end of flags (C1 security fix), "-": stdout
+	out, err := exec.Command(pdftotext, "-l", "1", "--", path, "-").Output()
 	if err != nil {
 		return ""
 	}
