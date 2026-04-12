@@ -265,6 +265,7 @@ func stripThinkTags(s string) string {
 	}
 	// Fallback: extract content from inside first think block
 	if m := thinkContentRe.FindStringSubmatch(s); len(m) > 1 {
+		log.Warn("stripThinkTags fallback: model put all content inside <think> tags, extracting think content as summary (quality may be degraded)")
 		return strings.TrimSpace(m[1])
 	}
 	return stripped
