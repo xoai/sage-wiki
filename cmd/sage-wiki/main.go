@@ -167,6 +167,10 @@ func init() {
 	// Search flags
 	searchCmd.Flags().StringSlice("tags", nil, "Filter by tags")
 	searchCmd.Flags().Int("limit", 10, "Maximum results")
+	searchCmd.Flags().String("scope", "local", "Search scope: local, global, or all")
+
+	// Query flags
+	queryCmd.Flags().String("scope", "local", "Query scope: local, global, or all")
 
 	rootCmd.AddCommand(initCmd, compileCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, hubCmd, sourceCmd, factsCmd)
 }
