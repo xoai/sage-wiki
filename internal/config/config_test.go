@@ -408,6 +408,110 @@ func TestUserTimeLocation(t *testing.T) {
 	}
 }
 
+func TestTypeSignalParsing(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := `
+version: 1
+project: test-wiki
+sources:
+  - path: raw
+    type: auto
+    watch: true
+output: wiki
+type_signals:
+  - type: regulation
+    filename_keywords: ["法规", "办法"]
+    content_keywords: ["第一条", "第二条"]
+    min_content_hits: 2
+  - type: research
+    filename_keywords: ["研报"]
+    content_keywords: ["投资评级"]
+    min_content_hits: 1
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(cfg.TypeSignals) != 2 {
+		t.Fatalf("expected 2 type signals, got %d", len(cfg.TypeSignals))
+	}
+	if cfg.TypeSignals[0].Type != "regulation" {
+		t.Errorf("expected type 'regulation', got %q", cfg.TypeSignals[0].Type)
+	}
+	if len(cfg.TypeSignals[0].FilenameKeywords) != 2 {
+		t.Errorf("expected 2 filename keywords, got %d", len(cfg.TypeSignals[0].FilenameKeywords))
+	}
+	if cfg.TypeSignals[0].MinContentHits != 2 {
+		t.Errorf("expected min_content_hits 2, got %d", cfg.TypeSignals[0].MinContentHits)
+	}
+}
+
+func TestTypeSignalValidation(t *testing.T) {
+	base := Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}}
+
+	tests := []struct {
+		name    string
+		signals []TypeSignal
+		wantErr string
+	}{
+		{
+			name:    "missing type",
+			signals: []TypeSignal{{FilenameKeywords: []string{"foo"}}},
+			wantErr: "type is required",
+		},
+		{
+			name:    "no keywords at all",
+			signals: []TypeSignal{{Type: "regulation"}},
+			wantErr: "at least one keyword",
+		},
+		{
+			name:    "content keywords without min_content_hits",
+			signals: []TypeSignal{{Type: "regulation", ContentKeywords: []string{"foo"}}},
+			wantErr: "min_content_hits must be > 0",
+		},
+		{
+			name:    "valid filename only",
+			signals: []TypeSignal{{Type: "regulation", FilenameKeywords: []string{"foo"}}},
+		},
+		{
+			name:    "valid content keywords with min hits",
+			signals: []TypeSignal{{Type: "regulation", ContentKeywords: []string{"foo"}, MinContentHits: 1}},
+		},
+		{
+			name:    "valid pattern only",
+			signals: []TypeSignal{{Type: "regulation", Pattern: "foo"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := base
+			cfg.TypeSignals = tt.signals
+			err := cfg.Validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Errorf("expected error containing %q, got nil", tt.wantErr)
+				return
+			}
+			if !contains(err.Error(), tt.wantErr) {
+				t.Errorf("expected error containing %q, got %q", tt.wantErr, err.Error())
+			}
+		})
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)
 }

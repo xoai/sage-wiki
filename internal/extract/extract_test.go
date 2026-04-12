@@ -228,6 +228,7 @@ func TestChunkCJKText(t *testing.T) {
 }
 
 func TestDetectSourceType(t *testing.T) {
+	// Backward compat: nil signals = extension-only
 	tests := []struct {
 		path     string
 		expected string
@@ -247,9 +248,83 @@ func TestDetectSourceType(t *testing.T) {
 		{"transcript.vtt", "article"},
 	}
 	for _, tt := range tests {
-		got := DetectSourceType(tt.path)
+		got := DetectSourceTypeWithSignals(tt.path, "", nil)
 		if got != tt.expected {
-			t.Errorf("DetectSourceType(%s) = %s, want %s", tt.path, got, tt.expected)
+			t.Errorf("DetectSourceTypeWithSignals(%s, \"\", nil) = %s, want %s", tt.path, got, tt.expected)
 		}
+	}
+}
+
+func TestDetectSourceTypeWithSignals(t *testing.T) {
+	signals := []TypeSignal{
+		{
+			Type:             "regulation",
+			FilenameKeywords: []string{"法规", "办法"},
+			ContentKeywords:  []string{"第一条", "第二条", "为了规范"},
+			MinContentHits:   2,
+		},
+		{
+			Type:             "research",
+			FilenameKeywords: []string{"研报"},
+			ContentKeywords:  []string{"投资评级", "目标价"},
+			MinContentHits:   1,
+		},
+	}
+
+	tests := []struct {
+		name        string
+		path        string
+		contentHead string
+		expected    string
+	}{
+		{"filename match", "/path/证券法规汇编.pdf", "", "regulation"},
+		{"content match", "/path/document.pdf", "第一条 为了规范证券市场 第二条 适用范围", "regulation"},
+		{"content below threshold", "/path/doc.pdf", "第一条 只有一个关键词", "paper"},
+		{"research filename", "/path/AI研报.pdf", "", "research"},
+		{"research content", "/path/report.pdf", "本报告投资评级为买入", "research"},
+		{"no match fallback pdf", "/path/random.pdf", "no keywords here", "paper"},
+		{"no match fallback md", "/path/notes.md", "no keywords here", "article"},
+		{"signal priority", "/path/法规研报.pdf", "", "regulation"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DetectSourceTypeWithSignals(tt.path, tt.contentHead, signals)
+			if got != tt.expected {
+				t.Errorf("DetectSourceTypeWithSignals(%s) = %s, want %s", tt.name, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestReadHead(t *testing.T) {
+	dir := t.TempDir()
+
+	// ASCII file
+	path := filepath.Join(dir, "test.txt")
+	os.WriteFile(path, []byte("Hello, World! This is a test file with some content."), 0644)
+	got := ReadHead(path, 5)
+	if got != "Hello" {
+		t.Errorf("ReadHead(5) = %q, want %q", got, "Hello")
+	}
+
+	// Chinese content
+	cnPath := filepath.Join(dir, "chinese.txt")
+	os.WriteFile(cnPath, []byte("第一条 为了规范证券发行"), 0644)
+	got = ReadHead(cnPath, 10)
+	if len([]rune(got)) > 10 {
+		t.Errorf("ReadHead(10) returned %d runes, want <= 10", len([]rune(got)))
+	}
+
+	// Non-existent file
+	got = ReadHead("/nonexistent/file.txt", 100)
+	if got != "" {
+		t.Errorf("ReadHead(nonexistent) = %q, want empty", got)
+	}
+
+	// File shorter than limit
+	got = ReadHead(path, 10000)
+	if got != "Hello, World! This is a test file with some content." {
+		t.Errorf("ReadHead(10000) = %q, want full content", got)
 	}
 }

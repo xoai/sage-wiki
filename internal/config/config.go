@@ -32,6 +32,7 @@ type Config struct {
 	Linting     LintingConfig  `yaml:"linting"`
 	Serve       ServeConfig    `yaml:"serve"`
 	Ontology    OntologyConfig `yaml:"ontology,omitempty"`
+	TypeSignals []TypeSignal   `yaml:"type_signals,omitempty"`
 }
 
 type VaultConfig struct {
@@ -206,6 +207,16 @@ type ServeConfig struct {
 	Port      int    `yaml:"port"`
 }
 
+// TypeSignal defines a content-based type detection rule.
+// Files are matched by filename keywords and/or content keywords.
+type TypeSignal struct {
+	Type             string   `yaml:"type"`
+	Pattern          string   `yaml:"pattern,omitempty"`           // simple substring match (legacy)
+	FilenameKeywords []string `yaml:"filename_keywords,omitempty"` // keywords matched against filename
+	ContentKeywords  []string `yaml:"content_keywords,omitempty"`  // keywords matched against content head
+	MinContentHits   int      `yaml:"min_content_hits,omitempty"`  // minimum content keyword matches required
+}
+
 // OntologyConfig configures ontology relation and entity types.
 type OntologyConfig struct {
 	Relations     []RelationConfig   `yaml:"relations,omitempty"`
@@ -370,6 +381,17 @@ func (c *Config) Validate() error {
 	}
 	if c.Search.ChunkSize != 0 && (c.Search.ChunkSize < 100 || c.Search.ChunkSize > 5000) {
 		return fmt.Errorf("config: search.chunk_size must be 100-5000, got %d", c.Search.ChunkSize)
+	}
+	for i, ts := range c.TypeSignals {
+		if ts.Type == "" {
+			return fmt.Errorf("config: type_signals[%d]: type is required", i)
+		}
+		if len(ts.FilenameKeywords) == 0 && len(ts.ContentKeywords) == 0 && ts.Pattern == "" {
+			return fmt.Errorf("config: type_signals[%d] (%s): at least one keyword (filename, content, or pattern) is required", i, ts.Type)
+		}
+		if len(ts.ContentKeywords) > 0 && ts.MinContentHits <= 0 {
+			return fmt.Errorf("config: type_signals[%d] (%s): min_content_hits must be > 0 when content_keywords is set", i, ts.Type)
+		}
 	}
 	if c.Compiler.Timezone != "" {
 		loc, err := time.LoadLocation(c.Compiler.Timezone)

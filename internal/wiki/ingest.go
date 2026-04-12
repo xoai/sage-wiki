@@ -111,7 +111,21 @@ func IngestPath(projectDir string, srcPath string) (*IngestResult, error) {
 		return nil, fmt.Errorf("ingest: file not found: %w", err)
 	}
 
-	srcType := extract.DetectSourceType(absPath)
+	var contentHead string
+	if len(cfg.TypeSignals) > 0 {
+		contentHead = extract.ReadHead(absPath, extract.DefaultHeadRunes)
+	}
+	signals := make([]extract.TypeSignal, len(cfg.TypeSignals))
+	for i, s := range cfg.TypeSignals {
+		signals[i] = extract.TypeSignal{
+			Type:             s.Type,
+			Pattern:          s.Pattern,
+			FilenameKeywords: s.FilenameKeywords,
+			ContentKeywords:  s.ContentKeywords,
+			MinContentHits:   s.MinContentHits,
+		}
+	}
+	srcType := extract.DetectSourceTypeWithSignals(absPath, contentHead, signals)
 	destDir := findSourceFolder(projectDir, cfg, srcType)
 	if destDir == "" {
 		// Fallback to first source folder

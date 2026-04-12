@@ -302,7 +302,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		memStore.Add(memory.Entry{
 			ID:          sr.SourcePath,
 			Content:     sr.Summary,
-			Tags:        []string{extractType(sr.SourcePath)},
+			Tags:        []string{extractType(sr.SourcePath, cfg.TypeSignals)},
 			ArticlePath: sr.SummaryPath,
 		})
 
@@ -708,7 +708,7 @@ func resumeBatch(
 
 		// Update manifest — ensure source entry exists, then mark compiled
 		if _, exists := mf.Sources[br.CustomID]; !exists {
-			mf.AddSource(br.CustomID, "", extractType(br.CustomID), 0)
+			mf.AddSource(br.CustomID, "", extractType(br.CustomID, cfg.TypeSignals), 0)
 		}
 		mf.MarkCompiled(br.CustomID, summaryPath, nil)
 
@@ -716,7 +716,7 @@ func resumeBatch(
 		memStore.Add(memory.Entry{
 			ID:          br.CustomID,
 			Content:     summaryText,
-			Tags:        []string{extractType(br.CustomID)},
+			Tags:        []string{extractType(br.CustomID, cfg.TypeSignals)},
 			ArticlePath: summaryPath,
 		})
 
@@ -900,8 +900,26 @@ func removeFromPending(state *CompileState, path string) {
 	}
 }
 
-func extractType(path string) string {
-	return extract.DetectSourceType(path)
+func extractType(path string, typeSignals []config.TypeSignal) string {
+	var contentHead string
+	if len(typeSignals) > 0 {
+		contentHead = extract.ReadHead(path, extract.DefaultHeadRunes)
+	}
+	return extract.DetectSourceTypeWithSignals(path, contentHead, convertSignals(typeSignals))
+}
+
+func convertSignals(typeSignals []config.TypeSignal) []extract.TypeSignal {
+	signals := make([]extract.TypeSignal, len(typeSignals))
+	for i, s := range typeSignals {
+		signals[i] = extract.TypeSignal{
+			Type:             s.Type,
+			Pattern:          s.Pattern,
+			FilenameKeywords: s.FilenameKeywords,
+			ContentKeywords:  s.ContentKeywords,
+			MinContentHits:   s.MinContentHits,
+		}
+	}
+	return signals
 }
 
 // timeNow returns the current time in RFC3339 using the given timezone.
