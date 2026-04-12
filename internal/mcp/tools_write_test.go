@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,6 +56,55 @@ func TestWriteSummary(t *testing.T) {
 	}
 	if src.Status != "compiled" {
 		t.Errorf("expected compiled status, got %s", src.Status)
+	}
+}
+
+func TestWriteSummaryNoCollision(t *testing.T) {
+	dir := t.TempDir()
+	wiki.InitGreenfield(dir, "test", "gemini-2.5-flash")
+
+	srv, err := NewServer(dir)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer srv.Close()
+
+	// Write two summaries with the same basename but different directories
+	sources := []struct {
+		path     string
+		content  string
+		wantFile string
+	}{
+		{"../../project/docs/projects/claw/manifest.md", "Claw manifest summary", "projects-claw-manifest.md"},
+		{"../../project/docs/projects/workflow/manifest.md", "Workflow manifest summary", "projects-workflow-manifest.md"},
+	}
+
+	for _, s := range sources {
+		result := srv.CallTool(context.Background(), "wiki_write_summary", mcplib.CallToolRequest{
+			Params: mcplib.CallToolParams{
+				Name: "wiki_write_summary",
+				Arguments: map[string]any{
+					"source":  s.path,
+					"content": s.content,
+				},
+			},
+		})
+		if result.IsError {
+			t.Fatalf("error writing %s: %s", s.path, result.Content[0].(mcplib.TextContent).Text)
+		}
+	}
+
+	// Verify both files exist with distinct names
+	for _, s := range sources {
+		path := filepath.Join(dir, "wiki", "summaries", s.wantFile)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("expected %s to exist: %v", s.wantFile, err)
+			continue
+		}
+		if !strings.Contains(string(data), s.content) {
+			t.Errorf("%s should contain %q, got %q", s.wantFile, s.content, string(data))
+		}
 	}
 }
 

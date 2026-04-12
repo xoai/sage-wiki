@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
+	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
 	gitpkg "github.com/xoai/sage-wiki/internal/git"
@@ -152,8 +153,7 @@ func (s *Server) handleWriteSummary(ctx context.Context, req mcplib.CallToolRequ
 		return errorResult("source and content are required"), nil
 	}
 
-	baseName := strings.TrimSuffix(filepath.Base(source), filepath.Ext(source))
-	summaryPath := filepath.Join(s.cfg.Output, "summaries", baseName+".md")
+	summaryPath := filepath.Join(s.cfg.Output, "summaries", compiler.SummaryFilename(source))
 	absProject, _ := filepath.Abs(s.projectDir)
 	absPath, _ := filepath.Abs(filepath.Join(s.projectDir, summaryPath))
 	if !isSubpath(absProject, absPath) {
