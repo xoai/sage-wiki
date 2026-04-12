@@ -10,12 +10,15 @@ import (
 
 // SourceContent holds extracted text from a source file.
 type SourceContent struct {
-	Path       string
-	Type       string // article, paper, code
-	Text       string
-	Frontmatter string
-	Chunks     []Chunk
-	ChunkCount int
+	Path          string
+	Type          string // article, paper, code
+	Text          string
+	Frontmatter   string
+	Chunks        []Chunk
+	ChunkCount    int
+	PreExtracted  bool   // true if content came from pre-extracted files
+	Confidence    string // high/medium/low
+	ExtractEngine string // extraction engine used (e.g. markitdown)
 }
 
 // Chunk represents a section of a large source.
