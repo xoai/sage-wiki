@@ -401,6 +401,17 @@ func (c *Config) Validate() error {
 	if c.Search.ChunkSize != 0 && (c.Search.ChunkSize < 100 || c.Search.ChunkSize > 5000) {
 		return fmt.Errorf("config: search.chunk_size must be 100-5000, got %d", c.Search.ChunkSize)
 	}
+	for i, ts := range c.TypeSignals {
+		if ts.Type == "" {
+			return fmt.Errorf("config: type_signals[%d]: type is required", i)
+		}
+		if len(ts.FilenameKeywords) == 0 && len(ts.ContentKeywords) == 0 && ts.Pattern == "" {
+			return fmt.Errorf("config: type_signals[%d] (%s): at least one keyword (filename, content, or pattern) is required", i, ts.Type)
+		}
+		if len(ts.ContentKeywords) > 0 && ts.MinContentHits <= 0 {
+			return fmt.Errorf("config: type_signals[%d] (%s): min_content_hits must be > 0 when content_keywords is set", i, ts.Type)
+		}
+	}
 	if c.Compiler.Timezone != "" {
 		loc, err := time.LoadLocation(c.Compiler.Timezone)
 		if err != nil {
