@@ -906,7 +906,10 @@ func removeFromPending(state *CompileState, path string) {
 }
 
 func extractType(path string, typeSignals []config.TypeSignal) string {
-	contentHead := extract.ReadHead(path, 500)
+	var contentHead string
+	if len(typeSignals) > 0 {
+		contentHead = extract.ReadHead(path, extract.DefaultHeadRunes)
+	}
 	return extract.DetectSourceTypeWithSignals(path, contentHead, convertSignals(typeSignals))
 }
 

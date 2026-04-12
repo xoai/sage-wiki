@@ -72,7 +72,10 @@ func Diff(projectDir string, cfg *config.Config, mf *manifest.Manifest) (*DiffRe
 				return nil
 			}
 
-			contentHead := extract.ReadHead(path, 500)
+			var contentHead string
+			if len(cfg.TypeSignals) > 0 {
+				contentHead = extract.ReadHead(path, extract.DefaultHeadRunes)
+			}
 			current[relPath] = SourceInfo{
 				Path: relPath,
 				Hash: hash,
