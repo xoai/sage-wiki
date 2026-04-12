@@ -16,23 +16,23 @@ import (
 
 // StatusInfo holds wiki stats for display.
 type StatusInfo struct {
-	Project        string
-	Mode           string // greenfield or vault-overlay
-	SourceCount    int
-	PendingCount   int
-	ConceptCount   int
-	EntryCount     int
-	VectorCount    int
-	VectorDims     int
-	EntityCount    int
-	RelationCount  int
-	LearningCount  int
-	EmbedProvider  string
-	EmbedDims      int
-	DimMismatch    bool
-	GitClean       bool
-	LastCommit     string
-	LastMessage    string
+	Project       string `json:"project"`
+	Mode          string `json:"mode"` // greenfield or vault-overlay
+	SourceCount   int    `json:"source_count"`
+	PendingCount  int    `json:"pending_count"`
+	ConceptCount  int    `json:"concept_count"`
+	EntryCount    int    `json:"entry_count"`
+	VectorCount   int    `json:"vector_count"`
+	VectorDims    int    `json:"vector_dims"`
+	EntityCount   int    `json:"entity_count"`
+	RelationCount int    `json:"relation_count"`
+	LearningCount int    `json:"learning_count"`
+	EmbedProvider string `json:"embed_provider"`
+	EmbedDims     int    `json:"embed_dims"`
+	DimMismatch   bool   `json:"dim_mismatch"`
+	GitClean      bool   `json:"git_clean"`
+	LastCommit    string `json:"last_commit"`
+	LastMessage   string `json:"last_message"`
 }
 
 // Stores holds shared store references to avoid re-opening the DB.

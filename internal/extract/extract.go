@@ -16,7 +16,7 @@ type SourceContent struct {
 	Frontmatter   string
 	Chunks        []Chunk
 	ChunkCount    int
-	PreExtracted  bool   // whether content was pre-extracted
+	PreExtracted  bool   // true if from pre-extraction pipeline
 	Confidence    string // high/medium/low
 	ExtractEngine string // extraction engine used
 }

@@ -8,6 +8,9 @@ CLAUDE.md
 .sage-memory/
 sage/
 
+# macOS
+.DS_Store
+
 # Build
 /sage-wiki
-bin/
+bin/__pycache__/
