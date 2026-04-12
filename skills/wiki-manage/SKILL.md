@@ -56,15 +56,7 @@ $SAGE search "test" --project $WIKI --format json
 ```
 成功→继续，失败→暂停报告。
 
-### Step 0.4: 目录体系迁移
-
-同 wiki-improve Step 0.4（检查 raw/ 目录合规性）。
-
-### Step 0.5: Inbox 处理
-
-同 wiki-improve Step 0.5（编译 + 分类 inbox 文件）。
-
-### Step 0.6: 文件提取（新增）
+### Step 0.5: 文件提取
 
 检查是否有需要提取的文件（PDF/Office 等非文本格式）。
 
@@ -95,7 +87,7 @@ ls $WIKI/.pre-extracted/files/ | head -20
 cat $WIKI/.pre-extracted/extract-meta.yaml
 ```
 
-### Step 0.7: Facts 导入（新增）
+### Step 0.6: Facts 导入
 
 提取完成后导入结构化数字：
 
@@ -105,7 +97,7 @@ $SAGE facts import --project $WIKI --format json
 
 检查导入结果：added/skipped/errors。errors > 0 时列出失败文件。
 
-### Step 0.8: Facts 质量快检（新增）
+### Step 0.7: Facts 质量快检
 
 ```bash
 $SAGE facts stats --project $WIKI --format json
@@ -156,8 +148,6 @@ $SAGE lint --project $WIKI --format json
 wiki-manage 日常维护报告
 ├── API 健康: embed ✓/✗
 ├── 更新: sage-wiki 已是最新 / 已更新到 xxx
-├── 迁移: 无 / 迁移了 N 个目录
-├── Inbox: 无 / 处理了 N 个文件
 ├── 提取: 无新文件 / 提取了 N 个文件（成功 S / 失败 F）
 ├── Facts: 导入 +N added, ~M skipped, !E errors
 ├── 编译: 新编译了 N 篇文章
