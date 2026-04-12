@@ -168,7 +168,7 @@ func init() {
 	searchCmd.Flags().StringSlice("tags", nil, "Filter by tags")
 	searchCmd.Flags().Int("limit", 10, "Maximum results")
 
-	rootCmd.AddCommand(initCmd, compileCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, hubCmd, sourceCmd)
+	rootCmd.AddCommand(initCmd, compileCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, hubCmd, sourceCmd, factsCmd)
 }
 
 // Placeholder implementations — will be filled in subsequent tasks
