@@ -85,8 +85,7 @@ func summarizeOne(
 	result := SummaryResult{SourcePath: info.Path}
 
 	// Extract source content
-	absPath := filepath.Join(projectDir, info.Path)
-	content, err := extract.Extract(absPath, info.Type)
+	content, err := extract.ExtractFromProject(projectDir, info.Path, info.Type)
 	if err != nil {
 		result.Error = fmt.Errorf("extract: %w", err)
 		return result

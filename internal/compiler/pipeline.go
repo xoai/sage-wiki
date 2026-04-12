@@ -490,8 +490,7 @@ func submitBatch(
 	// Build batch requests — extract content and render prompts
 	var requests []llm.BatchRequest
 	for _, src := range toProcess {
-		absPath := filepath.Join(projectDir, src.Path)
-		content, err := extract.Extract(absPath, src.Type)
+		content, err := extract.ExtractFromProject(projectDir, src.Path, src.Type)
 		if err != nil {
 			log.Warn("batch: skip source (extract failed)", "path", src.Path, "error", err)
 			continue
