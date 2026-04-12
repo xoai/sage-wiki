@@ -231,6 +231,15 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		}
 	}
 
+	// Detect deleted sources: manifest has file but raw/ doesn't
+	for path := range mf.Sources {
+		absPath := filepath.Join(projectDir, path)
+		if _, err := os.Stat(absPath); os.IsNotExist(err) {
+			log.Warn("source file deleted since last compile", "path", path)
+			result.Removed++
+		}
+	}
+
 	// If new files were added, reset pass to 1 so they get summarized
 	newFiles := false
 	var toProcess []SourceInfo

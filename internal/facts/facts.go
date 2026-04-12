@@ -43,6 +43,7 @@ type QueryOpts struct {
 	NumberType string
 	Source     string
 	Limit      int
+	Fuzzy      bool // 模糊匹配 entity 和 label（LIKE %keyword%）
 }
 
 // FactStats 汇总统计。
@@ -120,8 +121,13 @@ func (s *Store) Query(opts QueryOpts) ([]Fact, error) {
 	var args []interface{}
 
 	if opts.Entity != "" {
-		where = append(where, "entity = ?")
-		args = append(args, opts.Entity)
+		if opts.Fuzzy {
+			where = append(where, "entity LIKE ?")
+			args = append(args, "%"+opts.Entity+"%")
+		} else {
+			where = append(where, "entity = ?")
+			args = append(args, opts.Entity)
+		}
 	}
 	if opts.EntityType != "" {
 		where = append(where, "entity_type = ?")
@@ -132,8 +138,13 @@ func (s *Store) Query(opts QueryOpts) ([]Fact, error) {
 		args = append(args, opts.Period)
 	}
 	if opts.Label != "" {
-		where = append(where, "semantic_label = ?")
-		args = append(args, opts.Label)
+		if opts.Fuzzy {
+			where = append(where, "semantic_label LIKE ?")
+			args = append(args, "%"+opts.Label+"%")
+		} else {
+			where = append(where, "semantic_label = ?")
+			args = append(args, opts.Label)
+		}
 	}
 	if opts.NumberType != "" {
 		where = append(where, "number_type = ?")

@@ -55,6 +55,7 @@ func init() {
 	factsQueryCmd.Flags().String("source", "", "Filter by source file")
 	factsQueryCmd.Flags().Int("limit", 100, "Maximum results")
 	factsQueryCmd.Flags().Bool("count-only", false, "Only show count")
+	factsQueryCmd.Flags().Bool("fuzzy", false, "Fuzzy match entity and label (LIKE %keyword%)")
 
 	// delete flags
 	factsDeleteCmd.Flags().String("source", "", "Source file to delete facts for")
@@ -138,6 +139,7 @@ func runFactsQuery(cmd *cobra.Command, args []string) error {
 	source, _ := cmd.Flags().GetString("source")
 	limit, _ := cmd.Flags().GetInt("limit")
 	countOnly, _ := cmd.Flags().GetBool("count-only")
+	fuzzy, _ := cmd.Flags().GetBool("fuzzy")
 
 	results, err := store.Query(facts.QueryOpts{
 		Entity:     entity,
@@ -147,6 +149,7 @@ func runFactsQuery(cmd *cobra.Command, args []string) error {
 		NumberType: numberType,
 		Source:     source,
 		Limit:      limit,
+		Fuzzy:      fuzzy,
 	})
 	if err != nil {
 		if outputFormat == "json" {

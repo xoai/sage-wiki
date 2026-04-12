@@ -1,0 +1,16 @@
+# facts-aliases.yaml — entity 和 semantic_label 规范化别名
+# 放置于 wiki 项目根目录（与 config.yaml 同级）
+# facts import 时自动读取，将别名映射到 canonical name
+
+# entity 别名：canonical_name → [alias1, alias2, ...]
+entity_aliases:
+  # 示例：中英文公司名统一
+  # 希烽光电: ["XiFeng Optics", "希烽", "XiFeng"]
+  # 某某科技: ["XX Tech", "某某"]
+
+# semantic_label 别名：canonical_label → [alias1, alias2, ...]
+label_aliases:
+  # 示例：中英文财务指标统一
+  # 营业收入: ["Revenue", "Sales", "营收", "主营业务收入"]
+  # 净利润: ["Net Profit", "Net Income", "归母净利润"]
+  # 毛利率: ["Gross Margin", "Gross Profit Margin"]
