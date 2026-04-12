@@ -408,6 +408,85 @@ func TestUserTimeLocation(t *testing.T) {
 	}
 }
 
+func TestLoadWithExtends(t *testing.T) {
+	dir := t.TempDir()
+
+	basePath := filepath.Join(dir, "sage-base.yaml")
+	baseContent := `
+version: 1
+project: base-wiki
+description: "Base"
+sources:
+  - path: raw
+    type: auto
+output: wiki
+api:
+  provider: openai-compatible
+  api_key: sk-base-key
+  base_url: https://api.example.com/v1
+  rate_limit: 480
+models:
+  summarize: model-a
+  extract: model-a
+  write: model-a
+compiler:
+  max_parallel: 8
+  summary_max_tokens: 8000
+`
+	os.WriteFile(basePath, []byte(baseContent), 0644)
+
+	childDir := filepath.Join(dir, "child")
+	os.MkdirAll(childDir, 0755)
+	childPath := filepath.Join(childDir, "config.yaml")
+	childContent := `
+extends: ../sage-base.yaml
+project: child-wiki
+sources:
+  - path: raw
+    type: auto
+output: wiki
+`
+	os.WriteFile(childPath, []byte(childContent), 0644)
+
+	cfg, err := Load(childPath)
+	if err != nil {
+		t.Fatalf("Load with extends: %v", err)
+	}
+	if cfg.Project != "child-wiki" {
+		t.Errorf("project: got %q, want child-wiki", cfg.Project)
+	}
+	if cfg.API.Provider != "openai-compatible" {
+		t.Errorf("api.provider not inherited: got %q", cfg.API.Provider)
+	}
+	if cfg.API.RateLimit != 480 {
+		t.Errorf("rate_limit not inherited: got %d", cfg.API.RateLimit)
+	}
+	if cfg.Compiler.SummaryMaxTokens != 8000 {
+		t.Errorf("summary_max_tokens not inherited: got %d", cfg.Compiler.SummaryMaxTokens)
+	}
+}
+
+func TestLoadExtendsMissing(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	os.WriteFile(cfgPath, []byte(`
+extends: ../nonexistent.yaml
+project: test
+sources:
+  - path: raw
+    type: auto
+output: wiki
+`), 0644)
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("should not fail on missing base: %v", err)
+	}
+	if cfg.Project != "test" {
+		t.Errorf("project: got %q", cfg.Project)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)
 }

@@ -16,6 +16,7 @@ var typeNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 // Config represents the sage-wiki project configuration.
 type Config struct {
+	Extends     string       `yaml:"extends,omitempty"`
 	Version     int          `yaml:"version"`
 	Project     string       `yaml:"project"`
 	Description string       `yaml:"description"`
@@ -284,6 +285,9 @@ func (c *CompilerConfig) UserNow() string {
 }
 
 // Load reads and parses a config file, expanding environment variables.
+// If the config contains an "extends" field, the base config is loaded first
+// and deep-merged with the child config (maps merge recursively, scalars/slices
+// from child replace base). At most one level of inheritance (base's extends is ignored).
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -293,10 +297,50 @@ func Load(path string) (*Config, error) {
 	// Expand environment variables in ${VAR} format
 	expanded := expandEnvVars(string(data))
 
+	// Quick parse to check for extends field
+	var peek struct {
+		Extends string `yaml:"extends"`
+	}
+	yaml.Unmarshal([]byte(expanded), &peek)
+
+	finalYAML := expanded
+	if peek.Extends != "" {
+		basePath := peek.Extends
+		if !filepath.IsAbs(basePath) {
+			basePath = filepath.Join(filepath.Dir(path), basePath)
+		}
+
+		baseData, err := os.ReadFile(basePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: extends base %q not found, using child config only\n", peek.Extends)
+		} else {
+			baseExpanded := expandEnvVars(string(baseData))
+
+			// Deep merge via map[string]any to avoid yaml.v3 zero-value clobbering
+			var baseMap, childMap map[string]any
+			if err := yaml.Unmarshal([]byte(baseExpanded), &baseMap); err != nil {
+				return nil, fmt.Errorf("config.Load: parse base %q: %w", peek.Extends, err)
+			}
+			if err := yaml.Unmarshal([]byte(expanded), &childMap); err != nil {
+				return nil, fmt.Errorf("config.Load: parse child: %w", err)
+			}
+			// Remove extends from child before merge
+			delete(childMap, "extends")
+
+			merged := deepMerge(baseMap, childMap)
+			mergedBytes, err := yaml.Marshal(merged)
+			if err != nil {
+				return nil, fmt.Errorf("config.Load: marshal merged: %w", err)
+			}
+			finalYAML = string(mergedBytes)
+		}
+	}
+
 	cfg := Defaults()
-	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
+	if err := yaml.Unmarshal([]byte(finalYAML), &cfg); err != nil {
 		return nil, fmt.Errorf("config.Load: parse error: %w", err)
 	}
+	cfg.Extends = "" // clear after merge
 
 	if err := cfg.Validate(); err != nil {
 		return nil, err
