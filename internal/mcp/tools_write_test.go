@@ -307,6 +307,47 @@ func TestAddSourceWithPathTraversal(t *testing.T) {
 	}
 }
 
+func TestAddSourceFromConfiguredSourceDir(t *testing.T) {
+	dir := t.TempDir()
+	wiki.InitGreenfield(dir, "test", "gemini-2.5-flash")
+
+	// Create a source file outside the project dir but in a configured source path
+	externalDir := t.TempDir()
+	srcFile := filepath.Join(externalDir, "research.md")
+	os.WriteFile(srcFile, []byte("# Research\nSome findings."), 0644)
+
+	// Update config to include the external source directory
+	cfgPath := filepath.Join(dir, "config.yaml")
+	cfgData, _ := os.ReadFile(cfgPath)
+	// Replace the sources section to include external dir
+	cfgStr := strings.Replace(string(cfgData),
+		"sources:\n  - path: raw\n    type: auto",
+		fmt.Sprintf("sources:\n  - path: raw\n    type: auto\n  - path: %s\n    type: auto", externalDir),
+		1)
+	os.WriteFile(cfgPath, []byte(cfgStr), 0644)
+
+	srv, err := NewServer(dir)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer srv.Close()
+
+	// Get the relative path from project dir
+	relPath, _ := filepath.Rel(dir, srcFile)
+
+	result := srv.CallTool(context.Background(), "wiki_add_source", mcplib.CallToolRequest{
+		Params: mcplib.CallToolParams{
+			Name:      "wiki_add_source",
+			Arguments: map[string]any{"path": relPath},
+		},
+	})
+
+	if result.IsError {
+		t.Errorf("expected source from configured dir to be allowed, got error: %s",
+			result.Content[0].(mcplib.TextContent).Text)
+	}
+}
+
 func TestCaptureEmptyContent(t *testing.T) {
 	dir := t.TempDir()
 	wiki.InitGreenfield(dir, "test", "gemini-2.5-flash")
