@@ -1,6 +1,6 @@
 ---
 name: wiki-manage
-description: sage-wiki 全生命周期管理——创建项目、日常维护（含 file-extract + facts 导入）、深度体检、底座更新、状态看板
+description: sage-wiki 全生命周期管理——创建项目、日常维护（含 file-extract + facts 导入）、深度体检、上游协作（底座更新+PR review）、状态看板
 user_invocable: true
 ---
 
@@ -27,7 +27,7 @@ K老板，请选择操作：
 1. 创建项目 — 初始化新 wiki 项目 + 注册到 hub
 2. 日常维护 — 更新检查 + 提取 + 导入 + 编译 + lint + wikilink 修复
 3. 深度体检 — 日常维护 + 概念覆盖度/去重 + Config 治理 + facts 审计
-4. 更新底座 — 检查并合并 sage-wiki 上游更新 + 重新编译二进制
+4. 上游协作 — 检查并合并上游更新 + 检查 PR review + 修复反馈
 5. 状态看板 — 项目状态 + 覆盖率 + facts 统计一览
 
 选择 (1-5):
@@ -190,9 +190,53 @@ $SAGE coverage --project $WIKI --format json
 
 同 wiki-improve Step 6（分类覆盖度 + 关系频次 + 收敛告警）。
 
-## 工作流 4: 更新底座
+## 工作流 4: 上游协作
 
-仅执行 Step 0（上游更新检查 + 构建 + 测试），输出结果后结束。
+更新底座 + 检查 PR review + 修复反馈。
+
+### Step A: 底座更新检查
+
+（同原 Step 0：fetch upstream、merge、build、test）
+
+### Step B: PR Review 检查
+
+检查 open PR 的 owner 回复：
+
+```bash
+gh pr list --repo xoai/sage-wiki --state open --author kailunguu-code --json number,title,comments --jq '.[] | select(.comments | length > 0) | "\(.number) \(.title) (\(.comments | length) comments)"'
+```
+
+如果有未处理的回复，逐个读取：
+
+```bash
+gh api repos/xoai/sage-wiki/issues/{number}/comments --jq '.[] | "[\(.user.login)] \(.created_at[:10]):\n\(.body)\n---"'
+```
+
+### Step C: Review 意见分类
+
+对每个 PR 的 review 意见，按以下分类：
+
+| 类型 | 标记 | 行动 |
+|------|------|------|
+| Critical (安全/正确性) | C | 必须修复，阻塞合并 |
+| Major (架构/性能) | M | 应该修复，除非有充分理由 |
+| Minor (风格/命名) | m | 修复或回复说明 |
+| Question (澄清) | Q | 回复说明 |
+
+展示分类表，确认修复范围。
+
+### Step D: 逐个修复 + 推送
+
+对确认要修复的项：
+1. 按优先级逐个修复（C → M → m）
+2. 每项修复独立 commit
+3. 全部完成后 push 更新 PR
+4. 回复 PR comment 说明已修复
+
+```bash
+git push origin <branch>
+gh pr comment <number> --repo xoai/sage-wiki --body "Addressed review feedback: ..."
+```
 
 ## 工作流 5: 状态看板
 
