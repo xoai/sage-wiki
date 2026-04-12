@@ -139,6 +139,7 @@ func (db *DB) migrate() error {
 		migrationV1,
 		migrationV2,
 		migrationV3,
+		migrationV4,
 	}
 
 	for i := version; i < len(migrations); i++ {
@@ -267,4 +268,37 @@ CREATE TABLE IF NOT EXISTS vec_chunks (
 	dimensions INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_vec_chunks_doc ON vec_chunks(doc_id);
+`
+
+// migrationV4 adds the facts table for structured numeric data from file-extract.
+const migrationV4 = `
+CREATE TABLE IF NOT EXISTS facts (
+	id              INTEGER PRIMARY KEY AUTOINCREMENT,
+	source_file     TEXT NOT NULL,
+	source_project  TEXT DEFAULT 'local',
+	value           TEXT NOT NULL,
+	numeric         REAL,
+	sign            TEXT DEFAULT 'positive',
+	number_type     TEXT,
+	certainty       TEXT DEFAULT 'exact',
+	entity          TEXT DEFAULT 'unknown',
+	entity_type     TEXT,
+	period          TEXT DEFAULT 'unknown',
+	period_type     TEXT DEFAULT 'unknown',
+	semantic_label  TEXT,
+	source_location TEXT,
+	context_type    TEXT,
+	exact_quote     TEXT,
+	verified        BOOLEAN DEFAULT 0,
+	extraction_method TEXT,
+	schema_version  TEXT,
+	imported_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+	quote_hash      TEXT,
+	UNIQUE(source_file, entity, semantic_label, period, numeric, quote_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_facts_entity ON facts(entity);
+CREATE INDEX IF NOT EXISTS idx_facts_period ON facts(period);
+CREATE INDEX IF NOT EXISTS idx_facts_source ON facts(source_file);
+CREATE INDEX IF NOT EXISTS idx_facts_label  ON facts(semantic_label);
 `
