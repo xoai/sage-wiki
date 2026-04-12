@@ -11,6 +11,7 @@ import (
 
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/vectors"
+	"gopkg.in/yaml.v3"
 )
 
 // --- Completeness Pass ---
@@ -391,6 +392,119 @@ func (p *StalenessPass) Run(ctx *LintContext) ([]Finding, error) {
 				Severity: SevInfo,
 				Path:     filepath.Join(ctx.OutputDir, "concepts", e.Name()),
 				Message:  fmt.Sprintf("article is %d days old", int(age.Hours()/24)),
+			})
+		}
+	}
+
+	return findings, nil
+}
+
+// --- NumericContradiction Pass ---
+
+// NumericContradictionPass 读取 .pre-extracted/conflicts.yaml，每个冲突生成一个 Finding。
+type NumericContradictionPass struct{}
+
+func (p *NumericContradictionPass) Name() string       { return "numeric-contradiction" }
+func (p *NumericContradictionPass) CanAutoFix() bool    { return false }
+func (p *NumericContradictionPass) Fix(_ *LintContext, _ []Finding) error { return nil }
+
+func (p *NumericContradictionPass) Run(ctx *LintContext) ([]Finding, error) {
+	var findings []Finding
+
+	conflictsPath := filepath.Join(ctx.ProjectDir, ".pre-extracted", "conflicts.yaml")
+	data, err := os.ReadFile(conflictsPath)
+	if err != nil {
+		// 无 conflicts.yaml 不算错误
+		return findings, nil
+	}
+
+	var conflicts struct {
+		Conflicts []struct {
+			Entity string `yaml:"entity"`
+			Label  string `yaml:"semantic_label"`
+			Period string `yaml:"period"`
+			Values []struct {
+				Value  string `yaml:"value"`
+				Source string `yaml:"source_file"`
+			} `yaml:"values"`
+			Description string `yaml:"description"`
+		} `yaml:"conflicts"`
+	}
+
+	if err := yaml.Unmarshal(data, &conflicts); err != nil {
+		findings = append(findings, Finding{
+			Pass:     "numeric-contradiction",
+			Severity: SevWarning,
+			Path:     conflictsPath,
+			Message:  fmt.Sprintf("failed to parse conflicts.yaml: %v", err),
+		})
+		return findings, nil
+	}
+
+	for _, c := range conflicts.Conflicts {
+		msg := fmt.Sprintf("数字矛盾: %s / %s / %s", c.Entity, c.Label, c.Period)
+		if c.Description != "" {
+			msg += " — " + c.Description
+		}
+		var sources []string
+		for _, v := range c.Values {
+			sources = append(sources, fmt.Sprintf("%s=%s", v.Source, v.Value))
+		}
+		if len(sources) > 0 {
+			msg += " [" + strings.Join(sources, ", ") + "]"
+		}
+		findings = append(findings, Finding{
+			Pass:     "numeric-contradiction",
+			Severity: SevWarning,
+			Message:  msg,
+		})
+	}
+
+	return findings, nil
+}
+
+// --- OrphanFacts Pass ---
+
+// OrphanFactsPass 查 facts 表中 source_file 不存在于 raw/ 的记录。
+type OrphanFactsPass struct{}
+
+func (p *OrphanFactsPass) Name() string       { return "orphan-facts" }
+func (p *OrphanFactsPass) CanAutoFix() bool    { return false }
+func (p *OrphanFactsPass) Fix(_ *LintContext, _ []Finding) error { return nil }
+
+func (p *OrphanFactsPass) Run(ctx *LintContext) ([]Finding, error) {
+	var findings []Finding
+
+	cleanup, err := ctx.EnsureDB()
+	if err != nil {
+		return findings, nil
+	}
+	defer cleanup()
+
+	if ctx.DB == nil {
+		return findings, nil
+	}
+
+	// 查询所有 distinct source_file
+	rows, err := ctx.DB.ReadDB().Query("SELECT DISTINCT source_file FROM facts")
+	if err != nil {
+		return findings, nil // facts 表可能不存在
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var srcFile string
+		if err := rows.Scan(&srcFile); err != nil {
+			continue
+		}
+		absPath := filepath.Join(ctx.ProjectDir, srcFile)
+		if _, err := os.Stat(absPath); os.IsNotExist(err) {
+			findings = append(findings, Finding{
+				Pass:     "orphan-facts",
+				Severity: SevWarning,
+				Path:     srcFile,
+				Message:  fmt.Sprintf("facts reference source %q which no longer exists", srcFile),
+				Fix:      fmt.Sprintf("sage-wiki facts delete --source %q", srcFile),
 			})
 		}
 	}
