@@ -199,6 +199,7 @@ type WriteArticleData struct {
 	RelatedList     string
 	Confidence      string
 	MaxTokens       int
+	SourceContent   string // raw source content injected for grounding
 }
 
 // CaptionData holds data for image captioning template.

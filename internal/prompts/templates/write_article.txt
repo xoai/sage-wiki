@@ -4,6 +4,11 @@ Concept: {{.ConceptName}}
 Sources: {{.Sources}}
 Related concepts: {{.RelatedList}}
 
+{{if .SourceContent}}
+## Source material:
+{{.SourceContent}}
+{{end}}
+
 {{if .ExistingArticle}}
 ## Existing article (update/expand):
 {{.ExistingArticle}}
@@ -14,16 +19,13 @@ Related concepts: {{.RelatedList}}
 {{.Learnings}}
 {{end}}
 
-Write a structured wiki article with:
+Write a structured wiki article. When source material is provided above, ground your article in it — prefer specific details from the source over general knowledge.
 
 ## Definition
 Clear, precise definition of the concept.
 
-## How it works
-Technical explanation with appropriate depth.
-
-## Variants
-Known variants, implementations, or alternatives.
+## What we know
+Key facts, findings, or implementation details from the sources.
 
 ## Trade-offs
 Key trade-offs, limitations, or considerations.
