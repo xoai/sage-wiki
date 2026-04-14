@@ -400,6 +400,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 					RelationPatterns: relPatterns,
 					ChunkSize:        cfg.Search.ChunkSizeOrDefault(),
 					Language:         cfg.Language,
+					SourceDirs:       cfg.ResolveSources(projectDir),
 				}, concepts)
 
 				for _, ar := range articles {
@@ -822,6 +823,7 @@ func resumeBatch(
 					RelationPatterns: relPatterns,
 					ChunkSize:        cfg.Search.ChunkSizeOrDefault(),
 					Language:         cfg.Language,
+					SourceDirs:       cfg.ResolveSources(projectDir),
 				}, concepts)
 
 				for _, ar := range articles {

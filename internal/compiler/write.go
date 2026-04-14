@@ -49,6 +49,7 @@ type ArticleWriteOpts struct {
 	RelationPatterns []ontology.RelationPattern
 	ChunkSize        int // tokens per chunk (default 800)
 	Language         string
+	SourceDirs       []string // resolved source directories for fallback file lookup
 }
 
 // WriteArticles runs Pass 3: write concept articles with ontology edges.
@@ -99,6 +100,42 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept) ArticleRes
 		existingContent = string(data)
 	}
 
+	// Load raw source files for grounding
+	var sourceContent strings.Builder
+	for _, src := range concept.Sources {
+		rawPath := filepath.Join(opts.ProjectDir, src)
+		data, err := os.ReadFile(rawPath)
+		if err != nil {
+			// Fallback: search by basename in configured source directories
+			base := filepath.Base(src)
+			for _, srcDir := range opts.SourceDirs {
+				_ = filepath.WalkDir(srcDir, func(path string, d os.DirEntry, walkErr error) error {
+					if walkErr != nil || d.IsDir() {
+						return nil
+					}
+					if filepath.Base(path) == base {
+						if found, readErr := os.ReadFile(path); readErr == nil {
+							data = found
+							if rel, relErr := filepath.Rel(opts.ProjectDir, path); relErr == nil {
+								src = rel
+							}
+						}
+						return filepath.SkipAll
+					}
+					return nil
+				})
+				if data != nil {
+					break
+				}
+			}
+		}
+		if data != nil {
+			sourceContent.WriteString("### Source: " + src + "\n")
+			sourceContent.Write(data)
+			sourceContent.WriteString("\n\n")
+		}
+	}
+
 	// Build prompt
 	relatedNames := findRelatedConcepts(concept)
 	prompt, err := prompts.Render("write_article", prompts.WriteArticleData{
@@ -112,6 +149,7 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept) ArticleRes
 		RelatedList:     strings.Join(relatedNames, ", "),
 		Confidence:      "medium",
 		MaxTokens:       opts.MaxTokens,
+		SourceContent:   sourceContent.String(),
 	}, opts.Language)
 	if err != nil {
 		result.Error = fmt.Errorf("render write_article prompt: %w", err)
