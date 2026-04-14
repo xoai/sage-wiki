@@ -19,13 +19,16 @@ Related concepts: {{.RelatedList}}
 {{.Learnings}}
 {{end}}
 
-Write a structured wiki article. When source material is provided above, ground your article in it — prefer specific details from the source over general knowledge.
+Write a structured wiki article with:
 
 ## Definition
 Clear, precise definition of the concept.
 
-## What we know
-Key facts, findings, or implementation details from the sources.
+## How it works
+Technical explanation with appropriate depth.
+
+## Variants
+Known variants, implementations, or alternatives.
 
 ## Trade-offs
 Key trade-offs, limitations, or considerations.
