@@ -46,9 +46,7 @@ func (p *openaiProvider) formatBody(messages []Message, opts CallOpts, stream bo
 		"model":    opts.Model,
 		"messages": apiMessages,
 	}
-	if stream {
-		body["stream"] = true
-	}
+	body["stream"] = stream
 	if opts.MaxTokens > 0 {
 		body["max_tokens"] = opts.MaxTokens
 	}
