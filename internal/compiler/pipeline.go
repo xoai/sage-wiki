@@ -43,6 +43,9 @@ type CompileResult struct {
 	Errors             int
 	EmbedErrors        int
 	CostReport         *llm.CostReport // nil if no LLM calls were made
+	TierIndexed        int             // sources indexed at Tier 0
+	TierEmbedded       int             // sources embedded at Tier 1
+	TierCompiled       int             // sources sent through full pipeline (Tier 3)
 }
 
 // CompileState tracks progress for checkpoint/resume (ADR-018).
@@ -261,6 +264,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	if len(tier0Pending) > 0 {
 		progress.StartPhase("Tier 0: Index sources", len(tier0Pending))
 		indexed := indexRawSources(projectDir, tier0Pending, memStore, itemStore)
+		result.TierIndexed = indexed
 		log.Info("tier 0 indexing complete", "indexed", indexed)
 		progress.EndPhase()
 	}
@@ -270,6 +274,8 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	if len(tier1Pending) > 0 {
 		progress.StartPhase("Tier 1: Index + embed sources", len(tier1Pending))
 		indexed, embedded := indexAndEmbedSources(projectDir, tier1Pending, memStore, vecStore, embedder, itemStore, bp)
+		result.TierIndexed += indexed
+		result.TierEmbedded = embedded
 		log.Info("tier 1 indexing complete", "indexed", indexed, "embedded", embedded)
 		progress.EndPhase()
 	}
@@ -335,6 +341,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		result.ArticlesWritten = pipelineResult.ArticlesWritten
 		result.Errors += pipelineResult.Errors
 		result.EmbedErrors = pipelineResult.EmbedErrors
+		result.TierCompiled = len(toProcess)
 
 		// Mark Tier 3 passes only for sources that succeeded
 		succeeded := make(map[string]bool)

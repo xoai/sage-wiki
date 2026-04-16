@@ -211,6 +211,16 @@ func (p *Progress) Summary(result *CompileResult) {
 	fmt.Fprintf(os.Stderr, "📊 Compile complete in %s\n", elapsed.Round(time.Second))
 	fmt.Fprintf(os.Stderr, "   Sources:  +%d added, ~%d modified, -%d removed\n",
 		result.Added, result.Modified, result.Removed)
+
+	// Tier breakdown
+	if result.TierIndexed > 0 || result.TierEmbedded > 0 {
+		fmt.Fprintf(os.Stderr, "   Indexed:   %d sources", result.TierIndexed)
+		if result.TierEmbedded > 0 {
+			fmt.Fprintf(os.Stderr, " (%d embedded)", result.TierEmbedded)
+		}
+		fmt.Fprintln(os.Stderr)
+	}
+
 	if result.Summarized > 0 {
 		fmt.Fprintf(os.Stderr, "   Summaries: %d written\n", result.Summarized)
 	}
@@ -223,6 +233,14 @@ func (p *Progress) Summary(result *CompileResult) {
 	if result.Errors > 0 {
 		fmt.Fprintf(os.Stderr, "   Errors:    %d\n", result.Errors)
 	}
+
+	// Hint when sources were indexed but not compiled
+	if result.TierIndexed > 0 && result.Summarized == 0 && result.TierCompiled == 0 {
+		fmt.Fprintf(os.Stderr, "   ℹ️  %d sources indexed at Tier 0-1 (searchable but not compiled into articles).\n", result.TierIndexed)
+		fmt.Fprintf(os.Stderr, "      Set default_tier: 3 in config.yaml to compile all sources,\n")
+		fmt.Fprintf(os.Stderr, "      or use wiki_compile_topic via MCP to compile specific topics.\n")
+	}
+
 	fmt.Fprintln(os.Stderr)
 }
 

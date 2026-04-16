@@ -56,8 +56,11 @@ For most large vaults, the defaults work well:
 compiler:
   max_parallel: 20         # adaptive backpressure handles rate limits
   mode: auto               # batch API when 10+ sources (50% cost savings)
-  default_tier: 1          # index + embed everything by default
+  default_tier: 1          # override: index + embed only (global default is 3)
 ```
+
+> **Note:** The global default is `default_tier: 3` (full compile). For large
+> vaults (10K+), override to `1` here to index fast and compile on demand.
 
 ### File-Type Tier Overrides
 

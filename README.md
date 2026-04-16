@@ -252,7 +252,7 @@ compiler:
   #   - domain
 
   # Tiered compilation — index fast, compile what matters
-  default_tier: 1 # 0=index, 1=index+embed, 3=full compile
+  default_tier: 3 # 0=index, 1=index+embed, 3=full compile
   # tier_defaults:             # per-extension tier overrides
   #   json: 0                  # structured data — index only
   #   yaml: 0
@@ -344,7 +344,7 @@ sage-wiki uses **tiered compilation** to handle vaults of 10K-100K+ documents. I
 | **2** — Code parse | Structural summary via regex parser (no LLM) | Free | ~10ms |
 | **3** — Full compile | Summarize + extract concepts + write articles | ~$0.05-0.15 | ~5-8 min |
 
-At `default_tier: 1`, a 100K vault is searchable in ~5.5 hours. Articles compile lazily — when an agent queries a topic, search signals uncompiled sources, and `wiki_compile_topic` compiles just that cluster (~2 min for 20 sources).
+By default (`default_tier: 3`), all sources go through the full LLM pipeline — the same behavior as before tiered compilation. For large vaults (10K+), set `default_tier: 1` to index everything in ~5.5 hours, then compile on demand — when an agent queries a topic, search signals uncompiled sources, and `wiki_compile_topic` compiles just that cluster (~2 min for 20 sources).
 
 **Key features:**
 - **File-type defaults** — JSON, YAML, and lock files skip to Tier 0 automatically. Configure per-extension via `tier_defaults`.

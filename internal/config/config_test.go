@@ -17,8 +17,8 @@ func TestDefaults(t *testing.T) {
 	if cfg.Compiler.MaxParallel != 20 {
 		t.Errorf("expected max_parallel 20, got %d", cfg.Compiler.MaxParallel)
 	}
-	if cfg.Compiler.DefaultTier != 1 {
-		t.Errorf("expected default_tier 1, got %d", cfg.Compiler.DefaultTier)
+	if cfg.Compiler.DefaultTier != 3 {
+		t.Errorf("expected default_tier 3, got %d", cfg.Compiler.DefaultTier)
 	}
 	if cfg.Search.HybridWeightBM25 != 0.7 {
 		t.Errorf("expected bm25 weight 0.7, got %f", cfg.Search.HybridWeightBM25)

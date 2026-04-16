@@ -65,7 +65,7 @@ Architecture shift from "compile everything" to "index fast, compile what matter
 compiler:
   max_parallel: 20              # adaptive backpressure (was 4)
   mode: auto                    # standard, batch, or auto
-  default_tier: 1               # 0=index, 1=embed, 3=compile
+  default_tier: 3               # 0=index, 1=embed, 3=compile
   tier_defaults:                # per-extension tier overrides
     json: 0
     yaml: 0
