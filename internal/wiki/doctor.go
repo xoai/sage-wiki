@@ -67,7 +67,7 @@ func RunDoctor(projectDir string) *DoctorResult {
 		result.add("api", "ok", fmt.Sprintf("Provider: %s", cfg.API.Provider))
 
 		// Test connectivity
-		client, err := llm.NewClient(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, 1000)
+		client, err := llm.NewClient(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, 1000, cfg.API.ExtraParams)
 		if err != nil {
 			result.add("connectivity", "error", fmt.Sprintf("Failed to create LLM client: %v", err))
 		} else {

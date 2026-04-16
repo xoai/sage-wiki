@@ -214,6 +214,9 @@ api:
   api_key: ${GEMINI_API_KEY} # env var expansion supported
   # base_url:                   # custom endpoint (OpenRouter, Azure, etc.)
   # rate_limit: 60              # requests per minute
+  # extra_params:               # provider-specific params merged into request body
+  #   enable_thinking: false    # e.g., disable Qwen thinking mode
+  #   reasoning_effort: low     # e.g., DeepSeek reasoning control
 
 # Model per task — use cheaper models for high-volume, quality for writing
 models:

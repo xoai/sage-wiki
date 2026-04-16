@@ -8,8 +8,9 @@ import (
 
 // openaiProvider implements the OpenAI-compatible API format.
 type openaiProvider struct {
-	apiKey  string
-	baseURL string
+	apiKey      string
+	baseURL     string
+	extraParams map[string]interface{} // provider-specific params merged into request body
 }
 
 func newOpenAIProvider(apiKey string, baseURL string) *openaiProvider {
@@ -52,6 +53,15 @@ func (p *openaiProvider) formatBody(messages []Message, opts CallOpts, stream bo
 	}
 	if opts.Temperature > 0 {
 		body["temperature"] = opts.Temperature
+	}
+	// Merge provider-specific extra params (e.g., enable_thinking, reasoning_effort).
+	// Protected keys cannot be overridden — they are structural to the request.
+	protected := map[string]bool{"model": true, "messages": true, "stream": true}
+	for k, v := range p.extraParams {
+		if protected[k] {
+			continue
+		}
+		body[k] = v
 	}
 	return body
 }

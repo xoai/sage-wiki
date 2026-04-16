@@ -47,10 +47,11 @@ type Source struct {
 }
 
 type APIConfig struct {
-	Provider  string `yaml:"provider"`
-	APIKey    string `yaml:"api_key"`
-	BaseURL   string `yaml:"base_url,omitempty"`
-	RateLimit int    `yaml:"rate_limit,omitempty"`
+	Provider    string                 `yaml:"provider"`
+	APIKey      string                 `yaml:"api_key"`
+	BaseURL     string                 `yaml:"base_url,omitempty"`
+	RateLimit   int                    `yaml:"rate_limit,omitempty"`
+	ExtraParams map[string]interface{} `yaml:"extra_params,omitempty"` // provider-specific params merged into request body
 }
 
 type ModelsConfig struct {

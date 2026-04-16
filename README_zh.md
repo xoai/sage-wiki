@@ -214,6 +214,9 @@ api:
   api_key: ${GEMINI_API_KEY} # 支持环境变量展开
   # base_url:                   # 自定义端点 (OpenRouter, Azure 等)
   # rate_limit: 60              # 每分钟请求数
+  # extra_params:               # 提供商特定参数,合并到请求体中
+  #   enable_thinking: false    # 例如: 禁用 Qwen 思考模式
+  #   reasoning_effort: low     # 例如: DeepSeek 推理控制
 
 # 按任务指定模型 -- 高频任务用便宜模型,写作用高质量模型
 models:

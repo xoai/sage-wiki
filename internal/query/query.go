@@ -82,7 +82,7 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 	}
 
 	// Create LLM client
-	client, err := llm.NewClient(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, cfg.API.RateLimit)
+	client, err := llm.NewClient(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, cfg.API.RateLimit, cfg.API.ExtraParams)
 	if err != nil {
 		return nil, fmt.Errorf("query: create LLM client: %w", err)
 	}
@@ -162,7 +162,7 @@ func buildQueryContext(projectDir string, question string, topK int, cfg *config
 		// Create LLM client for expansion/reranking (best-effort, nil = skip)
 		var client *llm.Client
 		if cfg.Search.QueryExpansionEnabled() || rerankEnabled {
-			client, _ = llm.NewClient(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, cfg.API.RateLimit)
+			client, _ = llm.NewClient(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, cfg.API.RateLimit, cfg.API.ExtraParams)
 		}
 
 		model := cfg.Models.Query
@@ -614,7 +614,7 @@ func StreamQuery(ctx context.Context, projectDir string, question string, topK i
 		return nil, nil
 	}
 
-	client, err := llm.NewClient(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, cfg.API.RateLimit)
+	client, err := llm.NewClient(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, cfg.API.RateLimit, cfg.API.ExtraParams)
 	if err != nil {
 		return nil, fmt.Errorf("query: create LLM client: %w", err)
 	}

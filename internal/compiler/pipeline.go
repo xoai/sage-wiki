@@ -138,7 +138,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	}
 
 	// Create LLM client
-	client, err := llm.NewClient(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, cfg.API.RateLimit)
+	client, err := llm.NewClient(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, cfg.API.RateLimit, cfg.API.ExtraParams)
 	if err != nil {
 		return nil, fmt.Errorf("compile: create LLM client: %w", err)
 	}

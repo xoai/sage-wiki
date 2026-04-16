@@ -322,3 +322,47 @@ func TestChatCompletionStripsThinkTags(t *testing.T) {
 		t.Errorf("unexpected content: %q", resp.Content)
 	}
 }
+
+func TestExtraParamsMergedIntoRequest(t *testing.T) {
+	var receivedBody map[string]interface{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedBody)
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]string{"content": "ok"}},
+			},
+			"model": "test",
+			"usage": map[string]int{"total_tokens": 10},
+		})
+	}))
+	defer server.Close()
+
+	extra := map[string]interface{}{
+		"enable_thinking": false,
+		"top_k":           40,
+	}
+	client, err := NewClient("openai", "test-key", server.URL, 1000, extra)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	_, err = client.ChatCompletion([]Message{
+		{Role: "user", Content: "test"},
+	}, CallOpts{Model: "test-model"})
+	if err != nil {
+		t.Fatalf("ChatCompletion: %v", err)
+	}
+
+	// Verify extra params were merged
+	if val, ok := receivedBody["enable_thinking"]; !ok || val != false {
+		t.Errorf("enable_thinking = %v, want false", val)
+	}
+	if val, ok := receivedBody["top_k"]; !ok || val != float64(40) {
+		t.Errorf("top_k = %v, want 40", val)
+	}
+	// Standard fields should still be present
+	if receivedBody["model"] != "test-model" {
+		t.Errorf("model = %v, want test-model", receivedBody["model"])
+	}
+}

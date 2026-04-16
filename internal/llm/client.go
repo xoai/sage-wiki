@@ -58,7 +58,10 @@ type Client struct {
 }
 
 // NewClient creates a new LLM client for the given provider.
-func NewClient(providerName string, apiKey string, baseURL string, rateLimit int) (*Client, error) {
+// extraParams (if provided) are merged into every request body — use for
+// provider-specific parameters like Qwen's enable_thinking or DeepSeek's
+// reasoning_effort.
+func NewClient(providerName string, apiKey string, baseURL string, rateLimit int, extraParams ...map[string]interface{}) (*Client, error) {
 	p, err := newProvider(providerName, apiKey, baseURL)
 	if err != nil {
 		return nil, err
@@ -66,6 +69,19 @@ func NewClient(providerName string, apiKey string, baseURL string, rateLimit int
 
 	if rateLimit <= 0 {
 		rateLimit = defaultRateLimit(providerName)
+	}
+
+	var extra map[string]interface{}
+	if len(extraParams) > 0 && extraParams[0] != nil {
+		extra = extraParams[0]
+	}
+
+	// Wire extra params into the provider (currently OpenAI-compatible only;
+	// Ollama also uses openaiProvider so it gets extra_params too)
+	if extra != nil {
+		if op, ok := p.(*openaiProvider); ok {
+			op.extraParams = extra
+		}
 	}
 
 	return &Client{

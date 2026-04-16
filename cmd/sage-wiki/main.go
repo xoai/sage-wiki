@@ -708,7 +708,7 @@ func runScribe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create LLM client
-	client, err := llm.NewClient(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, cfg.API.RateLimit)
+	client, err := llm.NewClient(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, cfg.API.RateLimit, cfg.API.ExtraParams)
 	if err != nil {
 		return fmt.Errorf("scribe: create LLM client: %w", err)
 	}
