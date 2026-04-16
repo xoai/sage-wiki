@@ -122,7 +122,19 @@ func (s *Server) handleAddSource(ctx context.Context, req mcplib.CallToolRequest
 
 	absProject, _ := filepath.Abs(s.projectDir)
 	absPath, _ := filepath.Abs(filepath.Join(s.projectDir, path))
-	if !isSubpath(absProject, absPath) {
+
+	// Allow paths within the project directory OR within any configured source directory
+	allowed := isSubpath(absProject, absPath)
+	if !allowed {
+		for _, src := range s.cfg.ResolveSources(absProject) {
+			absSrc, _ := filepath.Abs(src)
+			if isSubpath(absSrc, absPath) {
+				allowed = true
+				break
+			}
+		}
+	}
+	if !allowed {
 		return errorResult("path traversal not allowed"), nil
 	}
 
@@ -162,8 +174,7 @@ func (s *Server) handleWriteSummary(ctx context.Context, req mcplib.CallToolRequ
 		return errorResult("source and content are required"), nil
 	}
 
-	baseName := strings.TrimSuffix(filepath.Base(source), filepath.Ext(source))
-	summaryPath := filepath.Join(s.cfg.Output, "summaries", baseName+".md")
+	summaryPath := filepath.Join(s.cfg.Output, "summaries", compiler.SummaryFilename(source))
 	absProject, _ := filepath.Abs(s.projectDir)
 	absPath, _ := filepath.Abs(filepath.Join(s.projectDir, summaryPath))
 	if !isSubpath(absProject, absPath) {
