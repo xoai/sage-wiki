@@ -142,7 +142,7 @@ func (ct *CostTracker) getPrice(model string) ModelPrice {
 	providerPrices, ok := prices[ct.provider]
 	if !ok {
 		// Try to match openai-compatible to openai prices
-		if ct.provider == "openai-compatible" {
+		if ct.provider == "openai-compatible" || ct.provider == "qwen" {
 			providerPrices = prices["openai"]
 		}
 	}
