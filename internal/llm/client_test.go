@@ -125,8 +125,8 @@ func TestGeminiFormat(t *testing.T) {
 					},
 				}},
 			},
-			"usageMetadata":  map[string]int{"totalTokenCount": 15},
-			"modelVersion": "gemini-2.5-flash",
+			"usageMetadata": map[string]int{"totalTokenCount": 15},
+			"modelVersion":  "gemini-2.5-flash",
 		})
 	}))
 	defer server.Close()
@@ -246,6 +246,16 @@ func TestOllamaUsesOpenAIFormat(t *testing.T) {
 	}
 	if client.ProviderName() != "openai" {
 		t.Errorf("ollama should use openai provider, got %s", client.ProviderName())
+	}
+}
+
+func TestQwenUsesOpenAIFormatWithDefaultBaseURL(t *testing.T) {
+	client, err := NewClient("qwen", "sk-test", "", 0)
+	if err != nil {
+		t.Fatalf("NewClient qwen: %v", err)
+	}
+	if client.ProviderName() != "openai" {
+		t.Errorf("qwen should use openai provider, got %s", client.ProviderName())
 	}
 }
 

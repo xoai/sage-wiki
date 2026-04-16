@@ -27,8 +27,8 @@ type Message struct {
 
 // CallOpts configures an LLM call.
 type CallOpts struct {
-	Model      string
-	MaxTokens  int
+	Model       string
+	MaxTokens   int
 	Temperature float64
 }
 
@@ -200,6 +200,11 @@ func newProvider(name string, apiKey string, baseURL string) (Provider, error) {
 	switch name {
 	case "openai", "openai-compatible":
 		return newOpenAIProvider(apiKey, baseURL), nil
+	case "qwen":
+		if baseURL == "" {
+			baseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+		}
+		return newOpenAIProvider(apiKey, baseURL), nil
 	case "anthropic":
 		return newAnthropicProvider(apiKey, baseURL), nil
 	case "gemini":
@@ -219,6 +224,8 @@ func defaultRateLimit(provider string) int {
 	case "anthropic":
 		return 50
 	case "openai":
+		return 60
+	case "qwen":
 		return 60
 	case "gemini":
 		return 60

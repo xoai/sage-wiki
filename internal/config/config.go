@@ -16,18 +16,18 @@ var typeNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 // Config represents the sage-wiki project configuration.
 type Config struct {
-	Extends     string       `yaml:"extends,omitempty"`
-	Version     int          `yaml:"version"`
-	Project     string       `yaml:"project"`
-	Description string       `yaml:"description"`
-	Language    string       `yaml:"language,omitempty"`
-	Vault       *VaultConfig `yaml:"vault,omitempty"`
-	Sources     []Source     `yaml:"sources"`
-	Output      string       `yaml:"output"`
-	Ignore      []string     `yaml:"ignore,omitempty"`
-	API         APIConfig    `yaml:"api"`
-	Models      ModelsConfig `yaml:"models"`
-	Embed       *EmbedConfig `yaml:"embed,omitempty"`
+	Extends     string         `yaml:"extends,omitempty"`
+	Version     int            `yaml:"version"`
+	Project     string         `yaml:"project"`
+	Description string         `yaml:"description"`
+	Language    string         `yaml:"language,omitempty"`
+	Vault       *VaultConfig   `yaml:"vault,omitempty"`
+	Sources     []Source       `yaml:"sources"`
+	Output      string         `yaml:"output"`
+	Ignore      []string       `yaml:"ignore,omitempty"`
+	API         APIConfig      `yaml:"api"`
+	Models      ModelsConfig   `yaml:"models"`
+	Embed       *EmbedConfig   `yaml:"embed,omitempty"`
 	Compiler    CompilerConfig `yaml:"compiler"`
 	Search      SearchConfig   `yaml:"search"`
 	Linting     LintingConfig  `yaml:"linting"`
@@ -70,34 +70,34 @@ type EmbedConfig struct {
 }
 
 type CompilerConfig struct {
-	MaxParallel      int     `yaml:"max_parallel"`
-	DebounceSeconds  int     `yaml:"debounce_seconds"`
-	SummaryMaxTokens int     `yaml:"summary_max_tokens"`
-	ArticleMaxTokens int     `yaml:"article_max_tokens"`
-	AutoCommit       bool    `yaml:"auto_commit"`
-	AutoLint         bool    `yaml:"auto_lint"`
-	Mode             string  `yaml:"mode,omitempty"`              // standard, batch, or auto
-	EstimateBefore   bool    `yaml:"estimate_before,omitempty"`   // prompt with cost estimate before compiling
-	PromptCache      *bool   `yaml:"prompt_cache,omitempty"`      // enable prompt caching (default: true)
-	BatchThreshold   int     `yaml:"batch_threshold,omitempty"`   // min sources to auto-select batch mode
-	TokenPriceOverride float64 `yaml:"token_price_per_million,omitempty"` // override price per 1M input tokens
-	Timezone         string   `yaml:"timezone,omitempty"`          // IANA timezone for user-facing timestamps (default: UTC)
-	ArticleFields    []string `yaml:"article_fields,omitempty"`    // custom frontmatter fields extracted from LLM response
+	MaxParallel        int      `yaml:"max_parallel"`
+	DebounceSeconds    int      `yaml:"debounce_seconds"`
+	SummaryMaxTokens   int      `yaml:"summary_max_tokens"`
+	ArticleMaxTokens   int      `yaml:"article_max_tokens"`
+	AutoCommit         bool     `yaml:"auto_commit"`
+	AutoLint           bool     `yaml:"auto_lint"`
+	Mode               string   `yaml:"mode,omitempty"`                    // standard, batch, or auto
+	EstimateBefore     bool     `yaml:"estimate_before,omitempty"`         // prompt with cost estimate before compiling
+	PromptCache        *bool    `yaml:"prompt_cache,omitempty"`            // enable prompt caching (default: true)
+	BatchThreshold     int      `yaml:"batch_threshold,omitempty"`         // min sources to auto-select batch mode
+	TokenPriceOverride float64  `yaml:"token_price_per_million,omitempty"` // override price per 1M input tokens
+	Timezone           string   `yaml:"timezone,omitempty"`                // IANA timezone for user-facing timestamps (default: UTC)
+	ArticleFields      []string `yaml:"article_fields,omitempty"`          // custom frontmatter fields extracted from LLM response
 
 	// Tiered compilation
-	DefaultTier      int            `yaml:"default_tier,omitempty"`       // default tier for sources (default: 1)
-	TierDefaults     map[string]int `yaml:"tier_defaults,omitempty"`      // file extension → default tier
-	AutoPromote      *bool          `yaml:"auto_promote,omitempty"`       // auto-promote based on signals (default: true)
-	PromoteSignals   PromoteSignals `yaml:"promote_signals,omitempty"`
-	AutoDemote       *bool          `yaml:"auto_demote,omitempty"`        // auto-demote stale articles (default: true)
-	DemoteSignals    DemoteSignals  `yaml:"demote_signals,omitempty"`
+	DefaultTier    int            `yaml:"default_tier,omitempty"`  // default tier for sources (default: 1)
+	TierDefaults   map[string]int `yaml:"tier_defaults,omitempty"` // file extension → default tier
+	AutoPromote    *bool          `yaml:"auto_promote,omitempty"`  // auto-promote based on signals (default: true)
+	PromoteSignals PromoteSignals `yaml:"promote_signals,omitempty"`
+	AutoDemote     *bool          `yaml:"auto_demote,omitempty"` // auto-demote stale articles (default: true)
+	DemoteSignals  DemoteSignals  `yaml:"demote_signals,omitempty"`
 
 	// Document splitting (Phase B)
-	SplitThreshold   int    `yaml:"split_threshold,omitempty"`    // chars, enable section-aware writing above this (default: 15000)
-	SplitStrategy    string `yaml:"split_strategy,omitempty"`     // "headings" (default)
+	SplitThreshold int    `yaml:"split_threshold,omitempty"` // chars, enable section-aware writing above this (default: 15000)
+	SplitStrategy  string `yaml:"split_strategy,omitempty"`  // "headings" (default)
 
 	// Backpressure
-	BackpressureEnabled *bool `yaml:"backpressure,omitempty"`     // enable adaptive backpressure (default: true)
+	BackpressureEnabled *bool `yaml:"backpressure,omitempty"` // enable adaptive backpressure (default: true)
 
 	// Concept deduplication
 	DedupThreshold float64 `yaml:"dedup_threshold,omitempty"` // cosine similarity for auto-merge (default: 0.85)
@@ -108,11 +108,11 @@ type CompilerConfig struct {
 
 // PromoteSignals configures when sources are promoted to higher tiers.
 type PromoteSignals struct {
-	QueryHitCount    int    `yaml:"query_hit_count,omitempty"`    // promote after N search hits (default: 3)
-	ClusterSize      int    `yaml:"cluster_size,omitempty"`       // promote when N+ sources on same topic (default: 5)
-	ManualTag        string `yaml:"manual_tag,omitempty"`         // promote if tagged (default: "compile")
-	ImportCentrality int    `yaml:"import_centrality,omitempty"`  // code: promote when N+ files import this (default: 10)
-	SourceRecencyDays int   `yaml:"source_recency_days,omitempty"` // boost recently modified (default: 7)
+	QueryHitCount     int    `yaml:"query_hit_count,omitempty"`     // promote after N search hits (default: 3)
+	ClusterSize       int    `yaml:"cluster_size,omitempty"`        // promote when N+ sources on same topic (default: 5)
+	ManualTag         string `yaml:"manual_tag,omitempty"`          // promote if tagged (default: "compile")
+	ImportCentrality  int    `yaml:"import_centrality,omitempty"`   // code: promote when N+ files import this (default: 10)
+	SourceRecencyDays int    `yaml:"source_recency_days,omitempty"` // boost recently modified (default: 7)
 }
 
 // DemoteSignals configures when sources are demoted to lower tiers.
@@ -154,10 +154,10 @@ type SearchConfig struct {
 	ChunkSize          int     `yaml:"chunk_size,omitempty"`      // tokens per chunk for indexing (default: 800)
 
 	// Graph-enhanced retrieval
-	GraphExpansion       *bool   `yaml:"graph_expansion,omitempty"`        // enable graph-based context expansion (default: true)
-	GraphMaxExpand       int     `yaml:"graph_max_expand,omitempty"`       // max articles added via graph (default: 10)
-	GraphDepth           int     `yaml:"graph_depth,omitempty"`            // traversal depth for expansion (default: 2)
-	ContextMaxTokens     int     `yaml:"context_max_tokens,omitempty"`     // token budget for query context (default: 8000)
+	GraphExpansion       *bool    `yaml:"graph_expansion,omitempty"`        // enable graph-based context expansion (default: true)
+	GraphMaxExpand       int      `yaml:"graph_max_expand,omitempty"`       // max articles added via graph (default: 10)
+	GraphDepth           int      `yaml:"graph_depth,omitempty"`            // traversal depth for expansion (default: 2)
+	ContextMaxTokens     int      `yaml:"context_max_tokens,omitempty"`     // token budget for query context (default: 8000)
 	WeightDirectLink     *float64 `yaml:"weight_direct_link,omitempty"`     // graph signal weight (default: 3.0, set 0 to disable)
 	WeightSourceOverlap  *float64 `yaml:"weight_source_overlap,omitempty"`  // graph signal weight (default: 4.0, set 0 to disable)
 	WeightCommonNeighbor *float64 `yaml:"weight_common_neighbor,omitempty"` // graph signal weight (default: 1.5, set 0 to disable)
@@ -442,10 +442,10 @@ func (c *Config) Validate() error {
 	}
 	if c.API.Provider != "" {
 		validProviders := map[string]bool{
-			"anthropic": true, "openai": true, "gemini": true, "ollama": true, "openai-compatible": true,
+			"anthropic": true, "openai": true, "gemini": true, "ollama": true, "openai-compatible": true, "qwen": true,
 		}
 		if !validProviders[c.API.Provider] {
-			return fmt.Errorf("config: invalid provider %q (valid: anthropic, openai, gemini, ollama, openai-compatible)", c.API.Provider)
+			return fmt.Errorf("config: invalid provider %q (valid: anthropic, openai, gemini, ollama, openai-compatible, qwen)", c.API.Provider)
 		}
 	}
 	if c.Serve.Transport != "" {

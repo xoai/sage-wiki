@@ -202,10 +202,13 @@ output: wiki # compiled output directory (_wiki for vault overlay)
 #   - Personal
 
 # LLM provider
-# Supported: anthropic, openai, gemini, ollama, openai-compatible
+# Supported: anthropic, openai, gemini, ollama, openai-compatible, qwen
 # For OpenRouter or other OpenAI-compatible providers:
 #   provider: openai-compatible
 #   base_url: https://openrouter.ai/api/v1
+# For Alibaba Cloud DashScope Qwen:
+#   provider: qwen
+#   api_key: ${DASHSCOPE_API_KEY}
 api:
   provider: gemini
   api_key: ${GEMINI_API_KEY} # env var expansion supported
