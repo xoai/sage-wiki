@@ -20,9 +20,9 @@ type ModelPrice struct {
 // Built-in approximate prices (may go stale — shown as estimates).
 var prices = map[string]map[string]ModelPrice{
 	"anthropic": {
-		"claude-sonnet-4-20250514":    {Input: 3.0, Output: 15.0, CachedInput: 0.3, BatchInput: 1.5, BatchOutput: 7.5},
-		"claude-haiku-4-5-20251001":   {Input: 0.8, Output: 4.0, CachedInput: 0.08, BatchInput: 0.4, BatchOutput: 2.0},
-		"claude-opus-4-6":             {Input: 15.0, Output: 75.0, CachedInput: 1.5, BatchInput: 7.5, BatchOutput: 37.5},
+		"claude-sonnet-4-20250514":  {Input: 3.0, Output: 15.0, CachedInput: 0.3, BatchInput: 1.5, BatchOutput: 7.5},
+		"claude-haiku-4-5-20251001": {Input: 0.8, Output: 4.0, CachedInput: 0.08, BatchInput: 0.4, BatchOutput: 2.0},
+		"claude-opus-4-6":           {Input: 15.0, Output: 75.0, CachedInput: 1.5, BatchInput: 7.5, BatchOutput: 37.5},
 	},
 	"openai": {
 		"gpt-4o":      {Input: 2.5, Output: 10.0, CachedInput: 1.25, BatchInput: 1.25, BatchOutput: 5.0},
@@ -30,11 +30,11 @@ var prices = map[string]map[string]ModelPrice{
 		"o3-mini":     {Input: 1.10, Output: 4.40, CachedInput: 0.55, BatchInput: 0.55, BatchOutput: 2.2},
 	},
 	"gemini": {
-		"gemini-2.5-flash":         {Input: 0.15, Output: 0.60, CachedInput: 0.0375},
-		"gemini-2.5-pro":           {Input: 1.25, Output: 10.0, CachedInput: 0.3125},
-		"gemini-2.0-flash":         {Input: 0.10, Output: 0.40, CachedInput: 0.025},
-		"gemini-3-flash-preview":   {Input: 0.15, Output: 0.60, CachedInput: 0.0375},
-		"gemini-3.1-flash-lite":    {Input: 0.02, Output: 0.05, CachedInput: 0.005},
+		"gemini-2.5-flash":       {Input: 0.15, Output: 0.60, CachedInput: 0.0375},
+		"gemini-2.5-pro":         {Input: 1.25, Output: 10.0, CachedInput: 0.3125},
+		"gemini-2.0-flash":       {Input: 0.10, Output: 0.40, CachedInput: 0.025},
+		"gemini-3-flash-preview": {Input: 0.15, Output: 0.60, CachedInput: 0.0375},
+		"gemini-3.1-flash-lite":  {Input: 0.02, Output: 0.05, CachedInput: 0.005},
 	},
 }
 
@@ -141,8 +141,8 @@ func (ct *CostTracker) getPrice(model string) ModelPrice {
 
 	providerPrices, ok := prices[ct.provider]
 	if !ok {
-		// Try to match openai-compatible to openai prices
-		if ct.provider == "openai-compatible" {
+		// Try to match OpenAI-compatible providers to OpenAI prices.
+		if ct.provider == "openai-compatible" || ct.provider == "qwen" {
 			providerPrices = prices["openai"]
 		}
 	}
