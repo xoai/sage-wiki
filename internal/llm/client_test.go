@@ -125,8 +125,8 @@ func TestGeminiFormat(t *testing.T) {
 					},
 				}},
 			},
-			"usageMetadata": map[string]int{"totalTokenCount": 15},
-			"modelVersion":  "gemini-2.5-flash",
+			"usageMetadata":  map[string]int{"totalTokenCount": 15},
+			"modelVersion": "gemini-2.5-flash",
 		})
 	}))
 	defer server.Close()

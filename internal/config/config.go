@@ -309,7 +309,7 @@ func Defaults() Config {
 			ArticleMaxTokens: 4000,
 			AutoCommit:       true,
 			AutoLint:         true,
-			DefaultTier:      1,
+			DefaultTier:      3,
 			Mode:             "auto",
 		},
 		Search: SearchConfig{

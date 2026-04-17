@@ -27,8 +27,8 @@ type Message struct {
 
 // CallOpts configures an LLM call.
 type CallOpts struct {
-	Model       string
-	MaxTokens   int
+	Model      string
+	MaxTokens  int
 	Temperature float64
 }
 
