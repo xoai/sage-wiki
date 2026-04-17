@@ -249,16 +249,6 @@ func TestOllamaUsesOpenAIFormat(t *testing.T) {
 	}
 }
 
-func TestQwenUsesOpenAIFormatWithDefaultBaseURL(t *testing.T) {
-	client, err := NewClient("qwen", "sk-test", "", 0)
-	if err != nil {
-		t.Fatalf("NewClient qwen: %v", err)
-	}
-	if client.ProviderName() != "openai" {
-		t.Errorf("qwen should use openai provider, got %s", client.ProviderName())
-	}
-}
-
 func TestStripThinkTags(t *testing.T) {
 	tests := []struct {
 		name string

@@ -202,13 +202,10 @@ output: wiki # 编译输出目录 (vault 覆盖模式下为 _wiki)
 #   - Personal
 
 # LLM 提供商
-# 支持: anthropic, openai, gemini, ollama, openai-compatible, qwen
+# 支持: anthropic, openai, gemini, ollama, openai-compatible
 # OpenRouter 或其他 OpenAI 兼容提供商:
 #   provider: openai-compatible
 #   base_url: https://openrouter.ai/api/v1
-# 阿里云 DashScope Qwen:
-#   provider: qwen
-#   api_key: ${DASHSCOPE_API_KEY}
 api:
   provider: gemini
   api_key: ${GEMINI_API_KEY} # 支持环境变量展开
