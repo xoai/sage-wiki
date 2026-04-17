@@ -113,7 +113,7 @@ export function ArticleView({ path, onNavigate, reloadKey }: Props) {
 
     if (href.startsWith('/wiki/')) {
       e.preventDefault();
-      const articlePath = href.replace('/wiki/', '') + '.md';
+      const articlePath = href.replace('/wiki/', '').replace(/\.md$/, '') + '.md';
       onNavigate(articlePath);
     } else if (href.startsWith('#')) {
       e.preventDefault();

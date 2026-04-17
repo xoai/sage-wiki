@@ -62,9 +62,20 @@ function wikilinkInlineRule(state: any, silent: boolean): boolean {
         linkTarget = target.slice(0, pipe);
       }
 
-      const href = linkTarget.includes('/')
-        ? `/wiki/${linkTarget}`
-        : `/wiki/concepts/${linkTarget}`;
+      // Strip .md suffix and resolve doc-ID prefixes (output:, summary:, concept:, wiki/)
+      const clean = linkTarget.replace(/\.md$/, '').replace(/^wiki\//, '');
+      let href: string;
+      if (clean.includes('/')) {
+        href = `/wiki/${clean}`;
+      } else if (clean.startsWith('output:')) {
+        href = `/wiki/outputs/${clean.slice(7)}`;
+      } else if (clean.startsWith('summary:')) {
+        href = `/wiki/summaries/${clean.slice(8)}`;
+      } else if (clean.startsWith('concept:')) {
+        href = `/wiki/concepts/${clean.slice(8)}`;
+      } else {
+        href = `/wiki/concepts/${clean}`;
+      }
 
       const openToken = state.push('html_inline', '', 0);
       openToken.content = `<a href="${escapeHtml(href)}" class="wikilink text-blue-600 dark:text-blue-400 hover:underline">`;

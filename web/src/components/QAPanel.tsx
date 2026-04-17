@@ -80,7 +80,7 @@ export function QAPanel({ onNavigate }: Props) {
     const link = target.closest('a');
     if (link?.getAttribute('href')?.startsWith('/wiki/')) {
       e.preventDefault();
-      const path = link.getAttribute('href')!.replace('/wiki/', '') + '.md';
+      const path = link.getAttribute('href')!.replace('/wiki/', '').replace(/\.md$/, '') + '.md';
       onNavigate(path);
     }
   };
