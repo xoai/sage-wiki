@@ -359,9 +359,9 @@ func TestCostConfigDefaults(t *testing.T) {
 
 func TestInvalidCompilerMode(t *testing.T) {
 	cfg := Config{
-		Project:  "test",
-		Output:   "wiki",
-		Sources:  []Source{{Path: "raw"}},
+		Project: "test",
+		Output:  "wiki",
+		Sources: []Source{{Path: "raw"}},
 		Compiler: CompilerConfig{Mode: "turbo"},
 	}
 	err := cfg.Validate()
@@ -402,9 +402,9 @@ func TestUserTimeLocation(t *testing.T) {
 
 	// Validate() path: timezone resolved and cached during validation
 	cfg := Config{
-		Project:  "test",
-		Output:   "wiki",
-		Sources:  []Source{{Path: "raw"}},
+		Project: "test",
+		Output:  "wiki",
+		Sources: []Source{{Path: "raw"}},
 		Compiler: CompilerConfig{Timezone: "America/New_York"},
 	}
 	if err := cfg.Validate(); err != nil {
