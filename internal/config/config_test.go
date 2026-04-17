@@ -172,6 +172,10 @@ func TestValidation(t *testing.T) {
 			wantErr: "invalid provider",
 		},
 		{
+			name: "valid qwen provider",
+			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, API: APIConfig{Provider: "qwen"}},
+		},
+		{
 			name:    "invalid transport",
 			cfg:     Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Serve: ServeConfig{Transport: "websocket"}},
 			wantErr: "invalid transport",
