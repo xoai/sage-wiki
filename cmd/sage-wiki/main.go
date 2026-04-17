@@ -197,7 +197,15 @@ func runInit(cmd *cobra.Command, args []string) error {
 	// Derive project name from directory
 	project := filepath.Base(dir)
 
-	if vaultMode {
+	// If --skill is set on an already-initialized project, skip project creation
+	skillTarget, _ := cmd.Flags().GetString("skill")
+	cfgPath := filepath.Join(dir, "config.yaml")
+	_, cfgExists := os.Stat(cfgPath)
+	skipInit := skillTarget != "" && cfgExists == nil
+
+	if skipInit {
+		fmt.Printf("Project already initialized. Generating skill file only.\n")
+	} else if vaultMode {
 		// Scan folders for interactive selection
 		folders, err := wiki.ScanFolders(dir)
 		if err != nil {
@@ -253,7 +261,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Generate agent skill file if requested
-	skillTarget, _ := cmd.Flags().GetString("skill")
 	if skillTarget != "" {
 		target := skill.AgentTarget(skillTarget)
 		info, err := skill.TargetInfoFor(target)
@@ -261,7 +268,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
-		cfgPath := filepath.Join(dir, "config.yaml")
 		cfg, err := config.Load(cfgPath)
 		if err != nil {
 			return fmt.Errorf("load config for skill generation: %w", err)

@@ -116,3 +116,39 @@ func TestRunInit_PackOverride(t *testing.T) {
 		t.Error("--pack meeting-notes should produce meeting-related content")
 	}
 }
+
+func TestRunInit_SkillOnExistingProject(t *testing.T) {
+	dir := t.TempDir()
+	oldProjectDir := projectDir
+	projectDir = dir
+	t.Cleanup(func() { projectDir = oldProjectDir })
+
+	// First, create a project with a custom config
+	customConfig := "project: custom-project\nsources:\n  - path: src\n    type: code\noutput: _wiki\n"
+	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(customConfig), 0644)
+
+	cmd := &cobra.Command{}
+	cmd.Flags().Bool("vault", false, "")
+	cmd.Flags().Bool("prompts", false, "")
+	cmd.Flags().String("model", "gemini-2.5-flash", "")
+	cmd.Flags().String("skill", "", "")
+	cmd.Flags().String("pack", "", "")
+	cmd.Flags().Set("skill", "claude-code")
+
+	err := runInit(cmd, []string{})
+	if err != nil {
+		t.Fatalf("init --skill on existing project: %v", err)
+	}
+
+	// config.yaml should NOT be overwritten
+	cfgContent, _ := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	if !strings.Contains(string(cfgContent), "custom-project") {
+		t.Error("config.yaml should be preserved (not overwritten)")
+	}
+
+	// CLAUDE.md should be generated with the project name from existing config
+	claudeContent, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	if !strings.Contains(string(claudeContent), "custom-project") {
+		t.Error("CLAUDE.md should use project name from existing config")
+	}
+}
