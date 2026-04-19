@@ -137,6 +137,29 @@ func summarizeOne(
 ) SummaryResult {
 	result := SummaryResult{SourcePath: info.Path}
 
+	// Skip LLM call if a valid summary file already exists on disk.
+	// Restores resume-from-checkpoint behavior when compile-state.json is missing
+	// (e.g. a prior failed run cleared it). Source of truth for "already summarized"
+	// becomes the filesystem, not just the JSON checkpoint.
+	baseName := strings.TrimSuffix(filepath.Base(info.Path), filepath.Ext(info.Path))
+	summaryPath := filepath.Join(outputDir, "summaries", baseName+".md")
+	absSummary := filepath.Join(projectDir, summaryPath)
+	if existing, err := os.ReadFile(absSummary); err == nil {
+		body := string(existing)
+		// Strip YAML frontmatter if present
+		if strings.HasPrefix(body, "---\n") {
+			if end := strings.Index(body[4:], "\n---\n"); end >= 0 {
+				body = body[4+end+5:]
+			}
+		}
+		body = strings.TrimSpace(body)
+		if len(body) >= 100 {
+			result.Summary = body
+			result.SummaryPath = summaryPath
+			return result
+		}
+	}
+
 	// Extract source content
 	absPath := filepath.Join(projectDir, info.Path)
 	content, err := extract.Extract(absPath, info.Type)
