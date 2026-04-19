@@ -94,7 +94,7 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	}
 
 	log.Info("Pass 2: extracting concepts", "from_summaries", len(summaries))
-	concepts, err := ExtractConcepts(summaries, mf.Concepts, client, extractModel)
+	concepts, err := ExtractConcepts(summaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens)
 	if err != nil {
 		return nil, fmt.Errorf("re-extract: concept extraction: %w", err)
 	}

@@ -75,6 +75,8 @@ type CompilerConfig struct {
 	DebounceSeconds  int     `yaml:"debounce_seconds"`
 	SummaryMaxTokens int     `yaml:"summary_max_tokens"`
 	ArticleMaxTokens int     `yaml:"article_max_tokens"`
+	ExtractMaxTokens int     `yaml:"extract_max_tokens,omitempty"`  // max output tokens for concept extraction (default: 8192)
+	ExtractBatchSize int     `yaml:"extract_batch_size,omitempty"`  // summaries per concept extraction call (default: 20)
 	AutoCommit       bool    `yaml:"auto_commit"`
 	AutoLint         bool    `yaml:"auto_lint"`
 	Mode             string  `yaml:"mode,omitempty"`              // standard, batch, or auto
@@ -307,6 +309,8 @@ func Defaults() Config {
 			DebounceSeconds:  2,
 			SummaryMaxTokens: 2000,
 			ArticleMaxTokens: 4000,
+			ExtractMaxTokens: 8192,
+			ExtractBatchSize: 20,
 			AutoCommit:       true,
 			AutoLint:         true,
 			DefaultTier:      3,

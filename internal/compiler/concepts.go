@@ -22,14 +22,20 @@ type ExtractedConcept struct {
 // ExtractConcepts runs Pass 2: concept extraction from summaries.
 // It takes new/updated summaries and the existing concept list,
 // asks the LLM to identify and deduplicate concepts.
-const conceptBatchSize = 20 // summaries per LLM call
-
 func ExtractConcepts(
 	summaries []SummaryResult,
 	existingConcepts map[string]manifest.Concept,
 	client *llm.Client,
 	model string,
+	batchSize int,
+	maxTokens int,
 ) ([]ExtractedConcept, error) {
+	if batchSize <= 0 {
+		batchSize = 20
+	}
+	if maxTokens <= 0 {
+		maxTokens = 8192
+	}
 	if len(summaries) == 0 {
 		return nil, nil
 	}
@@ -54,14 +60,14 @@ func ExtractConcepts(
 	// Process in batches
 	var allConcepts []ExtractedConcept
 
-	for i := 0; i < len(validSummaries); i += conceptBatchSize {
-		end := i + conceptBatchSize
+	for i := 0; i < len(validSummaries); i += batchSize {
+		end := i + batchSize
 		if end > len(validSummaries) {
 			end = len(validSummaries)
 		}
 		batch := validSummaries[i:end]
 
-		log.Info("extracting concepts batch", "batch", i/conceptBatchSize+1, "summaries", len(batch), "total", len(validSummaries))
+		log.Info("extracting concepts batch", "batch", i/batchSize+1, "summaries", len(batch), "total", len(validSummaries))
 
 		var summaryTexts []string
 		for _, s := range batch {
@@ -85,27 +91,27 @@ func ExtractConcepts(
 			Summaries:        strings.Join(summaryTexts, "\n\n---\n\n"),
 		}, "")
 		if err != nil {
-			log.Error("render extract_concepts prompt failed", "batch", i/conceptBatchSize+1, "error", err)
+			log.Error("render extract_concepts prompt failed", "batch", i/batchSize+1, "error", err)
 			continue
 		}
 
 		resp, err := client.ChatCompletion([]llm.Message{
 			{Role: "system", Content: "You are a concept extraction system for a knowledge wiki. Output valid JSON only."},
 			{Role: "user", Content: prompt},
-		}, llm.CallOpts{Model: model, MaxTokens: 8192})
+		}, llm.CallOpts{Model: model, MaxTokens: maxTokens})
 		if err != nil {
-			log.Error("concept extraction batch failed", "batch", i/conceptBatchSize+1, "error", err)
+			log.Error("concept extraction batch failed", "batch", i/batchSize+1, "error", err)
 			continue // skip failed batch, continue with others
 		}
 
 		concepts, err := parseConceptsJSON(resp.Content)
 		if err != nil {
-			log.Error("concept extraction parse failed", "batch", i/conceptBatchSize+1, "error", err)
+			log.Error("concept extraction parse failed", "batch", i/batchSize+1, "error", err)
 			continue
 		}
 
 		allConcepts = append(allConcepts, concepts...)
-		log.Info("batch concepts extracted", "batch", i/conceptBatchSize+1, "count", len(concepts))
+		log.Info("batch concepts extracted", "batch", i/batchSize+1, "count", len(concepts))
 	}
 
 	// Filter noise

@@ -180,7 +180,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		extCacheID, _ = client.SetupCache("You are an expert knowledge organizer. Extract structured concepts from source summaries.", extractModel)
 	}
 	progress.StartPhase("Pass 2: Extract concepts", len(successfulSummaries))
-	concepts, err := ExtractConcepts(successfulSummaries, mf.Concepts, client, extractModel)
+	concepts, err := ExtractConcepts(successfulSummaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens)
 	if err != nil {
 		progress.ItemError("concept extraction", err)
 		result.Errors++
