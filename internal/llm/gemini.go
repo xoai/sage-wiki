@@ -1,12 +1,19 @@
 package llm
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"regexp"
+	"strings"
 	"time"
+
+	"github.com/xoai/sage-wiki/internal/log"
 )
 
 // geminiKeySanitizer redacts API keys from Gemini URLs in error messages.
@@ -326,4 +333,330 @@ func (p *geminiProvider) ParseResponse(body []byte) (*Response, error) {
 			CachedTokens: result.UsageMetadata.CachedContentTokenCount,
 		},
 	}, nil
+}
+
+// --- BatchProvider implementation ---
+//
+// Gemini batch jobs use the Developer API (api-key auth, no OAuth needed).
+// Flow: upload JSONL input → submit batch → poll until done → download JSONL results.
+// Batch quota is separate from live quota and runs at 50% of standard pricing.
+
+const geminiUploadBaseURL = "https://generativelanguage.googleapis.com/upload/v1beta"
+const geminiDownloadBaseURL = "https://generativelanguage.googleapis.com/download/v1beta"
+
+// geminiBatchState maps Gemini job state strings to BatchStatus.
+func geminiBatchState(state string) BatchStatus {
+	switch state {
+	case "JOB_STATE_SUCCEEDED":
+		return BatchEnded
+	case "JOB_STATE_EXPIRED":
+		return BatchExpired
+	case "JOB_STATE_FAILED", "JOB_STATE_CANCELLED":
+		return BatchFailed
+	default:
+		return BatchInProgress
+	}
+}
+
+// uploadBatchInputFile uploads a JSONL payload to the Gemini File API.
+// Returns the resource name (e.g. "files/abc123") used to reference the file in batch submission.
+func (p *geminiProvider) uploadBatchInputFile(jsonl []byte) (string, error) {
+	const boundary = "sage_wiki_batch_boundary"
+
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	if err := w.SetBoundary(boundary); err != nil {
+		return "", fmt.Errorf("gemini batch: set boundary: %w", err)
+	}
+
+	// Metadata part: tells the File API the MIME type of the content.
+	metaPart, err := w.CreatePart(textproto.MIMEHeader{
+		"Content-Type": {"application/json; charset=utf-8"},
+	})
+	if err != nil {
+		return "", fmt.Errorf("gemini batch: create metadata part: %w", err)
+	}
+	metaJSON, _ := json.Marshal(map[string]any{
+		"file": map[string]string{
+			"displayName": "sage-wiki-batch-input",
+			"mimeType":    "text/plain",
+		},
+	})
+	if _, err := metaPart.Write(metaJSON); err != nil {
+		return "", fmt.Errorf("gemini batch: write metadata: %w", err)
+	}
+
+	// Data part: the actual JSONL content.
+	dataPart, err := w.CreatePart(textproto.MIMEHeader{
+		"Content-Type": {"text/plain"},
+	})
+	if err != nil {
+		return "", fmt.Errorf("gemini batch: create data part: %w", err)
+	}
+	if _, err := dataPart.Write(jsonl); err != nil {
+		return "", fmt.Errorf("gemini batch: write data: %w", err)
+	}
+	w.Close()
+
+	uploadURL := fmt.Sprintf("%s/files?key=%s", geminiUploadBaseURL, p.apiKey)
+	req, err := http.NewRequest("POST", uploadURL, &buf)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "multipart/related; boundary="+boundary)
+	req.Header.Set("X-Goog-Upload-Protocol", "multipart")
+
+	client := http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("gemini batch: upload file: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("gemini batch: upload returned %d: %s", resp.StatusCode, sanitizeGeminiError(string(body)))
+	}
+
+	var result struct {
+		File struct {
+			Name string `json:"name"`
+		} `json:"file"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("gemini batch: parse upload response: %w", err)
+	}
+	if result.File.Name == "" {
+		return "", fmt.Errorf("gemini batch: upload returned empty file name")
+	}
+
+	return result.File.Name, nil
+}
+
+// SubmitBatch implements BatchProvider for Gemini.
+// Serialises requests as JSONL (one per line, with a "key" field for correlation),
+// uploads to the File API, then submits an async batch job.
+func (p *geminiProvider) SubmitBatch(requests []BatchRequest) (string, error) {
+	if len(requests) == 0 {
+		return "", fmt.Errorf("gemini batch: no requests")
+	}
+
+	// All requests in a batch share the same model; use the first request's model.
+	model := requests[0].Opts.Model
+	if model == "" {
+		model = "gemini-2.5-flash"
+	}
+
+	// Build JSONL — one GenerateContentRequest per line, keyed by CustomID.
+	var buf bytes.Buffer
+	for _, r := range requests {
+		body, _ := p.formatBody(r.Messages, r.Opts)
+		line := map[string]any{
+			"key":     r.CustomID,
+			"request": body,
+		}
+		data, err := json.Marshal(line)
+		if err != nil {
+			return "", fmt.Errorf("gemini batch: marshal request %q: %w", r.CustomID, err)
+		}
+		buf.Write(data)
+		buf.WriteByte('\n')
+	}
+
+	// Upload JSONL to the File API.
+	fileName, err := p.uploadBatchInputFile(buf.Bytes())
+	if err != nil {
+		return "", err
+	}
+	log.Info("gemini batch: uploaded input file", "file", fileName, "requests", len(requests))
+
+	// Submit the batch job referencing the uploaded file.
+	payload := map[string]any{
+		"batch": map[string]any{
+			"displayName": "sage-wiki-batch",
+			"inputConfig": map[string]any{
+				"fileName": fileName,
+			},
+		},
+	}
+
+	submitURL := fmt.Sprintf("%s/models/%s:batchGenerateContent?key=%s", p.baseURL, model, p.apiKey)
+	req, err := http.NewRequest("POST", submitURL, jsonBody(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	hc := http.Client{Timeout: 120 * time.Second}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("gemini batch: submit: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("gemini batch: submit returned %d: %s", resp.StatusCode, sanitizeGeminiError(string(respBody)))
+	}
+
+	var result struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", fmt.Errorf("gemini batch: parse submit response: %w", err)
+	}
+	if result.Name == "" {
+		return "", fmt.Errorf("gemini batch: submit returned empty batch name")
+	}
+
+	log.Info("gemini batch submitted", "batch", result.Name, "requests", len(requests))
+	return result.Name, nil
+}
+
+// PollBatch checks the status of a Gemini batch job.
+// batchID is the resource name returned by SubmitBatch (e.g. "batches/abc123").
+func (p *geminiProvider) PollBatch(batchID string) (*BatchStatusResponse, error) {
+	pollURL := fmt.Sprintf("%s/%s?key=%s", p.baseURL, batchID, p.apiKey)
+	req, err := http.NewRequest("GET", pollURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	hc := http.Client{Timeout: 30 * time.Second}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("gemini batch: poll: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("gemini batch: poll returned %d: %s", resp.StatusCode, sanitizeGeminiError(string(body)))
+	}
+
+	var result struct {
+		Name     string `json:"name"`
+		State    string `json:"state"`
+		Response struct {
+			ResponsesFile string `json:"responsesFile"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("gemini batch: parse poll response: %w", err)
+	}
+
+	return &BatchStatusResponse{
+		BatchID:    result.Name,
+		Status:     geminiBatchState(result.State),
+		ResultsURL: result.Response.ResponsesFile, // e.g. "files/abc123-responses"
+	}, nil
+}
+
+// RetrieveBatch downloads and parses results from a completed Gemini batch.
+// resultsRef is the file resource name from PollBatch (e.g. "files/abc123-responses").
+func (p *geminiProvider) RetrieveBatch(resultsRef string) ([]BatchResult, error) {
+	// Validate the download URL points to the expected Gemini host to prevent SSRF.
+	expectedHost := "generativelanguage.googleapis.com"
+	if err := validateBatchURL(
+		fmt.Sprintf("%s/%s:download", geminiDownloadBaseURL, resultsRef),
+		expectedHost,
+	); err != nil {
+		return nil, fmt.Errorf("gemini batch: %w", err)
+	}
+
+	downloadURL := fmt.Sprintf("%s/%s:download?alt=media&key=%s", geminiDownloadBaseURL, resultsRef, p.apiKey)
+	req, err := http.NewRequest("GET", downloadURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	hc := http.Client{Timeout: 300 * time.Second}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("gemini batch: download results: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("gemini batch: download returned %d: %s", resp.StatusCode, sanitizeGeminiError(string(body)))
+	}
+
+	return parseGeminiBatchResults(resp.Body)
+}
+
+// parseGeminiBatchResults parses the JSONL results file returned by a completed Gemini batch job.
+// Each line is: {"key": "<CustomID>", "response": <GenerateContentResponse>}
+// or:            {"key": "<CustomID>", "status": {"code": N, "message": "..."}}  on per-request error.
+func parseGeminiBatchResults(r io.Reader) ([]BatchResult, error) {
+	var results []BatchResult
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		var entry struct {
+			Key      string `json:"key"`
+			Response *struct {
+				Candidates []struct {
+					Content struct {
+						Parts []struct {
+							Text string `json:"text"`
+						} `json:"parts"`
+					} `json:"content"`
+					FinishReason string `json:"finishReason"`
+				} `json:"candidates"`
+				UsageMetadata struct {
+					PromptTokenCount     int `json:"promptTokenCount"`
+					CandidatesTokenCount int `json:"candidatesTokenCount"`
+					TotalTokenCount      int `json:"totalTokenCount"`
+				} `json:"usageMetadata"`
+				ModelVersion string `json:"modelVersion"`
+			} `json:"response"`
+			Status *struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			} `json:"status"`
+		}
+
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			truncated := line
+			if len(truncated) > 200 {
+				truncated = truncated[:200] + "..."
+			}
+			log.Warn("gemini batch: skipping malformed JSONL line", "error", err, "line", truncated)
+			continue
+		}
+
+		br := BatchResult{CustomID: entry.Key}
+
+		switch {
+		case entry.Status != nil && entry.Status.Code != 0:
+			br.Error = fmt.Sprintf("code %d: %s", entry.Status.Code, entry.Status.Message)
+		case entry.Response != nil && len(entry.Response.Candidates) > 0:
+			var text string
+			for _, part := range entry.Response.Candidates[0].Content.Parts {
+				text += part.Text
+			}
+			br.Response = &Response{
+				Content:    stripThinkTags(text),
+				Model:      entry.Response.ModelVersion,
+				TokensUsed: entry.Response.UsageMetadata.TotalTokenCount,
+				Usage: Usage{
+					InputTokens:  entry.Response.UsageMetadata.PromptTokenCount,
+					OutputTokens: entry.Response.UsageMetadata.CandidatesTokenCount,
+				},
+			}
+		default:
+			br.Error = "empty response"
+		}
+
+		results = append(results, br)
+	}
+
+	return results, scanner.Err()
 }
