@@ -1,10 +1,103 @@
 package compiler
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/xoai/sage-wiki/internal/extract"
 )
+
+// buildSummaryFile writes a fake summary file with the given frontmatter hash and body.
+func buildSummaryFile(t *testing.T, dir, name, hash, body string) {
+	t.Helper()
+	summaryDir := filepath.Join(dir, "summaries")
+	if err := os.MkdirAll(summaryDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	content := fmt.Sprintf("---\nsource: %s\nsource_type: article\nsource_hash: %s\ncompiled_at: 2024-01-01\nchunk_count: 1\n---\n\n%s", name, hash, body)
+	if err := os.WriteFile(filepath.Join(summaryDir, name+".md"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSummarizeOneReusesExistingSummaryOnHashMatch(t *testing.T) {
+	projectDir := t.TempDir()
+	outputDir := "output"
+	sourceHash := "sha256:abc123"
+	longBody := strings.Repeat("x", 120)
+
+	buildSummaryFile(t, filepath.Join(projectDir, outputDir), "doc", sourceHash, longBody)
+
+	info := SourceInfo{Path: "sources/doc.md", Hash: sourceHash, Type: "article"}
+	result := summarizeOne(projectDir, outputDir, info, nil, "", 0, nil, "")
+
+	if result.Error != nil {
+		t.Fatalf("expected no error, got: %v", result.Error)
+	}
+	if result.Summary != longBody {
+		t.Errorf("expected reused summary body, got %q", result.Summary)
+	}
+	if result.SummaryPath != filepath.Join(outputDir, "summaries", "doc.md") {
+		t.Errorf("unexpected SummaryPath: %q", result.SummaryPath)
+	}
+}
+
+func TestSummarizeOneSkipsReusedWhenHashMismatch(t *testing.T) {
+	projectDir := t.TempDir()
+	outputDir := "output"
+	longBody := strings.Repeat("x", 120)
+
+	buildSummaryFile(t, filepath.Join(projectDir, outputDir), "doc", "sha256:old", longBody)
+
+	// Hash differs → must not reuse; extraction of missing source returns an error
+	info := SourceInfo{Path: "sources/doc.md", Hash: "sha256:new", Type: "article"}
+	result := summarizeOne(projectDir, outputDir, info, nil, "", 0, nil, "")
+
+	if result.Error == nil {
+		t.Fatal("expected an error (extract should fail on missing source), got nil")
+	}
+	if result.Summary != "" {
+		t.Errorf("expected no summary to be reused, got %q", result.Summary)
+	}
+}
+
+func TestSummarizeOneSkipsReusedWhenSummaryTooShort(t *testing.T) {
+	projectDir := t.TempDir()
+	outputDir := "output"
+	sourceHash := "sha256:abc123"
+
+	buildSummaryFile(t, filepath.Join(projectDir, outputDir), "doc", sourceHash, "too short")
+
+	// Body below 100 chars → must not reuse
+	info := SourceInfo{Path: "sources/doc.md", Hash: sourceHash, Type: "article"}
+	result := summarizeOne(projectDir, outputDir, info, nil, "", 0, nil, "")
+
+	if result.Error == nil {
+		t.Fatal("expected an error (extract should fail on missing source), got nil")
+	}
+	if result.Summary != "" {
+		t.Errorf("expected no summary to be reused, got %q", result.Summary)
+	}
+}
+
+func TestSummarizeOneSkipsReusedWhenNoSummaryFile(t *testing.T) {
+	projectDir := t.TempDir()
+	outputDir := "output"
+
+	// No summary file exists → must not reuse
+	info := SourceInfo{Path: "sources/doc.md", Hash: "sha256:abc123", Type: "article"}
+	result := summarizeOne(projectDir, outputDir, info, nil, "", 0, nil, "")
+
+	if result.Error == nil {
+		t.Fatal("expected an error (extract should fail on missing source), got nil")
+	}
+	if result.Summary != "" {
+		t.Errorf("expected no summary to be reused, got %q", result.Summary)
+	}
+}
 
 func TestGroupChunksNoGroupingNeeded(t *testing.T) {
 	chunks := make([]extract.Chunk, 5)
