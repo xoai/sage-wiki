@@ -64,7 +64,7 @@ type BatchResult struct {
 }
 
 // BatchProvider extends Provider with async batch API support.
-// Only Anthropic and OpenAI support batch; Gemini does not.
+// Anthropic, OpenAI, and Gemini providers implement this interface.
 type BatchProvider interface {
 	// SubmitBatch sends a batch of requests. Returns the batch ID.
 	SubmitBatch(requests []BatchRequest) (batchID string, err error)

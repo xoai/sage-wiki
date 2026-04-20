@@ -13,9 +13,10 @@ import (
 // --- BatchProvider interface tests ---
 
 func TestBatchProviderInterface(t *testing.T) {
-	// Verify both providers implement BatchProvider
+	// Verify all three providers implement BatchProvider
 	var _ BatchProvider = &anthropicProvider{}
 	var _ BatchProvider = &openaiProvider{}
+	var _ BatchProvider = &geminiProvider{}
 }
 
 // --- Anthropic batch tests ---
@@ -249,10 +250,17 @@ func TestOpenAIBatchRetrieve(t *testing.T) {
 
 // --- Client-level batch tests ---
 
+// noBatchProvider is a minimal Provider stub that does not implement BatchProvider.
+type noBatchProvider struct{}
+
+func (noBatchProvider) Name() string                                                    { return "nobatch" }
+func (noBatchProvider) SupportsVision() bool                                            { return false }
+func (noBatchProvider) FormatRequest([]Message, CallOpts) (*http.Request, error)        { return nil, nil }
+func (noBatchProvider) ParseResponse([]byte) (*Response, error)                         { return nil, nil }
+
 func TestClientBatchNotSupported(t *testing.T) {
-	// Gemini doesn't support batch — should return error
-	p := newGeminiProvider("key", "http://localhost")
-	client := &Client{provider: p}
+	// A provider that doesn't implement BatchProvider should return an error.
+	client := &Client{provider: noBatchProvider{}}
 
 	_, err := client.SubmitBatch(nil)
 	if err == nil {
@@ -298,5 +306,184 @@ func TestAnthropicBatchExpired(t *testing.T) {
 	}
 	if status.Status != BatchExpired {
 		t.Errorf("expected expired, got %s", status.Status)
+	}
+}
+
+// --- Gemini batch tests ---
+
+func TestParseGeminiBatchResults(t *testing.T) {
+	tests := []struct {
+		name      string
+		jsonl     string
+		wantCount int
+		check     func(t *testing.T, results []BatchResult)
+	}{
+		{
+			name: "successful response",
+			jsonl: `{"key":"req-1","response":{"candidates":[{"content":{"parts":[{"text":"hello world"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"totalTokenCount":15},"modelVersion":"gemini-2.5-flash"}}`,
+			wantCount: 1,
+			check: func(t *testing.T, results []BatchResult) {
+				r := results[0]
+				if r.CustomID != "req-1" {
+					t.Errorf("CustomID = %q, want %q", r.CustomID, "req-1")
+				}
+				if r.Error != "" {
+					t.Errorf("unexpected error: %s", r.Error)
+				}
+				if r.Response == nil {
+					t.Fatal("expected non-nil response")
+				}
+				if r.Response.Content != "hello world" {
+					t.Errorf("Content = %q, want %q", r.Response.Content, "hello world")
+				}
+				if r.Response.Model != "gemini-2.5-flash" {
+					t.Errorf("Model = %q, want %q", r.Response.Model, "gemini-2.5-flash")
+				}
+				if r.Response.TokensUsed != 15 {
+					t.Errorf("TokensUsed = %d, want 15", r.Response.TokensUsed)
+				}
+				if r.Response.Usage.InputTokens != 10 {
+					t.Errorf("InputTokens = %d, want 10", r.Response.Usage.InputTokens)
+				}
+				if r.Response.Usage.OutputTokens != 5 {
+					t.Errorf("OutputTokens = %d, want 5", r.Response.Usage.OutputTokens)
+				}
+			},
+		},
+		{
+			name:      "per-request error",
+			jsonl:     `{"key":"req-2","status":{"code":429,"message":"quota exceeded"}}`,
+			wantCount: 1,
+			check: func(t *testing.T, results []BatchResult) {
+				r := results[0]
+				if r.CustomID != "req-2" {
+					t.Errorf("CustomID = %q, want %q", r.CustomID, "req-2")
+				}
+				if r.Response != nil {
+					t.Error("expected nil response on error")
+				}
+				if r.Error != "code 429: quota exceeded" {
+					t.Errorf("Error = %q, want %q", r.Error, "code 429: quota exceeded")
+				}
+			},
+		},
+		{
+			name:      "empty candidate list gives empty-response error",
+			jsonl:     `{"key":"req-3","response":{"candidates":[]}}`,
+			wantCount: 1,
+			check: func(t *testing.T, results []BatchResult) {
+				if results[0].Error != "empty response" {
+					t.Errorf("Error = %q, want %q", results[0].Error, "empty response")
+				}
+			},
+		},
+		{
+			name: "multiple entries mixed",
+			jsonl: strings.Join([]string{
+				`{"key":"a","response":{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":{}}}`,
+				`{"key":"b","status":{"code":500,"message":"internal error"}}`,
+				``,
+				`{"key":"c","response":{"candidates":[{"content":{"parts":[{"text":"also ok"}]},"finishReason":"STOP"}],"usageMetadata":{}}}`,
+			}, "\n"),
+			wantCount: 3,
+			check: func(t *testing.T, results []BatchResult) {
+				ids := []string{results[0].CustomID, results[1].CustomID, results[2].CustomID}
+				if ids[0] != "a" || ids[1] != "b" || ids[2] != "c" {
+					t.Errorf("unexpected IDs: %v", ids)
+				}
+				if results[0].Error != "" {
+					t.Errorf("entry a: unexpected error %q", results[0].Error)
+				}
+				if results[1].Response != nil {
+					t.Error("entry b: expected nil response")
+				}
+				if results[2].Response == nil || results[2].Response.Content != "also ok" {
+					t.Errorf("entry c: unexpected response %v", results[2].Response)
+				}
+			},
+		},
+		{
+			name:      "malformed line is skipped",
+			jsonl:     "not-json\n{\"key\":\"good\",\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hi\"}]}}],\"usageMetadata\":{}}}",
+			wantCount: 1,
+			check: func(t *testing.T, results []BatchResult) {
+				if results[0].CustomID != "good" {
+					t.Errorf("CustomID = %q, want %q", results[0].CustomID, "good")
+				}
+			},
+		},
+		{
+			name:      "empty input",
+			jsonl:     "",
+			wantCount: 0,
+			check:     func(t *testing.T, results []BatchResult) {},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results, err := parseGeminiBatchResults(strings.NewReader(tt.jsonl))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(results) != tt.wantCount {
+				t.Fatalf("got %d results, want %d", len(results), tt.wantCount)
+			}
+			tt.check(t, results)
+		})
+	}
+}
+
+func TestGeminiBatchState(t *testing.T) {
+	tests := []struct {
+		state string
+		want  BatchStatus
+	}{
+		{"JOB_STATE_SUCCEEDED", BatchEnded},
+		{"JOB_STATE_EXPIRED", BatchExpired},
+		{"JOB_STATE_FAILED", BatchFailed},
+		{"JOB_STATE_CANCELLED", BatchFailed},
+		{"JOB_STATE_RUNNING", BatchInProgress},
+		{"", BatchInProgress},
+	}
+	for _, tt := range tests {
+		got := geminiBatchState(tt.state)
+		if got != tt.want {
+			t.Errorf("geminiBatchState(%q) = %v, want %v", tt.state, got, tt.want)
+		}
+	}
+}
+
+func TestNewGeminiProviderURLDerivation(t *testing.T) {
+	tests := []struct {
+		baseURL         string
+		wantUpload      string
+		wantDownload    string
+		wantBatchHost   string
+	}{
+		{
+			baseURL:       "https://generativelanguage.googleapis.com/v1beta",
+			wantUpload:    "https://generativelanguage.googleapis.com/upload/v1beta",
+			wantDownload:  "https://generativelanguage.googleapis.com/download/v1beta",
+			wantBatchHost: "generativelanguage.googleapis.com",
+		},
+		{
+			baseURL:       "https://my-proxy.example.com/v1beta",
+			wantUpload:    "https://my-proxy.example.com/upload/v1beta",
+			wantDownload:  "https://my-proxy.example.com/download/v1beta",
+			wantBatchHost: "my-proxy.example.com",
+		},
+	}
+	for _, tt := range tests {
+		p := newGeminiProvider("key", tt.baseURL)
+		if p.uploadBaseURL != tt.wantUpload {
+			t.Errorf("baseURL=%q: uploadBaseURL = %q, want %q", tt.baseURL, p.uploadBaseURL, tt.wantUpload)
+		}
+		if p.downloadBaseURL != tt.wantDownload {
+			t.Errorf("baseURL=%q: downloadBaseURL = %q, want %q", tt.baseURL, p.downloadBaseURL, tt.wantDownload)
+		}
+		if p.batchHost != tt.wantBatchHost {
+			t.Errorf("baseURL=%q: batchHost = %q, want %q", tt.baseURL, p.batchHost, tt.wantBatchHost)
+		}
 	}
 }

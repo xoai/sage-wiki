@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -26,15 +27,35 @@ func sanitizeGeminiError(s string) string {
 
 // geminiProvider implements the Google Gemini API format.
 type geminiProvider struct {
-	apiKey  string
-	baseURL string
+	apiKey          string
+	baseURL         string
+	uploadBaseURL   string // derived from baseURL; used by batch File API uploads
+	downloadBaseURL string // derived from baseURL; used by batch result downloads
+	batchHost       string // hostname extracted from baseURL; used for SSRF validation
 }
 
 func newGeminiProvider(apiKey string, baseURL string) *geminiProvider {
 	if baseURL == "" {
 		baseURL = "https://generativelanguage.googleapis.com/v1beta"
 	}
-	return &geminiProvider{apiKey: apiKey, baseURL: baseURL}
+	// Derive upload/download URL prefixes from baseURL so that a custom proxy
+	// or regional endpoint is honoured consistently across all batch operations.
+	// Standard pattern: baseURL ends in "/v1beta"; upload is "/upload/v1beta",
+	// download is "/download/v1beta". Falls back to baseURL unchanged if the
+	// pattern is not found (non-standard endpoint).
+	uploadBase := strings.Replace(baseURL, "/v1beta", "/upload/v1beta", 1)
+	downloadBase := strings.Replace(baseURL, "/v1beta", "/download/v1beta", 1)
+	var batchHost string
+	if u, err := url.Parse(baseURL); err == nil {
+		batchHost = u.Hostname()
+	}
+	return &geminiProvider{
+		apiKey:          apiKey,
+		baseURL:         baseURL,
+		uploadBaseURL:   uploadBase,
+		downloadBaseURL: downloadBase,
+		batchHost:       batchHost,
+	}
 }
 
 func (p *geminiProvider) Name() string        { return "gemini" }
@@ -341,9 +362,6 @@ func (p *geminiProvider) ParseResponse(body []byte) (*Response, error) {
 // Flow: upload JSONL input → submit batch → poll until done → download JSONL results.
 // Batch quota is separate from live quota and runs at 50% of standard pricing.
 
-const geminiUploadBaseURL = "https://generativelanguage.googleapis.com/upload/v1beta"
-const geminiDownloadBaseURL = "https://generativelanguage.googleapis.com/download/v1beta"
-
 // geminiBatchState maps Gemini job state strings to BatchStatus.
 func geminiBatchState(state string) BatchStatus {
 	switch state {
@@ -398,7 +416,7 @@ func (p *geminiProvider) uploadBatchInputFile(jsonl []byte) (string, error) {
 	}
 	w.Close()
 
-	uploadURL := fmt.Sprintf("%s/files?key=%s", geminiUploadBaseURL, p.apiKey)
+	uploadURL := fmt.Sprintf("%s/files?key=%s", p.uploadBaseURL, p.apiKey)
 	req, err := http.NewRequest("POST", uploadURL, &buf)
 	if err != nil {
 		return "", err
@@ -555,16 +573,16 @@ func (p *geminiProvider) PollBatch(batchID string) (*BatchStatusResponse, error)
 // RetrieveBatch downloads and parses results from a completed Gemini batch.
 // resultsRef is the file resource name from PollBatch (e.g. "files/abc123-responses").
 func (p *geminiProvider) RetrieveBatch(resultsRef string) ([]BatchResult, error) {
-	// Validate the download URL points to the expected Gemini host to prevent SSRF.
-	expectedHost := "generativelanguage.googleapis.com"
+	// Validate the download URL points to the expected host to prevent SSRF.
+	// p.batchHost is derived from p.baseURL so custom endpoints are honoured.
 	if err := validateBatchURL(
-		fmt.Sprintf("%s/%s:download", geminiDownloadBaseURL, resultsRef),
-		expectedHost,
+		fmt.Sprintf("%s/%s:download", p.downloadBaseURL, resultsRef),
+		p.batchHost,
 	); err != nil {
 		return nil, fmt.Errorf("gemini batch: %w", err)
 	}
 
-	downloadURL := fmt.Sprintf("%s/%s:download?alt=media&key=%s", geminiDownloadBaseURL, resultsRef, p.apiKey)
+	downloadURL := fmt.Sprintf("%s/%s:download?alt=media&key=%s", p.downloadBaseURL, resultsRef, p.apiKey)
 	req, err := http.NewRequest("GET", downloadURL, nil)
 	if err != nil {
 		return nil, err

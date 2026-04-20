@@ -137,41 +137,6 @@ func summarizeOne(
 ) SummaryResult {
 	result := SummaryResult{SourcePath: info.Path}
 
-	// Skip LLM call if a valid summary file already exists on disk with a matching
-	// source hash. Restores resume-from-checkpoint behavior when compile-state.json is
-	// missing (e.g. a prior failed run cleared it). The source_hash field in the
-	// frontmatter guards against serving stale summaries for modified sources.
-	baseName := strings.TrimSuffix(filepath.Base(info.Path), filepath.Ext(info.Path))
-	summaryPath := filepath.Join(outputDir, "summaries", baseName+".md")
-	absSummary := filepath.Join(projectDir, summaryPath)
-	if existing, err := os.ReadFile(absSummary); err == nil {
-		body := string(existing)
-		// Parse source_hash from YAML frontmatter and verify it matches the current
-		// source file. This prevents stale summaries being served for modified sources.
-		var storedHash string
-		if strings.HasPrefix(body, "---\n") {
-			if end := strings.Index(body[4:], "\n---\n"); end >= 0 {
-				frontmatter := body[4 : 4+end]
-				for _, line := range strings.Split(frontmatter, "\n") {
-					if strings.HasPrefix(line, "source_hash: ") {
-						storedHash = strings.TrimPrefix(line, "source_hash: ")
-						break
-					}
-				}
-				body = body[4+end+5:]
-			}
-		}
-		body = strings.TrimSpace(body)
-		if len(body) >= 100 && storedHash == info.Hash {
-			log.Info("reusing existing summary", "path", info.Path)
-			result.Summary = body
-			result.SummaryPath = summaryPath
-			// Note: result.Concepts is left nil; concept extraction runs separately
-			// in Pass 2 and does not depend on this field.
-			return result
-		}
-	}
-
 	// Extract source content
 	absPath := filepath.Join(projectDir, info.Path)
 	content, err := extract.Extract(absPath, info.Type)
@@ -271,12 +236,11 @@ func writeSummaryFile(projectDir, outputDir string, info SourceInfo, content *ex
 	frontmatter := fmt.Sprintf(`---
 source: %s
 source_type: %s
-source_hash: %s
 compiled_at: %s
 chunk_count: %d
 ---
 
-`, info.Path, content.Type, info.Hash, timeNow(loc), content.ChunkCount)
+`, info.Path, content.Type, timeNow(loc), content.ChunkCount)
 
 	if err := os.WriteFile(absOutputPath, []byte(frontmatter+summaryText), 0644); err != nil {
 		result.Error = fmt.Errorf("write summary: %w", err)
