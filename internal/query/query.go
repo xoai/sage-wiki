@@ -432,6 +432,9 @@ func docIDToArticlePath(docID string, outputDir string) string {
 		name := docID[7:]
 		return filepath.Join(outputDir, "outputs", name)
 	}
+	if strings.HasPrefix(docID, "src:") {
+		return docID[4:]
+	}
 	return ""
 }
 

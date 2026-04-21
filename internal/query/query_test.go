@@ -67,6 +67,24 @@ func TestExtractSeedIDsFromEnhanced(t *testing.T) {
 	}
 }
 
+func TestDocIDToArticlePath_SrcPrefix(t *testing.T) {
+	tests := []struct {
+		docID string
+		want  string
+	}{
+		{"src:raw/notes/doc.md", "raw/notes/doc.md"},
+		{"src:raw/papers/paper.pdf", "raw/papers/paper.pdf"},
+		{"concept:attention", filepath.Join("wiki", "concepts", "attention.md")},
+		{"unknown:foo", ""},
+	}
+	for _, tt := range tests {
+		got := docIDToArticlePath(tt.docID, "wiki")
+		if got != tt.want {
+			t.Errorf("docIDToArticlePath(%q) = %q, want %q", tt.docID, got, tt.want)
+		}
+	}
+}
+
 func TestComputeGraphExpansion_EmptySeeds(t *testing.T) {
 	cfg := &config.Config{Search: config.SearchConfig{}}
 	dir := t.TempDir()
