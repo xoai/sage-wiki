@@ -273,7 +273,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	tier1Pending, _ := itemStore.ListPending(1)
 	if len(tier1Pending) > 0 {
 		progress.StartPhase("Tier 1: Index + embed sources", len(tier1Pending))
-		indexed, embedded := indexAndEmbedSources(projectDir, tier1Pending, memStore, vecStore, embedder, itemStore, bp)
+		indexed, embedded := indexAndEmbedSources(projectDir, tier1Pending, memStore, vecStore, embedder, itemStore, bp, chunkStore, cfg.Search.ChunkSizeOrDefault(), db)
 		result.TierIndexed += indexed
 		result.TierEmbedded = embedded
 		log.Info("tier 1 indexing complete", "indexed", indexed, "embedded", embedded)

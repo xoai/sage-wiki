@@ -1,6 +1,8 @@
 package compiler
 
 import (
+	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -11,6 +13,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/memory"
+	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -78,6 +81,9 @@ func indexAndEmbedSources(
 	embedder embed.Embedder,
 	items *CompileItemStore,
 	bp *BackpressureController,
+	chunkStore *memory.ChunkStore,
+	chunkSize int,
+	db *storage.DB,
 ) (indexed, embedded int) {
 	// Step 1: FTS5 index any sources not yet indexed
 	for _, src := range sources {
@@ -135,6 +141,10 @@ func indexAndEmbedSources(
 		return indexed, 0
 	}
 
+	if chunkSize <= 0 {
+		chunkSize = 800
+	}
+
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	embeddedCount := 0
@@ -167,24 +177,78 @@ func indexAndEmbedSources(
 				return
 			}
 
-			vec, err := embedder.Embed(content.Text)
-			if err != nil {
-				if bp != nil && llm.IsRateLimitError(err) {
-					delay := bp.OnRateLimit()
-					log.Warn("embedding rate limited", "delay", delay)
-				}
-				log.Warn("tier 1 embed: embedding failed", "path", s.SourcePath, "error", err)
-				if merr := items.MarkError(s.SourcePath, err); merr != nil {
-					log.Warn("mark error failed", "path", s.SourcePath, "error", merr)
-				}
+			if content.Text == "" {
 				return
 			}
 
-			if bp != nil {
-				bp.OnSuccess()
+			chunks := extract.ChunkText(content.Text, chunkSize)
+
+			// Embed each chunk sequentially (same pattern as write.go:250-260)
+			chunkEmbeddings := make([][]float32, len(chunks))
+			for i, c := range chunks {
+				vec, err := embedder.Embed(c.Text)
+				if err != nil {
+					if bp != nil && llm.IsRateLimitError(err) {
+						delay := bp.OnRateLimit()
+						log.Warn("embedding rate limited", "delay", delay)
+					}
+					log.Warn("tier 1 chunk embed failed", "path", s.SourcePath, "chunk", i, "error", err)
+					continue
+				}
+				chunkEmbeddings[i] = vec
+				if bp != nil {
+					bp.OnSuccess()
+				}
 			}
 
-			vecStore.Upsert("src:"+s.SourcePath, vec)
+			docID := "src:" + s.SourcePath
+
+			if chunkStore != nil && db != nil {
+				// Clean up legacy whole-document vector
+				vecStore.Delete(docID)
+
+				if err := db.WriteTx(func(tx *sql.Tx) error {
+					if err := chunkStore.DeleteDocChunks(tx, docID); err != nil {
+						return err
+					}
+
+					entries := make([]memory.ChunkEntry, len(chunks))
+					for i, c := range chunks {
+						entries[i] = memory.ChunkEntry{
+							ChunkID:    fmt.Sprintf("%s:c%d", docID, i),
+							ChunkIndex: c.Index,
+							Heading:    c.Heading,
+							Content:    c.Text,
+						}
+					}
+
+					if err := chunkStore.IndexChunks(tx, docID, entries); err != nil {
+						return err
+					}
+
+					for i, emb := range chunkEmbeddings {
+						if emb != nil {
+							if err := vecStore.UpsertChunk(tx, entries[i].ChunkID, docID, emb); err != nil {
+								log.Warn("tier 1 chunk vector upsert failed", "chunk", entries[i].ChunkID, "error", err)
+							}
+						}
+					}
+
+					return nil
+				}); err != nil {
+					log.Error("tier 1 chunk indexing failed", "path", s.SourcePath, "error", err)
+					if merr := items.MarkError(s.SourcePath, err); merr != nil {
+						log.Warn("mark error failed", "path", s.SourcePath, "error", merr)
+					}
+					return
+				}
+			} else {
+				// Fallback: single-vector embed (legacy path when chunk infra unavailable)
+				if len(chunkEmbeddings) > 0 && chunkEmbeddings[0] != nil {
+					vecStore.Upsert(docID, chunkEmbeddings[0])
+				}
+			}
+
 			if err := items.MarkPass(s.SourcePath, "embedded"); err != nil {
 				log.Warn("mark pass failed", "path", s.SourcePath, "pass", "embedded", "error", err)
 			}
