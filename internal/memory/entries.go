@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/xoai/sage-wiki/internal/storage"
 )
@@ -207,12 +208,10 @@ func SanitizeFTS(s string) string {
 }
 
 func isCJKOrKana(r rune) bool {
-	return (r >= 0x4E00 && r <= 0x9FFF) || // CJK Unified Ideographs
-		(r >= 0x3400 && r <= 0x4DBF) || // CJK Extension A
-		(r >= 0xF900 && r <= 0xFAFF) || // CJK Compatibility Ideographs
-		(r >= 0x3040 && r <= 0x309F) || // Hiragana
-		(r >= 0x30A0 && r <= 0x30FF) || // Katakana
-		(r >= 0xAC00 && r <= 0xD7AF) // Hangul Syllables
+	return unicode.Is(unicode.Han, r) ||
+		unicode.Is(unicode.Hangul, r) ||
+		(r >= 0x3040 && r <= 0x309F) || // Hiragana block
+		(r >= 0x30A0 && r <= 0x30FF) // Katakana block (includes prolonged sound mark ー U+30FC)
 }
 
 var stopwords = map[string]bool{

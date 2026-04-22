@@ -26,6 +26,18 @@ Fixed `--watch --prune` silently dropping `--prune` (GitHub issue #61). All comp
 - **`hub compile --prune`** — New flag on the hub multi-project compile command.
 - **TUI plumbing** — CompileOpts threaded through the TUI compile model (UI toggle deferred).
 
+### Gemini Batch API (PR #63)
+
+- **Gemini batch support** — `compile --batch` now works with Gemini provider. 50% cost reduction with separate quota bucket. Uses File API upload for arbitrarily large batches.
+- **Configurable concept extraction** — `extract_batch_size` and `extract_max_tokens` in config.yaml to avoid JSON truncation on large corpora.
+
+### Search Quality
+
+- **Cross-lingual vector search (PR #67)** — Vector search now runs brute-force across all chunks instead of being BM25-prefiltered. Fixes cross-lingual queries (e.g., Polish query against English content) where BM25 has zero lexical overlap.
+- **Hybrid weight fix (PR #67)** — The `query` command now correctly passes configured `hybrid_weight_bm25` / `hybrid_weight_vector` to the doc-level search path (was defaulting to 1.0/1.0).
+- **CJK search fix (PR #65)** — `SanitizeFTS` now preserves CJK ideographs, kana, and hangul. Previously all non-ASCII characters were stripped, causing BM25 to return zero results for Chinese/Japanese/Korean queries.
+- **Chunk-level Tier 1 embedding (#66)** — Long sources at Tier 1 are now split into ~800-token chunks before embedding, stored in `vec_chunks` + `chunks_fts`. Eliminates silent truncation for documents exceeding embedding model token limits.
+
 ## 0.1.4 — 2026-04-15
 
 ### Large Vault Performance

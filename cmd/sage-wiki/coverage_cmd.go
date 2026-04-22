@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -32,11 +33,7 @@ func runCoverage(cmd *cobra.Command, args []string) error {
 	mfPath := filepath.Join(dir, ".manifest.json")
 	mf, err := manifest.Load(mfPath)
 	if err != nil {
-		if outputFormat == "json" {
-			fmt.Println(cli.FormatJSON(false, nil, err.Error()))
-			return nil
-		}
-		return fmt.Errorf("load manifest: %w", err)
+		return cli.CLIError(outputFormat, fmt.Errorf("load manifest: %w", err))
 	}
 
 	var rows []coverageRow
@@ -46,6 +43,7 @@ func runCoverage(cmd *cobra.Command, args []string) error {
 			Compiled: src.Status,
 		})
 	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Path < rows[j].Path })
 
 	if outputFormat == "json" {
 		fmt.Println(cli.FormatJSON(true, rows, ""))

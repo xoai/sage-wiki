@@ -85,12 +85,7 @@ func EnhancedSearch(opts EnhancedSearchOpts) ([]SearchResult, error) {
 		}
 
 		if len(queryVecs) > 0 {
-			// PATCH (cross-lingual fix): always brute-force vector across ALL
-			// chunks, never filter by BM25 candidate doc IDs. Original behaviour
-			// (BM25-prefiltered vector) was an efficiency optimization that
-			// silently dropped semantically-relevant docs whenever BM25 missed
-			// them — fatal for multilingual corpora where a Polish query has
-			// zero token overlap with English content.
+			// Always brute-force vector search to support cross-lingual queries where BM25 has zero lexical overlap
 			for _, qv := range queryVecs {
 				vr, err := opts.VecStore.SearchChunks(qv, candidateLimit)
 				if err != nil {

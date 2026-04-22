@@ -162,7 +162,7 @@ func summarizeOne(
 			}
 		}
 		body = strings.TrimSpace(body)
-		if len(body) >= 100 && storedHash == info.Hash {
+		if len(body) >= 100 && storedHash != "" && storedHash == info.Hash {
 			log.Info("reusing existing summary", "path", info.Path)
 			result.Summary = body
 			result.SummaryPath = summaryPath

@@ -12,7 +12,7 @@ User Query
   -> Query expansion (LLM: keyword + semantic + hypothetical answer variants)
   -> Parallel search:
      +-- BM25 on original + keyword variants (chunk-level FTS5)
-     +-- Vector search on semantic/hyde variants (chunk-level, BM25-prefiltered)
+     +-- Vector search on semantic/hyde variants (chunk-level, brute-force cosine)
   -> RRF fusion (reciprocal rank fusion)
   -> Deduplicate to document level (best chunk per doc)
   -> LLM re-ranking (top-15 candidates scored for relevance)
@@ -57,9 +57,9 @@ After retrieval, the top 15 candidates are sent to the LLM in a single call for 
 
 This ensures that if RRF placed something at rank 1 with high confidence, the reranker can't easily demote it.
 
-### BM25-prefiltered vector search
+### Cross-lingual vector search
 
-Instead of brute-force scanning all chunk vectors, the enhanced pipeline uses BM25 results as a candidate filter. Vector comparisons are limited to chunks from the top 50 BM25 documents, capping cosine computations at ~250 regardless of wiki size.
+The enhanced pipeline runs full brute-force cosine search across all chunk vectors, independent of BM25 results. This ensures multilingual queries (e.g., Polish query against English content) find semantically relevant results even when there's zero lexical overlap between the query and content languages. BM25 and vector results are combined via RRF fusion, so both keyword and semantic matches contribute to the final ranking.
 
 ### Graph-enhanced context expansion
 
@@ -180,7 +180,7 @@ sage-wiki's enhanced search pipeline was inspired by analyzing [qmd](https://git
 | **Chunk size** | 800 tokens (configurable) | 900 tokens |
 | **Query expansion** | LLM-based (lex/vec/hyde) | LLM-based |
 | **Re-ranking** | LLM batch scoring + position-aware blending | Cross-encoder |
-| **Vector search** | BM25-prefiltered (caps at ~250 comparisons) | Brute-force |
+| **Vector search** | Brute-force cosine (cross-lingual safe) | Brute-force |
 | **Hybrid search** | RRF fusion (BM25 + vector) | Vector-only |
 | **Strong-signal skip** | Yes (normalized BM25 threshold) | No |
 | **Graph context** | 4-signal expansion (relations, sources, neighbors, types) + 1-hop fallback | No graph |

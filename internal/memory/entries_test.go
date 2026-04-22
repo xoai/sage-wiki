@@ -160,7 +160,9 @@ func TestSanitizeFTSPreservesCJK(t *testing.T) {
 		{"hello世界", "hello世界"},
 		{"注意力机制", "注意力机制"},
 		{"トランスフォーマー", "トランスフォーマー"},       // katakana
+		{"ひらがな", "ひらがな"},                       // hiragana
 		{"변환기", "변환기"},                         // hangul
+		{"𠀀古字", "𠀀古字"},                         // CJK Extension B (U+20000+)
 		{"test*注入\"attack", "test注入attack"},     // strips FTS operators, keeps CJK
 		{"「引号」标点", "引号标点"},                     // strips CJK punctuation U+300x
 	}
