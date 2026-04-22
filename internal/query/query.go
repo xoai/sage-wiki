@@ -310,8 +310,10 @@ func buildDocLevelContext(projectDir string, question string, topK int,
 	}
 
 	results, err := searcher.Search(hybrid.SearchOpts{
-		Query: question,
-		Limit: topK,
+		Query:        question,
+		Limit:        topK,
+		BM25Weight:   cfg.Search.HybridWeightBM25,
+		VectorWeight: cfg.Search.HybridWeightVector,
 	}, queryVec)
 	if err != nil {
 		return "", nil, fmt.Errorf("query: search: %w", err)

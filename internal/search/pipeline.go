@@ -85,26 +85,19 @@ func EnhancedSearch(opts EnhancedSearchOpts) ([]SearchResult, error) {
 		}
 
 		if len(queryVecs) > 0 {
-			// BM25-prefiltered: only search vectors for docs from BM25 results
-			docIDs := memory.DocIDs(bm25Results)
-			if len(docIDs) > 0 {
-				for _, qv := range queryVecs {
-					vr, err := opts.VecStore.SearchChunksFiltered(qv, docIDs, candidateLimit)
-					if err != nil {
-						log.Warn("chunk vector search failed", "error", err)
-						continue
-					}
-					vecResults = append(vecResults, vr...)
+			// PATCH (cross-lingual fix): always brute-force vector across ALL
+			// chunks, never filter by BM25 candidate doc IDs. Original behaviour
+			// (BM25-prefiltered vector) was an efficiency optimization that
+			// silently dropped semantically-relevant docs whenever BM25 missed
+			// them — fatal for multilingual corpora where a Polish query has
+			// zero token overlap with English content.
+			for _, qv := range queryVecs {
+				vr, err := opts.VecStore.SearchChunks(qv, candidateLimit)
+				if err != nil {
+					log.Warn("chunk vector search failed", "error", err)
+					continue
 				}
-			} else {
-				// No BM25 results — try brute force vector search
-				for _, qv := range queryVecs {
-					vr, err := opts.VecStore.SearchChunks(qv, candidateLimit)
-					if err != nil {
-						continue
-					}
-					vecResults = append(vecResults, vr...)
-				}
+				vecResults = append(vecResults, vr...)
 			}
 		}
 	}
