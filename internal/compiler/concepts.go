@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
@@ -22,6 +23,9 @@ type ExtractedConcept struct {
 // ExtractConcepts runs Pass 2: concept extraction from summaries.
 // It takes new/updated summaries and the existing concept list,
 // asks the LLM to identify and deduplicate concepts.
+// concurrency > 1 runs batches in parallel; each batch receives the same
+// existingConcepts snapshot as dedup context (not the growing allConcepts),
+// so deduplicateConcepts at the end handles cross-batch merging.
 func ExtractConcepts(
 	summaries []SummaryResult,
 	existingConcepts map[string]manifest.Concept,
@@ -29,12 +33,16 @@ func ExtractConcepts(
 	model string,
 	batchSize int,
 	maxTokens int,
+	concurrency int,
 ) ([]ExtractedConcept, error) {
 	if batchSize <= 0 {
 		batchSize = 20
 	}
 	if maxTokens <= 0 {
 		maxTokens = 8192
+	}
+	if concurrency <= 1 {
+		concurrency = 1
 	}
 	if len(summaries) == 0 {
 		return nil, nil
@@ -51,67 +59,85 @@ func ExtractConcepts(
 		return nil, nil
 	}
 
-	// Build existing concept list for dedup context
+	// Build existing concept list for dedup context (shared snapshot for all batches)
 	var existingList []string
 	for name := range existingConcepts {
 		existingList = append(existingList, name)
 	}
+	dedupSnapshot := strings.Join(existingList, ", ")
 
-	// Process in batches
-	var allConcepts []ExtractedConcept
-
+	// Split into batches
+	type batchWork struct {
+		index int
+		items []SummaryResult
+	}
+	var batches []batchWork
 	for i := 0; i < len(validSummaries); i += batchSize {
 		end := i + batchSize
 		if end > len(validSummaries) {
 			end = len(validSummaries)
 		}
-		batch := validSummaries[i:end]
+		batches = append(batches, batchWork{index: i / batchSize, items: validSummaries[i:end]})
+	}
 
-		log.Info("extracting concepts batch", "batch", i/batchSize+1, "summaries", len(batch), "total", len(validSummaries))
+	totalBatches := len(batches)
+	results := make([][]ExtractedConcept, totalBatches)
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
 
-		var summaryTexts []string
-		for _, s := range batch {
-			// Use truncated summary to stay within context limits
-			summary := s.Summary
-			if len(summary) > 1000 {
-				summary = summary[:1000] + "\n..."
+	for _, b := range batches {
+		wg.Add(1)
+		go func(b batchWork) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			log.Info("extracting concepts batch", "batch", b.index+1, "of", totalBatches, "summaries", len(b.items))
+
+			var summaryTexts []string
+			for _, s := range b.items {
+				summary := s.Summary
+				if len(summary) > 1000 {
+					summary = summary[:1000] + "\n..."
+				}
+				summaryTexts = append(summaryTexts, fmt.Sprintf("### Source: %s\n%s", s.SourcePath, summary))
 			}
-			summaryTexts = append(summaryTexts, fmt.Sprintf("### Source: %s\n%s", s.SourcePath, summary))
-		}
 
-		// Include previously extracted concepts in the dedup list
-		dedup := make([]string, len(existingList))
-		copy(dedup, existingList)
-		for _, c := range allConcepts {
-			dedup = append(dedup, c.Name)
-		}
+			prompt, err := prompts.Render("extract_concepts", prompts.ExtractData{
+				ExistingConcepts: dedupSnapshot,
+				Summaries:        strings.Join(summaryTexts, "\n\n---\n\n"),
+			}, "")
+			if err != nil {
+				log.Error("render extract_concepts prompt failed", "batch", b.index+1, "error", err)
+				return
+			}
 
-		prompt, err := prompts.Render("extract_concepts", prompts.ExtractData{
-			ExistingConcepts: strings.Join(dedup, ", "),
-			Summaries:        strings.Join(summaryTexts, "\n\n---\n\n"),
-		}, "")
-		if err != nil {
-			log.Error("render extract_concepts prompt failed", "batch", i/batchSize+1, "error", err)
-			continue
-		}
+			resp, err := client.ChatCompletion([]llm.Message{
+				{Role: "system", Content: "You are a concept extraction system for a knowledge wiki. Output valid JSON only."},
+				{Role: "user", Content: prompt},
+			}, llm.CallOpts{Model: model, MaxTokens: maxTokens})
+			if err != nil {
+				log.Error("concept extraction batch failed", "batch", b.index+1, "error", err)
+				return
+			}
 
-		resp, err := client.ChatCompletion([]llm.Message{
-			{Role: "system", Content: "You are a concept extraction system for a knowledge wiki. Output valid JSON only."},
-			{Role: "user", Content: prompt},
-		}, llm.CallOpts{Model: model, MaxTokens: maxTokens})
-		if err != nil {
-			log.Error("concept extraction batch failed", "batch", i/batchSize+1, "error", err)
-			continue // skip failed batch, continue with others
-		}
+			concepts, err := parseConceptsJSON(resp.Content)
+			if err != nil {
+				log.Error("concept extraction parse failed", "batch", b.index+1, "error", err)
+				return
+			}
 
-		concepts, err := parseConceptsJSON(resp.Content)
-		if err != nil {
-			log.Error("concept extraction parse failed", "batch", i/batchSize+1, "error", err)
-			continue
-		}
+			results[b.index] = concepts
+			log.Info("batch concepts extracted", "batch", b.index+1, "count", len(concepts))
+		}(b)
+	}
 
-		allConcepts = append(allConcepts, concepts...)
-		log.Info("batch concepts extracted", "batch", i/batchSize+1, "count", len(concepts))
+	wg.Wait()
+
+	// Flatten results in original batch order
+	var allConcepts []ExtractedConcept
+	for _, r := range results {
+		allConcepts = append(allConcepts, r...)
 	}
 
 	// Filter noise
