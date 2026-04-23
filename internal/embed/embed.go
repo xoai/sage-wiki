@@ -93,6 +93,7 @@ func NewCascade(provider string, apiKey string, baseURL string, override *EmbedO
 				apiKey:   key,
 				baseURL:  url,
 				dims:     dims,
+				client:   newEmbedHTTPClient(),
 			}
 			if dims > 0 {
 				log.Info("embedding provider detected", "tier", 0, "provider", p, "model", override.Model, "dims", dims)
@@ -112,6 +113,7 @@ func NewCascade(provider string, apiKey string, baseURL string, override *EmbedO
 			apiKey:   apiKey,
 			baseURL:  baseURL,
 			dims:     dims,
+			client:   newEmbedHTTPClient(),
 		}
 		log.Info("embedding provider detected", "tier", 1, "provider", provider, "model", model, "dims", dims)
 		return embedder
@@ -121,13 +123,36 @@ func NewCascade(provider string, apiKey string, baseURL string, override *EmbedO
 	if ollamaAvailable() {
 		log.Info("embedding provider detected", "tier", 2, "provider", "ollama", "model", "nomic-embed-text", "dims", 768)
 		return &OllamaEmbedder{
-			model: "nomic-embed-text",
-			dims:  768,
+			model:  "nomic-embed-text",
+			dims:   768,
+			client: newEmbedHTTPClient(),
 		}
 	}
 
 	log.Warn("no embedding provider available — vector search disabled. Install Ollama or configure an embedding-capable provider.")
 	return nil
+}
+
+// sharedEmbedTransport is a process-wide HTTP transport for embedding API
+// calls. It overrides http.DefaultTransport's MaxIdleConnsPerHost=2 — which
+// causes TCP/TLS churn when Pass-3 write.go and Tier-1 index.go fire many
+// concurrent Embed() calls at a single embedding endpoint. Mirrors the fix in
+// internal/llm/client.go:sharedTransport (PER-116).
+var sharedEmbedTransport http.RoundTripper = func() http.RoundTripper {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.MaxIdleConns = 512
+	tr.MaxIdleConnsPerHost = 256
+	tr.MaxConnsPerHost = 0
+	tr.IdleConnTimeout = 90 * time.Second
+	return tr
+}()
+
+// newEmbedHTTPClient returns a stdlib http.Client that uses sharedEmbedTransport.
+func newEmbedHTTPClient() http.Client {
+	return http.Client{
+		Transport: sharedEmbedTransport,
+		Timeout:   120 * time.Second,
+	}
 }
 
 // APIEmbedder calls a provider's embedding API.

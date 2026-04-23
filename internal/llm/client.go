@@ -57,6 +57,23 @@ type Client struct {
 	cacheID  string       // active cache ID (empty = no caching)
 }
 
+// sharedTransport is the HTTP transport reused by every llm.Client.
+// It overrides Go's http.DefaultTransport (which caps MaxIdleConnsPerHost at 2,
+// forcing TCP/TLS churn on ~every concurrent call) and sets MaxConnsPerHost=0
+// (unlimited). This matters when the compiler fires cfg.Compiler.MaxParallel
+// concurrent requests at a single vLLM/Ollama/OpenAI host.
+//
+// Kept as a package-level var so embedding connection pool is shared across
+// Clients in the same process (matches Go's DefaultTransport ergonomics).
+var sharedTransport http.RoundTripper = func() http.RoundTripper {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.MaxIdleConns = 512
+	tr.MaxIdleConnsPerHost = 256
+	tr.MaxConnsPerHost = 0 // unlimited (do not throttle concurrent dials)
+	tr.IdleConnTimeout = 90 * time.Second
+	return tr
+}()
+
 // NewClient creates a new LLM client for the given provider.
 // extraParams (if provided) are merged into every request body — use for
 // provider-specific parameters like Qwen's enable_thinking or DeepSeek's
@@ -67,7 +84,9 @@ func NewClient(providerName string, apiKey string, baseURL string, rateLimit int
 		return nil, err
 	}
 
-	if rateLimit <= 0 {
+	// rateLimit == 0 (omitted) → use provider default (may be 0 for self-hosted).
+	// rateLimit  < 0          → explicit opt-out, disable client-side rate limiting.
+	if rateLimit == 0 {
 		rateLimit = defaultRateLimit(providerName)
 	}
 
@@ -87,7 +106,10 @@ func NewClient(providerName string, apiKey string, baseURL string, rateLimit int
 	return &Client{
 		provider: p,
 		limiter:  newRateLimiter(rateLimit),
-		client:   http.Client{Timeout: 120 * time.Second},
+		client: http.Client{
+			Transport: sharedTransport,
+			Timeout:   120 * time.Second,
+		},
 	}, nil
 }
 
@@ -235,6 +257,16 @@ func newProvider(name string, apiKey string, baseURL string) (Provider, error) {
 	}
 }
 
+// defaultRateLimit returns the default RPM for a provider.
+//
+//   - Public paid APIs get conservative defaults matching their published limits.
+//   - Self-hosted backends (openai-compatible = vLLM/LocalAI/etc., ollama) return
+//     0, meaning "no client-side rate limiting": the compiler's BackpressureController
+//     + server-side capacity are the real governors, and a 1/sec (or 1/2sec) cap
+//     was the hidden reason sage-wiki could not saturate a local GPU endpoint
+//     despite cfg.Compiler.MaxParallel >= 8 (PER-116 / per-112-concurrency-fix).
+//   - Unknown providers keep the previous conservative 30 RPM default — do not
+//     surprise users with unbounded bursts against a new SaaS they wire up.
 func defaultRateLimit(provider string) int {
 	switch provider {
 	case "anthropic":
@@ -245,6 +277,8 @@ func defaultRateLimit(provider string) int {
 		return 60
 	case "gemini":
 		return 60
+	case "openai-compatible", "ollama":
+		return 0 // self-hosted: no client-side RPM cap
 	default:
 		return 30
 	}
@@ -286,28 +320,54 @@ func backoffDelay(attempt int) time.Duration {
 	return time.Duration(delay * float64(time.Second))
 }
 
-// rateLimiter implements a simple token bucket rate limiter.
+// rateLimiter paces outgoing requests so the Client never exceeds a caller-
+// supplied requests-per-minute target. It is an N-goroutine-safe "next available
+// slot" limiter:
+//
+//   - Each goroutine reserves a monotonically advancing wake-up timestamp while
+//     holding the mutex, then releases the mutex BEFORE sleeping. This is the
+//     key fix for PER-116: the previous implementation held the mutex across
+//     time.Sleep(), which serialized ALL concurrent callers to one-per-interval
+//     regardless of cfg.Compiler.MaxParallel. With the mutex released, slots are
+//     still spaced `interval` apart, but goroutines sleep concurrently — so a
+//     burst of N goroutines against a high RPM limit (or a disabled limiter) can
+//     all have their requests in flight simultaneously.
+//
+//   - When requestsPerMinute <= 0 the limiter is disabled (no-op wait). Used by
+//     self-hosted backends where a local GPU endpoint is the real governor.
 type rateLimiter struct {
 	mu       sync.Mutex
-	interval time.Duration
-	lastCall time.Time
+	interval time.Duration // 0 = disabled
+	nextSlot time.Time     // next allowed call start
 }
 
+// newRateLimiter returns a limiter. A non-positive rate means "disabled".
 func newRateLimiter(requestsPerMinute int) *rateLimiter {
-	interval := time.Minute / time.Duration(requestsPerMinute)
-	return &rateLimiter{interval: interval}
+	if requestsPerMinute <= 0 {
+		return &rateLimiter{} // interval=0 → wait() is a no-op
+	}
+	return &rateLimiter{interval: time.Minute / time.Duration(requestsPerMinute)}
 }
 
+// wait blocks just long enough that the calling goroutine's request respects
+// the limiter's spacing. The mutex is NOT held across the sleep.
 func (r *rateLimiter) wait() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	now := time.Now()
-	elapsed := now.Sub(r.lastCall)
-	if elapsed < r.interval {
-		time.Sleep(r.interval - elapsed)
+	if r.interval == 0 {
+		return
 	}
-	r.lastCall = time.Now()
+
+	r.mu.Lock()
+	now := time.Now()
+	wakeAt := r.nextSlot
+	if wakeAt.Before(now) {
+		wakeAt = now
+	}
+	r.nextSlot = wakeAt.Add(r.interval)
+	r.mu.Unlock()
+
+	if d := time.Until(wakeAt); d > 0 {
+		time.Sleep(d)
+	}
 }
 
 // stripThinkTags removes <think>...</think> blocks from LLM responses.
