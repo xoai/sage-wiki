@@ -122,7 +122,19 @@ func (s *Server) handleAddSource(ctx context.Context, req mcplib.CallToolRequest
 
 	absProject, _ := filepath.Abs(s.projectDir)
 	absPath, _ := filepath.Abs(filepath.Join(s.projectDir, path))
-	if !isSubpath(absProject, absPath) {
+
+	// Allow paths within the project directory OR within any configured source directory
+	allowed := isSubpath(absProject, absPath)
+	if !allowed {
+		for _, src := range s.cfg.ResolveSources(absProject) {
+			absSrc, _ := filepath.Abs(src)
+			if isSubpath(absSrc, absPath) {
+				allowed = true
+				break
+			}
+		}
+	}
+	if !allowed {
 		return errorResult("path traversal not allowed"), nil
 	}
 
@@ -162,8 +174,7 @@ func (s *Server) handleWriteSummary(ctx context.Context, req mcplib.CallToolRequ
 		return errorResult("source and content are required"), nil
 	}
 
-	baseName := strings.TrimSuffix(filepath.Base(source), filepath.Ext(source))
-	summaryPath := filepath.Join(s.cfg.Output, "summaries", baseName+".md")
+	summaryPath := filepath.Join(s.cfg.Output, "summaries", compiler.SummaryFilename(source))
 	absProject, _ := filepath.Abs(s.projectDir)
 	absPath, _ := filepath.Abs(filepath.Join(s.projectDir, summaryPath))
 	if !isSubpath(absProject, absPath) {
@@ -524,11 +535,38 @@ func (s *Server) handleCompileDiff(ctx context.Context, req mcplib.CallToolReque
 		return errorResult(err.Error()), nil
 	}
 
-	// Simple diff: count pending sources
-	pending := mf.PendingSources()
-	total := mf.SourceCount()
+	diff, err := compiler.Diff(s.projectDir, s.cfg, mf)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
 
-	return textResult(fmt.Sprintf("Sources: %d total, %d pending compilation", total, len(pending))), nil
+	total := mf.SourceCount()
+	pending := len(diff.Added) + len(diff.Modified)
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Sources: %d total, %d pending compilation\n", total, pending)
+	fmt.Fprintf(&sb, "Added: %d, Modified: %d, Removed: %d\n", len(diff.Added), len(diff.Modified), len(diff.Removed))
+
+	if len(diff.Added) > 0 {
+		sb.WriteString("\nNew files:\n")
+		for _, f := range diff.Added {
+			fmt.Fprintf(&sb, "  + %s (%d bytes)\n", f.Path, f.Size)
+		}
+	}
+	if len(diff.Modified) > 0 {
+		sb.WriteString("\nModified files:\n")
+		for _, f := range diff.Modified {
+			fmt.Fprintf(&sb, "  ~ %s (%d bytes)\n", f.Path, f.Size)
+		}
+	}
+	if len(diff.Removed) > 0 {
+		sb.WriteString("\nRemoved files:\n")
+		for _, p := range diff.Removed {
+			fmt.Fprintf(&sb, "  - %s\n", p)
+		}
+	}
+
+	return textResult(sb.String()), nil
 }
 
 func (s *Server) tryEmbed(id string, content string) {
