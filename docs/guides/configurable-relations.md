@@ -95,6 +95,27 @@ Invalid: `Regulates`, `has-effect`, `part of`, `123abc`
 
 Invalid names are rejected at config load time with a clear error message.
 
+### Type-restricted relations
+
+Custom relation types can optionally restrict which entity types are valid as source and target:
+
+```yaml
+ontology:
+  relation_types:
+    - name: curated_by
+      synonyms: ["curated by", "organized by", "programmed by"]
+      valid_sources: [exhibition, program]
+      valid_targets: [artist]
+    - name: funded_by
+      synonyms: ["funded by", "granted by", "awarded by"]
+      valid_sources: [exhibition, program, grant_program]
+      valid_targets: [funder, grant_program]
+```
+
+When `valid_sources` is set, a relation edge is only created if the source entity's type is in the list. When `valid_targets` is set, the target entity's type must match. Both fields are optional — empty or omitted means all types are accepted.
+
+This is useful for domain-specific wikis where relation keywords might appear in many contexts but should only connect specific entity categories. For example, "curated by" should create edges from exhibitions to artists — not from applications to source documents.
+
 ## Examples by domain
 
 ### Biology / Life Sciences
@@ -144,6 +165,33 @@ ontology:
 3. **Validation** — `ontology.NewStore()` receives the merged list of valid names. `AddRelation()` rejects any type not in the list
 4. **Extraction** — `ontology.RelationPatterns()` builds keyword patterns from the merged list (skipping types with no synonyms like `cites` and `derived_from`). The compiler uses these patterns during article writing
 5. **Migration** — Existing databases are automatically migrated on first open after upgrade. The SQL CHECK constraint is replaced with application-layer validation, so custom types can be stored
+
+### Arts / Gallery Archive
+
+```yaml
+ontology:
+  relation_types:
+    - name: funded_by
+      synonyms: ["funded by", "granted by", "awarded by", "supported by"]
+      valid_sources: [exhibition, program, grant_program]
+      valid_targets: [funder, grant_program]
+    - name: curated_by
+      synonyms: ["curated by", "organized by", "programmed by"]
+      valid_sources: [exhibition, program]
+      valid_targets: [artist]
+    - name: exhibited_at
+      synonyms: ["shown at", "displayed at", "held at", "hosted by"]
+      valid_sources: [exhibition, program]
+      valid_targets: [venue]
+    - name: partnered_with
+      synonyms: ["partnered with", "presented with", "in collaboration with"]
+      valid_sources: [exhibition, program, partner_organization]
+      valid_targets: [partner_organization]
+    - name: employs
+      synonyms: ["employs", "staffs", "hires", "contracts"]
+      valid_sources: [concept, partner_organization]
+      valid_targets: [organizational_role, artist]
+```
 
 ## Zero config
 
