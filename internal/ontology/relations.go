@@ -4,14 +4,18 @@ import "github.com/xoai/sage-wiki/internal/config"
 
 // RelationDef defines a relation type with its keyword synonyms.
 type RelationDef struct {
-	Name     string
-	Synonyms []string
+	Name         string
+	Synonyms     []string
+	ValidSources []string
+	ValidTargets []string
 }
 
 // RelationPattern maps keywords to a relation type for extraction.
 type RelationPattern struct {
-	Keywords []string
-	Relation string
+	Keywords     []string
+	Relation     string
+	ValidSources []string
+	ValidTargets []string
 }
 
 // BuiltinRelations defines the 8 immutable relation types with default synonyms.
@@ -57,11 +61,22 @@ func MergedRelations(cfgRelations []config.RelationConfig) []RelationDef {
 					existing[s] = true
 				}
 			}
+			if len(cr.ValidSources) > 0 {
+				result[idx].ValidSources = append([]string(nil), cr.ValidSources...)
+			}
+			if len(cr.ValidTargets) > 0 {
+				result[idx].ValidTargets = append([]string(nil), cr.ValidTargets...)
+			}
 		} else {
 			// New custom type
 			syns := make([]string, len(cr.Synonyms))
 			copy(syns, cr.Synonyms)
-			result = append(result, RelationDef{Name: cr.Name, Synonyms: syns})
+			result = append(result, RelationDef{
+				Name:         cr.Name,
+				Synonyms:     syns,
+				ValidSources: append([]string(nil), cr.ValidSources...),
+				ValidTargets: append([]string(nil), cr.ValidTargets...),
+			})
 		}
 	}
 
@@ -85,8 +100,10 @@ func RelationPatterns(defs []RelationDef) []RelationPattern {
 			continue
 		}
 		patterns = append(patterns, RelationPattern{
-			Keywords: d.Synonyms,
-			Relation: d.Name,
+			Keywords:     d.Synonyms,
+			Relation:     d.Name,
+			ValidSources: d.ValidSources,
+			ValidTargets: d.ValidTargets,
 		})
 	}
 	return patterns
