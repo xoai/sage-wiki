@@ -23,6 +23,11 @@ import (
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
+var (
+	blockSplitRe = regexp.MustCompile(`\n\n|\n#{1,3}\s`)
+	wikilinkRe   = regexp.MustCompile(`\[\[([^\]]+)\]\]`)
+)
+
 // ArticleResult holds the output of writing a concept article.
 type ArticleResult struct {
 	ConceptName string
@@ -453,35 +458,32 @@ func findRelatedConcepts(concept ExtractedConcept) []string {
 }
 
 // extractRelations parses article text for relationship patterns and creates ontology edges.
-// Looks for patterns like "X implements Y", "X extends Y", etc. near [[wikilinks]].
+// Splits article into semantic blocks (paragraph breaks and headings) and only creates
+// relations when a keyword co-occurs with a [[wikilink]] in the same block.
 func extractRelations(conceptID string, content string, ontStore *ontology.Store, patterns []ontology.RelationPattern) {
-	linkRe := regexp.MustCompile(`\[\[([^\]]+)\]\]`)
-	links := linkRe.FindAllStringSubmatch(content, -1)
+	blocks := blockSplitRe.Split(content, -1)
 
-	// Collect unique linked concepts
-	linkedConcepts := map[string]bool{}
-	for _, m := range links {
-		target := m[1]
-		if target != conceptID {
-			linkedConcepts[target] = true
-		}
-	}
+	for _, block := range blocks {
+		blockLower := strings.ToLower(block)
+		links := wikilinkRe.FindAllStringSubmatch(block, -1)
 
-	contentLower := strings.ToLower(content)
+		for _, m := range links {
+			target := m[1]
+			if target == conceptID {
+				continue
+			}
 
-	for target := range linkedConcepts {
-		targetLower := strings.ToLower(target)
-		for _, rp := range patterns {
-			for _, keyword := range rp.Keywords {
-				// Look for the keyword near the concept mention
-				if strings.Contains(contentLower, keyword) && strings.Contains(contentLower, targetLower) {
-					ontStore.AddRelation(ontology.Relation{
-						ID:       conceptID + "-" + rp.Relation + "-" + target,
-						SourceID: conceptID,
-						TargetID: target,
-						Relation: rp.Relation,
-					})
-					break // one relation type per target is enough
+			for _, rp := range patterns {
+				for _, keyword := range rp.Keywords {
+					if strings.Contains(blockLower, keyword) {
+						ontStore.AddRelation(ontology.Relation{
+							ID:       conceptID + "-" + rp.Relation + "-" + target,
+							SourceID: conceptID,
+							TargetID: target,
+							Relation: rp.Relation,
+						})
+						break // one relation type per target is enough
+					}
 				}
 			}
 		}
