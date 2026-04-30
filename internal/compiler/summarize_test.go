@@ -213,7 +213,7 @@ func TestGroupChunksMaxTokensZero(t *testing.T) {
 }
 
 func TestSynthesizeHierarchicalEmpty(t *testing.T) {
-	_, err := synthesizeHierarchical(nil, "test.md", nil, "", 2000)
+	_, err := synthesizeHierarchical(nil, "test.md", nil, "", 2000, "")
 	if err == nil {
 		t.Error("expected error for empty summaries")
 	}
@@ -221,7 +221,7 @@ func TestSynthesizeHierarchicalEmpty(t *testing.T) {
 
 func TestSynthesizeHierarchicalSingleSummary(t *testing.T) {
 	// Single summary should pass through without LLM call
-	result, err := synthesizeHierarchical([]string{"already done"}, "test.md", nil, "", 2000)
+	result, err := synthesizeHierarchical([]string{"already done"}, "test.md", nil, "", 2000, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
