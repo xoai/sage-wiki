@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,6 +56,55 @@ func TestWriteSummary(t *testing.T) {
 	}
 	if src.Status != "compiled" {
 		t.Errorf("expected compiled status, got %s", src.Status)
+	}
+}
+
+func TestWriteSummaryNoCollision(t *testing.T) {
+	dir := t.TempDir()
+	wiki.InitGreenfield(dir, "test", "gemini-2.5-flash")
+
+	srv, err := NewServer(dir)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer srv.Close()
+
+	// Write two summaries with the same basename but different directories
+	sources := []struct {
+		path     string
+		content  string
+		wantFile string
+	}{
+		{"../../project/docs/projects/claw/manifest.md", "Claw manifest summary", "projects-claw-manifest.md"},
+		{"../../project/docs/projects/workflow/manifest.md", "Workflow manifest summary", "projects-workflow-manifest.md"},
+	}
+
+	for _, s := range sources {
+		result := srv.CallTool(context.Background(), "wiki_write_summary", mcplib.CallToolRequest{
+			Params: mcplib.CallToolParams{
+				Name: "wiki_write_summary",
+				Arguments: map[string]any{
+					"source":  s.path,
+					"content": s.content,
+				},
+			},
+		})
+		if result.IsError {
+			t.Fatalf("error writing %s: %s", s.path, result.Content[0].(mcplib.TextContent).Text)
+		}
+	}
+
+	// Verify both files exist with distinct names
+	for _, s := range sources {
+		path := filepath.Join(dir, "wiki", "summaries", s.wantFile)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("expected %s to exist: %v", s.wantFile, err)
+			continue
+		}
+		if !strings.Contains(string(data), s.content) {
+			t.Errorf("%s should contain %q, got %q", s.wantFile, s.content, string(data))
+		}
 	}
 }
 
@@ -254,6 +304,47 @@ func TestAddSourceWithPathTraversal(t *testing.T) {
 
 	if !result.IsError {
 		t.Error("expected error for path traversal")
+	}
+}
+
+func TestAddSourceFromConfiguredSourceDir(t *testing.T) {
+	dir := t.TempDir()
+	wiki.InitGreenfield(dir, "test", "gemini-2.5-flash")
+
+	// Create a source file outside the project dir but in a configured source path
+	externalDir := t.TempDir()
+	srcFile := filepath.Join(externalDir, "research.md")
+	os.WriteFile(srcFile, []byte("# Research\nSome findings."), 0644)
+
+	// Update config to include the external source directory
+	cfgPath := filepath.Join(dir, "config.yaml")
+	cfgData, _ := os.ReadFile(cfgPath)
+	// Replace the sources section to include external dir
+	cfgStr := strings.Replace(string(cfgData),
+		"sources:\n  - path: raw\n    type: auto",
+		fmt.Sprintf("sources:\n  - path: raw\n    type: auto\n  - path: %s\n    type: auto", externalDir),
+		1)
+	os.WriteFile(cfgPath, []byte(cfgStr), 0644)
+
+	srv, err := NewServer(dir)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer srv.Close()
+
+	// Get the relative path from project dir
+	relPath, _ := filepath.Rel(dir, srcFile)
+
+	result := srv.CallTool(context.Background(), "wiki_add_source", mcplib.CallToolRequest{
+		Params: mcplib.CallToolParams{
+			Name:      "wiki_add_source",
+			Arguments: map[string]any{"path": relPath},
+		},
+	})
+
+	if result.IsError {
+		t.Errorf("expected source from configured dir to be allowed, got error: %s",
+			result.Content[0].(mcplib.TextContent).Text)
 	}
 }
 
