@@ -234,7 +234,7 @@ func summarizeOne(
 		}
 
 		// Hierarchical synthesis: reduce in groups until we have a single summary
-		summaryText, err = synthesizeHierarchical(chunkSummaries, info.Path, client, model, maxTokens)
+		summaryText, err = synthesizeHierarchical(chunkSummaries, info.Path, client, model, maxTokens, language)
 		if err != nil {
 			result.Error = err
 			return result
@@ -434,7 +434,7 @@ func groupChunks(chunks []extract.Chunk, maxTokens int) [][]extract.Chunk {
 
 // synthesizeHierarchical reduces summaries in tiers of synthesisGroupSize
 // until a single final summary remains.
-func synthesizeHierarchical(summaries []string, sourcePath string, client *llm.Client, model string, maxTokens int) (string, error) {
+func synthesizeHierarchical(summaries []string, sourcePath string, client *llm.Client, model string, maxTokens int, language string) (string, error) {
 	if len(summaries) == 0 {
 		return "", fmt.Errorf("synthesize: no summaries to combine for %q", sourcePath)
 	}
@@ -461,6 +461,12 @@ func synthesizeHierarchical(summaries []string, sourcePath string, client *llm.C
 				"Combine these %d section summaries into a single coherent summary of the source document %q.\n\n%s",
 				len(group), sourcePath, strings.Join(group, "\n\n---\n\n"),
 			)
+			if language != "" {
+				synthesisPrompt += fmt.Sprintf(
+					"\n\nIMPORTANT: Write your entire response in %s. Keep technical terms, code, and proper nouns in their original form.",
+					language,
+				)
+			}
 
 			resp, err := client.ChatCompletion([]llm.Message{
 				{Role: "system", Content: "You are synthesizing partial summaries into a final summary."},
