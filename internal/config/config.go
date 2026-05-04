@@ -68,6 +68,7 @@ type EmbedConfig struct {
 	Dimensions int    `yaml:"dimensions,omitempty"`
 	APIKey     string `yaml:"api_key,omitempty"`
 	BaseURL    string `yaml:"base_url,omitempty"`
+	RateLimit  int    `yaml:"rate_limit,omitempty"` // embedding RPM (0 = no limit, -1 = explicit disable)
 }
 
 type CompilerConfig struct {

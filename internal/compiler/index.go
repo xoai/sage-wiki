@@ -185,9 +185,11 @@ func indexAndEmbedSources(
 
 			// Embed each chunk sequentially (same pattern as write.go:250-260)
 			chunkEmbeddings := make([][]float32, len(chunks))
+			allChunksOK := true
 			for i, c := range chunks {
 				vec, err := embedder.Embed(c.Text)
 				if err != nil {
+					allChunksOK = false
 					if bp != nil && llm.IsRateLimitError(err) {
 						delay := bp.OnRateLimit()
 						log.Warn("embedding rate limited", "delay", delay)
@@ -246,11 +248,15 @@ func indexAndEmbedSources(
 				// Fallback: single-vector embed (legacy path when chunk infra unavailable)
 				if len(chunkEmbeddings) > 0 && chunkEmbeddings[0] != nil {
 					vecStore.Upsert(docID, chunkEmbeddings[0])
+				} else {
+					allChunksOK = false
 				}
 			}
 
-			if err := items.MarkPass(s.SourcePath, "embedded"); err != nil {
-				log.Warn("mark pass failed", "path", s.SourcePath, "pass", "embedded", "error", err)
+			if allChunksOK {
+				if err := items.MarkPass(s.SourcePath, "embedded"); err != nil {
+					log.Warn("mark pass failed", "path", s.SourcePath, "pass", "embedded", "error", err)
+				}
 			}
 
 			mu.Lock()

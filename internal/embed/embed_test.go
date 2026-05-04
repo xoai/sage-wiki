@@ -4,7 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/xoai/sage-wiki/internal/llm"
 )
 
 func TestCascadeTier1(t *testing.T) {
@@ -166,5 +170,136 @@ func TestDefaultModels(t *testing.T) {
 		if dims <= 0 {
 			t.Errorf("invalid dimensions %d for %s", dims, model)
 		}
+	}
+}
+
+func TestEmbedRetry429ThenSuccess(t *testing.T) {
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		if n <= 2 {
+			w.WriteHeader(429)
+			w.Write([]byte(`{"error": "rate limited"}`))
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"embedding": []float32{1, 2, 3}}},
+		})
+	}))
+	defer server.Close()
+
+	e := &APIEmbedder{provider: "openai", model: "x", apiKey: "sk", baseURL: server.URL, dims: 3}
+	vec, err := e.Embed("test")
+	if err != nil {
+		t.Fatalf("expected success after retries, got: %v", err)
+	}
+	if len(vec) != 3 {
+		t.Errorf("expected 3 dims, got %d", len(vec))
+	}
+	if atomic.LoadInt32(&calls) != 3 {
+		t.Errorf("expected 3 calls (2 retries + 1 success), got %d", calls)
+	}
+}
+
+func TestEmbedRetryExhausted429(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(429)
+		w.Write([]byte(`{"error": "rate limited"}`))
+	}))
+	defer server.Close()
+
+	e := &APIEmbedder{provider: "openai", model: "x", apiKey: "sk", baseURL: server.URL, dims: 3}
+	_, err := e.Embed("test")
+	if err == nil {
+		t.Fatal("expected error after retry exhaustion")
+	}
+	if !llm.IsRateLimitError(err) {
+		t.Errorf("expected RateLimitError, got: %T %v", err, err)
+	}
+}
+
+func TestEmbedRetry503ThenSuccess(t *testing.T) {
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			w.WriteHeader(503)
+			w.Write([]byte(`service unavailable`))
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"embedding": []float32{4, 5, 6}}},
+		})
+	}))
+	defer server.Close()
+
+	e := &APIEmbedder{provider: "openai", model: "x", apiKey: "sk", baseURL: server.URL, dims: 3}
+	vec, err := e.Embed("test")
+	if err != nil {
+		t.Fatalf("expected success after 503 retry, got: %v", err)
+	}
+	if len(vec) != 3 {
+		t.Errorf("expected 3 dims, got %d", len(vec))
+	}
+}
+
+func TestEmbedRetryExhausted503(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(503)
+		w.Write([]byte(`service unavailable`))
+	}))
+	defer server.Close()
+
+	e := &APIEmbedder{provider: "openai", model: "x", apiKey: "sk", baseURL: server.URL, dims: 3}
+	_, err := e.Embed("test")
+	if err == nil {
+		t.Fatal("expected error after 503 retry exhaustion")
+	}
+	if llm.IsRateLimitError(err) {
+		t.Error("503 exhaustion should NOT be RateLimitError")
+	}
+}
+
+func TestEmbedNoRetryOn400(t *testing.T) {
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(400)
+		w.Write([]byte(`bad request`))
+	}))
+	defer server.Close()
+
+	e := &APIEmbedder{provider: "openai", model: "x", apiKey: "sk", baseURL: server.URL, dims: 3}
+	_, err := e.Embed("test")
+	if err == nil {
+		t.Fatal("expected error on 400")
+	}
+	if atomic.LoadInt32(&calls) != 1 {
+		t.Errorf("expected 1 call (no retry for 400), got %d", calls)
+	}
+}
+
+func TestEmbedRateLimiter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"embedding": []float32{1, 2, 3}}},
+		})
+	}))
+	defer server.Close()
+
+	e := &APIEmbedder{
+		provider: "openai", model: "x", apiKey: "sk", baseURL: server.URL, dims: 3,
+		limiter: newEmbedLimiter(60), // 1 per second
+	}
+
+	start := time.Now()
+	for i := 0; i < 3; i++ {
+		if _, err := e.Embed("test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	elapsed := time.Since(start)
+	if elapsed < 1900*time.Millisecond {
+		t.Errorf("expected ≥2s for 3 calls at 1/sec, got %v", elapsed)
 	}
 }

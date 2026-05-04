@@ -3,12 +3,17 @@ package embed
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 )
 
@@ -43,6 +48,7 @@ type EmbedOverride struct {
 	Dimensions int
 	APIKey     string
 	BaseURL    string
+	RateLimit  int
 }
 
 // NewFromConfig creates an Embedder from the project config, using embed
@@ -56,6 +62,7 @@ func NewFromConfig(cfg *config.Config) Embedder {
 			Dimensions: cfg.Embed.Dimensions,
 			APIKey:     cfg.Embed.APIKey,
 			BaseURL:    cfg.Embed.BaseURL,
+			RateLimit:  cfg.Embed.RateLimit,
 		}
 	}
 	return NewCascade(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, ov)
@@ -93,6 +100,7 @@ func NewCascade(provider string, apiKey string, baseURL string, override *EmbedO
 				apiKey:   key,
 				baseURL:  url,
 				dims:     dims,
+				limiter:  newEmbedLimiter(override.RateLimit),
 			}
 			if dims > 0 {
 				log.Info("embedding provider detected", "tier", 0, "provider", p, "model", override.Model, "dims", dims)
@@ -101,6 +109,12 @@ func NewCascade(provider string, apiKey string, baseURL string, override *EmbedO
 			}
 			return embedder
 		}
+	}
+
+	// Determine rate limit for fallback tiers
+	var rateLimit int
+	if override != nil {
+		rateLimit = override.RateLimit
 	}
 
 	// Tier 1: Provider embedding API
@@ -112,6 +126,7 @@ func NewCascade(provider string, apiKey string, baseURL string, override *EmbedO
 			apiKey:   apiKey,
 			baseURL:  baseURL,
 			dims:     dims,
+			limiter:  newEmbedLimiter(rateLimit),
 		}
 		log.Info("embedding provider detected", "tier", 1, "provider", provider, "model", model, "dims", dims)
 		return embedder
@@ -121,8 +136,9 @@ func NewCascade(provider string, apiKey string, baseURL string, override *EmbedO
 	if ollamaAvailable() {
 		log.Info("embedding provider detected", "tier", 2, "provider", "ollama", "model", "nomic-embed-text", "dims", 768)
 		return &OllamaEmbedder{
-			model: "nomic-embed-text",
-			dims:  768,
+			model:   "nomic-embed-text",
+			dims:    768,
+			limiter: newEmbedLimiter(rateLimit),
 		}
 	}
 
@@ -138,16 +154,22 @@ type APIEmbedder struct {
 	baseURL  string
 	dims     int
 	client   http.Client
+	limiter  *embedRateLimiter
 }
 
-func (e *APIEmbedder) Name() string     { return fmt.Sprintf("%s/%s", e.provider, e.model) }
-func (e *APIEmbedder) Dimensions() int  { return e.dims }
+func (e *APIEmbedder) Name() string    { return fmt.Sprintf("%s/%s", e.provider, e.model) }
+func (e *APIEmbedder) Dimensions() int { return e.dims }
 
 func (e *APIEmbedder) Embed(text string) ([]float32, error) {
-	if e.provider == "gemini" {
-		return e.embedGemini(text)
+	if e.limiter != nil {
+		e.limiter.wait()
 	}
-	return e.embedOpenAI(text)
+	return retryableEmbed(func() ([]float32, error) {
+		if e.provider == "gemini" {
+			return e.embedGemini(text)
+		}
+		return e.embedOpenAI(text)
+	})
 }
 
 // embedOpenAI uses the OpenAI-compatible /embeddings endpoint.
@@ -175,7 +197,11 @@ func (e *APIEmbedder) embedOpenAI(text string) ([]float32, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("embed: API returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, &embedHTTPError{
+			StatusCode: resp.StatusCode,
+			Body:       string(respBody),
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
+		}
 	}
 
 	var result struct {
@@ -233,7 +259,11 @@ func (e *APIEmbedder) embedGemini(text string) ([]float32, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("embed: API returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, &embedHTTPError{
+			StatusCode: resp.StatusCode,
+			Body:       string(respBody),
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
+		}
 	}
 
 	var result struct {
@@ -270,15 +300,25 @@ func (e *APIEmbedder) embeddingURL() string {
 
 // OllamaEmbedder uses a local Ollama instance.
 type OllamaEmbedder struct {
-	model  string
-	dims   int
-	client http.Client
+	model   string
+	dims    int
+	client  http.Client
+	limiter *embedRateLimiter
 }
 
-func (e *OllamaEmbedder) Name() string     { return fmt.Sprintf("ollama/%s", e.model) }
-func (e *OllamaEmbedder) Dimensions() int  { return e.dims }
+func (e *OllamaEmbedder) Name() string    { return fmt.Sprintf("ollama/%s", e.model) }
+func (e *OllamaEmbedder) Dimensions() int { return e.dims }
 
 func (e *OllamaEmbedder) Embed(text string) ([]float32, error) {
+	if e.limiter != nil {
+		e.limiter.wait()
+	}
+	return retryableEmbed(func() ([]float32, error) {
+		return e.embedOllama(text)
+	})
+}
+
+func (e *OllamaEmbedder) embedOllama(text string) ([]float32, error) {
 	body, _ := json.Marshal(map[string]any{
 		"model":  e.model,
 		"prompt": text,
@@ -292,7 +332,11 @@ func (e *OllamaEmbedder) Embed(text string) ([]float32, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("ollama embed: %d: %s", resp.StatusCode, string(respBody))
+		return nil, &embedHTTPError{
+			StatusCode: resp.StatusCode,
+			Body:       string(respBody),
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
+		}
 	}
 
 	var result struct {
@@ -308,6 +352,104 @@ func (e *OllamaEmbedder) Embed(text string) ([]float32, error) {
 
 	e.dims = len(result.Embedding)
 	return result.Embedding, nil
+}
+
+// embedHTTPError carries HTTP status and retry metadata from failed embed requests.
+type embedHTTPError struct {
+	StatusCode int
+	Body       string
+	RetryAfter time.Duration
+}
+
+func (e *embedHTTPError) Error() string {
+	return fmt.Sprintf("embed: API returned %d: %s", e.StatusCode, e.Body)
+}
+
+func isRetryableStatus(code int) bool {
+	return code == 429 || code == 503
+}
+
+func parseRetryAfter(header string) time.Duration {
+	if header == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(header); err == nil {
+		return time.Duration(secs) * time.Second
+	}
+	return 0
+}
+
+const maxEmbedRetries = 3
+
+func retryableEmbed(fn func() ([]float32, error)) ([]float32, error) {
+	var lastErr error
+	for attempt := 0; attempt <= maxEmbedRetries; attempt++ {
+		vec, err := fn()
+		if err == nil {
+			return vec, nil
+		}
+
+		var httpErr *embedHTTPError
+		if !errors.As(err, &httpErr) || !isRetryableStatus(httpErr.StatusCode) {
+			return nil, err
+		}
+
+		lastErr = err
+		if attempt == maxEmbedRetries {
+			break
+		}
+
+		delay := httpErr.RetryAfter
+		if delay == 0 {
+			base := time.Second * time.Duration(1<<uint(attempt))
+			jitter := time.Duration(float64(base) * (0.75 + rand.Float64()*0.5))
+			delay = jitter
+		}
+		time.Sleep(delay)
+	}
+
+	var httpErr *embedHTTPError
+	if errors.As(lastErr, &httpErr) && httpErr.StatusCode == 429 {
+		return nil, &llm.RateLimitError{
+			StatusCode: 429,
+			Body:       httpErr.Body,
+		}
+	}
+	return nil, lastErr
+}
+
+// embedRateLimiter paces embedding API calls using slot reservation.
+type embedRateLimiter struct {
+	mu       sync.Mutex
+	interval time.Duration
+	nextSlot time.Time
+}
+
+func (r *embedRateLimiter) wait() {
+	if r.interval == 0 {
+		return
+	}
+	r.mu.Lock()
+	now := time.Now()
+	wakeAt := r.nextSlot
+	if wakeAt.Before(now) {
+		wakeAt = now
+	}
+	r.nextSlot = wakeAt.Add(r.interval)
+	r.mu.Unlock()
+
+	if d := time.Until(wakeAt); d > 0 {
+		time.Sleep(d)
+	}
+}
+
+func newEmbedLimiter(rpm int) *embedRateLimiter {
+	if rpm <= 0 {
+		return nil
+	}
+	return &embedRateLimiter{
+		interval: time.Minute / time.Duration(rpm),
+	}
 }
 
 // ollamaAvailable probes localhost:11434 for a running Ollama instance.
