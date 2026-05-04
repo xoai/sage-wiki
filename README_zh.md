@@ -234,6 +234,7 @@ embed:
   # model: text-embedding-3-small
   # api_key: ${OPENAI_API_KEY}  # 单独的 embedding API Key
   # base_url:                   # 单独的端点
+  # rate_limit: 0              # embedding RPM 限制 (0 = 无限制; Gemini Tier 1 建议设为 1200)
 
 compiler:
   max_parallel: 20 # 并发 LLM 调用数 (自适应背压控制)
@@ -311,7 +312,22 @@ serve:
 - **扩展内置类型** -- 为已有类型添加同义词 (如多语言关键词)。默认同义词保留,你的追加在后面。
 - **添加自定义类型** -- 定义新的关系名称及其关键词同义词。关系名称必须为小写 `[a-z][a-z0-9_]*`。
 
-零配置 = 与当前行为完全相同。现有数据库会在首次打开时自动迁移。参阅[完整指南](docs/guides/configurable-relations.md)了解领域特定示例、内置同义词表和提取原理。
+关系提取使用段落级关键词邻近匹配 -- 关键词必须与 `[[wikilink]]` 出现在同一段落或标题块中。这防止了跨段落的虚假边。
+
+你还可以限制关系连接的实体类型:
+
+```yaml
+ontology:
+  relation_types:
+    - name: curated_by
+      synonyms: ["curated by", "organized by"]
+      valid_sources: [exhibition, program]
+      valid_targets: [artist]
+```
+
+设置 `valid_sources`/`valid_targets` 后,只有匹配实体类型的边才会被创建。留空 = 允许所有类型 (默认)。
+
+零配置 = 与当前行为完全相同。现有数据库会在首次打开时自动迁移。参阅[完整指南](docs/guides/configurable-relations.md)了解领域特定示例、类型限制关系和提取原理。
 
 ## 费用优化
 
@@ -579,7 +595,7 @@ python3 eval.py ./test-fixture
 - **存储:** SQLite + FTS5 (BM25 搜索) + BLOB 向量 (余弦相似度) + compile_items 表用于每源文件层级/状态追踪
 - **本体:** 类型化实体-关系图,支持 BFS 遍历和环检测
 - **搜索:** 增强管线,支持 chunk 级别 FTS5 + 向量索引、LLM 查询扩展、LLM 重排序、RRF 融合和 4 信号图扩展。搜索结果提示未编译源文件以支持按需编译。
-- **编译器:** 分层管线 (层级 0: 索引, 层级 1: 向量, 层级 2: 代码解析, 层级 3: 完整 LLM 编译),支持自适应背压、prompt 缓存、batch API、费用追踪、MCP 按需编译、质量评分和级联感知。内置 10 个代码解析器 (Go 使用 go/ast, 8 种语言使用正则, 结构化数据键提取)。
+- **编译器:** 分层管线 (层级 0: 索引, 层级 1: 向量, 层级 2: 代码解析, 层级 3: 完整 LLM 编译),支持自适应背压、并发 Pass 2 提取、prompt 缓存、batch API (Anthropic + OpenAI + Gemini)、费用追踪、MCP 按需编译、质量评分和级联感知。Embedding 支持指数退避重试、可选限速和长文本均值池化。内置 10 个代码解析器 (Go 使用 go/ast, 8 种语言使用正则, 结构化数据键提取)。
 - **MCP:** 17 个工具 (6 读、9 写、2 组合),通过 stdio 或 SSE 提供,包括 `wiki_compile_topic` 按需编译和 `wiki_capture` 知识提取
 - **TUI:** bubbletea + glamour 4 标签终端面板 (浏览、搜索、问答、编译),支持层级分布显示
 - **Web UI:** Preact + Tailwind CSS 通过 `go:embed` 嵌入,使用构建标签 (`-tags webui`)

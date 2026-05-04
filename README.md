@@ -234,6 +234,7 @@ embed:
   # model: text-embedding-3-small
   # api_key: ${OPENAI_API_KEY}  # separate key for embeddings
   # base_url:                   # separate endpoint
+  # rate_limit: 0              # embedding RPM cap (0 = no limit; set to 1200 for Gemini Tier 1)
 
 compiler:
   max_parallel: 20 # concurrent LLM calls (with adaptive backpressure)
@@ -311,7 +312,22 @@ You can customize relations via `ontology.relations` in `config.yaml`:
 - **Extend a built-in type** — add synonyms (e.g., multilingual keywords) to an existing type. The default synonyms are kept; yours are appended.
 - **Add a custom type** — define a new relation name with its keyword synonyms. Relation names must be lowercase `[a-z][a-z0-9_]*`.
 
-Zero config = identical to current behavior. Existing databases are migrated automatically on first open. See the [full guide](docs/guides/configurable-relations.md) for domain-specific examples, built-in synonym tables, and how extraction works.
+Relations are extracted using block-level keyword proximity — a keyword must co-occur with a `[[wikilink]]` in the same paragraph or heading block. This prevents spurious edges from cross-paragraph matches.
+
+You can also restrict which entity types a relation connects:
+
+```yaml
+ontology:
+  relation_types:
+    - name: curated_by
+      synonyms: ["curated by", "organized by"]
+      valid_sources: [exhibition, program]
+      valid_targets: [artist]
+```
+
+When `valid_sources`/`valid_targets` are set, edges are only created if the source/target entity type matches. Empty = all types allowed (default).
+
+Zero config = identical to current behavior. Existing databases are migrated automatically on first open. See the [full guide](docs/guides/configurable-relations.md) for domain-specific examples, type-restricted relations, and how extraction works.
 
 ## Cost Optimization
 
@@ -579,7 +595,7 @@ python3 eval.py ./test-fixture
 - **Storage:** SQLite with FTS5 (BM25 search) + BLOB vectors (cosine similarity) + compile_items table for per-source tier/state tracking
 - **Ontology:** Typed entity-relation graph with BFS traversal and cycle detection
 - **Search:** Enhanced pipeline with chunk-level FTS5 + vector indexing, LLM query expansion, LLM re-ranking, RRF fusion, and 4-signal graph expansion. Search responses signal uncompiled sources for compile-on-demand.
-- **Compiler:** Tiered pipeline (Tier 0: index, Tier 1: embed, Tier 2: code parse, Tier 3: full LLM compile) with adaptive backpressure, prompt caching, batch API, cost tracking, compile-on-demand via MCP, quality scoring, and cascade awareness. 10 built-in code parsers (Go via go/ast, 8 languages via regex, structured data key extraction).
+- **Compiler:** Tiered pipeline (Tier 0: index, Tier 1: embed, Tier 2: code parse, Tier 3: full LLM compile) with adaptive backpressure, concurrent Pass 2 extraction, prompt caching, batch API (Anthropic + OpenAI + Gemini), cost tracking, compile-on-demand via MCP, quality scoring, and cascade awareness. Embedding includes retry with exponential backoff, optional rate limiting, and mean-pooling for long inputs. 10 built-in code parsers (Go via go/ast, 8 languages via regex, structured data key extraction).
 - **MCP:** 17 tools (6 read, 9 write, 2 compound) via stdio or SSE, including `wiki_compile_topic` for on-demand compilation and `wiki_capture` for knowledge extraction
 - **TUI:** bubbletea + glamour 4-tab terminal dashboard (browse, search, Q&A, compile) with tier distribution display
 - **Web UI:** Preact + Tailwind CSS embedded via `go:embed` with build tag (`-tags webui`)

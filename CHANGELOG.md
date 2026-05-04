@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.1.6 — 2026-05-04
+
+### Embedding Reliability (PR #68)
+
+- **Retry with exponential backoff** — embedding API calls retry up to 3 times on 429/503 with exponential backoff (1s, 2s, 4s) + jitter. Respects `Retry-After` header.
+- **`embed.rate_limit` config** — optional client-side RPM pacing for embedding calls. Default 0 (no limit). Set to e.g. `1200` for Gemini Tier 1.
+- **BackpressureController fires for embeddings** — 429 errors now return typed `*RateLimitError`, triggering concurrency halving. Previously dead code.
+- **Partial failure recovery** — `PassEmbedded` only marks on full success. Failed chunks retry on next compile without re-processing everything.
+
+### Compiler Performance (PRs #69, #70)
+
+- **Concurrent Pass 2** (#69) — concept extraction batches run in parallel (bounded by `max_parallel`). ~N× speedup for providers with continuous batching (OpenRouter, vLLM, Groq).
+- **Rate limiter fix** (#70) — mutex no longer held across sleep. Self-hosted backends (`openai-compatible`, `ollama`) get 0 default RPM (no client-side cap). Shared HTTP transport with `MaxIdleConnsPerHost: 256`.
+- **Mean-pooling for long inputs** (#75) — embedder splits inputs >5K runes into chunks and mean-pools. Prevents 413 errors on 8K-token-limited providers (GLM, bge-m3). `re-embed` command also re-processes `vec_chunks`.
+
+### Ontology Quality (PRs #71, #72)
+
+- **Block-level relation extraction** (#71) — keywords must co-occur with `[[wikilinks]]` in the same paragraph/heading block. Eliminates ~90% of spurious edges from cross-paragraph matches.
+- **Type-restricted relations** (#72) — optional `valid_sources`/`valid_targets` fields on relation configs. Only creates edges between matching entity types. Backward compatible (empty = all types allowed).
+
+### Multilingual (PR #73)
+
+- **Language in hierarchical synthesis** — the `language` config now applies to hierarchical summary synthesis for multi-chunk documents (was only applied to single-chunk path).
+
 ## 0.1.5 — 2026-04-17
 
 ### Agent Skill Templates
