@@ -463,6 +463,13 @@ func findRelatedConcepts(concept ExtractedConcept) []string {
 func extractRelations(conceptID string, content string, ontStore *ontology.Store, patterns []ontology.RelationPattern) {
 	blocks := blockSplitRe.Split(content, -1)
 
+	sourceEntity, err := ontStore.GetEntity(conceptID)
+	sourceType := ""
+	sourceKnown := err == nil
+	if sourceEntity != nil {
+		sourceType = sourceEntity.Type
+	}
+
 	for _, block := range blocks {
 		blockLower := strings.ToLower(block)
 		links := wikilinkRe.FindAllStringSubmatch(block, -1)
@@ -473,7 +480,21 @@ func extractRelations(conceptID string, content string, ontStore *ontology.Store
 				continue
 			}
 
+			targetEntity, err := ontStore.GetEntity(target)
+			targetType := ""
+			targetKnown := err == nil
+			if targetEntity != nil {
+				targetType = targetEntity.Type
+			}
+
 			for _, rp := range patterns {
+				if sourceKnown && len(rp.ValidSources) > 0 && !typeInList(sourceType, rp.ValidSources) {
+					continue
+				}
+				if targetKnown && len(rp.ValidTargets) > 0 && !typeInList(targetType, rp.ValidTargets) {
+					continue
+				}
+
 				for _, keyword := range rp.Keywords {
 					if strings.Contains(blockLower, keyword) {
 						ontStore.AddRelation(ontology.Relation{
@@ -482,12 +503,21 @@ func extractRelations(conceptID string, content string, ontStore *ontology.Store
 							TargetID: target,
 							Relation: rp.Relation,
 						})
-						break // one relation type per target is enough
+						break
 					}
 				}
 			}
 		}
 	}
+}
+
+func typeInList(t string, list []string) bool {
+	for _, v := range list {
+		if v == t {
+			return true
+		}
+	}
+	return false
 }
 
 func sanitizeID(s string) string {

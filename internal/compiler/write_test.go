@@ -123,3 +123,118 @@ func TestExtractRelations_MultipleWikilinksSameTarget(t *testing.T) {
 		t.Errorf("expected 1 relation (deduplicated), got %d", len(relations))
 	}
 }
+
+func TestExtractRelations_ValidSourcesFilters(t *testing.T) {
+	store := setupTestStore(t)
+
+	store.AddEntity(ontology.Entity{ID: "flash-attention", Type: "technique", Name: "Flash Attention"})
+	store.AddEntity(ontology.Entity{ID: "self-attention", Type: "concept", Name: "Self-Attention"})
+
+	content := "Flash attention implements [[self-attention]]."
+
+	t.Run("excluded source type", func(t *testing.T) {
+		store2 := setupTestStore(t)
+		store2.AddEntity(ontology.Entity{ID: "flash-attention", Type: "technique", Name: "Flash Attention"})
+		store2.AddEntity(ontology.Entity{ID: "self-attention", Type: "concept", Name: "Self-Attention"})
+
+		patterns := []ontology.RelationPattern{
+			{Keywords: []string{"implements"}, Relation: "implements", ValidSources: []string{"concept"}},
+		}
+		extractRelations("flash-attention", content, store2, patterns)
+		relations, _ := store2.ListRelations("", 100)
+		if len(relations) != 0 {
+			t.Errorf("expected 0 (technique not in ValidSources [concept]), got %d", len(relations))
+		}
+	})
+
+	t.Run("included source type", func(t *testing.T) {
+		store2 := setupTestStore(t)
+		store2.AddEntity(ontology.Entity{ID: "flash-attention", Type: "technique", Name: "Flash Attention"})
+		store2.AddEntity(ontology.Entity{ID: "self-attention", Type: "concept", Name: "Self-Attention"})
+
+		patterns := []ontology.RelationPattern{
+			{Keywords: []string{"implements"}, Relation: "implements", ValidSources: []string{"technique", "concept"}},
+		}
+		extractRelations("flash-attention", content, store2, patterns)
+		relations, _ := store2.ListRelations("", 100)
+		if len(relations) != 1 {
+			t.Errorf("expected 1 (technique in ValidSources), got %d", len(relations))
+		}
+	})
+}
+
+func TestExtractRelations_ValidTargetsFilters(t *testing.T) {
+	store := setupTestStore(t)
+
+	store.AddEntity(ontology.Entity{ID: "flash-attention", Type: "technique", Name: "Flash Attention"})
+	store.AddEntity(ontology.Entity{ID: "self-attention", Type: "concept", Name: "Self-Attention"})
+
+	content := "Flash attention implements [[self-attention]]."
+
+	t.Run("excluded target type", func(t *testing.T) {
+		store2 := setupTestStore(t)
+		store2.AddEntity(ontology.Entity{ID: "flash-attention", Type: "technique", Name: "Flash Attention"})
+		store2.AddEntity(ontology.Entity{ID: "self-attention", Type: "concept", Name: "Self-Attention"})
+
+		patterns := []ontology.RelationPattern{
+			{Keywords: []string{"implements"}, Relation: "implements", ValidTargets: []string{"technique"}},
+		}
+		extractRelations("flash-attention", content, store2, patterns)
+		relations, _ := store2.ListRelations("", 100)
+		if len(relations) != 0 {
+			t.Errorf("expected 0 (concept not in ValidTargets), got %d", len(relations))
+		}
+	})
+
+	t.Run("included target type", func(t *testing.T) {
+		store2 := setupTestStore(t)
+		store2.AddEntity(ontology.Entity{ID: "flash-attention", Type: "technique", Name: "Flash Attention"})
+		store2.AddEntity(ontology.Entity{ID: "self-attention", Type: "concept", Name: "Self-Attention"})
+
+		patterns := []ontology.RelationPattern{
+			{Keywords: []string{"implements"}, Relation: "implements", ValidTargets: []string{"concept", "technique"}},
+		}
+		extractRelations("flash-attention", content, store2, patterns)
+		relations, _ := store2.ListRelations("", 100)
+		if len(relations) != 1 {
+			t.Errorf("expected 1 (concept in ValidTargets), got %d", len(relations))
+		}
+	})
+}
+
+func TestExtractRelations_EmptyValidFiltersAllowsAll(t *testing.T) {
+	store := setupTestStore(t)
+
+	store.AddEntity(ontology.Entity{ID: "flash-attention", Type: "technique", Name: "Flash Attention"})
+	store.AddEntity(ontology.Entity{ID: "self-attention", Type: "concept", Name: "Self-Attention"})
+
+	patterns := []ontology.RelationPattern{
+		{Keywords: []string{"implements"}, Relation: "implements", ValidSources: nil, ValidTargets: nil},
+	}
+
+	content := "Flash attention implements [[self-attention]]."
+	extractRelations("flash-attention", content, store, patterns)
+
+	relations, _ := store.ListRelations("", 100)
+	if len(relations) != 1 {
+		t.Errorf("expected 1 (nil filters allow all), got %d", len(relations))
+	}
+}
+
+func TestExtractRelations_EntityNotFoundWithValidTargets(t *testing.T) {
+	store := setupTestStore(t)
+
+	store.AddEntity(ontology.Entity{ID: "flash-attention", Type: "technique", Name: "Flash Attention"})
+
+	patterns := []ontology.RelationPattern{
+		{Keywords: []string{"implements"}, Relation: "implements", ValidTargets: []string{"concept"}},
+	}
+
+	content := "Flash attention implements [[self-attention]]."
+	extractRelations("flash-attention", content, store, patterns)
+
+	relations, _ := store.ListRelations("", 100)
+	if len(relations) != 0 {
+		t.Errorf("expected 0 (unknown target type '' not in ValidTargets), got %d", len(relations))
+	}
+}
