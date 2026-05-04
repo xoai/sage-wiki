@@ -34,11 +34,11 @@ var defaultModels = map[string]string{
 
 // Default dimensions per model.
 var defaultDimensions = map[string]int{
-	"text-embedding-3-small": 1536,
+	"text-embedding-3-small":     1536,
 	"gemini-embedding-2-preview": 768,
-	"voyage-3-lite":          1024,
-	"mistral-embed":          1024,
-	"nomic-embed-text":       768,
+	"voyage-3-lite":              1024,
+	"mistral-embed":              1024,
+	"nomic-embed-text":           768,
 }
 
 // EmbedOverride holds optional overrides from the embed config block.
@@ -100,6 +100,7 @@ func NewCascade(provider string, apiKey string, baseURL string, override *EmbedO
 				apiKey:   key,
 				baseURL:  url,
 				dims:     dims,
+				client:   newEmbedHTTPClient(),
 				limiter:  newEmbedLimiter(override.RateLimit),
 			}
 			if dims > 0 {
@@ -126,6 +127,7 @@ func NewCascade(provider string, apiKey string, baseURL string, override *EmbedO
 			apiKey:   apiKey,
 			baseURL:  baseURL,
 			dims:     dims,
+			client:   newEmbedHTTPClient(),
 			limiter:  newEmbedLimiter(rateLimit),
 		}
 		log.Info("embedding provider detected", "tier", 1, "provider", provider, "model", model, "dims", dims)
@@ -138,12 +140,35 @@ func NewCascade(provider string, apiKey string, baseURL string, override *EmbedO
 		return &OllamaEmbedder{
 			model:   "nomic-embed-text",
 			dims:    768,
+			client:  newEmbedHTTPClient(),
 			limiter: newEmbedLimiter(rateLimit),
 		}
 	}
 
 	log.Warn("no embedding provider available — vector search disabled. Install Ollama or configure an embedding-capable provider.")
 	return nil
+}
+
+// sharedEmbedTransport is a process-wide HTTP transport for embedding API
+// calls. It overrides http.DefaultTransport's MaxIdleConnsPerHost=2 — which
+// causes TCP/TLS churn when Pass-3 write.go and Tier-1 index.go fire many
+// concurrent Embed() calls at a single embedding endpoint. Mirrors the fix in
+// internal/llm/client.go:sharedTransport (PER-116).
+var sharedEmbedTransport http.RoundTripper = func() http.RoundTripper {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.MaxIdleConns = 512
+	tr.MaxIdleConnsPerHost = 256
+	tr.MaxConnsPerHost = 0
+	tr.IdleConnTimeout = 90 * time.Second
+	return tr
+}()
+
+// newEmbedHTTPClient returns a stdlib http.Client that uses sharedEmbedTransport.
+func newEmbedHTTPClient() http.Client {
+	return http.Client{
+		Transport: sharedEmbedTransport,
+		Timeout:   120 * time.Second,
+	}
 }
 
 // APIEmbedder calls a provider's embedding API.
@@ -160,16 +185,66 @@ type APIEmbedder struct {
 func (e *APIEmbedder) Name() string    { return fmt.Sprintf("%s/%s", e.provider, e.model) }
 func (e *APIEmbedder) Dimensions() int { return e.dims }
 
+// maxEmbedChars is the per-request input cap (in runes) for OpenAI-compatible
+// embedding endpoints. 5000 runes ≈ 4K tokens, leaving headroom for 8K-token
+// limits common to GLM embedding-3 / bge-m3 / Qwen text-embedding-v3.
+// Longer texts are split and mean-pooled to produce a single document vector.
+const maxEmbedChars = 5000
+
 func (e *APIEmbedder) Embed(text string) ([]float32, error) {
 	if e.limiter != nil {
 		e.limiter.wait()
 	}
-	return retryableEmbed(func() ([]float32, error) {
-		if e.provider == "gemini" {
+	if e.provider == "gemini" {
+		return retryableEmbed(func() ([]float32, error) {
 			return e.embedGemini(text)
+		})
+	}
+	runes := []rune(text)
+	if len(runes) <= maxEmbedChars {
+		return retryableEmbed(func() ([]float32, error) {
+			return e.embedOpenAI(text)
+		})
+	}
+	return e.embedOpenAILong(runes)
+}
+
+// embedOpenAILong splits overly-long input into rune-aligned chunks, embeds
+// each chunk, and mean-pools the resulting vectors so downstream storage still
+// receives a single fixed-dimension embedding per document.
+func (e *APIEmbedder) embedOpenAILong(runes []rune) ([]float32, error) {
+	var pooled []float32
+	chunks := 0
+	for i := 0; i < len(runes); i += maxEmbedChars {
+		end := i + maxEmbedChars
+		if end > len(runes) {
+			end = len(runes)
 		}
-		return e.embedOpenAI(text)
-	})
+		vec, err := retryableEmbed(func() ([]float32, error) {
+			return e.embedOpenAI(string(runes[i:end]))
+		})
+		if err != nil {
+			return nil, fmt.Errorf("embed: chunk %d/%d: %w", chunks+1, (len(runes)+maxEmbedChars-1)/maxEmbedChars, err)
+		}
+		if pooled == nil {
+			pooled = make([]float32, len(vec))
+		} else if len(vec) != len(pooled) {
+			return nil, fmt.Errorf("embed: inconsistent dimensions across chunks: %d vs %d", len(vec), len(pooled))
+		}
+		for j, v := range vec {
+			pooled[j] += v
+		}
+		chunks++
+	}
+	if chunks == 0 {
+		return nil, fmt.Errorf("embed: no chunks produced from input")
+	}
+	inv := 1.0 / float32(chunks)
+	for j := range pooled {
+		pooled[j] *= inv
+	}
+	log.Info("embed: mean-pooled long input", "model", e.model, "chunks", chunks, "chars", len(runes))
+	return pooled, nil
 }
 
 // embedOpenAI uses the OpenAI-compatible /embeddings endpoint.

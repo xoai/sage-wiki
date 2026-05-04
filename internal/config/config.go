@@ -289,8 +289,10 @@ type OntologyConfig struct {
 
 // RelationConfig defines a custom or extended relation type.
 type RelationConfig struct {
-	Name     string   `yaml:"name"`
-	Synonyms []string `yaml:"synonyms"`
+	Name         string   `yaml:"name"`
+	Synonyms     []string `yaml:"synonyms"`
+	ValidSources []string `yaml:"valid_sources,omitempty"`
+	ValidTargets []string `yaml:"valid_targets,omitempty"`
 }
 
 // EntityTypeConfig defines a custom or extended entity type.

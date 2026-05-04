@@ -2,8 +2,10 @@ package embed
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -151,6 +153,93 @@ func TestCascadeTier0AutoDetectDimensions(t *testing.T) {
 	// Dimensions are 0 until first embed call auto-detects
 	if e.Dimensions() != 0 {
 		t.Errorf("expected 0 (auto-detect), got %d", e.Dimensions())
+	}
+}
+
+func TestEmbedLongInputMeanPooling(t *testing.T) {
+	// Chunk-indexed vectors: 1st call → [1,1,1], 2nd → [3,3,3], 3rd → [5,5,5]
+	// Mean = [3,3,3]. 12000 runes = 3 chunks @ 5000 each.
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		val := float32(2*n - 1)
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{"embedding": []float32{val, val, val}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	e := &APIEmbedder{
+		provider: "openai",
+		model:    "bge-m3",
+		apiKey:   "sk-test",
+		baseURL:  server.URL,
+		dims:     3,
+	}
+
+	longText := strings.Repeat("字", 12000)
+	vec, err := e.Embed(longText)
+	if err != nil {
+		t.Fatalf("Embed long: %v", err)
+	}
+	if atomic.LoadInt32(&calls) != 3 {
+		t.Errorf("expected 3 chunk calls, got %d", calls)
+	}
+	if len(vec) != 3 {
+		t.Fatalf("expected 3 dims, got %d", len(vec))
+	}
+	for i, v := range vec {
+		if math.Abs(float64(v-3.0)) > 1e-5 {
+			t.Errorf("dim %d: expected mean=3.0, got %f", i, v)
+		}
+	}
+}
+
+func TestEmbedShortInputSkipsPooling(t *testing.T) {
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{"embedding": []float32{0.5, 0.5, 0.5}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	e := &APIEmbedder{provider: "openai", model: "x", apiKey: "sk", baseURL: server.URL, dims: 3}
+	if _, err := e.Embed("short"); err != nil {
+		t.Fatalf("Embed short: %v", err)
+	}
+	if atomic.LoadInt32(&calls) != 1 {
+		t.Errorf("expected single call for short input, got %d", calls)
+	}
+}
+
+func TestEmbedLongInputErrorPropagation(t *testing.T) {
+	// Use 400 (non-retryable) to test immediate error propagation from a chunk
+	var chunkIdx int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&chunkIdx, 1)
+		if n == 2 {
+			w.WriteHeader(400)
+			w.Write([]byte(`bad request`))
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{"embedding": []float32{1, 1, 1}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	e := &APIEmbedder{provider: "openai", model: "x", apiKey: "sk", baseURL: server.URL, dims: 3}
+	_, err := e.Embed(strings.Repeat("a", 12000))
+	if err == nil {
+		t.Fatal("expected error when middle chunk fails")
 	}
 }
 

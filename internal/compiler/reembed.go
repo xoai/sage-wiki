@@ -74,5 +74,58 @@ func ReEmbed(projectDir string) (int, error) {
 	}
 
 	log.Info("re-embedding complete", "embedded", embedded, "total", len(entries))
-	return embedded, nil
+
+	// Phase 2: re-embed chunk-level vectors so vec_chunks dimensions stay
+	// consistent with the current embedding model. Skipping this leaves stale
+	// chunks (e.g., from a prior 768-dim Ollama run) that break hybrid search
+	// when their dim disagrees with the entry-level vectors.
+	chunkRows, err := db.ReadDB().Query("SELECT chunk_id, doc_id, content FROM chunks_meta")
+	if err != nil {
+		return embedded, fmt.Errorf("re-embed: query chunks: %w", err)
+	}
+	defer chunkRows.Close()
+
+	type chunk struct {
+		chunkID string
+		docID   string
+		content string
+	}
+	var chunks []chunk
+	for chunkRows.Next() {
+		var c chunk
+		if err := chunkRows.Scan(&c.chunkID, &c.docID, &c.content); err != nil {
+			continue
+		}
+		chunks = append(chunks, c)
+	}
+
+	if len(chunks) == 0 {
+		return embedded, nil
+	}
+
+	log.Info("re-embedding chunks", "count", len(chunks), "provider", embedder.Name())
+
+	tx, err := db.WriteDB().Begin()
+	if err != nil {
+		return embedded, fmt.Errorf("re-embed: begin chunk tx: %w", err)
+	}
+	chunkOK := 0
+	for i, c := range chunks {
+		vec, err := embedder.Embed(c.content)
+		if err != nil {
+			log.Warn("chunk embedding failed", "progress", fmt.Sprintf("%d/%d", i+1, len(chunks)), "chunk", c.chunkID, "error", err)
+			continue
+		}
+		if err := vecStore.UpsertChunk(tx, c.chunkID, c.docID, vec); err != nil {
+			log.Warn("chunk upsert failed", "chunk", c.chunkID, "error", err)
+			continue
+		}
+		chunkOK++
+	}
+	if err := tx.Commit(); err != nil {
+		return embedded, fmt.Errorf("re-embed: commit chunks: %w", err)
+	}
+
+	log.Info("chunk re-embedding complete", "embedded", chunkOK, "total", len(chunks))
+	return embedded + chunkOK, nil
 }
