@@ -187,7 +187,15 @@ func init() {
 	rootCmd.AddCommand(initCmd, compileCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, scribeCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, sourceCmd, hubCmd, skillCmd)
 }
 
-// Placeholder implementations — will be filled in subsequent tasks
+func resolveConfigPath(dir string) string {
+	if configPath != "" {
+		if filepath.IsAbs(configPath) {
+			return configPath
+		}
+		return filepath.Join(dir, configPath)
+	}
+	return filepath.Join(dir, "config.yaml")
+}
 
 func runInit(cmd *cobra.Command, args []string) error {
 	vaultMode, _ := cmd.Flags().GetBool("vault")
@@ -199,7 +207,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// If --skill is set on an already-initialized project, skip project creation
 	skillTarget, _ := cmd.Flags().GetString("skill")
-	cfgPath := filepath.Join(dir, "config.yaml")
+	cfgPath := resolveConfigPath(dir)
 	_, cfgExists := os.Stat(cfgPath)
 	skipInit := skillTarget != "" && cfgExists == nil
 
@@ -417,7 +425,7 @@ func runLint(cmd *cobra.Command, args []string) error {
 	fix, _ := cmd.Flags().GetBool("fix")
 	passName, _ := cmd.Flags().GetString("pass")
 
-	cfgPath := filepath.Join(dir, "config.yaml")
+	cfgPath := resolveConfigPath(dir)
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return err
@@ -470,7 +478,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	searcher := hybrid.NewSearcher(memStore, vecStore)
 
 	// Load config to get embed and search weight settings
-	cfg, cfgErr := config.Load(filepath.Join(dir, "config.yaml"))
+	cfg, cfgErr := config.Load(resolveConfigPath(dir))
 
 	var queryVec []float32
 	if cfgErr == nil {
@@ -584,7 +592,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 // maybePromptEstimate shows a cost estimate and asks for confirmation
 // if config.compiler.estimate_before is true.
 func maybePromptEstimate(dir string) error {
-	cfgPath := filepath.Join(dir, "config.yaml")
+	cfgPath := resolveConfigPath(dir)
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return nil // non-fatal — compile will catch config errors
@@ -635,7 +643,7 @@ func maybePromptEstimate(dir string) error {
 }
 
 func runEstimate(dir string) error {
-	cfgPath := filepath.Join(dir, "config.yaml")
+	cfgPath := resolveConfigPath(dir)
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return err
@@ -742,7 +750,7 @@ func runScribe(cmd *cobra.Command, args []string) error {
 	filePath := args[0]
 
 	// Load config
-	cfgPath := filepath.Join(dir, "config.yaml")
+	cfgPath := resolveConfigPath(dir)
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return fmt.Errorf("scribe: load config: %w", err)
