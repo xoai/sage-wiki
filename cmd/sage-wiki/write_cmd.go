@@ -55,7 +55,7 @@ func runWriteSummary(cmd *cobra.Command, args []string) error {
 	content, _ := cmd.Flags().GetString("content")
 	conceptsStr, _ := cmd.Flags().GetString("concepts")
 
-	cfg, err := config.Load(filepath.Join(dir, "config.yaml"))
+	cfg, err := config.Load(resolveConfigPath(dir))
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
@@ -112,7 +112,7 @@ func runWriteArticle(cmd *cobra.Command, args []string) error {
 	conceptID, _ := cmd.Flags().GetString("concept")
 	content, _ := cmd.Flags().GetString("content")
 
-	cfg, err := config.Load(filepath.Join(dir, "config.yaml"))
+	cfg, err := config.Load(resolveConfigPath(dir))
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}

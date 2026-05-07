@@ -99,7 +99,7 @@ func runHubAdd(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(args[0])
 
 	// Check project has config.yaml
-	cfg, err := config.Load(filepath.Join(dir, "config.yaml"))
+	cfg, err := config.Load(resolveConfigPath(dir))
 	if err != nil {
 		errMsg := fmt.Sprintf("not a sage-wiki project (no config.yaml): %s", dir)
 		if outputFormat == "json" {

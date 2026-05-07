@@ -20,7 +20,7 @@ var diffCmd = &cobra.Command{
 func runDiff(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
 
-	cfg, err := config.Load(filepath.Join(dir, "config.yaml"))
+	cfg, err := config.Load(resolveConfigPath(dir))
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
