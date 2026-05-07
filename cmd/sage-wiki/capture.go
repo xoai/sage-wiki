@@ -54,7 +54,7 @@ func runCapture(cmd *cobra.Command, args []string) error {
 		return cli.CLIError(outputFormat, fmt.Errorf("content too large (%d bytes, max 100KB)", len(content)))
 	}
 
-	cfg, err := config.Load(filepath.Join(dir, "config.yaml"))
+	cfg, err := config.Load(resolveConfigPath(dir))
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}

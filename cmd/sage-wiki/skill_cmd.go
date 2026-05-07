@@ -38,7 +38,7 @@ func init() {
 
 func loadSkillConfig(cmd *cobra.Command) (*config.Config, skill.AgentTarget, skill.PackName, error) {
 	dir, _ := filepath.Abs(projectDir)
-	cfgPath := filepath.Join(dir, "config.yaml")
+	cfgPath := resolveConfigPath(dir)
 
 	cfg, err := config.Load(cfgPath)
 	if err != nil {

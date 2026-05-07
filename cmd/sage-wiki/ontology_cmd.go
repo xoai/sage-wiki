@@ -57,7 +57,7 @@ func init() {
 }
 
 func openOntStore(dir string) (*storage.DB, *ontology.Store, error) {
-	cfg, err := config.Load(filepath.Join(dir, "config.yaml"))
+	cfg, err := config.Load(resolveConfigPath(dir))
 	if err != nil {
 		return nil, nil, err
 	}

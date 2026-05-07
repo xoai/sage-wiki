@@ -53,7 +53,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 
 	// Entities: need DB + ontology
-	cfg, err := config.Load(filepath.Join(dir, "config.yaml"))
+	cfg, err := config.Load(resolveConfigPath(dir))
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
