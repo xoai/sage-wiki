@@ -366,3 +366,116 @@ func TestExtraParamsMergedIntoRequest(t *testing.T) {
 		t.Errorf("model = %v, want test-model", receivedBody["model"])
 	}
 }
+
+func TestMaxCompletionTokensForNewModels(t *testing.T) {
+	tests := []struct {
+		model   string
+		wantKey string
+	}{
+		{"gpt-4o", "max_tokens"},
+		{"gpt-4o-mini", "max_tokens"},
+		{"gpt-4-turbo", "max_tokens"},
+		{"gpt-3.5-turbo", "max_tokens"},
+		{"gpt-5", "max_completion_tokens"},
+		{"gpt-5.4-mini", "max_completion_tokens"},
+		{"gpt-5.5", "max_completion_tokens"},
+		{"o1", "max_completion_tokens"},
+		{"o1-mini", "max_completion_tokens"},
+		{"o1-preview", "max_completion_tokens"},
+		{"o3-mini", "max_completion_tokens"},
+		{"o4-mini", "max_completion_tokens"},
+		{"deepseek-v3", "max_tokens"},
+		{"qwen3-235b", "max_tokens"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			var receivedBody map[string]interface{}
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				json.NewDecoder(r.Body).Decode(&receivedBody)
+				json.NewEncoder(w).Encode(map[string]any{
+					"choices": []map[string]any{
+						{"message": map[string]string{"content": "ok"}},
+					},
+					"model": tt.model,
+					"usage": map[string]int{"total_tokens": 10},
+				})
+			}))
+			defer server.Close()
+
+			client, err := NewClient("openai", "test-key", server.URL, 1000)
+			if err != nil {
+				t.Fatalf("NewClient: %v", err)
+			}
+
+			_, err = client.ChatCompletion([]Message{
+				{Role: "user", Content: "test"},
+			}, CallOpts{Model: tt.model, MaxTokens: 1024})
+			if err != nil {
+				t.Fatalf("ChatCompletion: %v", err)
+			}
+
+			if _, ok := receivedBody[tt.wantKey]; !ok {
+				t.Errorf("expected %q in request body, got keys: %v", tt.wantKey, keys(receivedBody))
+			}
+			// Ensure only one token-limit key is present
+			unwantedKey := "max_tokens"
+			if tt.wantKey == "max_tokens" {
+				unwantedKey = "max_completion_tokens"
+			}
+			if _, ok := receivedBody[unwantedKey]; ok {
+				t.Errorf("unexpected %q in request body alongside %q", unwantedKey, tt.wantKey)
+			}
+		})
+	}
+}
+
+func TestExtraParamsOverrideMaxTokens(t *testing.T) {
+	var receivedBody map[string]interface{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedBody)
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]string{"content": "ok"}},
+			},
+			"model": "gpt-4o",
+			"usage": map[string]int{"total_tokens": 10},
+		})
+	}))
+	defer server.Close()
+
+	extra := map[string]interface{}{
+		"max_completion_tokens": float64(2048),
+	}
+	client, err := NewClient("openai", "test-key", server.URL, 1000, extra)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	_, err = client.ChatCompletion([]Message{
+		{Role: "user", Content: "test"},
+	}, CallOpts{Model: "gpt-4o", MaxTokens: 1024})
+	if err != nil {
+		t.Fatalf("ChatCompletion: %v", err)
+	}
+
+	// extraParams has max_completion_tokens — it should be sent, and CallOpts.MaxTokens skipped
+	if _, ok := receivedBody["max_tokens"]; ok {
+		t.Error("max_tokens should not be present when max_completion_tokens is in extraParams")
+	}
+	if val, ok := receivedBody["max_completion_tokens"]; !ok {
+		t.Error("max_completion_tokens from extraParams should be present in request body")
+	} else if val != float64(2048) {
+		t.Errorf("max_completion_tokens = %v, want 2048", val)
+	}
+}
+
+func keys(m map[string]interface{}) []string {
+	var ks []string
+	for k := range m {
+		ks = append(ks, k)
+	}
+	return ks
+}

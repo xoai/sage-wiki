@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // openaiProvider implements the OpenAI-compatible API format.
@@ -48,12 +49,7 @@ func (p *openaiProvider) formatBody(messages []Message, opts CallOpts, stream bo
 		"messages": apiMessages,
 	}
 	body["stream"] = stream
-	if opts.MaxTokens > 0 {
-		body["max_tokens"] = opts.MaxTokens
-	}
-	if opts.Temperature > 0 {
-		body["temperature"] = opts.Temperature
-	}
+
 	// Merge provider-specific extra params (e.g., enable_thinking, reasoning_effort).
 	// Protected keys cannot be overridden — they are structural to the request.
 	protected := map[string]bool{"model": true, "messages": true, "stream": true}
@@ -62,6 +58,23 @@ func (p *openaiProvider) formatBody(messages []Message, opts CallOpts, stream bo
 			continue
 		}
 		body[k] = v
+	}
+
+	// Token limit: if user explicitly set a token-limit key in extraParams, that
+	// takes precedence (it was already written above). Otherwise, use the correct
+	// parameter name for the model family based on CallOpts.MaxTokens.
+	_, hasMaxTokens := p.extraParams["max_tokens"]
+	_, hasMaxCompletion := p.extraParams["max_completion_tokens"]
+	if opts.MaxTokens > 0 && !hasMaxTokens && !hasMaxCompletion {
+		if useMaxCompletionTokens(opts.Model) {
+			body["max_completion_tokens"] = opts.MaxTokens
+		} else {
+			body["max_tokens"] = opts.MaxTokens
+		}
+	}
+
+	if opts.Temperature > 0 {
+		body["temperature"] = opts.Temperature
 	}
 	return body
 }
@@ -141,4 +154,17 @@ func (p *openaiProvider) ParseResponse(body []byte) (*Response, error) {
 			CachedTokens: result.Usage.PromptTokensDetails.CachedTokens,
 		},
 	}, nil
+}
+
+// useMaxCompletionTokens returns true for model families that require
+// max_completion_tokens instead of the legacy max_tokens parameter.
+func useMaxCompletionTokens(model string) bool {
+	if strings.HasPrefix(model, "gpt-5") {
+		return true
+	}
+	// Reasoning models: o1, o3, o4 families (o1-mini, o3-mini, o4-mini, etc.)
+	if len(model) >= 2 && model[0] == 'o' && model[1] >= '1' && model[1] <= '9' {
+		return true
+	}
+	return false
 }
