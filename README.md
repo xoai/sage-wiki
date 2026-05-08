@@ -11,7 +11,7 @@ Drop in your papers, articles, and notes. sage-wiki compiles them into a structu
 - **Your sources in, a wiki out.** Add documents to a folder. The LLM reads, summarizes, extracts concepts, and writes interconnected articles.
 - **Scales to 100K+ documents.** Tiered compilation indexes everything fast, compiles only what matters. A 100K vault is searchable in hours, not months.
 - **Compounding knowledge.** Every new source enriches existing articles. The wiki gets smarter as it grows.
-- **Works with your tools.** Opens natively in Obsidian. Connects to any LLM agent via MCP. Runs as a single binary — nothing to install beyond the API key.
+- **Works with your tools.** Opens natively in Obsidian. Connects to any LLM agent via MCP. Runs as a single binary — works with API keys or your existing LLM subscription.
 - **Ask your wiki questions.** Enhanced search with chunk-level indexing, LLM query expansion, and re-ranking. Ask natural language questions and get cited answers.
 - **Compile on demand.** Agents can trigger compilation for specific topics via MCP. Search results signal when uncompiled sources are available.
 
@@ -135,6 +135,10 @@ See the [self-hosting guide](docs/guides/self-hosted-server.md) for Docker Compo
 | `sage-wiki capture "text"`                                                              | Capture knowledge from text                      |
 | `sage-wiki add-source <path>`                                                           | Register a source file in the manifest           |
 | `sage-wiki skill <refresh\|preview> [--target <agent>]`                                 | Generate or refresh agent skill files            |
+| `sage-wiki auth login --provider <name>`                                                | OAuth login for subscription auth                |
+| `sage-wiki auth import --provider <name>`                                               | Import credentials from existing CLI tools       |
+| `sage-wiki auth status`                                                                 | Show stored subscription credentials            |
+| `sage-wiki auth logout --provider <name>`                                               | Remove stored credentials                        |
 | `sage-wiki scribe <session-file>`                                                       | Extract entities from a session transcript       |
 
 ## TUI
@@ -213,6 +217,9 @@ output: wiki # compiled output directory (_wiki for vault overlay)
 api:
   provider: gemini
   api_key: ${GEMINI_API_KEY} # env var expansion supported
+  # auth: subscription          # use subscription credentials instead of api_key
+                                # requires: sage-wiki auth login --provider <name>
+                                # supported providers: openai, anthropic, gemini
   # base_url:                   # custom endpoint (OpenRouter, Azure, etc.)
   # rate_limit: 60              # requests per minute
   # extra_params:               # provider-specific params merged into request body
@@ -235,6 +242,29 @@ embed:
   # api_key: ${OPENAI_API_KEY}  # separate key for embeddings
   # base_url:                   # separate endpoint
   # rate_limit: 0              # embedding RPM cap (0 = no limit; set to 1200 for Gemini Tier 1)
+
+# Multi-provider note:
+# The api section configures the primary LLM provider used for all compiler
+# and query tasks (summarize, extract, write, lint, query). The embed section
+# can use a DIFFERENT provider for embeddings — with its own api_key, base_url,
+# and rate_limit. This lets you mix providers for cost or quality:
+#
+#   api:
+#     provider: anthropic                    # Claude for generation
+#     api_key: ${ANTHROPIC_API_KEY}
+#   models:
+#     summarize: claude-haiku-4-5-20251001   # cheap model for bulk work
+#     write: claude-sonnet-4-20250514        # quality model for articles
+#     query: claude-sonnet-4-20250514
+#   embed:
+#     provider: openai                       # OpenAI for embeddings
+#     model: text-embedding-3-small
+#     api_key: ${OPENAI_API_KEY}
+#
+# With subscription auth, you can authenticate with multiple providers:
+#   sage-wiki auth login --provider anthropic
+#   sage-wiki auth import --provider gemini
+# Then use Anthropic for generation and Gemini for embeddings.
 
 compiler:
   max_parallel: 20 # concurrent LLM calls (with adaptive backpressure)
@@ -303,6 +333,54 @@ serve:
 #       description: "A recorded decision with rationale"
 ```
 
+### Multi-Provider Setup
+
+sage-wiki lets you use different LLM providers for different tasks. The `api` section sets the primary provider for generation (summarize, extract, write, lint, query), while `embed` can use a completely separate provider for embeddings — each with its own credentials and rate limits.
+
+**Use cases:**
+- **Cost optimization** — cheap model for bulk summarization, quality model for article writing
+- **Best-of-breed** — Claude for generation, OpenAI for embeddings, Ollama for local search
+- **Subscription mixing** — use your ChatGPT subscription for generation and Gemini subscription for embeddings
+
+**Example: Claude for generation + OpenAI embeddings**
+
+```yaml
+api:
+  provider: anthropic
+  api_key: ${ANTHROPIC_API_KEY}
+
+models:
+  summarize: claude-haiku-4-5-20251001    # cheap for bulk work
+  extract: claude-haiku-4-5-20251001
+  write: claude-sonnet-4-20250514         # quality for articles
+  lint: claude-haiku-4-5-20251001
+  query: claude-sonnet-4-20250514
+
+embed:
+  provider: openai
+  model: text-embedding-3-small
+  api_key: ${OPENAI_API_KEY}
+```
+
+**Example: Subscription auth with two providers**
+
+```bash
+sage-wiki auth login --provider anthropic
+sage-wiki auth import --provider gemini
+```
+
+```yaml
+api:
+  provider: anthropic
+  auth: subscription
+
+embed:
+  provider: gemini
+  # no api_key needed — uses imported Gemini subscription credentials
+```
+
+The `models` section controls which model is used per task, all within the primary provider. Different models can have very different cost/quality tradeoffs — use smaller models (haiku, flash, mini) for high-volume passes like summarization, and larger models (sonnet, pro) for article writing and Q&A.
+
 ### Configurable Relations
 
 The ontology has 8 built-in relation types: `implements`, `extends`, `optimizes`, `contradicts`, `cites`, `prerequisite_of`, `trades_off`, `derived_from`. Each has default keyword synonyms used for automatic extraction.
@@ -351,6 +429,32 @@ sage-wiki compile --estimate    # show cost breakdown, exit
 Or set `compiler.estimate_before: true` in config to prompt every time.
 
 **Auto mode** — Set `compiler.mode: auto` and `compiler.batch_threshold: 10` to automatically use batch when compiling 10+ sources.
+
+## Subscription Auth
+
+Use your existing LLM subscription instead of API keys. Supports ChatGPT Plus/Pro, Claude Pro/Max, GitHub Copilot, and Google Gemini.
+
+```bash
+# Login via browser (OpenAI or Anthropic)
+sage-wiki auth login --provider openai
+
+# Or import from an existing CLI tool
+sage-wiki auth import --provider claude
+sage-wiki auth import --provider copilot
+sage-wiki auth import --provider gemini
+```
+
+Then set `api.auth: subscription` in your `config.yaml`:
+
+```yaml
+api:
+  provider: openai
+  auth: subscription
+```
+
+All commands will use your subscription credentials. Tokens refresh automatically. If a token expires and can't refresh, sage-wiki falls back to `api_key` with a warning.
+
+**Limitations:** Batch mode is unavailable with subscription auth (auto-disabled). Some models may not be accessible via subscription tokens. See the [subscription auth guide](docs/guides/subscription-auth.md) for details.
 
 ## Scaling to Large Vaults
 

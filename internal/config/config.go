@@ -48,6 +48,7 @@ type Source struct {
 
 type APIConfig struct {
 	Provider    string                 `yaml:"provider"`
+	Auth        string                 `yaml:"auth,omitempty"`         // "api_key" (default) or "subscription"
 	APIKey      string                 `yaml:"api_key"`
 	BaseURL     string                 `yaml:"base_url,omitempty"`
 	RateLimit   int                    `yaml:"rate_limit,omitempty"`
@@ -454,6 +455,18 @@ func (c *Config) Validate() error {
 		}
 		if !validProviders[c.API.Provider] {
 			return fmt.Errorf("config: invalid provider %q (valid: anthropic, openai, gemini, ollama, openai-compatible, qwen)", c.API.Provider)
+		}
+	}
+	if c.API.Auth != "" && c.API.Auth != "api_key" {
+		if c.API.Auth != "subscription" {
+			return fmt.Errorf("config: invalid api.auth %q (valid: api_key, subscription)", c.API.Auth)
+		}
+		if c.API.Provider == "" {
+			return fmt.Errorf("config: subscription auth requires api.provider to be set (openai, anthropic, or gemini)")
+		}
+		subscriptionProviders := map[string]bool{"openai": true, "anthropic": true, "gemini": true}
+		if !subscriptionProviders[c.API.Provider] {
+			return fmt.Errorf("config: subscription auth is not supported for provider %q (requires: openai, anthropic, or gemini)", c.API.Provider)
 		}
 	}
 	if c.Serve.Transport != "" {

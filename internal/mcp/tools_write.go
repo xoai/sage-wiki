@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
+	"github.com/xoai/sage-wiki/internal/auth"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
@@ -398,11 +399,14 @@ type capturedItem struct {
 }
 
 func extractKnowledgeItems(cfg *config.Config, content, captureCtx, tags string) ([]capturedItem, error) {
-	if cfg.API.Provider == "" || cfg.API.APIKey == "" {
-		return nil, fmt.Errorf("LLM not configured (no api.provider or api.api_key)")
+	if cfg.API.Provider == "" {
+		return nil, fmt.Errorf("LLM not configured (no api.provider)")
+	}
+	if cfg.API.APIKey == "" && cfg.API.Auth != "subscription" {
+		return nil, fmt.Errorf("LLM not configured (no api.api_key — set api_key or use api.auth: subscription)")
 	}
 
-	client, err := llm.NewClient(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, cfg.API.RateLimit, cfg.API.ExtraParams)
+	client, err := auth.NewLLMClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("create LLM client: %w", err)
 	}
@@ -564,7 +568,7 @@ func (s *Server) handleCompileTopic(ctx context.Context, req mcplib.CallToolRequ
 		return errorResult(fmt.Sprintf("load config: %v", err)), nil
 	}
 
-	client, err := llm.NewClient(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, cfg.API.RateLimit, cfg.API.ExtraParams)
+	client, err := auth.NewLLMClient(cfg)
 	if err != nil {
 		return errorResult(fmt.Sprintf("create LLM client: %v", err)), nil
 	}

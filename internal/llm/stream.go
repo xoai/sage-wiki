@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/xoai/sage-wiki/internal/log"
 )
@@ -39,8 +38,7 @@ func (c *Client) ChatCompletionStream(ctx context.Context, messages []Message, o
 	}
 	req = req.WithContext(ctx)
 
-	httpClient := http.Client{Timeout: 180 * time.Second}
-	resp, err := httpClient.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("llm: stream request failed: %w", err)
 	}

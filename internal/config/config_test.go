@@ -234,6 +234,47 @@ func TestValidation(t *testing.T) {
 			name: "valid minimal",
 			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}},
 		},
+		{
+			name: "valid auth api_key",
+			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, API: APIConfig{Auth: "api_key"}},
+		},
+		{
+			name: "valid auth subscription with openai",
+			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, API: APIConfig{Auth: "subscription", Provider: "openai"}},
+		},
+		{
+			name: "valid auth subscription with anthropic",
+			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, API: APIConfig{Auth: "subscription", Provider: "anthropic"}},
+		},
+		{
+			name: "valid auth subscription with gemini",
+			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, API: APIConfig{Auth: "subscription", Provider: "gemini"}},
+		},
+		{
+			name:    "invalid auth value",
+			cfg:     Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, API: APIConfig{Auth: "magic"}},
+			wantErr: "invalid api.auth",
+		},
+		{
+			name:    "subscription auth with ollama",
+			cfg:     Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, API: APIConfig{Auth: "subscription", Provider: "ollama"}},
+			wantErr: "subscription auth is not supported",
+		},
+		{
+			name:    "subscription auth with openai-compatible",
+			cfg:     Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, API: APIConfig{Auth: "subscription", Provider: "openai-compatible"}},
+			wantErr: "subscription auth is not supported",
+		},
+		{
+			name:    "subscription auth with qwen",
+			cfg:     Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, API: APIConfig{Auth: "subscription", Provider: "qwen"}},
+			wantErr: "subscription auth is not supported",
+		},
+		{
+			name:    "subscription auth without provider requires provider",
+			cfg:     Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, API: APIConfig{Auth: "subscription"}},
+			wantErr: "requires api.provider",
+		},
 	}
 
 	for _, tt := range tests {

@@ -11,7 +11,7 @@
 - **输入源文件,输出 wiki。** 将文档放入文件夹。LLM 会阅读、摘要、提取概念,并生成互相关联的文章。
 - **支持 10 万+文档扩展。** 分层编译快速索引一切,仅编译重要内容。10 万文档库在数小时内即可搜索,而非数月。
 - **知识持续积累。** 每一个新源文件都会丰富已有文章。wiki 会随着内容增长变得越来越智能。
-- **与你的工具无缝集成。** 原生支持 Obsidian 打开。通过 MCP 连接任意 LLM Agent。单一二进制文件 -- 除了 API Key 无需额外安装。
+- **与你的工具无缝集成。** 原生支持 Obsidian 打开。通过 MCP 连接任意 LLM Agent。单一二进制文件 -- 支持 API Key 或直接使用已有的 LLM 订阅。
 - **向你的 wiki 提问。** 增强搜索支持 chunk 级别索引、LLM 查询扩展和重排序。用自然语言提问,获取带引用的回答。
 - **按需编译。** Agent 可通过 MCP 触发特定主题的编译。搜索结果会提示何时有未编译的源文件可用。
 
@@ -135,6 +135,10 @@ docker run -d -p 3333:3333 -v ./my-wiki:/wiki -e GEMINI_API_KEY=... sage-wiki
 | `sage-wiki capture "text"`                                                              | 从文本中捕获知识                      |
 | `sage-wiki add-source <path>`                                                           | 在 manifest 中注册源文件              |
 | `sage-wiki skill <refresh\|preview> [--target <agent>]`                                 | 生成或刷新 Agent 技能文件             |
+| `sage-wiki auth login --provider <name>`                                                | 通过 OAuth 登录订阅认证              |
+| `sage-wiki auth import --provider <name>`                                               | 从已有 CLI 工具导入凭证              |
+| `sage-wiki auth status`                                                                 | 显示已存储的订阅凭证                  |
+| `sage-wiki auth logout --provider <name>`                                               | 删除已存储的凭证                      |
 | `sage-wiki scribe <session-file>`                                                       | 从会话记录中提取实体                  |
 
 ## TUI
@@ -213,6 +217,9 @@ output: wiki # 编译输出目录 (vault 覆盖模式下为 _wiki)
 api:
   provider: gemini
   api_key: ${GEMINI_API_KEY} # 支持环境变量展开
+  # auth: subscription          # 使用订阅凭证代替 api_key
+                                # 需要: sage-wiki auth login --provider <name>
+                                # 支持: openai, anthropic, gemini
   # base_url:                   # 自定义端点 (OpenRouter, Azure 等)
   # rate_limit: 60              # 每分钟请求数
   # extra_params:               # 提供商特定参数,合并到请求体中
@@ -303,6 +310,54 @@ serve:
 #       description: "决策记录及其理由"
 ```
 
+### 多提供商配置
+
+sage-wiki 支持为不同任务使用不同的 LLM 提供商。`api` 部分设置用于生成任务(摘要、提取、写作、检查、查询)的主提供商,而 `embed` 可以使用完全独立的提供商进行嵌入 -- 各自拥有独立的凭证和速率限制。
+
+**使用场景:**
+- **成本优化** -- 批量摘要使用廉价模型,文章写作使用高质量模型
+- **最佳组合** -- Claude 用于生成,OpenAI 用于嵌入,Ollama 用于本地搜索
+- **混合订阅** -- ChatGPT 订阅用于生成,Gemini 订阅用于嵌入
+
+**示例:Claude 生成 + OpenAI 嵌入**
+
+```yaml
+api:
+  provider: anthropic
+  api_key: ${ANTHROPIC_API_KEY}
+
+models:
+  summarize: claude-haiku-4-5-20251001    # 批量任务用廉价模型
+  extract: claude-haiku-4-5-20251001
+  write: claude-sonnet-4-20250514         # 文章写作用高质量模型
+  lint: claude-haiku-4-5-20251001
+  query: claude-sonnet-4-20250514
+
+embed:
+  provider: openai
+  model: text-embedding-3-small
+  api_key: ${OPENAI_API_KEY}
+```
+
+**示例:使用两个提供商的订阅认证**
+
+```bash
+sage-wiki auth login --provider anthropic
+sage-wiki auth import --provider gemini
+```
+
+```yaml
+api:
+  provider: anthropic
+  auth: subscription
+
+embed:
+  provider: gemini
+  # 无需 api_key -- 使用导入的 Gemini 订阅凭证
+```
+
+`models` 部分控制主提供商内每个任务使用的模型。不同模型的成本/质量差异很大 -- 摘要等高频任务使用小模型(haiku、flash、mini),文章写作和问答使用大模型(sonnet、pro)。
+
 ### 可配置的关系类型
 
 本体内置 8 种关系类型: `implements`、`extends`、`optimizes`、`contradicts`、`cites`、`prerequisite_of`、`trades_off`、`derived_from`。每种都有默认的关键词同义词用于自动提取。
@@ -351,6 +406,32 @@ sage-wiki compile --estimate    # 显示费用明细后退出
 或在配置中设置 `compiler.estimate_before: true` 以每次编译前提示。
 
 **自动模式** -- 设置 `compiler.mode: auto` 和 `compiler.batch_threshold: 10`,编译 10 个以上源文件时自动使用 batch 模式。
+
+## 订阅认证
+
+使用你已有的 LLM 订阅代替 API Key。支持 ChatGPT Plus/Pro、Claude Pro/Max、GitHub Copilot 和 Google Gemini。
+
+```bash
+# 通过浏览器登录 (OpenAI 或 Anthropic)
+sage-wiki auth login --provider openai
+
+# 或从已有 CLI 工具导入凭证
+sage-wiki auth import --provider claude
+sage-wiki auth import --provider copilot
+sage-wiki auth import --provider gemini
+```
+
+然后在 `config.yaml` 中设置 `api.auth: subscription`:
+
+```yaml
+api:
+  provider: openai
+  auth: subscription
+```
+
+所有命令将使用你的订阅凭证。Token 会自动刷新。如果 token 过期且无法刷新,sage-wiki 会回退到 `api_key` 并发出警告。
+
+**限制:** 订阅认证不支持 batch 模式(自动禁用)。部分模型可能无法通过订阅 token 访问。详见[订阅认证指南](docs/guides/subscription-auth.md)。
 
 ## 大规模知识库扩展
 

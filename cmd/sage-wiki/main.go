@@ -10,6 +10,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/log"
 	"strings"
 
+	"github.com/xoai/sage-wiki/internal/auth"
 	"github.com/xoai/sage-wiki/internal/cli"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
@@ -763,7 +764,7 @@ func runScribe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create LLM client
-	client, err := llm.NewClient(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, cfg.API.RateLimit, cfg.API.ExtraParams)
+	client, err := auth.NewLLMClient(cfg)
 	if err != nil {
 		return fmt.Errorf("scribe: create LLM client: %w", err)
 	}

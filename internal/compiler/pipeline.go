@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/auth"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/extract"
@@ -141,7 +142,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	}
 
 	// Create LLM client
-	client, err := llm.NewClient(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, cfg.API.RateLimit, cfg.API.ExtraParams)
+	client, err := auth.NewLLMClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("compile: create LLM client: %w", err)
 	}
@@ -159,6 +160,16 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 			return nil, fmt.Errorf("compile: provider changed from %s to %s since batch was submitted — clear checkpoint with --fresh or switch back", state.Batch.Provider, client.ProviderName())
 		}
 		return resumeBatch(projectDir, client, cfg, mf, state, statePath, tracker, opts)
+	}
+
+	// Subscription auth: disable batch mode (subscription tokens lack batch API access)
+	if cfg.API.Auth == "subscription" && (opts.Batch || cfg.Compiler.Mode == "batch" || cfg.Compiler.Mode == "auto") {
+		log.Info("batch mode unavailable with subscription auth, using standard mode")
+		fmt.Fprintln(os.Stderr, "Batch mode unavailable with subscription auth, using standard mode.")
+		opts.Batch = false
+		if cfg.Compiler.Mode == "batch" || cfg.Compiler.Mode == "auto" {
+			cfg.Compiler.Mode = "standard"
+		}
 	}
 
 	// Resolve batch mode: CLI flag > config mode > default (standard)
@@ -318,6 +329,11 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 
 	if len(toProcess) > 0 {
 		cacheEnabled := cfg.Compiler.PromptCacheEnabled() && !opts.NoCache
+		if cacheEnabled && cfg.API.Auth == "subscription" && cfg.API.Provider == "gemini" {
+			cacheEnabled = false
+			log.Info("prompt caching unavailable with Gemini subscription auth")
+			fmt.Fprintln(os.Stderr, "Prompt caching unavailable with Gemini subscription auth.")
+		}
 		pipelineResult := runFullPipeline(toProcess, FullPipelineOpts{
 			ProjectDir:   projectDir,
 			Config:       cfg,

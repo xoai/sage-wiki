@@ -5,9 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/xoai/sage-wiki/internal/auth"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
-	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/prompts"
@@ -67,7 +67,7 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	}
 
 	// Create LLM client
-	client, err := llm.NewClient(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, cfg.API.RateLimit, cfg.API.ExtraParams)
+	client, err := auth.NewLLMClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("re-extract: create LLM client: %w", err)
 	}

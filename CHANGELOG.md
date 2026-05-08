@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.1.7 — 2026-05-08
+
+### Subscription Auth (issue #15)
+
+Use your existing LLM subscription (ChatGPT Plus/Pro, Claude Pro/Max, GitHub Copilot, Google Gemini) instead of managing separate API keys and billing.
+
+- **`sage-wiki auth login --provider openai`** — Browser-based PKCE OAuth flow. Supports OpenAI and Anthropic. Headless fallback for SSH/WSL (paste redirect URL).
+- **`sage-wiki auth import --provider claude`** — Import credentials from existing CLI tools (Codex CLI, Claude Code, GitHub Copilot, Gemini CLI).
+- **`sage-wiki auth status`** — List stored credentials with masked tokens, source, and expiry status.
+- **`sage-wiki auth logout --provider openai`** — Remove stored credentials.
+- **`api.auth: subscription`** — New config field. When set, sage-wiki uses subscription credentials instead of `api_key`. Auth precedence: environment variable > subscription > api_key.
+- **Auto-refresh** — Tokens refresh transparently during long compiles. Uses RWMutex with double-checked locking to avoid serializing concurrent compiler goroutines.
+- **Batch mode auto-disabled** — Subscription tokens cannot access the batch API. Automatically falls back to standard mode with a warning.
+- **Global credential store** — Tokens stored at `~/.sage-wiki/auth.json` (0600 permissions). Login once, use across all projects.
+- **TOS warning** — Displayed on first login/import. Providers may change terms at any time.
+
+See the [subscription auth guide](docs/guides/subscription-auth.md) for setup, supported providers, and troubleshooting.
+
+### GPT-5.x Support (PR #76)
+
+- **`max_completion_tokens` for GPT-5.x and reasoning models** — OpenAI's GPT-5.x and o1/o3/o4 models reject the legacy `max_tokens` parameter. The OpenAI provider now detects model families and sends the correct parameter. Also fixes a bug where `extra_params` token-limit overrides were silently dropped.
+
+### Config Flag Fix (PR #77)
+
+- **`--config` flag wired to all commands** — The `--config` persistent flag was defined but never read. All 14 command handlers now use the flag via `resolveConfigPath()`. Thanks @Joneyao.
+
+### Streaming Transport Fix
+
+- **Streaming uses client transport** — `ChatCompletionStream` previously created a standalone `http.Client`, bypassing any transport wrapping (subscription auth, metrics, etc.). Now uses the client's configured transport.
+
 ## 0.1.6 — 2026-05-04
 
 ### Embedding Reliability (PR #68)

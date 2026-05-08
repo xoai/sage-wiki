@@ -113,6 +113,10 @@ func NewClient(providerName string, apiKey string, baseURL string, rateLimit int
 	}, nil
 }
 
+func (c *Client) SetTransport(t http.RoundTripper) {
+	c.client.Transport = t
+}
+
 // ChatCompletion sends a chat completion request with retry on rate limits.
 // If a cache is active (via SetupCache), automatically uses the cached path.
 func (c *Client) ChatCompletion(messages []Message, opts CallOpts) (*Response, error) {
