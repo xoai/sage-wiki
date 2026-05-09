@@ -271,6 +271,23 @@ func TestValidation(t *testing.T) {
 			wantErr: "subscription auth is not supported",
 		},
 		{
+			name: "valid trust include_outputs false",
+			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Trust: TrustConfig{IncludeOutputs: "false"}},
+		},
+		{
+			name: "valid trust include_outputs verified",
+			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Trust: TrustConfig{IncludeOutputs: "verified"}},
+		},
+		{
+			name: "valid trust include_outputs true",
+			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Trust: TrustConfig{IncludeOutputs: "true"}},
+		},
+		{
+			name:    "invalid trust include_outputs",
+			cfg:     Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Trust: TrustConfig{IncludeOutputs: "maybe"}},
+			wantErr: "invalid trust.include_outputs",
+		},
+		{
 			name:    "subscription auth without provider requires provider",
 			cfg:     Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, API: APIConfig{Auth: "subscription"}},
 			wantErr: "requires api.provider",

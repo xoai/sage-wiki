@@ -127,7 +127,7 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
 	embedder := embed.NewFromConfig(cfg)
 	chunkStore := memory.NewChunkStore(db)
-	outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault()})
+	outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode()})
 	if err != nil {
 		log.Warn("auto-filing failed", "error", err)
 	} else {
@@ -191,7 +191,7 @@ func buildQueryContext(projectDir string, question string, topK int, cfg *config
 				seedIDs := extractSeedIDsFromEnhanced(enhanced)
 				graphExpanded = computeGraphExpansion(cfg, ontStore, seedIDs)
 			}
-			return buildContextFromEnhanced(projectDir, cfg.Output, enhanced, ontStore, graphExpanded, cfg.Search.ContextMaxTokensOrDefault())
+			return buildContextFromEnhanced(projectDir, cfg.Output, enhanced, ontStore, graphExpanded, cfg.Search.ContextMaxTokensOrDefault(), cfg.Trust.IncludeOutputsMode())
 		}
 	} else if chunkCount == 0 {
 		count, _ := memStore.Count()
@@ -201,11 +201,11 @@ func buildQueryContext(projectDir string, question string, topK int, cfg *config
 	}
 
 	// Fallback: document-level hybrid search
-	return buildDocLevelContext(projectDir, question, topK, memStore, vecStore, ontStore, embedder, cfg, graphExpanded)
+	return buildDocLevelContext(projectDir, question, topK, memStore, vecStore, ontStore, embedder, cfg, graphExpanded, cfg.Trust.IncludeOutputsMode())
 }
 
 // buildContextFromEnhanced assembles article context from enhanced search results.
-func buildContextFromEnhanced(projectDir string, outputDir string, results []search.SearchResult, ontStore *ontology.Store, graphExpanded []graphExpandedArticle, maxTokens int) (string, []string, error) {
+func buildContextFromEnhanced(projectDir string, outputDir string, results []search.SearchResult, ontStore *ontology.Store, graphExpanded []graphExpandedArticle, maxTokens int, trustMode string) (string, []string, error) {
 	var ctx strings.Builder
 	var sources []string
 	seen := map[string]bool{}
@@ -218,6 +218,9 @@ func buildContextFromEnhanced(projectDir string, outputDir string, results []sea
 
 	for _, r := range results {
 		docID := r.DocID
+		if !shouldIncludeOutput(docID, trustMode) {
+			continue
+		}
 		articlePath := docIDToArticlePath(docID, outputDir)
 		if articlePath == "" || seen[articlePath] {
 			continue
@@ -243,6 +246,9 @@ func buildContextFromEnhanced(projectDir string, outputDir string, results []sea
 
 	// Graph-expanded articles (higher quality than depth-1 BFS)
 	for _, ge := range graphExpanded {
+		if !shouldIncludeOutput(ge.EntityID, trustMode) {
+			continue
+		}
 		if ge.ArticlePath == "" || seen[ge.ArticlePath] {
 			continue
 		}
@@ -276,6 +282,9 @@ func buildContextFromEnhanced(projectDir string, outputDir string, results []sea
 			MaxDepth:  1,
 		})
 		for _, rel := range related {
+			if !shouldIncludeOutput(rel.ID, trustMode) {
+				continue
+			}
 			if rel.ArticlePath != "" && !seen[rel.ArticlePath] {
 				absPath := filepath.Join(projectDir, rel.ArticlePath)
 				if data, err := os.ReadFile(absPath); err == nil {
@@ -301,7 +310,7 @@ func buildContextFromEnhanced(projectDir string, outputDir string, results []sea
 // buildDocLevelContext is the original document-level search path.
 func buildDocLevelContext(projectDir string, question string, topK int,
 	memStore *memory.Store, vecStore *vectors.Store, ontStore *ontology.Store,
-	embedder embed.Embedder, cfg *config.Config, graphExpanded []graphExpandedArticle) (string, []string, error) {
+	embedder embed.Embedder, cfg *config.Config, graphExpanded []graphExpandedArticle, trustMode string) (string, []string, error) {
 
 	searcher := hybrid.NewSearcher(memStore, vecStore)
 
@@ -339,6 +348,9 @@ func buildDocLevelContext(projectDir string, question string, topK int,
 	seen := map[string]bool{}
 
 	for _, r := range results {
+		if !shouldIncludeOutput(r.ID, trustMode) {
+			continue
+		}
 		if r.ArticlePath == "" || seen[r.ArticlePath] {
 			continue
 		}
@@ -363,6 +375,9 @@ func buildDocLevelContext(projectDir string, question string, topK int,
 
 	// Graph-expanded articles
 	for _, ge := range graphExpanded {
+		if !shouldIncludeOutput(ge.EntityID, trustMode) {
+			continue
+		}
 		if ge.ArticlePath == "" || seen[ge.ArticlePath] {
 			continue
 		}
@@ -399,6 +414,9 @@ func buildDocLevelContext(projectDir string, question string, topK int,
 			MaxDepth:  1,
 		})
 		for _, rel := range related {
+			if !shouldIncludeOutput(rel.ID, trustMode) {
+				continue
+			}
 			if rel.ArticlePath != "" && !seen[rel.ArticlePath] {
 				absPath := filepath.Join(projectDir, rel.ArticlePath)
 				if data, err := os.ReadFile(absPath); err == nil {
@@ -419,6 +437,13 @@ func buildDocLevelContext(projectDir string, question string, topK int,
 	}
 
 	return ctx.String(), sources, nil
+}
+
+func shouldIncludeOutput(id string, mode string) bool {
+	if !strings.HasPrefix(id, "output:") {
+		return true
+	}
+	return mode == "true"
 }
 
 // docIDToArticlePath converts a doc ID like "concept:my-concept" to "{outputDir}/concepts/my-concept.md".
@@ -461,11 +486,12 @@ func SaveAnswer(projectDir string, question string, answer string, sources []str
 		Sources:  sources,
 		Format:   "markdown",
 	}
-	return autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault()})
+	return autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode()})
 }
 
 // autoFileOpts holds optional stores for chunk indexing in autoFile.
 type autoFileOpts struct {
+	TrustMode string // "false", "verified", "true" — when not "true", skip indexing
 	ChunkStore *memory.ChunkStore
 	DB         *storage.DB
 	ChunkSize  int // tokens per chunk (0 = default 800)
@@ -496,6 +522,17 @@ format: %s
 
 	if err := os.WriteFile(absPath, []byte(frontmatter+result.Answer), 0644); err != nil {
 		return "", err
+	}
+
+	// Skip indexing when output trust is enabled (not "true" / legacy mode).
+	// File is still written to disk for human reference.
+	trustMode := "true" // default: legacy behavior
+	if len(opts) > 0 && opts[0].TrustMode != "" {
+		trustMode = opts[0].TrustMode
+	}
+	if trustMode != "true" {
+		log.Info("query result filed (not indexed — trust mode)", "path", relPath)
+		return relPath, nil
 	}
 
 	// Index in FTS5
@@ -655,7 +692,7 @@ func StreamQuery(ctx context.Context, projectDir string, question string, topK i
 		ontStore := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
 		embedder := embed.NewFromConfig(cfg)
 		chunkStore := memory.NewChunkStore(db)
-		if outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault()}); err != nil {
+		if outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode()}); err != nil {
 			log.Warn("stream auto-filing failed", "error", err)
 		} else {
 			log.Info("stream query result filed", "path", outputPath)

@@ -33,6 +33,7 @@ type Config struct {
 	Linting     LintingConfig  `yaml:"linting"`
 	Serve       ServeConfig    `yaml:"serve"`
 	Ontology    OntologyConfig `yaml:"ontology,omitempty"`
+	Trust       TrustConfig    `yaml:"trust,omitempty"`
 	TypeSignals []TypeSignal   `yaml:"type_signals,omitempty"`
 }
 
@@ -302,6 +303,56 @@ type EntityTypeConfig struct {
 	Description string `yaml:"description,omitempty"`
 }
 
+// TrustConfig controls the output trust system (staged QA for query outputs).
+type TrustConfig struct {
+	IncludeOutputs      string   `yaml:"include_outputs,omitempty"`      // "false" (default), "verified", "true"
+	ConsensusThreshold  int      `yaml:"consensus_threshold,omitempty"`  // confirmations for promotion (default: 3)
+	GroundingThreshold  float64  `yaml:"grounding_threshold,omitempty"`  // min grounding score (default: 0.8)
+	AutoPromote         *bool    `yaml:"auto_promote,omitempty"`         // auto-promote when thresholds met (default: true)
+	SimilarityThreshold float64  `yaml:"similarity_threshold,omitempty"` // cosine sim for question matching (default: 0.85)
+}
+
+// IncludeOutputsMode returns the effective include_outputs mode.
+// Empty string is treated as "false" (safe default).
+func (t TrustConfig) IncludeOutputsMode() string {
+	if t.IncludeOutputs == "" {
+		return "false"
+	}
+	return t.IncludeOutputs
+}
+
+// AutoPromoteEnabled returns whether auto-promotion is enabled (default: true).
+func (t TrustConfig) AutoPromoteEnabled() bool {
+	if t.AutoPromote == nil {
+		return true
+	}
+	return *t.AutoPromote
+}
+
+// ConsensusThresholdOrDefault returns the consensus threshold or 3 if not set.
+func (t TrustConfig) ConsensusThresholdOrDefault() int {
+	if t.ConsensusThreshold <= 0 {
+		return 3
+	}
+	return t.ConsensusThreshold
+}
+
+// GroundingThresholdOrDefault returns the grounding threshold or 0.8 if not set.
+func (t TrustConfig) GroundingThresholdOrDefault() float64 {
+	if t.GroundingThreshold <= 0 {
+		return 0.8
+	}
+	return t.GroundingThreshold
+}
+
+// SimilarityThresholdOrDefault returns the similarity threshold or 0.85 if not set.
+func (t TrustConfig) SimilarityThresholdOrDefault() float64 {
+	if t.SimilarityThreshold <= 0 {
+		return 0.85
+	}
+	return t.SimilarityThreshold
+}
+
 // Defaults returns a Config with sensible defaults for greenfield mode.
 func Defaults() Config {
 	return Config{
@@ -332,6 +383,9 @@ func Defaults() Config {
 		Serve: ServeConfig{
 			Transport: "stdio",
 			Port:      3333,
+		},
+		Trust: TrustConfig{
+			IncludeOutputs: "false",
 		},
 	}
 }
@@ -467,6 +521,12 @@ func (c *Config) Validate() error {
 		subscriptionProviders := map[string]bool{"openai": true, "anthropic": true, "gemini": true}
 		if !subscriptionProviders[c.API.Provider] {
 			return fmt.Errorf("config: subscription auth is not supported for provider %q (requires: openai, anthropic, or gemini)", c.API.Provider)
+		}
+	}
+	if mode := c.Trust.IncludeOutputs; mode != "" {
+		validModes := map[string]bool{"false": true, "verified": true, "true": true}
+		if !validModes[mode] {
+			return fmt.Errorf("config: invalid trust.include_outputs %q (valid: \"false\", \"verified\", \"true\")", mode)
 		}
 	}
 	if c.Serve.Transport != "" {
