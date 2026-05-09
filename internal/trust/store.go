@@ -107,6 +107,13 @@ func (s *Store) Demote(id string) error {
 	})
 }
 
+func (s *Store) UpdateFilePath(id string, filePath string) error {
+	return s.db.WriteTx(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE pending_outputs SET file_path = ? WHERE id = ?`, filePath, id)
+		return err
+	})
+}
+
 func (s *Store) Delete(id string) error {
 	return s.db.WriteTx(func(tx *sql.Tx) error {
 		tx.Exec(`DELETE FROM confirmation_sources WHERE output_id = ?`, id)
@@ -152,6 +159,49 @@ func (s *Store) GetConfirmations(outputID string) ([]*Confirmation, error) {
 
 func (s *Store) ListConfirmed() ([]*PendingOutput, error) {
 	return s.ListByState(StateConfirmed)
+}
+
+func (s *Store) ListByQuestionHash(qHash string) ([]*PendingOutput, error) {
+	rows, err := s.db.ReadDB().Query(`SELECT id, question, question_hash, answer, answer_hash,
+		state, confirmations, grounding_score, sources_hash, sources_used,
+		file_path, created_at, promoted_at, demoted_at
+		FROM pending_outputs WHERE question_hash = ? ORDER BY created_at DESC`, qHash)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []*PendingOutput
+	for rows.Next() {
+		o, err := scanOutputRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, o)
+	}
+	return results, rows.Err()
+}
+
+func (s *Store) ListOlderThan(cutoff time.Time) ([]*PendingOutput, error) {
+	rows, err := s.db.ReadDB().Query(`SELECT id, question, question_hash, answer, answer_hash,
+		state, confirmations, grounding_score, sources_hash, sources_used,
+		file_path, created_at, promoted_at, demoted_at
+		FROM pending_outputs WHERE state IN ('pending', 'stale') AND created_at < ?
+		ORDER BY created_at`, cutoff.Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []*PendingOutput
+	for rows.Next() {
+		o, err := scanOutputRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, o)
+	}
+	return results, rows.Err()
 }
 
 type scannable interface {

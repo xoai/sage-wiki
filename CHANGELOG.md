@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.1.8 — 2026-05-09
+
+### Output Trust System (issue #74)
+
+Query outputs are now treated as claims, not facts. Outputs earn trust through grounding verification and consensus before entering the searchable corpus. This prevents data poisoning from incorrect LLM answers feeding back into future queries.
+
+- **Tri-state trust mode** — `trust.include_outputs` config: `"false"` (default, outputs excluded from search), `"verified"` (only confirmed outputs in search), `"true"` (legacy, all outputs indexed).
+- **`sage-wiki verify`** — Run LLM-based grounding checks on pending outputs. Extracts factual claims and checks entailment against source passages. Auto-promotes when both grounding and consensus thresholds are met.
+- **Consensus pipeline** — Repeated queries that produce the same answer from independent source chunks build confirmations. Independence is scored via Jaccard distance between chunk sets. Configurable via `trust.consensus_threshold` (default: 3) and `trust.similarity_threshold` (default: 0.85).
+- **Conflict detection** — When the same question produces contradictory answers, both are flagged as conflicts. Resolve via `sage-wiki outputs resolve <id>`.
+- **`sage-wiki outputs list`** — List outputs by trust state: pending, confirmed, conflict, stale.
+- **`sage-wiki outputs promote <id>`** — Manually promote a pending output to confirmed (indexes into FTS5, vectors, ontology, chunks).
+- **`sage-wiki outputs reject <id>`** — Reject and delete a pending output (de-indexes and removes file).
+- **`sage-wiki outputs resolve <id>`** — Promote one answer and reject all competing answers for the same question.
+- **`sage-wiki outputs clean --older-than 90d`** — Remove stale pending outputs older than a threshold.
+- **`sage-wiki outputs migrate`** — Migrate existing `wiki/outputs/` files into the trust system. Parses sources from frontmatter.
+- **Source change demotion** — During `sage-wiki compile`, confirmed outputs are automatically demoted to stale when their cited source files change. Only runs in `"verified"` mode.
+- **Pending output quarantine** — New query outputs are written to `wiki/under_review/` with state frontmatter. Promoted outputs move to `wiki/outputs/` and are indexed.
+- **Idempotent confirmations** — Duplicate evidence from the same source chunks is silently skipped. Prevents inflation of confirmation counts.
+- **Atomic promotion** — File move and search indexing complete before DB state is marked confirmed. Failures roll back cleanly.
+
+See the [output trust guide](docs/guides/output-trust.md) for configuration, workflows, and architecture.
+
 ## 0.1.7 — 2026-05-08
 
 ### Subscription Auth (issue #15)

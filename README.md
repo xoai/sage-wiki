@@ -139,6 +139,13 @@ See the [self-hosting guide](docs/guides/self-hosted-server.md) for Docker Compo
 | `sage-wiki auth import --provider <name>`                                               | Import credentials from existing CLI tools       |
 | `sage-wiki auth status`                                                                 | Show stored subscription credentials            |
 | `sage-wiki auth logout --provider <name>`                                               | Remove stored credentials                        |
+| `sage-wiki verify [--all] [--since 7d] [--limit 20]`                                   | Grounding verification on pending outputs        |
+| `sage-wiki outputs list [--state pending\|confirmed\|conflict\|stale]`                  | List outputs by trust state                      |
+| `sage-wiki outputs promote <id>`                                                        | Manually promote output to confirmed             |
+| `sage-wiki outputs reject <id>`                                                         | Reject and delete a pending output               |
+| `sage-wiki outputs resolve <id>`                                                        | Promote answer, reject competing conflicts       |
+| `sage-wiki outputs clean [--older-than 90d]`                                            | Remove stale/old pending outputs                 |
+| `sage-wiki outputs migrate`                                                             | Migrate existing outputs into trust system       |
 | `sage-wiki scribe <session-file>`                                                       | Extract entities from a session transcript       |
 
 ## TUI
@@ -319,6 +326,13 @@ serve:
   transport: stdio # stdio or sse
   port: 3333 # SSE mode only
 
+# Output trust — quarantine query outputs until verified
+# trust:
+#   include_outputs: false       # "false" (default), "verified", "true" (legacy)
+#   consensus_threshold: 3       # confirmations for auto-promote
+#   grounding_threshold: 0.8     # min grounding score (0.0-1.0)
+#   similarity_threshold: 0.85   # question matching threshold
+#   auto_promote: true           # auto-promote when all thresholds met
 
 # Ontology types (optional)
 # Extend built-in types with additional synonyms or add custom types.
@@ -455,6 +469,49 @@ api:
 All commands will use your subscription credentials. Tokens refresh automatically. If a token expires and can't refresh, sage-wiki falls back to `api_key` with a warning.
 
 **Limitations:** Batch mode is unavailable with subscription auth (auto-disabled). Some models may not be accessible via subscription tokens. See the [subscription auth guide](docs/guides/subscription-auth.md) for details.
+
+## Output Trust
+
+When sage-wiki answers a question, the answer is an LLM-generated claim, not a verified fact. Without safeguards, wrong answers get indexed into the wiki and pollute future queries. The output trust system quarantines new outputs and requires verification before they enter the searchable corpus.
+
+```yaml
+# config.yaml
+trust:
+  include_outputs: verified  # "false" (exclude all), "verified" (confirmed only), "true" (legacy)
+  consensus_threshold: 3     # confirmations needed for auto-promote
+  grounding_threshold: 0.8   # minimum grounding score
+  similarity_threshold: 0.85 # cosine similarity for question matching
+  auto_promote: true          # auto-promote when thresholds met
+```
+
+**How it works:**
+
+1. **Query** — sage-wiki answers your question. The output is written to `wiki/under_review/` as pending.
+2. **Consensus** — If the same question is asked again and produces the same answer from different source chunks, confirmations accumulate. Independence is scored via Jaccard distance between chunk sets.
+3. **Grounding** — Run `sage-wiki verify` to check claims against source passages via LLM entailment.
+4. **Promotion** — When both consensus and grounding thresholds are met, the output is promoted to `wiki/outputs/` and indexed into search.
+
+```bash
+# Check pending outputs
+sage-wiki outputs list
+
+# Run grounding verification
+sage-wiki verify --all
+
+# Manually promote a trusted output
+sage-wiki outputs promote 2026-05-09-what-is-attention.md
+
+# Resolve a conflict (promote one, reject others)
+sage-wiki outputs resolve 2026-05-09-what-is-attention.md
+
+# Clean up old pending outputs
+sage-wiki outputs clean --older-than 90d
+
+# Migrate existing outputs into the trust system
+sage-wiki outputs migrate
+```
+
+Source changes during `sage-wiki compile` automatically demote confirmed outputs when their cited sources are modified. See the [output trust guide](docs/guides/output-trust.md) for the full architecture, configuration reference, and troubleshooting.
 
 ## Scaling to Large Vaults
 

@@ -139,6 +139,13 @@ docker run -d -p 3333:3333 -v ./my-wiki:/wiki -e GEMINI_API_KEY=... sage-wiki
 | `sage-wiki auth import --provider <name>`                                               | 从已有 CLI 工具导入凭证              |
 | `sage-wiki auth status`                                                                 | 显示已存储的订阅凭证                  |
 | `sage-wiki auth logout --provider <name>`                                               | 删除已存储的凭证                      |
+| `sage-wiki verify [--all] [--since 7d] [--limit 20]`                                   | 对待审核的输出进行事实验证            |
+| `sage-wiki outputs list [--state pending\|confirmed\|conflict\|stale]`                  | 按信任状态列出输出                    |
+| `sage-wiki outputs promote <id>`                                                        | 手动将输出提升为已确认                |
+| `sage-wiki outputs reject <id>`                                                         | 拒绝并删除待审核输出                  |
+| `sage-wiki outputs resolve <id>`                                                        | 确认一个答案,拒绝其他冲突答案        |
+| `sage-wiki outputs clean [--older-than 90d]`                                            | 清理过期的待审核输出                  |
+| `sage-wiki outputs migrate`                                                             | 将现有输出迁移到信任系统              |
 | `sage-wiki scribe <session-file>`                                                       | 从会话记录中提取实体                  |
 
 ## TUI
@@ -432,6 +439,46 @@ api:
 所有命令将使用你的订阅凭证。Token 会自动刷新。如果 token 过期且无法刷新,sage-wiki 会回退到 `api_key` 并发出警告。
 
 **限制:** 订阅认证不支持 batch 模式(自动禁用)。部分模型可能无法通过订阅 token 访问。详见[订阅认证指南](docs/guides/subscription-auth.md)。
+
+## 输出信任系统
+
+当 sage-wiki 回答问题时,答案是 LLM 生成的声明,而非经过验证的事实。如果没有保护措施,错误的回答会被索引到 wiki 中,污染后续查询。输出信任系统将新输出隔离,要求验证后才能进入可搜索的语料库。
+
+```yaml
+# config.yaml
+trust:
+  include_outputs: verified  # "false"(排除全部）, "verified"（仅已确认）, "true"（传统模式）
+  consensus_threshold: 3     # 自动提升所需的确认次数
+  grounding_threshold: 0.8   # 最低事实性评分
+  similarity_threshold: 0.85 # 问题匹配的余弦相似度阈值
+  auto_promote: true          # 满足阈值时自动提升
+```
+
+**工作原理:**
+
+1. **查询** — sage-wiki 回答你的问题。输出以待审核状态写入 `wiki/under_review/`。
+2. **共识** — 如果同一问题再次被问到并从不同的源 chunk 产生相同答案,确认次数累积。独立性通过 chunk 集合的 Jaccard 距离评分。
+3. **事实验证** — 运行 `sage-wiki verify` 通过 LLM 蕴含检查比对源文段中的声明。
+4. **提升** — 当共识和事实验证阈值都满足时,输出被提升到 `wiki/outputs/` 并索引到搜索中。
+
+```bash
+# 查看待审核输出
+sage-wiki outputs list
+
+# 运行事实验证
+sage-wiki verify --all
+
+# 手动提升已信任的输出
+sage-wiki outputs promote 2026-05-09-what-is-attention.md
+
+# 解决冲突（提升一个,拒绝其他）
+sage-wiki outputs resolve 2026-05-09-what-is-attention.md
+
+# 清理过期的待审核输出
+sage-wiki outputs clean --older-than 90d
+```
+
+编译期间源文件变更会自动降级已确认的输出。详见[输出信任指南](docs/guides/output-trust.md)。
 
 ## 大规模知识库扩展
 

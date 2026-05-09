@@ -23,12 +23,12 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 5 {
-		t.Errorf("expected schema version 5, got %d", version)
+	if version != 6 {
+		t.Errorf("expected schema version 6, got %d", version)
 	}
 
 	// Verify tables exist
-	tables := []string{"entries", "vec_entries", "entities", "relations", "learnings", "chunks_meta", "chunks_fts", "vec_chunks", "compile_items"}
+	tables := []string{"entries", "vec_entries", "entities", "relations", "learnings", "chunks_meta", "chunks_fts", "vec_chunks", "compile_items", "pending_outputs", "confirmation_sources"}
 	for _, table := range tables {
 		var name string
 		err := db.ReadDB().QueryRow(
@@ -62,8 +62,8 @@ func TestIdempotentMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 5 {
-		t.Errorf("expected 5 schema_version rows, got %d", count)
+	if count != 6 {
+		t.Errorf("expected 6 schema_version rows, got %d", count)
 	}
 }
 

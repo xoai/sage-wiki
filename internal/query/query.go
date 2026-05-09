@@ -21,6 +21,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/search"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -29,6 +30,7 @@ type QueryResult struct {
 	Question    string
 	Answer      string
 	Sources     []string // article paths used
+	ChunksUsed  []string // chunk IDs used in context
 	Format      string   // markdown, terminal, marp
 	OutputPath  string   // if auto-filed
 }
@@ -69,7 +71,7 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 		defer db.Close()
 	}
 
-	contextStr, sources, err := buildQueryContext(projectDir, question, topK, cfg, db)
+	contextStr, sources, chunkIDs, err := buildQueryContext(projectDir, question, topK, cfg, db)
 	if err != nil {
 		return nil, err
 	}
@@ -113,10 +115,11 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 	}
 
 	result := &QueryResult{
-		Question: question,
-		Answer:   resp.Content,
-		Sources:  sources,
-		Format:   format,
+		Question:   question,
+		Answer:     resp.Content,
+		Sources:    sources,
+		ChunksUsed: chunkIDs,
+		Format:     format,
 	}
 
 	// Auto-file to outputs/
@@ -127,7 +130,8 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
 	embedder := embed.NewFromConfig(cfg)
 	chunkStore := memory.NewChunkStore(db)
-	outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode()})
+	trustCfg := cfg.Trust
+	outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode(), TrustCfg: &trustCfg, Client: client, Model: model, ChunksUsed: chunkIDs})
 	if err != nil {
 		log.Warn("auto-filing failed", "error", err)
 	} else {
@@ -138,8 +142,8 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 }
 
 // buildQueryContext runs hybrid search + ontology traversal and assembles
-// the article context string. Returns ("", nil, nil) if no results found.
-func buildQueryContext(projectDir string, question string, topK int, cfg *config.Config, db *storage.DB) (string, []string, error) {
+// the article context string. Returns ("", nil, nil, nil) if no results found.
+func buildQueryContext(projectDir string, question string, topK int, cfg *config.Config, db *storage.DB) (string, []string, []string, error) {
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
 	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
@@ -147,6 +151,11 @@ func buildQueryContext(projectDir string, question string, topK int, cfg *config
 	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
 	chunkStore := memory.NewChunkStore(db)
 	embedder := embed.NewFromConfig(cfg)
+
+	var trustStore *trust.Store
+	if cfg.Trust.IncludeOutputsMode() == "verified" {
+		trustStore = trust.NewStore(db)
+	}
 
 	var graphExpanded []graphExpandedArticle
 
@@ -186,12 +195,20 @@ func buildQueryContext(projectDir string, question string, topK int, cfg *config
 		if err != nil {
 			log.Warn("enhanced search failed, falling back to doc-level", "error", err)
 		} else if len(enhanced) > 0 {
+			// Collect chunk IDs for trust independence scoring
+			var chunkIDs []string
+			for _, r := range enhanced {
+				if r.ChunkID != "" {
+					chunkIDs = append(chunkIDs, r.ChunkID)
+				}
+			}
 			// Compute graph expansion from enhanced search seeds
 			if cfg.Search.GraphExpansionEnabled() {
 				seedIDs := extractSeedIDsFromEnhanced(enhanced)
 				graphExpanded = computeGraphExpansion(cfg, ontStore, seedIDs)
 			}
-			return buildContextFromEnhanced(projectDir, cfg.Output, enhanced, ontStore, graphExpanded, cfg.Search.ContextMaxTokensOrDefault(), cfg.Trust.IncludeOutputsMode())
+			ctx, srcs, err := buildContextFromEnhanced(projectDir, cfg.Output, enhanced, ontStore, graphExpanded, cfg.Search.ContextMaxTokensOrDefault(), cfg.Trust.IncludeOutputsMode(), trustStore)
+			return ctx, srcs, chunkIDs, err
 		}
 	} else if chunkCount == 0 {
 		count, _ := memStore.Count()
@@ -200,12 +217,13 @@ func buildQueryContext(projectDir string, question string, topK int, cfg *config
 		}
 	}
 
-	// Fallback: document-level hybrid search
-	return buildDocLevelContext(projectDir, question, topK, memStore, vecStore, ontStore, embedder, cfg, graphExpanded, cfg.Trust.IncludeOutputsMode())
+	// Fallback: document-level hybrid search (no chunk IDs)
+	ctx, srcs, err := buildDocLevelContext(projectDir, question, topK, memStore, vecStore, ontStore, embedder, cfg, graphExpanded, cfg.Trust.IncludeOutputsMode(), trustStore)
+	return ctx, srcs, nil, err
 }
 
 // buildContextFromEnhanced assembles article context from enhanced search results.
-func buildContextFromEnhanced(projectDir string, outputDir string, results []search.SearchResult, ontStore *ontology.Store, graphExpanded []graphExpandedArticle, maxTokens int, trustMode string) (string, []string, error) {
+func buildContextFromEnhanced(projectDir string, outputDir string, results []search.SearchResult, ontStore *ontology.Store, graphExpanded []graphExpandedArticle, maxTokens int, trustMode string, trustStore *trust.Store) (string, []string, error) {
 	var ctx strings.Builder
 	var sources []string
 	seen := map[string]bool{}
@@ -218,7 +236,7 @@ func buildContextFromEnhanced(projectDir string, outputDir string, results []sea
 
 	for _, r := range results {
 		docID := r.DocID
-		if !shouldIncludeOutput(docID, trustMode) {
+		if !shouldIncludeOutput(docID, trustMode, trustStore) {
 			continue
 		}
 		articlePath := docIDToArticlePath(docID, outputDir)
@@ -246,7 +264,7 @@ func buildContextFromEnhanced(projectDir string, outputDir string, results []sea
 
 	// Graph-expanded articles (higher quality than depth-1 BFS)
 	for _, ge := range graphExpanded {
-		if !shouldIncludeOutput(ge.EntityID, trustMode) {
+		if !shouldIncludeOutput(ge.EntityID, trustMode, trustStore) {
 			continue
 		}
 		if ge.ArticlePath == "" || seen[ge.ArticlePath] {
@@ -282,7 +300,7 @@ func buildContextFromEnhanced(projectDir string, outputDir string, results []sea
 			MaxDepth:  1,
 		})
 		for _, rel := range related {
-			if !shouldIncludeOutput(rel.ID, trustMode) {
+			if !shouldIncludeOutput(rel.ID, trustMode, trustStore) {
 				continue
 			}
 			if rel.ArticlePath != "" && !seen[rel.ArticlePath] {
@@ -310,7 +328,7 @@ func buildContextFromEnhanced(projectDir string, outputDir string, results []sea
 // buildDocLevelContext is the original document-level search path.
 func buildDocLevelContext(projectDir string, question string, topK int,
 	memStore *memory.Store, vecStore *vectors.Store, ontStore *ontology.Store,
-	embedder embed.Embedder, cfg *config.Config, graphExpanded []graphExpandedArticle, trustMode string) (string, []string, error) {
+	embedder embed.Embedder, cfg *config.Config, graphExpanded []graphExpandedArticle, trustMode string, trustStore *trust.Store) (string, []string, error) {
 
 	searcher := hybrid.NewSearcher(memStore, vecStore)
 
@@ -348,7 +366,7 @@ func buildDocLevelContext(projectDir string, question string, topK int,
 	seen := map[string]bool{}
 
 	for _, r := range results {
-		if !shouldIncludeOutput(r.ID, trustMode) {
+		if !shouldIncludeOutput(r.ID, trustMode, trustStore) {
 			continue
 		}
 		if r.ArticlePath == "" || seen[r.ArticlePath] {
@@ -375,7 +393,7 @@ func buildDocLevelContext(projectDir string, question string, topK int,
 
 	// Graph-expanded articles
 	for _, ge := range graphExpanded {
-		if !shouldIncludeOutput(ge.EntityID, trustMode) {
+		if !shouldIncludeOutput(ge.EntityID, trustMode, trustStore) {
 			continue
 		}
 		if ge.ArticlePath == "" || seen[ge.ArticlePath] {
@@ -414,7 +432,7 @@ func buildDocLevelContext(projectDir string, question string, topK int,
 			MaxDepth:  1,
 		})
 		for _, rel := range related {
-			if !shouldIncludeOutput(rel.ID, trustMode) {
+			if !shouldIncludeOutput(rel.ID, trustMode, trustStore) {
 				continue
 			}
 			if rel.ArticlePath != "" && !seen[rel.ArticlePath] {
@@ -439,11 +457,22 @@ func buildDocLevelContext(projectDir string, question string, topK int,
 	return ctx.String(), sources, nil
 }
 
-func shouldIncludeOutput(id string, mode string) bool {
+func shouldIncludeOutput(id string, mode string, ts *trust.Store) bool {
 	if !strings.HasPrefix(id, "output:") {
 		return true
 	}
-	return mode == "true"
+	switch mode {
+	case "true":
+		return true
+	case "verified":
+		if ts == nil {
+			return false
+		}
+		docID := strings.TrimPrefix(id, "output:")
+		return ts.IsConfirmed(docID)
+	default:
+		return false
+	}
 }
 
 // docIDToArticlePath converts a doc ID like "concept:my-concept" to "{outputDir}/concepts/my-concept.md".
@@ -486,21 +515,72 @@ func SaveAnswer(projectDir string, question string, answer string, sources []str
 		Sources:  sources,
 		Format:   "markdown",
 	}
-	return autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode()})
+	var saveClient *llm.Client
+	saveModel := cfg.Models.Query
+	if cfg.Trust.IncludeOutputsMode() != "true" {
+		saveClient, _ = auth.NewLLMClient(cfg)
+	}
+	saveTrustCfg := cfg.Trust
+	return autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode(), TrustCfg: &saveTrustCfg, Client: saveClient, Model: saveModel})
 }
 
 // autoFileOpts holds optional stores for chunk indexing in autoFile.
 type autoFileOpts struct {
-	TrustMode string // "false", "verified", "true" — when not "true", skip indexing
+	TrustMode  string // "false", "verified", "true" — when not "true", skip indexing
 	ChunkStore *memory.ChunkStore
 	DB         *storage.DB
 	ChunkSize  int // tokens per chunk (0 = default 800)
+	TrustCfg   *config.TrustConfig
+	Client     *llm.Client
+	Model      string
+	ChunksUsed []string
 }
 
 // autoFile saves the query result to wiki/outputs/ with frontmatter.
 func autoFile(projectDir string, outputDir string, result *QueryResult,
 	memStore *memory.Store, vecStore *vectors.Store, ontStore *ontology.Store,
 	embedder embed.Embedder, userNow string, opts ...autoFileOpts) (string, error) {
+
+	// Check trust mode BEFORE writing any file — trust modes delegate to
+	// ProcessOutput which writes to under_review/, never to outputs/.
+	trustMode := "true"
+	if len(opts) > 0 && opts[0].TrustMode != "" {
+		trustMode = opts[0].TrustMode
+	}
+	if trustMode != "true" {
+		if len(opts) > 0 && opts[0].DB != nil {
+			trustCfg := config.TrustConfig{}
+			if opts[0].TrustCfg != nil {
+				trustCfg = *opts[0].TrustCfg
+			}
+			poResult, err := trust.ProcessOutput(trust.ProcessOutputOpts{
+				ProjectDir: projectDir,
+				OutputDir:  outputDir,
+				Question:   result.Question,
+				Answer:     result.Answer,
+				Sources:    result.Sources,
+				ChunksUsed: opts[0].ChunksUsed,
+				Embedder:   embedder,
+				Client:     opts[0].Client,
+				Model:      opts[0].Model,
+				Cfg:        trustCfg,
+				DB:         opts[0].DB,
+				Stores: trust.IndexStores{
+					MemStore: memStore, VecStore: vecStore, OntStore: ontStore,
+					ChunkStore: opts[0].ChunkStore, DB: opts[0].DB,
+					ChunkSize: opts[0].ChunkSize,
+				},
+				UserNow: userNow,
+			})
+			if err != nil {
+				log.Warn("trust ProcessOutput failed", "error", err)
+				return "", err
+			}
+			log.Info("trust pipeline", "action", poResult.Action, "id", poResult.OutputID)
+			return poResult.FilePath, nil
+		}
+		return "", nil
+	}
 
 	outputsDir := filepath.Join(projectDir, outputDir, "outputs")
 	os.MkdirAll(outputsDir, 0755)
@@ -522,17 +602,6 @@ format: %s
 
 	if err := os.WriteFile(absPath, []byte(frontmatter+result.Answer), 0644); err != nil {
 		return "", err
-	}
-
-	// Skip indexing when output trust is enabled (not "true" / legacy mode).
-	// File is still written to disk for human reference.
-	trustMode := "true" // default: legacy behavior
-	if len(opts) > 0 && opts[0].TrustMode != "" {
-		trustMode = opts[0].TrustMode
-	}
-	if trustMode != "true" {
-		log.Info("query result filed (not indexed — trust mode)", "path", relPath)
-		return relPath, nil
 	}
 
 	// Index in FTS5
@@ -647,7 +716,7 @@ func StreamQuery(ctx context.Context, projectDir string, question string, topK i
 		defer db.Close()
 	}
 
-	contextStr, sources, err := buildQueryContext(projectDir, question, topK, cfg, db)
+	contextStr, sources, streamChunkIDs, err := buildQueryContext(projectDir, question, topK, cfg, db)
 	if err != nil {
 		return nil, err
 	}
@@ -692,7 +761,8 @@ func StreamQuery(ctx context.Context, projectDir string, question string, topK i
 		ontStore := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
 		embedder := embed.NewFromConfig(cfg)
 		chunkStore := memory.NewChunkStore(db)
-		if outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode()}); err != nil {
+		streamTrustCfg := cfg.Trust
+		if outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode(), TrustCfg: &streamTrustCfg, Client: client, Model: model, ChunksUsed: streamChunkIDs}); err != nil {
 			log.Warn("stream auto-filing failed", "error", err)
 		} else {
 			log.Info("stream query result filed", "path", outputPath)

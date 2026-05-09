@@ -20,6 +20,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -423,6 +424,21 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		vecCount, _ := vecStore.Count()
 		if ftsCount != vecCount {
 			log.Warn("FTS/vector mismatch after compile", "fts", ftsCount, "vec", vecCount, "embed_errors", result.EmbedErrors)
+		}
+	}
+
+	// Check for source changes that invalidate confirmed outputs
+	if cfg.Trust.IncludeOutputsMode() == "verified" {
+		trustStore := trust.NewStore(db)
+		stores := trust.IndexStores{
+			MemStore: memStore, VecStore: vecStore, OntStore: pipelineOntStore,
+			ChunkStore: chunkStore, DB: db,
+		}
+		demoted, err := trust.CheckSourceChanges(trustStore, projectDir, &stores)
+		if err != nil {
+			log.Warn("trust source check failed", "error", err)
+		} else if demoted > 0 {
+			log.Info("demoted stale outputs", "count", demoted)
 		}
 	}
 
@@ -833,6 +849,24 @@ func resumeBatch(
 
 	if err := writeChangelog(projectDir, cfg.Output, result, cfg.Compiler.UserTimeLocation()); err != nil {
 		log.Warn("failed to write CHANGELOG", "error", err)
+	}
+
+	// Check for source changes that invalidate confirmed outputs
+	if cfg.Trust.IncludeOutputsMode() == "verified" {
+		trustStore := trust.NewStore(db)
+		batchMerged := ontology.MergedRelations(cfg.Ontology.Relations)
+		batchMergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+		stores := trust.IndexStores{
+			MemStore: memStore, VecStore: vecStore,
+			OntStore: ontology.NewStore(db, ontology.ValidRelationNames(batchMerged), ontology.ValidEntityTypeNames(batchMergedTypes)),
+			ChunkStore: chunkStore, DB: db,
+		}
+		demoted, err := trust.CheckSourceChanges(trustStore, projectDir, &stores)
+		if err != nil {
+			log.Warn("trust source check failed", "error", err)
+		} else if demoted > 0 {
+			log.Info("demoted stale outputs", "count", demoted)
+		}
 	}
 
 	// Clean up checkpoint
