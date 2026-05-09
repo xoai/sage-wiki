@@ -61,11 +61,11 @@ func (c *Client) ChatCompletionStream(ctx context.Context, messages []Message, o
 
 		line := scanner.Text()
 
-		if !strings.HasPrefix(line, "data: ") {
+		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
 
-		data := strings.TrimPrefix(line, "data: ")
+		data := strings.TrimPrefix(line, "data:")
 		if data == "[DONE]" {
 			break
 		}
