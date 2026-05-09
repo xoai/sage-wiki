@@ -146,6 +146,7 @@ func (db *DB) migrate() error {
 		{sql: migrationV3},
 		{sql: migrationV4, disableFK: true},
 		{sql: migrationV5},
+		{sql: migrationV6},
 	}
 
 	for i := version; i < len(migrations); i++ {
@@ -378,4 +379,46 @@ CREATE INDEX IF NOT EXISTS idx_ci_type ON compile_items(file_type);
 CREATE INDEX IF NOT EXISTS idx_ci_compile ON compile_items(compile_id);
 CREATE INDEX IF NOT EXISTS idx_ci_hits ON compile_items(query_hit_count);
 CREATE INDEX IF NOT EXISTS idx_ci_queried ON compile_items(last_queried_at);
+`
+
+// migrationV6 adds the output trust system tables.
+const migrationV6 = `
+CREATE TABLE IF NOT EXISTS pending_outputs (
+	id TEXT PRIMARY KEY,
+	question TEXT NOT NULL,
+	question_hash TEXT NOT NULL,
+	answer TEXT NOT NULL,
+	answer_hash TEXT NOT NULL,
+	state TEXT NOT NULL DEFAULT 'pending',
+	confirmations INTEGER NOT NULL DEFAULT 1,
+	grounding_score REAL,
+	sources_hash TEXT,
+	sources_used TEXT,
+	file_path TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	promoted_at TEXT,
+	demoted_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_outputs_question_hash
+	ON pending_outputs(question_hash);
+CREATE INDEX IF NOT EXISTS idx_pending_outputs_state
+	ON pending_outputs(state);
+
+CREATE TABLE IF NOT EXISTS confirmation_sources (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	output_id TEXT NOT NULL REFERENCES pending_outputs(id),
+	chunk_ids TEXT NOT NULL,
+	answer_hash TEXT NOT NULL,
+	confirmed_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_confirmation_sources_output
+	ON confirmation_sources(output_id);
+
+CREATE TABLE IF NOT EXISTS pending_questions_vec (
+	question_hash TEXT PRIMARY KEY,
+	embedding BLOB NOT NULL,
+	dimensions INTEGER NOT NULL
+);
 `
