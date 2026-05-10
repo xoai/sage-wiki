@@ -28,42 +28,31 @@ var skillPreviewCmd = &cobra.Command{
 
 func init() {
 	skillRefreshCmd.Flags().String("target", "claude-code", "Agent target (claude-code, cursor, windsurf, agents-md, codex, gemini, generic)")
-	skillRefreshCmd.Flags().String("pack", "", "Override domain pack")
-
 	skillPreviewCmd.Flags().String("target", "claude-code", "Agent target")
-	skillPreviewCmd.Flags().String("pack", "", "Override domain pack")
 
 	skillCmd.AddCommand(skillRefreshCmd, skillPreviewCmd)
 }
 
-func loadSkillConfig(cmd *cobra.Command) (*config.Config, skill.AgentTarget, skill.PackName, error) {
+func loadSkillConfig(cmd *cobra.Command) (*config.Config, skill.AgentTarget, error) {
 	dir, _ := filepath.Abs(projectDir)
 	cfgPath := resolveConfigPath(dir)
 
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("no config.yaml found; run sage-wiki init first")
+		return nil, "", fmt.Errorf("no config.yaml found; run sage-wiki init first")
 	}
 
 	targetStr, _ := cmd.Flags().GetString("target")
 	target := skill.AgentTarget(targetStr)
 	if _, err := skill.TargetInfoFor(target); err != nil {
-		return nil, "", "", err
+		return nil, "", err
 	}
 
-	packStr, _ := cmd.Flags().GetString("pack")
-	var pack skill.PackName
-	if packStr != "" {
-		pack = skill.PackName(packStr)
-	} else {
-		pack = skill.SelectPack(cfg.Sources)
-	}
-
-	return cfg, target, pack, nil
+	return cfg, target, nil
 }
 
 func runSkillRefresh(cmd *cobra.Command, args []string) error {
-	cfg, target, pack, err := loadSkillConfig(cmd)
+	cfg, target, err := loadSkillConfig(cmd)
 	if err != nil {
 		return err
 	}
@@ -71,7 +60,7 @@ func runSkillRefresh(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
 	data := skill.BuildTemplateData(cfg)
 
-	if err := skill.WriteSkill(dir, target, pack, data); err != nil {
+	if err := skill.WriteSkill(dir, target, data); err != nil {
 		return err
 	}
 
@@ -81,13 +70,13 @@ func runSkillRefresh(cmd *cobra.Command, args []string) error {
 }
 
 func runSkillPreview(cmd *cobra.Command, args []string) error {
-	cfg, target, pack, err := loadSkillConfig(cmd)
+	cfg, target, err := loadSkillConfig(cmd)
 	if err != nil {
 		return err
 	}
 
 	data := skill.BuildTemplateData(cfg)
-	out, err := skill.PreviewSkill(target, pack, data)
+	out, err := skill.PreviewSkill(target, data)
 	if err != nil {
 		return err
 	}

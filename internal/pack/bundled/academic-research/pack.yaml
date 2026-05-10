@@ -1,0 +1,37 @@
+name: academic-research
+version: 1.0.0
+description: Ontology and prompts for academic research papers, citations, and methodology tracking
+author: sage-wiki
+license: MIT
+tags:
+  - academic
+  - research
+  - citations
+  - papers
+config:
+  compiler:
+    default_tier: 3
+ontology:
+  entity_types:
+    - name: finding
+      description: A research finding, result, or conclusion from a study
+    - name: research_hypothesis
+      description: A research hypothesis or conjecture to be tested
+    - name: methodology
+      description: A research method, technique, or experimental approach
+  relation_types:
+    - name: cites
+      synonyms: [references, builds_on]
+    - name: contradicts
+      synonyms: [challenges, disputes, refutes]
+    - name: replicates
+      synonyms: [reproduces, confirms]
+    - name: extends
+      synonyms: [builds_upon, generalizes]
+prompts:
+  - summarize_paper.txt
+  - extract_methodology.txt
+skills:
+  - academic-research.md
+samples:
+  - example-paper-note.md

@@ -22,6 +22,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/memory"
 	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/pack"
 	"github.com/xoai/sage-wiki/internal/prompts"
 	tuidashboard "github.com/xoai/sage-wiki/internal/tui/dashboard"
 	"github.com/xoai/sage-wiki/internal/web"
@@ -153,7 +154,7 @@ func init() {
 	initCmd.Flags().Bool("prompts", false, "Scaffold prompt templates for customization")
 	initCmd.Flags().String("model", "gemini-2.5-flash", "Default LLM model for all tasks (e.g. gemini-2.5-flash, gemini-3.1-flash-lite)")
 	initCmd.Flags().String("skill", "", "Generate agent skill file (claude-code, cursor, windsurf, agents-md, codex, gemini, generic)")
-	initCmd.Flags().String("pack", "", "Override domain pack (codebase-memory, research-library, meeting-notes, documentation-curator)")
+	initCmd.Flags().String("pack", "", "Install a contribution pack during init")
 
 	// Compile flags
 	compileCmd.Flags().Bool("watch", false, "Watch for changes and recompile")
@@ -185,7 +186,7 @@ func init() {
 	// Query flags
 	queryCmd.Flags().String("scope", "local", "Query scope: local, global, or all")
 
-	rootCmd.AddCommand(initCmd, compileCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, scribeCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, sourceCmd, hubCmd, skillCmd)
+	rootCmd.AddCommand(initCmd, compileCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, scribeCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, sourceCmd, hubCmd, skillCmd, packCmd)
 }
 
 func resolveConfigPath(dir string) string {
@@ -269,6 +270,58 @@ func runInit(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Edit these files to customize how sage-wiki summarizes and writes articles.\n")
 	}
 
+	// Install and apply contribution pack if requested
+	packFlag, _ := cmd.Flags().GetString("pack")
+	if packFlag != "" {
+		fmt.Printf("Installing pack %q...\n", packFlag)
+		installSource := "local"
+		manifest, packDir, err := pack.Install(packFlag, "")
+		if err != nil {
+			if pack.ValidateName(packFlag) == nil && !isPathOrURL(packFlag) {
+				reg := pack.NewRegistry("")
+				manifest, packDir, err = reg.InstallFromRegistry(packFlag)
+				if err != nil {
+					return fmt.Errorf("pack %q not found locally or in registry: %w", packFlag, err)
+				}
+				installSource = "registry"
+			} else {
+				return fmt.Errorf("install pack: %w", err)
+			}
+		}
+		fmt.Printf("Installed %s v%s\n", manifest.Name, manifest.Version)
+
+		state, err := pack.LoadState(dir)
+		if err != nil {
+			state = &pack.PackState{}
+		}
+
+		applyMode := pack.ModeReplace
+		if cfgExists == nil {
+			applyMode = pack.ModeMerge
+		}
+
+		result, err := pack.Apply(dir, packDir, manifest, applyMode, state, pack.ApplyOpts{Source: installSource})
+		if err != nil {
+			return fmt.Errorf("apply pack: %w", err)
+		}
+		if err := state.Save(dir); err != nil {
+			return fmt.Errorf("save pack state: %w", err)
+		}
+
+		if len(result.ConfigChanges) > 0 {
+			fmt.Printf("Config updated: %v\n", result.ConfigChanges)
+		}
+		if len(result.OntologyAdded) > 0 {
+			fmt.Printf("Ontology extended: %v\n", result.OntologyAdded)
+		}
+		if len(result.PromptsAdded) > 0 {
+			fmt.Printf("Prompts added: %v\n", result.PromptsAdded)
+		}
+		if len(result.SamplesAdded) > 0 {
+			fmt.Printf("Samples added: %v\n", result.SamplesAdded)
+		}
+	}
+
 	// Generate agent skill file if requested
 	if skillTarget != "" {
 		target := skill.AgentTarget(skillTarget)
@@ -282,16 +335,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("load config for skill generation: %w", err)
 		}
 
-		packOverride, _ := cmd.Flags().GetString("pack")
-		var pack skill.PackName
-		if packOverride != "" {
-			pack = skill.PackName(packOverride)
-		} else {
-			pack = skill.SelectPack(cfg.Sources)
-		}
-
 		data := skill.BuildTemplateData(cfg)
-		if err := skill.WriteSkill(dir, target, pack, data); err != nil {
+		if err := skill.WriteSkill(dir, target, data); err != nil {
 			return fmt.Errorf("write skill file: %w", err)
 		}
 		fmt.Printf("Agent skill written to %s\n", info.FileName)

@@ -29,17 +29,18 @@ type SummaryResult struct {
 
 // SummarizeOpts configures a summarization pass.
 type SummarizeOpts struct {
-	Ctx         context.Context // optional; checked between sources for cancellation
-	ProjectDir  string
-	OutputDir   string
-	Sources     []SourceInfo
-	Client      *llm.Client
-	Model       string
-	MaxTokens   int
-	MaxParallel int
-	UserTZ      *time.Location
-	Language    string
+	Ctx          context.Context // optional; checked between sources for cancellation
+	ProjectDir   string
+	OutputDir    string
+	Sources      []SourceInfo
+	Client       *llm.Client
+	Model        string
+	MaxTokens    int
+	MaxParallel  int
+	UserTZ       *time.Location
+	Language     string
 	Backpressure *BackpressureController // optional; if nil, uses fixed semaphore
+	ExtractOpts  []extract.ExtractOpts   // optional; passed to extract.Extract
 }
 
 // Summarize processes sources through Pass 1, producing summaries.
@@ -94,7 +95,7 @@ func Summarize(opts SummarizeOpts) []SummaryResult {
 			defer wg.Done()
 			defer release()
 
-			result := summarizeOne(opts.ProjectDir, opts.OutputDir, info, opts.Client, opts.Model, opts.MaxTokens, opts.UserTZ, opts.Language)
+			result := summarizeOne(opts.ProjectDir, opts.OutputDir, info, opts.Client, opts.Model, opts.MaxTokens, opts.UserTZ, opts.Language, opts.ExtractOpts...)
 			results[idx] = result
 
 			n := int(done.Add(1))
@@ -134,6 +135,7 @@ func summarizeOne(
 	maxTokens int,
 	userTZ *time.Location,
 	language string,
+	extractOpts ...extract.ExtractOpts,
 ) SummaryResult {
 	result := SummaryResult{SourcePath: info.Path}
 
@@ -174,7 +176,7 @@ func summarizeOne(
 
 	// Extract source content
 	absPath := filepath.Join(projectDir, info.Path)
-	content, err := extract.Extract(absPath, info.Type)
+	content, err := extract.Extract(absPath, info.Type, extractOpts...)
 	if err != nil {
 		result.Error = fmt.Errorf("extract: %w", err)
 		return result

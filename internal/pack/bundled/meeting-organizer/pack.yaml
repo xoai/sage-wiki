@@ -1,0 +1,37 @@
+name: meeting-organizer
+version: 1.0.0
+description: Ontology and prompts for meeting notes, action items, decisions, and follow-ups
+author: sage-wiki
+license: MIT
+tags:
+  - meetings
+  - notes
+  - action-items
+  - decisions
+config:
+  compiler:
+    default_tier: 2
+ontology:
+  entity_types:
+    - name: attendee
+      description: A person who participated in a meeting or discussion
+    - name: action_item
+      description: A task assigned during a meeting with an owner and deadline
+    - name: blocker
+      description: An issue preventing progress that was raised during a meeting
+  relation_types:
+    - name: decided
+      synonyms: [agreed, resolved, concluded]
+    - name: assigned_to
+      synonyms: [owned_by, responsible]
+    - name: blocked_by
+      synonyms: [waiting_on, depends_on]
+    - name: followed_up
+      synonyms: [revisited, checked_on]
+prompts:
+  - extract_meeting.txt
+  - extract_action_items.txt
+skills:
+  - meeting-organizer.md
+samples:
+  - example-meeting-notes.md

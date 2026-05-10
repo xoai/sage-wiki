@@ -90,7 +90,7 @@ func TestRunInit_InvalidSkillTarget(t *testing.T) {
 	}
 }
 
-func TestRunInit_PackOverride(t *testing.T) {
+func TestRunInit_WithPack(t *testing.T) {
 	dir := t.TempDir()
 	oldProjectDir := projectDir
 	projectDir = dir
@@ -103,17 +103,34 @@ func TestRunInit_PackOverride(t *testing.T) {
 	cmd.Flags().String("skill", "", "")
 	cmd.Flags().String("pack", "", "")
 	cmd.Flags().Set("skill", "claude-code")
-	cmd.Flags().Set("pack", "meeting-notes")
+	cmd.Flags().Set("pack", "meeting-organizer")
 
 	err := runInit(cmd, []string{})
 	if err != nil {
-		t.Fatalf("runInit with --pack override: %v", err)
+		t.Fatalf("runInit with --pack: %v", err)
 	}
 
+	// skill file should be generated (base template)
 	content, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
-	s := strings.ToLower(string(content))
-	if !strings.Contains(s, "meeting") {
-		t.Error("--pack meeting-notes should produce meeting-related content")
+	s := string(content)
+	if !strings.Contains(s, "wiki_search") {
+		t.Error("skill file should contain wiki_search")
+	}
+
+	// pack should be applied — check config has pack ontology
+	cfgData, _ := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	cs := string(cfgData)
+	if !strings.Contains(cs, "decided") && !strings.Contains(cs, "action_item") {
+		t.Error("config should contain meeting-organizer ontology types")
+	}
+
+	// pack state should be persisted
+	stateData, err := os.ReadFile(filepath.Join(dir, ".sage", "pack-state.yaml"))
+	if err != nil {
+		t.Fatal("pack-state.yaml should exist after init --pack")
+	}
+	if !strings.Contains(string(stateData), "meeting-organizer") {
+		t.Error("pack-state.yaml should record the applied pack")
 	}
 }
 

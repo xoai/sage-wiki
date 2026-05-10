@@ -34,6 +34,7 @@ type Config struct {
 	Serve       ServeConfig    `yaml:"serve"`
 	Ontology    OntologyConfig `yaml:"ontology,omitempty"`
 	Trust       TrustConfig    `yaml:"trust,omitempty"`
+	Parsers     ParsersConfig  `yaml:"parsers,omitempty"`
 	TypeSignals []TypeSignal   `yaml:"type_signals,omitempty"`
 }
 
@@ -343,6 +344,12 @@ func (t TrustConfig) GroundingThresholdOrDefault() float64 {
 		return 0.8
 	}
 	return t.GroundingThreshold
+}
+
+// ParsersConfig controls external parser behavior.
+type ParsersConfig struct {
+	External      bool `yaml:"external,omitempty"`       // enable external parsers (default: false)
+	TrustExternal bool `yaml:"trust_external,omitempty"` // acknowledge that external parsers run unsandboxed code (default: false)
 }
 
 // SimilarityThresholdOrDefault returns the similarity threshold or 0.85 if not set.

@@ -191,93 +191,57 @@ For agents without a skill file convention, generate a generic skill and include
 sage-wiki skill preview --target generic > sage-wiki-skill.md
 ```
 
-## Skill Packs
+## Domain Skills via Contribution Packs
 
-sage-wiki ships 4 domain-specific skill packs. Each generates different behavioral triggers, capture guidelines, and query examples tailored to the domain.
+The base skill file (`sage-wiki init --skill claude-code`) provides generic MCP interaction guidance — when to search, what to capture, how to query. For domain-specific agent behavior, apply a **contribution pack**.
 
-### codebase-memory (default for code projects)
+sage-wiki ships 8 bundled packs, each with a `skills/` directory containing domain-specific triggers and capture patterns:
 
-For repositories. Teaches the agent to:
+| Pack | Domain | Agent learns to... |
+|------|--------|-------------------|
+| `academic-research` | Research papers | Search for related work, capture findings, trace citations |
+| `software-engineering` | Codebases | Check ADRs before changes, capture decisions, query dependencies |
+| `product-management` | PRDs & strategy | Find user stories, capture hypotheses, track validation results |
+| `personal-knowledge` | Zettelkasten | Connect ideas, refine fleeting notes, trace inspiration chains |
+| `study-group` | Textbook study | Check prerequisites, capture definitions, find examples |
+| `meeting-organizer` | Meeting notes | Prep with context, capture decisions, track action items |
+| `content-creation` | Editorial | Check for duplication, capture outlines, find references |
+| `legal-compliance` | Regulatory | Find applicable regulations, capture obligations, track deadlines |
 
-- Check wiki before modifying public APIs or cross-module interfaces
-- Capture ADR-style decisions after architectural changes
-- Query dependency relationships via ontology ("what depends on this module?")
-- Compile relevant topic clusters when search returns uncompiled sources
-- Use `wiki_provenance` to trace source-article relationships
-
-Trigger phrases: "refactor", "redesign", "why is this", "what depends on", "breaking change"
-
-MCP tools referenced: `wiki_search`, `wiki_read`, `wiki_status`, `wiki_ontology_query`, `wiki_learn`, `wiki_compile_topic`, `wiki_provenance`
-
-### research-library (default for article/paper projects)
-
-For research projects. Teaches the agent to:
-
-- Search wiki before answering domain questions — brain-first, not hallucinate-first
-- Capture new findings after reading papers or running experiments
-- Query prerequisite chains ("what do I need to understand before X?")
-- Query contradiction edges ("what challenges this claim?")
-- Compile on-demand when a topic cluster has enough uncompiled sources
-
-Trigger phrases: "related work", "prior art", "what's known about", "contradicts", "builds on"
-
-MCP tools referenced: `wiki_search`, `wiki_read`, `wiki_status`, `wiki_ontology_query`, `wiki_learn`, `wiki_capture`, `wiki_compile_topic`
-
-### meeting-notes (override only)
-
-For operational use. Select with `--pack meeting-notes`. Teaches the agent to:
-
-- Search wiki for person/company context before meetings
-- Capture decisions and action items after meetings
-- Generate pre-meeting briefings from wiki context
-- Enrich person pages when new information surfaces
-
-Trigger phrases: "prep me for", "what do we know about [person]", "meeting with", "action items"
-
-MCP tools referenced: `wiki_search`, `wiki_read`, `wiki_status`, `wiki_learn`, `wiki_capture`, `wiki_list`
-
-### documentation-curator (override only)
-
-For maintaining team documentation. Select with `--pack documentation-curator`. Teaches the agent to:
-
-- Check wiki before writing new docs (avoid duplication)
-- Capture new concepts and definitions when authoring guides
-- Link new documentation to existing concept articles via ontology
-- Flag stale or contradictory documentation via linter integration
-
-Trigger phrases: "document this", "write a guide", "update the docs", "what's documented about"
-
-MCP tools referenced: `wiki_search`, `wiki_read`, `wiki_status`, `wiki_ontology_query`, `wiki_learn`, `wiki_lint`, `wiki_compile_topic`
-
-### Auto-selection
-
-The generator picks a pack based on source types in your config.yaml:
-
-| Source types | Pack selected |
-|---|---|
-| All code | codebase-memory |
-| All article/paper | research-library |
-| Mixed code + article | codebase-memory |
-| Empty or auto-only | codebase-memory |
-
-Override with `--pack` for meeting-notes or documentation-curator:
+### Applying a domain pack
 
 ```bash
-sage-wiki init --skill claude-code --pack meeting-notes
+# During init
+sage-wiki init --skill claude-code --pack academic-research
+
+# Or on an existing project
+sage-wiki pack install academic-research
+sage-wiki pack apply academic-research
 ```
+
+The pack adds domain ontology (entity and relation types), prompt templates, sample sources, and a skill file. The skill file is copied to your project's `skills/` directory with domain-specific triggers like "search for related papers before citing a claim" or "capture decisions made during meetings."
+
+### Two-layer skill architecture
+
+The skill system has two layers:
+
+1. **Base skill** (generated by `--skill`) — generic MCP instructions rendered from your project's config.yaml. Written to CLAUDE.md/.cursorrules/etc. Covers tool names, entity types, relation types.
+
+2. **Domain skill** (from pack) — domain-specific triggers, capture patterns, and query examples. Copied to `skills/` during `pack apply`. Complements the base layer with contextual guidance.
+
+Both layers work together. The base skill teaches the agent *how* to use wiki tools. The domain skill teaches it *when* and *why* — in the language of your domain.
 
 ## What the Generator Produces
 
-The skill content is generated from your project's config.yaml, not hand-written. The generator reads:
+The base skill content is generated from your project's config.yaml, not hand-written. The generator reads:
 
 - **Project name** — referenced in the skill header
-- **Source types** — determines which pack to use and what triggers to emphasize
-- **Entity types** — built-in (concept, technique, source, claim, artifact) + custom types from `ontology.entity_types`
-- **Relation types** — built-in (implements, extends, contradicts, etc.) + custom from `ontology.relation_types`
+- **Source types** — listed for context
+- **Entity types** — built-in (concept, technique, source, claim, artifact) + custom types from `ontology.entity_types` + any types added by packs
+- **Relation types** — built-in (implements, extends, contradicts, etc.) + custom from `ontology.relation_types` + pack relations
 - **Graph expansion** — whether ontology queries are available (affects query examples)
-- **Default tier** — compilation tier (affects compile-on-demand guidance)
 
-The output is 30-50 lines of behavioral instructions with three sections: when to check, what to capture, how to query. It references MCP tool names but not full schemas (agents get those from MCP discovery).
+The output is ~30 lines of behavioral instructions with three sections: when to check, what to capture, how to query. It references MCP tool names but not full schemas (agents get those from MCP discovery). Domain-specific guidance comes from pack skill files in `skills/`.
 
 ### Marker-based updates
 
@@ -371,60 +335,47 @@ Session starts
 
 The difference between "sage-wiki is installed" and "sage-wiki is actively used" is entirely in whether this loop runs. The skill file is the bootstrap that starts it.
 
-## Adding a Custom Skill Pack
+## Adding Domain Skills to Your Own Pack
 
-Skill packs are Go templates embedded in the binary at `internal/skill/packs/`. To add a new pack:
+Domain skills are plain markdown files in the pack's `skills/` directory. Unlike the base skill template (which is a Go template with project-specific variables), pack skills are static — they use domain-specific language and reference the pack's ontology relations directly.
 
-1. Create `internal/skill/packs/your-pack-name.md.tmpl` following the three-section structure (when/what/how). Use Go `text/template` syntax for project-specific values:
+### Create a pack with a skill file
 
+```bash
+sage-wiki pack create my-domain
 ```
-## sage-wiki — project knowledge base
 
-This project ({{.Project}}) uses sage-wiki as its knowledge layer.
-Sources: {{.SourceTypes}}.
+Then add `skills/my-domain.md` to your pack directory:
 
-### When to check the wiki
+```markdown
+## My Domain — domain triggers
 
-[Your domain-specific triggers here]
+### When to search the wiki
 
-1. Call `wiki_search` with the relevant term
-2. Read articles with `wiki_read`{{if .HasOntology}}
-3. Use `wiki_ontology_query` for relationship queries{{end}}
+- Before [domain-specific trigger] → search for [what]
+- "What's known about X?" → search for [domain concept]
+
+### Domain-specific queries
+
+- Find [domain concept]: `wiki_search("query")`
+- Check [relationship]: `wiki_ontology_query` with relation "[your_relation]"
 
 ### What to capture
 
-[Your domain-specific capture guidelines]
-
-### How to query effectively
-
-- Entity types: {{range $i, $e := .EntityTypes}}{{if $i}}, {{end}}{{$e}}{{end}}{{if .HasOntology}}
-- Relation types: {{range $i, $r := .RelationTypes}}{{if $i}}, {{end}}{{$r}}{{end}}{{end}}
+- [Domain artifact] → `wiki_learn` type "[type]" with [what to include]
+- [Rich context] → `wiki_capture` from [source]
 ```
 
-2. Register the pack in `internal/skill/packs.go`:
+List the skill file in your `pack.yaml`:
 
-```go
-var packFiles = map[PackName]string{
-    // ...existing packs...
-    PackName("your-pack-name"): "packs/your-pack-name.md.tmpl",
-}
+```yaml
+skills:
+  - my-domain.md
 ```
 
-3. (Optional) Add auto-selection logic in `SelectPack()` in `internal/skill/skill.go`, or leave it as override-only via `--pack your-pack-name`.
+When users run `sage-wiki pack apply my-domain`, the skill file is copied to `skills/my-domain.md` in their project. Keep skills under 40 lines — focused triggers are more effective than comprehensive documentation.
 
-Available template variables:
-
-| Variable | Type | Description |
-|---|---|---|
-| `{{.Project}}` | string | Project name from config |
-| `{{.SourceTypes}}` | string | Comma-separated source types (e.g., "article, code") |
-| `{{.EntityTypes}}` | []string | Built-in + custom entity type names |
-| `{{.RelationTypes}}` | []string | Built-in + custom relation type names |
-| `{{.HasOntology}}` | bool | Whether ontology queries are available (always true) |
-| `{{.DefaultTier}}` | int | Default compilation tier (0-3) |
-| `{{.HasGraphExpansion}}` | bool | Whether graph-based search expansion is enabled |
-
-Keep packs under 50 lines. The agent reads this on every session start — bloating the context window wastes tokens and dilutes the behavioral signal.
+See [CONTRIBUTING.md](../../CONTRIBUTING.md) for the full pack authoring guide and schema reference.
 
 ## Tips for Effective Capture
 

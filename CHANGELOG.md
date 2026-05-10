@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.1.9 — 2026-05-10
+
+### Contribution Packs
+
+Installable configuration profiles that bundle ontology types, prompts, and sample sources for specific domains. Packs are composable, versioned, and work offline.
+
+- **8 bundled packs** — `academic-research`, `software-engineering`, `product-management`, `personal-knowledge`, `study-group`, `meeting-organizer`, `content-creation`, `legal-compliance`. Embedded in the binary via `go:embed`, available offline.
+- **Pack lifecycle** — `pack install` (from local path, Git URL, registry, or bundled), `pack apply` (transactional with snapshot rollback), `pack remove` (restores pre-apply state), `pack update` (per-file diff with conflict detection).
+- **Git-based registry** — [sage-wiki-packs](https://github.com/xoai/sage-wiki-packs) repository with `index.yaml`. `pack search` queries the registry. Stale cache fallback on network failure.
+- **Pack authoring** — `pack create` scaffolds a new pack. `pack validate` checks schema, paths, ontology names, and config overlay safety. `pack conflicts` shows multi-pack file overlaps.
+- **Init integration** — `sage-wiki init --pack <name>` installs and applies a contribution pack during project setup. Uses replace mode for new projects, merge mode for existing ones.
+- **Fill-only merge** — Pack config overlays use fill-only semantics: pack values apply only where the project has no value. User config is never silently overwritten.
+- **Config allowlist** — Only safe config keys (compiler, search, linting, ontology, trust, type_signals, ignore) are allowed in pack overlays. Keys like api, embed, models, parsers, serve are stripped to prevent credential hijacking.
+- **Security hardening** — Path traversal protection (ValidateRelPath + symlink resolution), atomic cache replacement, transactional state persistence, source boundary enforcement (registry-only updates), parser opt-in via `--enable-parsers`.
+
+### External Parsers
+
+Runtime-pluggable file format parsers via stdin/stdout subprocess protocol. Add support for any file format by writing a parser script in any language.
+
+- **Stdin protocol** — sage-wiki pipes file content to stdin, parser writes plain text to stdout. No filesystem access needed.
+- **Sandboxed execution** — Timeout enforcement (30s default, 120s max), environment stripping (only PATH, HOME, LANG), network isolation via `CLONE_NEWNET` on Linux.
+- **`parsers/parser.yaml`** — Extension-to-command mapping. Relative script paths resolved against `parsers/` directory.
+- **Compiler integration** — External parsers checked after built-in format detection, before plain text fallback. Wired into all 5 Extract() call sites via `ExtractOpts` variadic pattern.
+- **Explicit opt-in** — Requires `parsers.external: true` in config. Packs with parsers require `--enable-parsers` flag during apply.
+
+### Skill System Simplification
+
+- **Presets removed** — The 4 domain-specific skill templates (`codebase-memory`, `research-library`, `meeting-notes`, `documentation-curator`) are removed. `sage-wiki init --skill claude-code` now renders a single generic base template with MCP tool guidance, entity types, and relation types from config.yaml.
+- **Domain skills in packs** — Domain-specific agent behavior (when to search for papers, how to capture meeting decisions, etc.) now lives in pack `skills/` directories. Apply a pack to get domain-specific triggers alongside the base skill.
+- **`--pack` flag simplified** — On `init`, `--pack` always means a contribution pack. No more ambiguity with skill presets. On `skill refresh/preview`, no `--pack` or `--preset` flags needed.
+
+### New Commands
+
+| Command | Description |
+|---------|-------------|
+| `pack install <name\|url>` | Install a pack from bundled, registry, local, or Git |
+| `pack apply <name>` | Apply an installed pack to the project |
+| `pack remove <name>` | Remove a pack and restore pre-apply state |
+| `pack list` | List applied, cached, and bundled packs |
+| `pack search <query>` | Search the pack registry |
+| `pack update [name]` | Update packs to latest versions |
+| `pack info <name>` | Show pack details |
+| `pack create <name>` | Scaffold a new pack directory |
+| `pack validate [path]` | Validate pack schema and files |
+| `pack conflicts` | Show multi-pack file overlaps |
+
+### Documentation
+
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — Guide for pack authors and parser contributors. Covers pack.yaml schema, directory structure, testing, registry submission, and external parser authoring.
+- **README updated** — Contribution packs section, external parsers section, updated commands table, architecture description.
+
+---
+
 ## 0.1.8 — 2026-05-09
 
 ### Output Trust System (issue #74)
@@ -86,7 +139,7 @@ Agents ignore sage-wiki's 17 MCP tools because nothing tells them *when* to use 
 - **`sage-wiki init --skill <agent>`** — Generate a skill file during project init. Supported agents: `claude-code`, `cursor`, `windsurf`, `agents-md`, `codex`, `gemini`, `generic`.
 - **`sage-wiki skill refresh`** — Regenerate the skill section on an existing project. Marker-based replacement preserves surrounding content.
 - **`sage-wiki skill preview`** — Preview the generated skill without writing files.
-- **4 domain packs** — `codebase-memory` (default for code projects), `research-library` (paper/article projects), `meeting-notes`, `documentation-curator`. Auto-selected from source types in config, overridable via `--pack`.
+- **4 domain packs** — `codebase-memory` (default for code projects), `research-library` (paper/article projects), `meeting-notes`, `documentation-curator`. Auto-selected from source types in config, overridable via `--pack`. *(Superseded in 0.1.9 by contribution packs with domain skills.)*
 - **Project-specific content** — Templates reference actual entity types, relation types, and MCP tools from your config.yaml.
 - **Safe on existing projects** — Running `init --skill` on an already-initialized project skips project creation and only generates the skill file.
 

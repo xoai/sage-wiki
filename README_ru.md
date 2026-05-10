@@ -50,6 +50,8 @@ go build -tags webui -o sage-wiki ./cmd/sage-wiki/
 
 Просто поместите файлы в папку источников — sage-wiki автоматически определит формат. Для изображений требуется LLM с поддержкой зрения (Gemini, Claude, GPT-4o).
 
+Нужен формат, которого нет в списке? sage-wiki поддерживает **внешние парсеры** — скрипты на любом языке, которые читают stdin и выводят текст в stdout. См. [Внешние парсеры](#внешние-парсеры) ниже.
+
 ## Быстрый старт
 
 ![Конвейер компилятора](sage-wiki-compiler-pipeline.png)
@@ -135,6 +137,15 @@ docker run -d -p 3333:3333 -v ./my-wiki:/wiki -e GEMINI_API_KEY=... sage-wiki
 | `sage-wiki capture "text"`                                                              | Извлечь знания из текста                         |
 | `sage-wiki add-source <path>`                                                           | Зарегистрировать файл-источник в манифесте       |
 | `sage-wiki skill <refresh\|preview> [--target <agent>]`                                 | Генерация или обновление файлов навыков агента   |
+| `sage-wiki pack install <name\|url>`                                                    | Установить пакет расширения                      |
+| `sage-wiki pack apply <name> [--mode merge\|replace]`                                   | Применить установленный пакет к проекту           |
+| `sage-wiki pack remove <name>`                                                          | Удалить пакет из проекта                         |
+| `sage-wiki pack list`                                                                   | Список применённых, кэшированных и встроенных пакетов |
+| `sage-wiki pack search <query>`                                                         | Поиск в реестре пакетов                          |
+| `sage-wiki pack update [name]`                                                          | Обновить установленные пакеты                    |
+| `sage-wiki pack info <name>`                                                            | Показать информацию о пакете                     |
+| `sage-wiki pack create <name>`                                                          | Создать каркас нового пакета                     |
+| `sage-wiki pack validate [path]`                                                        | Проверить схему и файлы пакета                   |
 | `sage-wiki auth login --provider <name>`                                                | OAuth-вход для авторизации по подписке            |
 | `sage-wiki auth import --provider <name>`                                               | Импорт учётных данных из существующих CLI-инструментов |
 | `sage-wiki auth status`                                                                 | Показать сохранённые учётные данные подписки     |
@@ -619,6 +630,44 @@ created_at: 2026-04-10T08:00:00+08:00
 
 Поля основной истины (`concept`, `aliases`, `sources`, `created_at`) всегда точны — они берутся из прохода извлечения, а не из LLM. Семантические поля (`confidence` + ваши пользовательские поля) отражают оценку LLM.
 
+## Пакеты расширения
+
+Пакеты — это устанавливаемые профили конфигурации, объединяющие типы онтологии, промпты и примеры источников для конкретных областей. sage-wiki включает 8 встроенных пакетов, работающих оффлайн:
+
+| Пакет | Аудитория | Ключевая онтология |
+|-------|-----------|-------------------|
+| `academic-research` | Исследователи | cites, contradicts, finding, hypothesis |
+| `software-engineering` | Команды разработки | implements, depends_on, adr, runbook |
+| `product-management` | Продуктовые менеджеры | addresses, prioritizes, user_story |
+| `personal-knowledge` | Управление заметками | relates_to, inspired_by, fleeting_note |
+| `study-group` | Студенты | explains, prerequisite_of, definition |
+| `meeting-organizer` | Менеджеры | decided, assigned_to, action_item |
+| `content-creation` | Авторы | references, revises, draft, published |
+| `legal-compliance` | Юристы | regulates, supersedes, policy, control |
+
+```bash
+sage-wiki init --pack academic-research
+sage-wiki pack install academic-research
+sage-wiki pack apply academic-research --mode merge
+sage-wiki pack list
+```
+
+Пакеты комбинируемы. Пакеты сообщества распространяются через реестр [sage-wiki-packs](https://github.com/xoai/sage-wiki-packs). См. [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Внешние парсеры
+
+sage-wiki включает встроенные парсеры для более чем 12 форматов. Для остальных форматов можно добавить внешний парсер в виде скрипта на любом языке. Протокол stdin/stdout.
+
+```yaml
+parsers:
+  - extensions: [".rtf"]
+    command: python3
+    args: ["rtf_parser.py"]
+    timeout: 30s
+```
+
+Безопасность: внешние парсеры выполняются с ограничением времени, очисткой переменных окружения и сетевой изоляцией на Linux. Требуется `parsers.external: true`. См. [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Файлы навыков агента
 
 sage-wiki имеет 17 MCP-инструментов, но агенты не будут их использовать, пока что-то в их контексте не укажет, *когда* обращаться к вики. Файлы навыков устраняют этот разрыв — сгенерированные фрагменты, которые обучают агентов, когда искать, что захватывать и как эффективно запрашивать.
@@ -638,13 +687,13 @@ sage-wiki skill preview --target cursor
 
 **Поддерживаемые агенты:** `claude-code`, `cursor`, `windsurf`, `agents-md` (Antigravity/Codex), `gemini`, `generic`
 
-**Доменные пакеты:** Генератор автоматически выбирает пакет на основе типов ваших источников:
-- `codebase-memory` — проекты с кодом (по умолчанию). Триггеры на изменения API, рефакторинг, критические изменения.
-- `research-library` — проекты со статьями/научными работами. Триггеры на вопросы по предметной области, связанные работы.
-- `meeting-notes` — оперативное использование (только переопределение: `--pack meeting-notes`).
-- `documentation-curator` — проекты документации (только переопределение: `--pack documentation-curator`).
+Файл навыков предоставляет базовый универсальный шаблон — когда искать, что сохранять, как запрашивать — используя типы сущностей и связей из config.yaml. Для доменного поведения агента (триггеры исследований, шаблоны захвата встреч и т.д.) примените [пакет расширения](#пакеты-расширения):
 
-Запуск `skill refresh` перегенерирует только отмеченную секцию навыков — ваше остальное содержимое сохраняется.
+```bash
+sage-wiki init --skill claude-code --pack academic-research
+```
+
+Директория `skills/` пакета добавляет доменные триггеры вместе с базовым навыком. Запуск `skill refresh` перегенерирует только отмеченную секцию навыков — ваше остальное содержимое сохраняется.
 
 ## Интеграция с MCP
 
@@ -797,6 +846,8 @@ python3 eval.py ./test-fixture
 - **TUI:** bubbletea + glamour — 4-вкладочная терминальная панель (обзор, поиск, Q&A, компиляция) с отображением распределения по уровням
 - **Веб-интерфейс:** Preact + Tailwind CSS, встроенный через `go:embed` с тегом сборки (`-tags webui`)
 - **Scribe:** Расширяемый интерфейс для извлечения знаний из разговоров. Session scribe обрабатывает JSONL-транскрипты Claude Code.
+- **Пакеты:** Система пакетов расширения — 8 встроенных пакетов, Git-реестр, жизненный цикл установки/применения/удаления/обновления, транзакционное применение с откатом через снимки.
+- **Внешние парсеры:** Подключаемые парсеры форматов файлов через subprocess-протокол stdin/stdout. Песочница с таймаутом, очисткой окружения и сетевой изоляцией.
 
 Без CGO. Чистый Go. Кроссплатформенный.
 

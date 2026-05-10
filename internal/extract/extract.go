@@ -27,8 +27,15 @@ type Chunk struct {
 	Heading string // section heading if available
 }
 
+// ExtractOpts provides optional configuration for extraction.
+type ExtractOpts struct {
+	ExternalParsers *ExternalRegistry
+	ParsersEnabled  bool // must be true AND ExternalParsers non-nil to use external parsers
+}
+
 // Extract reads and extracts text from a source file.
-func Extract(path string, sourceType string) (*SourceContent, error) {
+// Optional ExtractOpts can provide external parser support.
+func Extract(path string, sourceType string, opts ...ExtractOpts) (*SourceContent, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 
 	switch {
@@ -55,8 +62,35 @@ func Extract(path string, sourceType string) (*SourceContent, error) {
 	case isCodeFile(ext):
 		return extractCode(path)
 	default:
-		return extractPlainText(path, sourceType) // treat unknown as text
+		// try external parsers before plain text fallback
+		if len(opts) > 0 && opts[0].ParsersEnabled && opts[0].ExternalParsers != nil && opts[0].ExternalParsers.Supports(ext) {
+			return extractExternal(path, sourceType, ext, opts[0].ExternalParsers)
+		}
+		return extractPlainText(path, sourceType)
 	}
+}
+
+func extractExternal(path, sourceType, ext string, reg *ExternalRegistry) (*SourceContent, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading file for external parser: %w", err)
+	}
+
+	text, err := reg.Parse(data, ext)
+	if err != nil {
+		return nil, fmt.Errorf("external parser for %s: %w", ext, err)
+	}
+
+	if sourceType == "" || sourceType == "auto" {
+		sourceType = "article"
+	}
+
+	return &SourceContent{
+		Path:          path,
+		Type:          sourceType,
+		Text:          text,
+		ExtractEngine: "external",
+	}, nil
 }
 
 // EstimateTokens estimates token count for mixed-script text.

@@ -21,15 +21,6 @@ const (
 	TargetGeneric    AgentTarget = "generic"
 )
 
-type PackName string
-
-const (
-	PackCodebaseMemory      PackName = "codebase-memory"
-	PackResearchLibrary     PackName = "research-library"
-	PackMeetingNotes        PackName = "meeting-notes"
-	PackDocumentationCurator PackName = "documentation-curator"
-)
-
 type TemplateData struct {
 	Project           string
 	SourceTypes       string
@@ -65,22 +56,6 @@ func TargetInfoFor(target AgentTarget) (TargetInfo, error) {
 		return TargetInfo{}, fmt.Errorf("unknown agent target %q; supported: %s", target, supportedTargets)
 	}
 	return info, nil
-}
-
-func SelectPack(sources []config.Source) PackName {
-	var codeCount, docCount int
-	for _, s := range sources {
-		switch s.Type {
-		case "code":
-			codeCount++
-		case "article", "paper":
-			docCount++
-		}
-	}
-	if docCount > 0 && codeCount == 0 {
-		return PackResearchLibrary
-	}
-	return PackCodebaseMemory
 }
 
 func BuildTemplateData(cfg *config.Config) TemplateData {

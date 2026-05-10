@@ -271,11 +271,30 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		})
 	}
 
+	// Load external parsers if enabled and trusted
+	var exOpts []extract.ExtractOpts
+	if cfg.Parsers.External {
+		if !cfg.Parsers.TrustExternal {
+			fmt.Fprintln(os.Stderr, "Warning: parsers.external is true but parsers.trust_external is false.")
+			fmt.Fprintln(os.Stderr, "External parsers execute arbitrary code WITHOUT a sandbox on most systems.")
+			fmt.Fprintln(os.Stderr, "Set parsers.trust_external: true in config.yaml to acknowledge this risk.")
+		} else {
+			exReg, err := extract.LoadExternalParsers(projectDir)
+			if err != nil {
+				log.Warn("loading external parsers", "error", err)
+			} else if exReg.HasParsers() {
+				exReg.Trusted = true
+				fmt.Fprintln(os.Stderr, "External parsers enabled (trusted mode). Running parser code from this project.")
+				exOpts = []extract.ExtractOpts{{ExternalParsers: exReg, ParsersEnabled: true}}
+			}
+		}
+	}
+
 	// Tier 0: FTS5 index only (no LLM, ~5ms/doc)
 	tier0Pending, _ := itemStore.ListPending(0)
 	if len(tier0Pending) > 0 {
 		progress.StartPhase("Tier 0: Index sources", len(tier0Pending))
-		indexed := indexRawSources(projectDir, tier0Pending, memStore, itemStore)
+		indexed := indexRawSources(projectDir, tier0Pending, memStore, itemStore, exOpts...)
 		result.TierIndexed = indexed
 		log.Info("tier 0 indexing complete", "indexed", indexed)
 		progress.EndPhase()
@@ -285,7 +304,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	tier1Pending, _ := itemStore.ListPending(1)
 	if len(tier1Pending) > 0 {
 		progress.StartPhase("Tier 1: Index + embed sources", len(tier1Pending))
-		indexed, embedded := indexAndEmbedSources(projectDir, tier1Pending, memStore, vecStore, embedder, itemStore, bp, chunkStore, cfg.Search.ChunkSizeOrDefault(), db)
+		indexed, embedded := indexAndEmbedSources(projectDir, tier1Pending, memStore, vecStore, embedder, itemStore, bp, chunkStore, cfg.Search.ChunkSizeOrDefault(), db, exOpts...)
 		result.TierIndexed += indexed
 		result.TierEmbedded = embedded
 		log.Info("tier 1 indexing complete", "indexed", indexed, "embedded", embedded)
@@ -500,11 +519,21 @@ func submitBatch(
 		maxTokens = 2000
 	}
 
+	// Load external parsers for batch extraction
+	var batchExOpts []extract.ExtractOpts
+	if cfg.Parsers.External && cfg.Parsers.TrustExternal {
+		exReg, err := extract.LoadExternalParsers(projectDir)
+		if err == nil && exReg.HasParsers() {
+			exReg.Trusted = true
+			batchExOpts = []extract.ExtractOpts{{ExternalParsers: exReg, ParsersEnabled: true}}
+		}
+	}
+
 	// Build batch requests — extract content and render prompts
 	var requests []llm.BatchRequest
 	for _, src := range toProcess {
 		absPath := filepath.Join(projectDir, src.Path)
-		content, err := extract.Extract(absPath, src.Type)
+		content, err := extract.Extract(absPath, src.Type, batchExOpts...)
 		if err != nil {
 			log.Warn("batch: skip source (extract failed)", "path", src.Path, "error", err)
 			continue

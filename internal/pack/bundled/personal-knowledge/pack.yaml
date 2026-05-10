@@ -1,0 +1,38 @@
+name: personal-knowledge
+version: 1.0.0
+description: Ontology and prompts for Zettelkasten-style personal knowledge management
+author: sage-wiki
+license: MIT
+tags:
+  - personal
+  - knowledge
+  - zettelkasten
+  - notes
+config:
+  compiler:
+    default_tier: 2
+ontology:
+  entity_types:
+    - name: fleeting_note
+      description: A quick capture of an idea or observation, to be processed later
+    - name: permanent_note
+      description: A refined, atomic note expressing a single idea in your own words
+    - name: index_note
+      description: A structure note that organizes and connects other notes by topic
+  relation_types:
+    - name: relates_to
+      synonyms: [connects_to, links_to]
+    - name: inspired_by
+      synonyms: [sparked_by, prompted_by]
+    - name: develops
+      synonyms: [elaborates, refines, expands_on]
+    - name: contrasts_with
+      synonyms: [differs_from, opposes]
+prompts:
+  - extract_zettelkasten.txt
+  - distill_note.txt
+skills:
+  - personal-knowledge.md
+samples:
+  - example-fleeting-note.md
+  - example-permanent-note.md

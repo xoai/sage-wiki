@@ -50,6 +50,8 @@ go build -tags webui -o sage-wiki ./cmd/sage-wiki/
 
 ファイルをソースフォルダにドロップするだけ — sage-wikiがフォーマットを自動検出します。画像にはビジョン対応のLLM（Gemini、Claude、GPT-4o）が必要です。
 
+ここに記載されていないフォーマットが必要ですか？sage-wikiは**外部パーサー**をサポートしています — stdinを読み取りプレーンテキストをstdoutに書き出す任意の言語のスクリプトです。詳細は[外部パーサー](#外部パーサー)をご覧ください。
+
 ## クイックスタート
 
 ![コンパイラパイプライン](sage-wiki-compiler-pipeline.png)
@@ -135,6 +137,15 @@ Docker Compose、Syncthing同期、リバースプロキシ、LLMプロバイダ
 | `sage-wiki capture "text"`                                                              | テキストから知識をキャプチャ |
 | `sage-wiki add-source <path>`                                                           | マニフェストにソースファイルを登録 |
 | `sage-wiki skill <refresh\|preview> [--target <agent>]`                                 | エージェントスキルファイルの生成またはリフレッシュ |
+| `sage-wiki pack install <name\|url>`                                                    | コントリビューションパックのインストール |
+| `sage-wiki pack apply <name> [--mode merge\|replace]`                                   | インストール済みパックをプロジェクトに適用 |
+| `sage-wiki pack remove <name>`                                                          | プロジェクトからパックを削除 |
+| `sage-wiki pack list`                                                                   | 適用済み・キャッシュ済み・バンドル済みパック一覧 |
+| `sage-wiki pack search <query>`                                                         | パックレジストリを検索 |
+| `sage-wiki pack update [name]`                                                          | インストール済みパックを最新版に更新 |
+| `sage-wiki pack info <name>`                                                            | パックの詳細を表示 |
+| `sage-wiki pack create <name>`                                                          | 新しいパックディレクトリのスキャフォールド |
+| `sage-wiki pack validate [path]`                                                        | パックのスキーマとファイルを検証 |
 | `sage-wiki auth login --provider <name>`                                                | サブスクリプション認証用OAuthログイン |
 | `sage-wiki auth import --provider <name>`                                               | 既存のCLIツールから認証情報をインポート |
 | `sage-wiki auth status`                                                                 | 保存されたサブスクリプション認証情報を表示 |
@@ -619,6 +630,53 @@ created_at: 2026-04-10T08:00:00+08:00
 
 グラウンドトゥルースフィールド（`concept`、`aliases`、`sources`、`created_at`）は常に正確です — 抽出パスから取得され、LLMからではありません。セマンティックフィールド（`confidence` + カスタムフィールド）はLLMの判断を反映します。
 
+## コントリビューションパック
+
+パックは、特定のドメイン向けのオントロジー型、プロンプト、サンプルソースをバンドルするインストール可能な設定プロファイルです。sage-wikiには、オフラインで動作する8つのバンドルパックが付属しています：
+
+| パック | 対象 | 主なオントロジー |
+|------|------|-------------|
+| `academic-research` | 研究者 | cites, contradicts, finding, hypothesis |
+| `software-engineering` | 開発チーム | implements, depends_on, adr, runbook |
+| `product-management` | PM | addresses, prioritizes, user_story |
+| `personal-knowledge` | ノート管理 | relates_to, inspired_by, fleeting_note |
+| `study-group` | 学生 | explains, prerequisite_of, definition |
+| `meeting-organizer` | マネージャー | decided, assigned_to, action_item |
+| `content-creation` | ライター | references, revises, draft, published |
+| `legal-compliance` | 法務チーム | regulates, supersedes, policy, control |
+
+```bash
+# 初期化時にバンドルパックを適用
+sage-wiki init --pack academic-research
+
+# 既存プロジェクトにインストール・適用
+sage-wiki pack install academic-research
+sage-wiki pack apply academic-research --mode merge
+
+# 利用可能なパックを閲覧
+sage-wiki pack list
+sage-wiki pack search "research"
+```
+
+パックは組み合わせ可能です — 複数のパックを適用すると、オントロジー型はユニオンマージされます。コミュニティパックは[sage-wiki-packs](https://github.com/xoai/sage-wiki-packs)レジストリで配布されています。詳細は[CONTRIBUTING.md](CONTRIBUTING.md)をご覧ください。
+
+## 外部パーサー
+
+sage-wikiには12以上のフォーマットのビルトインパーサーがあります。それ以外のフォーマットには、任意の言語でスクリプトとして外部パーサーを追加できます。
+
+外部パーサーはstdin/stdoutプロトコルを使用します：sage-wikiがファイルの内容をstdinにパイプし、スクリプトがプレーンテキストをstdoutに出力します。
+
+```yaml
+# parsers/parser.yaml
+parsers:
+  - extensions: [".rtf"]
+    command: python3
+    args: ["rtf_parser.py"]
+    timeout: 30s
+```
+
+セキュリティ：外部パーサーはタイムアウト制限、環境変数のストリップ、Linuxでのネットワーク分離で実行されます。`parsers.external: true`による明示的なオプトインが必要です。詳細は[CONTRIBUTING.md](CONTRIBUTING.md)をご覧ください。
+
 ## エージェントスキルファイル
 
 sage-wikiには17のMCPツールがありますが、エージェントのコンテキストにWikiを*いつ*チェックすべきかを示すものがなければ、ツールは使用されません。スキルファイルはそのギャップを埋めます — エージェントに検索のタイミング、キャプチャすべき内容、効果的なクエリ方法を教える生成されたスニペットです。
@@ -638,13 +696,13 @@ sage-wiki skill preview --target cursor
 
 **対応エージェント：** `claude-code`、`cursor`、`windsurf`、`agents-md`（Antigravity/Codex）、`gemini`、`generic`
 
-**ドメインパック：** ジェネレーターはソースタイプに基づいてパックを自動選択します：
-- `codebase-memory` — コードプロジェクト（デフォルト）。API変更、リファクタリング、破壊的変更をトリガーとします。
-- `research-library` — 論文/記事プロジェクト。ドメインの質問、関連研究をトリガーとします。
-- `meeting-notes` — 運用用（オーバーライドのみ：`--pack meeting-notes`）。
-- `documentation-curator` — ドキュメンテーションプロジェクト（オーバーライドのみ：`--pack documentation-curator`）。
+スキルファイルは汎用的なベーステンプレートを提供します — いつ検索するか、何をキャプチャするか、どうクエリするか — config.yamlのエンティティ型とリレーション型を使用します。ドメイン固有のエージェント動作（研究トリガー、会議キャプチャパターンなど）には、[コントリビューションパック](#コントリビューションパック)を適用してください：
 
-`skill refresh`を実行すると、マークされたスキルセクションのみが再生成されます — 他のコンテンツは保持されます。
+```bash
+sage-wiki init --skill claude-code --pack academic-research
+```
+
+パックの`skills/`ディレクトリがベーススキルと共にドメイン固有のトリガーを追加します。`skill refresh`を実行すると、マーカー間のスキルセクションのみが再生成されます — 他のコンテンツは保持されます。
 
 ## MCP統合
 
@@ -797,6 +855,8 @@ python3 eval.py ./test-fixture
 - **TUI：** bubbletea + glamourの4タブターミナルダッシュボード（ブラウズ、検索、Q&A、コンパイル）。ティア分布表示付き。
 - **Web UI：** ビルドタグ（`-tags webui`）による`go:embed`で埋め込まれたPreact + Tailwind CSS
 - **Scribe：** 会話からの知識取り込み用拡張可能インターフェース。セッションScribeがClaude Code JSONLトランスクリプトを処理します。
+- **パック:** コントリビューションパックシステム — 8つのバンドルパック、Gitベースレジストリ、インストール/適用/削除/更新ライフサイクル、スナップショットロールバック付きトランザクショナル適用。
+- **外部パーサー:** stdin/stdoutサブプロセスプロトコルによるランタイムプラガブルファイルフォーマットパーサー。タイムアウト、環境ストリップ、ネットワーク分離によるサンドボックス実行。
 
 CGOなし。純粋Go。クロスプラットフォーム。
 

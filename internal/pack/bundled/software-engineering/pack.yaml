@@ -1,0 +1,38 @@
+name: software-engineering
+version: 1.0.0
+description: Ontology and prompts for codebases, ADRs, runbooks, and software architecture
+author: sage-wiki
+license: MIT
+tags:
+  - software
+  - engineering
+  - architecture
+  - adr
+config:
+  compiler:
+    default_tier: 3
+ontology:
+  entity_types:
+    - name: adr
+      description: An architecture decision record documenting a significant design choice
+    - name: runbook
+      description: An operational runbook or incident response procedure
+    - name: api_endpoint
+      description: A public API endpoint with its contract and behavior
+  relation_types:
+    - name: implements
+      synonyms: [realizes, fulfills]
+    - name: depends_on
+      synonyms: [requires, imports, uses]
+    - name: deprecates
+      synonyms: [supersedes, replaces]
+    - name: tests
+      synonyms: [verifies, validates]
+prompts:
+  - summarize_code.txt
+  - extract_adr.txt
+skills:
+  - software-engineering.md
+samples:
+  - example-adr.md
+  - example-runbook.md

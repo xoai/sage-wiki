@@ -1,0 +1,37 @@
+name: content-creation
+version: 1.0.0
+description: Ontology and prompts for editorial workflows, drafts, and content publishing
+author: sage-wiki
+license: MIT
+tags:
+  - content
+  - editorial
+  - writing
+  - publishing
+config:
+  compiler:
+    default_tier: 2
+ontology:
+  entity_types:
+    - name: draft
+      description: A work-in-progress piece of content not yet published
+    - name: published
+      description: A finalized and published piece of content
+    - name: editorial
+      description: An editorial note, style decision, or content guideline
+  relation_types:
+    - name: references
+      synonyms: [cites, links_to, mentions]
+    - name: revises
+      synonyms: [updates, corrects, amends]
+    - name: series_with
+      synonyms: [part_of, follows, continues]
+    - name: targets
+      synonyms: [written_for, aimed_at]
+prompts:
+  - summarize_editorial.txt
+  - extract_outline.txt
+skills:
+  - content-creation.md
+samples:
+  - example-blog-draft.md

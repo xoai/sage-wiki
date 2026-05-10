@@ -50,6 +50,8 @@ go build -tags webui -o sage-wiki ./cmd/sage-wiki/
 
 Just drop files into your source folder — sage-wiki detects the format automatically. Images require a vision-capable LLM (Gemini, Claude, GPT-4o).
 
+Need a format not listed here? sage-wiki supports **external parsers** — scripts in any language that read stdin and write plain text to stdout. See [External Parsers](#external-parsers) below.
+
 ## Quickstart
 
 ![Compiler Pipeline](sage-wiki-compiler-pipeline.png)
@@ -135,6 +137,16 @@ See the [self-hosting guide](docs/guides/self-hosted-server.md) for Docker Compo
 | `sage-wiki capture "text"`                                                              | Capture knowledge from text                      |
 | `sage-wiki add-source <path>`                                                           | Register a source file in the manifest           |
 | `sage-wiki skill <refresh\|preview> [--target <agent>]`                                 | Generate or refresh agent skill files            |
+| `sage-wiki pack install <name\|url>`                                                    | Install a contribution pack                      |
+| `sage-wiki pack apply <name> [--mode merge\|replace]`                                   | Apply an installed pack to the project           |
+| `sage-wiki pack remove <name>`                                                          | Remove a pack from the project                   |
+| `sage-wiki pack list`                                                                   | List applied, cached, and bundled packs          |
+| `sage-wiki pack search <query>`                                                         | Search the pack registry                         |
+| `sage-wiki pack update [name]`                                                          | Update installed packs to latest versions        |
+| `sage-wiki pack info <name>`                                                            | Show details about a pack                        |
+| `sage-wiki pack create <name>`                                                          | Scaffold a new pack directory                    |
+| `sage-wiki pack validate [path]`                                                        | Validate a pack's schema and files               |
+| `sage-wiki pack conflicts`                                                              | Show multi-pack file overlaps                    |
 | `sage-wiki auth login --provider <name>`                                                | OAuth login for subscription auth                |
 | `sage-wiki auth import --provider <name>`                                               | Import credentials from existing CLI tools       |
 | `sage-wiki auth status`                                                                 | Show stored subscription credentials            |
@@ -619,6 +631,70 @@ created_at: 2026-04-10T08:00:00+08:00
 
 Ground-truth fields (`concept`, `aliases`, `sources`, `created_at`) are always accurate — they come from the extraction pass, not the LLM. Semantic fields (`confidence` + your custom fields) reflect the LLM's judgment.
 
+## Contribution Packs
+
+Packs are installable configuration profiles that bundle ontology types, prompts, and sample sources for specific domains. sage-wiki ships with 8 bundled packs that work offline:
+
+| Pack | Audience | Key ontology |
+|------|----------|-------------|
+| `academic-research` | Researchers | cites, contradicts, finding, hypothesis |
+| `software-engineering` | Dev teams | implements, depends_on, adr, runbook |
+| `product-management` | PMs | addresses, prioritizes, user_story |
+| `personal-knowledge` | Note-takers | relates_to, inspired_by, fleeting_note |
+| `study-group` | Students | explains, prerequisite_of, definition |
+| `meeting-organizer` | Managers | decided, assigned_to, action_item |
+| `content-creation` | Writers | references, revises, draft, published |
+| `legal-compliance` | Legal teams | regulates, supersedes, policy, control |
+
+```bash
+# Apply a bundled pack during init
+sage-wiki init --pack academic-research
+
+# Or install and apply to an existing project
+sage-wiki pack install academic-research
+sage-wiki pack apply academic-research --mode merge
+
+# Browse available packs
+sage-wiki pack list
+sage-wiki pack search "research"
+
+# Install from a Git URL
+sage-wiki pack install https://github.com/someone/their-pack.git
+
+# Check for updates
+sage-wiki pack update
+```
+
+Packs are composable — apply multiple packs and their ontology types are union-merged. Conflicts (overlapping prompt files) are reported. Use `sage-wiki pack conflicts` to inspect.
+
+Community packs are distributed via the [sage-wiki-packs](https://github.com/xoai/sage-wiki-packs) registry. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to create and publish your own pack.
+
+## External Parsers
+
+sage-wiki has built-in parsers for 12+ formats. For anything else — `.docx` templates, `.rtf`, proprietary formats — you can add an external parser as a script in any language.
+
+External parsers use a stdin/stdout protocol: sage-wiki pipes file content to stdin, your script writes plain text to stdout.
+
+```yaml
+# parsers/parser.yaml
+parsers:
+  - extensions: [".rtf"]
+    command: python3
+    args: ["rtf_parser.py"]
+    timeout: 30s
+```
+
+```yaml
+# config.yaml
+parsers:
+  external: true          # enable external parser loading
+  trust_external: true    # acknowledge that parsers run unsandboxed
+```
+
+Security: external parsers run with timeout enforcement (30s default, 120s max) and environment stripping (only PATH, HOME, LANG). They require double opt-in: `parsers.external: true` to load parser definitions, and `parsers.trust_external: true` to acknowledge that parsers execute as unsandboxed subprocesses. Packs with parsers also require `--enable-parsers` during `pack apply`.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full parser authoring guide.
+
 ## Agent Skill Files
 
 sage-wiki has 17 MCP tools, but agents won't use them unless something in their context says *when* to check the wiki. Skill files bridge that gap — generated snippets that teach agents when to search, what to capture, and how to query effectively.
@@ -638,13 +714,13 @@ This appends a behavioral skill section to the agent's instruction file (CLAUDE.
 
 **Supported agents:** `claude-code`, `cursor`, `windsurf`, `agents-md` (Antigravity/Codex), `gemini`, `generic`
 
-**Domain packs:** The generator auto-selects a pack based on your source types:
-- `codebase-memory` — code projects (default). Triggers on API changes, refactors, breaking changes.
-- `research-library` — paper/article projects. Triggers on domain questions, related work.
-- `meeting-notes` — operational use (override only: `--pack meeting-notes`).
-- `documentation-curator` — documentation projects (override only: `--pack documentation-curator`).
+The skill file provides a generic base — when to search, what to capture, how to query — using your project's entity and relation types from config.yaml. For domain-specific agent behavior (research triggers, meeting capture patterns, etc.), apply a [contribution pack](#contribution-packs):
 
-Running `skill refresh` regenerates only the marked skill section — your other content is preserved.
+```bash
+sage-wiki init --skill claude-code --pack academic-research
+```
+
+The pack's `skills/` directory adds domain-specific triggers alongside the base skill. Running `skill refresh` regenerates only the marked skill section — your other content is preserved.
 
 ## MCP Integration
 
@@ -797,6 +873,8 @@ python3 eval.py ./test-fixture
 - **TUI:** bubbletea + glamour 4-tab terminal dashboard (browse, search, Q&A, compile) with tier distribution display
 - **Web UI:** Preact + Tailwind CSS embedded via `go:embed` with build tag (`-tags webui`)
 - **Scribe:** Extensible interface for ingesting knowledge from conversations. Session scribe processes Claude Code JSONL transcripts.
+- **Packs:** Contribution pack system with 8 bundled packs, Git-based registry, install/apply/remove/update lifecycle, transactional apply with snapshot rollback, fill-only merge, and config allowlist security.
+- **External Parsers:** Runtime-pluggable file format parsers via stdin/stdout subprocess protocol. Sandboxed execution with timeout, env stripping, and network isolation (Linux).
 
 Zero CGO. Pure Go. Cross-platform.
 

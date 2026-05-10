@@ -1,0 +1,37 @@
+name: legal-compliance
+version: 1.0.0
+description: Ontology and prompts for regulatory documents, policies, and compliance tracking
+author: sage-wiki
+license: MIT
+tags:
+  - legal
+  - compliance
+  - regulatory
+  - policy
+config:
+  compiler:
+    default_tier: 3
+ontology:
+  entity_types:
+    - name: policy
+      description: An internal policy, procedure, or organizational rule
+    - name: regulation
+      description: An external regulation, law, or compliance requirement
+    - name: control
+      description: A compliance control or safeguard measure
+  relation_types:
+    - name: regulates
+      synonyms: [governs, applies_to, constrains]
+    - name: supersedes
+      synonyms: [replaces, amends, overrides]
+    - name: complies_with
+      synonyms: [satisfies, meets, implements]
+    - name: requires
+      synonyms: [mandates, obligates]
+prompts:
+  - extract_regulatory.txt
+  - extract_obligations.txt
+skills:
+  - legal-compliance.md
+samples:
+  - example-policy.md

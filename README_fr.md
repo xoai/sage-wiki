@@ -50,6 +50,8 @@ go build -tags webui -o sage-wiki ./cmd/sage-wiki/
 
 Il suffit de déposer les fichiers dans votre dossier source — sage-wiki détecte le format automatiquement. Les images nécessitent un LLM capable de vision (Gemini, Claude, GPT-4o).
 
+Besoin d'un format non listé ? sage-wiki prend en charge les **parseurs externes** — des scripts dans n'importe quel langage qui lisent stdin et écrivent du texte brut sur stdout. Voir [Parseurs externes](#parseurs-externes) ci-dessous.
+
 ## Démarrage rapide
 
 ![Pipeline du compilateur](sage-wiki-compiler-pipeline.png)
@@ -135,6 +137,15 @@ Consultez le [guide d'auto-hébergement](docs/guides/self-hosted-server.md) pour
 | `sage-wiki capture "text"`                                                              | Capturer des connaissances à partir de texte        |
 | `sage-wiki add-source <path>`                                                           | Enregistrer un fichier source dans le manifeste     |
 | `sage-wiki skill <refresh\|preview> [--target <agent>]`                                 | Générer ou actualiser les fichiers de compétences agent |
+| `sage-wiki pack install <name\|url>`                                                    | Installer un pack de contribution |
+| `sage-wiki pack apply <name> [--mode merge\|replace]`                                   | Appliquer un pack installé au projet |
+| `sage-wiki pack remove <name>`                                                          | Supprimer un pack du projet |
+| `sage-wiki pack list`                                                                   | Lister les packs appliqués, en cache et intégrés |
+| `sage-wiki pack search <query>`                                                         | Rechercher dans le registre de packs |
+| `sage-wiki pack update [name]`                                                          | Mettre à jour les packs installés |
+| `sage-wiki pack info <name>`                                                            | Afficher les détails d'un pack |
+| `sage-wiki pack create <name>`                                                          | Créer un nouveau répertoire de pack |
+| `sage-wiki pack validate [path]`                                                        | Valider le schéma et les fichiers d'un pack |
 | `sage-wiki auth login --provider <name>`                                                | Connexion OAuth pour l'authentification par abonnement |
 | `sage-wiki auth import --provider <name>`                                               | Importer les identifiants depuis des outils CLI existants |
 | `sage-wiki auth status`                                                                 | Afficher les identifiants d'abonnement stockés      |
@@ -621,6 +632,44 @@ created_at: 2026-04-10T08:00:00+08:00
 
 Les champs de vérité terrain (`concept`, `aliases`, `sources`, `created_at`) sont toujours précis — ils proviennent de la passe d'extraction, pas du LLM. Les champs sémantiques (`confidence` + vos champs personnalisés) reflètent le jugement du LLM.
 
+## Packs de contribution
+
+Les packs sont des profils de configuration installables qui regroupent des types d'ontologie, des prompts et des sources d'exemple pour des domaines spécifiques. sage-wiki inclut 8 packs intégrés fonctionnant hors ligne :
+
+| Pack | Public | Ontologie clé |
+|------|--------|--------------|
+| `academic-research` | Chercheurs | cites, contradicts, finding, hypothesis |
+| `software-engineering` | Équipes dev | implements, depends_on, adr, runbook |
+| `product-management` | PM | addresses, prioritizes, user_story |
+| `personal-knowledge` | Prise de notes | relates_to, inspired_by, fleeting_note |
+| `study-group` | Étudiants | explains, prerequisite_of, definition |
+| `meeting-organizer` | Managers | decided, assigned_to, action_item |
+| `content-creation` | Rédacteurs | references, revises, draft, published |
+| `legal-compliance` | Juridique | regulates, supersedes, policy, control |
+
+```bash
+sage-wiki init --pack academic-research
+sage-wiki pack install academic-research
+sage-wiki pack apply academic-research --mode merge
+sage-wiki pack list
+```
+
+Les packs sont composables. Les packs communautaires sont distribués via le registre [sage-wiki-packs](https://github.com/xoai/sage-wiki-packs). Voir [CONTRIBUTING.md](CONTRIBUTING.md) pour créer et publier votre propre pack.
+
+## Parseurs externes
+
+sage-wiki inclut des parseurs natifs pour plus de 12 formats. Pour tout autre format, vous pouvez ajouter un parseur externe sous forme de script dans n'importe quel langage. Protocole stdin/stdout.
+
+```yaml
+parsers:
+  - extensions: [".rtf"]
+    command: python3
+    args: ["rtf_parser.py"]
+    timeout: 30s
+```
+
+Sécurité : les parseurs externes s'exécutent avec timeout, suppression des variables d'environnement et isolation réseau sous Linux. Nécessite `parsers.external: true`. Voir [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Fichiers de compétences agent
 
 sage-wiki dispose de 17 outils MCP, mais les agents ne les utiliseront pas à moins que quelque chose dans leur contexte indique *quand* consulter le wiki. Les fichiers de compétences comblent cette lacune — des extraits générés qui enseignent aux agents quand chercher, quoi capturer et comment interroger efficacement.
@@ -640,13 +689,13 @@ Cela ajoute une section de compétences comportementales au fichier d'instructio
 
 **Agents supportés :** `claude-code`, `cursor`, `windsurf`, `agents-md` (Antigravity/Codex), `gemini`, `generic`
 
-**Packs de domaine :** Le générateur sélectionne automatiquement un pack en fonction de vos types de sources :
-- `codebase-memory` — projets de code (par défaut). Se déclenche sur les changements d'API, les refactorisations, les changements cassants.
-- `research-library` — projets d'articles scientifiques. Se déclenche sur les questions de domaine, les travaux connexes.
-- `meeting-notes` — usage opérationnel (remplacement uniquement : `--pack meeting-notes`).
-- `documentation-curator` — projets de documentation (remplacement uniquement : `--pack documentation-curator`).
+Le fichier de compétences fournit un modèle de base générique — quand chercher, quoi capturer, comment interroger — utilisant les types d'entités et de relations de votre config.yaml. Pour un comportement d'agent spécifique au domaine, appliquez un [pack de contribution](#packs-de-contribution) :
 
-L'exécution de `skill refresh` régénère uniquement la section de compétences marquée — votre autre contenu est préservé.
+```bash
+sage-wiki init --skill claude-code --pack academic-research
+```
+
+Le répertoire `skills/` du pack ajoute des déclencheurs spécifiques au domaine aux côtés de la compétence de base. L'exécution de `skill refresh` régénère uniquement la section de compétences marquée — votre autre contenu est préservé.
 
 ## Intégration MCP
 
@@ -799,6 +848,8 @@ python3 eval.py ./test-fixture
 - **TUI :** tableau de bord terminal bubbletea + glamour à 4 onglets (parcourir, rechercher, Q&R, compiler) avec affichage de la distribution par paliers
 - **Interface web :** Preact + Tailwind CSS intégrée via `go:embed` avec build tag (`-tags webui`)
 - **Scribe :** Interface extensible pour l'ingestion de connaissances depuis les conversations. Le scribe de session traite les transcriptions JSONL de Claude Code.
+- **Packs :** Système de packs de contribution — 8 packs intégrés, registre Git, cycle de vie installation/application/suppression/mise à jour, application transactionnelle avec restauration par snapshot.
+- **Parseurs externes :** Parseurs de formats de fichiers enfichables à l'exécution via protocole subprocess stdin/stdout. Exécution en bac à sable avec timeout, suppression d'environnement et isolation réseau.
 
 Zéro CGO. Go pur. Multi-plateforme.
 

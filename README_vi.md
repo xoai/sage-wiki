@@ -50,6 +50,8 @@ go build -tags webui -o sage-wiki ./cmd/sage-wiki/
 
 Chỉ cần thả tệp vào thư mục nguồn — sage-wiki tự động phát hiện định dạng. Hình ảnh yêu cầu LLM có khả năng vision (Gemini, Claude, GPT-4o).
 
+Cần định dạng không có trong danh sách? sage-wiki hỗ trợ **trình phân tích ngoài** — script bằng bất kỳ ngôn ngữ nào đọc stdin và ghi văn bản thuần ra stdout. Xem [Trình phân tích ngoài](#trình-phân-tích-ngoài) bên dưới.
+
 ## Bắt đầu nhanh
 
 ![Compiler Pipeline](sage-wiki-compiler-pipeline.png)
@@ -135,6 +137,15 @@ Xem [hướng dẫn tự host](docs/guides/self-hosted-server.md) để biết v
 | `sage-wiki capture "text"`                                                              | Ghi nhận tri thức từ văn bản                         |
 | `sage-wiki add-source <path>`                                                           | Đăng ký tệp nguồn trong manifest                    |
 | `sage-wiki skill <refresh\|preview> [--target <agent>]`                                 | Tạo hoặc làm mới tệp kỹ năng agent                  |
+| `sage-wiki pack install <name\|url>`                                                    | Cài đặt gói đóng góp                                |
+| `sage-wiki pack apply <name> [--mode merge\|replace]`                                   | Áp dụng gói đã cài vào dự án                        |
+| `sage-wiki pack remove <name>`                                                          | Gỡ gói khỏi dự án                                   |
+| `sage-wiki pack list`                                                                   | Liệt kê gói đã áp dụng, cache, và tích hợp          |
+| `sage-wiki pack search <query>`                                                         | Tìm kiếm registry gói                               |
+| `sage-wiki pack update [name]`                                                          | Cập nhật gói lên phiên bản mới nhất                  |
+| `sage-wiki pack info <name>`                                                            | Hiển thị chi tiết gói                                |
+| `sage-wiki pack create <name>`                                                          | Tạo khung thư mục gói mới                           |
+| `sage-wiki pack validate [path]`                                                        | Kiểm tra schema và file của gói                      |
 | `sage-wiki auth login --provider <name>`                                                | Đăng nhập OAuth cho xác thực đăng ký                 |
 | `sage-wiki auth import --provider <name>`                                               | Nhập thông tin xác thực từ công cụ CLI hiện có       |
 | `sage-wiki auth status`                                                                 | Hiển thị thông tin xác thực đăng ký đã lưu           |
@@ -619,6 +630,44 @@ created_at: 2026-04-10T08:00:00+08:00
 
 Các trường thực tế (`concept`, `aliases`, `sources`, `created_at`) luôn chính xác — chúng đến từ bước trích xuất, không phải LLM. Các trường ngữ nghĩa (`confidence` + trường tùy chỉnh của bạn) phản ánh đánh giá của LLM.
 
+## Gói đóng góp
+
+Gói là các profile cấu hình có thể cài đặt, đóng gói các loại ontology, prompt và nguồn mẫu cho các lĩnh vực cụ thể. sage-wiki đi kèm 8 gói tích hợp hoạt động offline:
+
+| Gói | Đối tượng | Ontology chính |
+|-----|----------|---------------|
+| `academic-research` | Nhà nghiên cứu | cites, contradicts, finding, hypothesis |
+| `software-engineering` | Đội phát triển | implements, depends_on, adr, runbook |
+| `product-management` | PM | addresses, prioritizes, user_story |
+| `personal-knowledge` | Quản lý ghi chú | relates_to, inspired_by, fleeting_note |
+| `study-group` | Sinh viên | explains, prerequisite_of, definition |
+| `meeting-organizer` | Quản lý | decided, assigned_to, action_item |
+| `content-creation` | Nhà văn | references, revises, draft, published |
+| `legal-compliance` | Pháp lý | regulates, supersedes, policy, control |
+
+```bash
+sage-wiki init --pack academic-research
+sage-wiki pack install academic-research
+sage-wiki pack apply academic-research --mode merge
+sage-wiki pack list
+```
+
+Các gói có thể kết hợp. Gói cộng đồng được phân phối qua registry [sage-wiki-packs](https://github.com/xoai/sage-wiki-packs). Xem [CONTRIBUTING.md](CONTRIBUTING.md) để biết thêm chi tiết.
+
+## Trình phân tích ngoài
+
+sage-wiki có trình phân tích tích hợp cho hơn 12 định dạng. Với các định dạng khác, bạn có thể thêm trình phân tích ngoài bằng script viết bằng bất kỳ ngôn ngữ nào. Sử dụng giao thức stdin/stdout.
+
+```yaml
+parsers:
+  - extensions: [".rtf"]
+    command: python3
+    args: ["rtf_parser.py"]
+    timeout: 30s
+```
+
+Bảo mật: trình phân tích ngoài chạy với giới hạn thời gian, loại bỏ biến môi trường, và cách ly mạng trên Linux. Cần cấu hình `parsers.external: true`. Xem [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Tệp kỹ năng Agent
 
 sage-wiki có 17 công cụ MCP, nhưng agent sẽ không sử dụng chúng trừ khi có gì đó trong ngữ cảnh của chúng cho biết *khi nào* cần kiểm tra wiki. Tệp kỹ năng lấp đầy khoảng trống đó — các đoạn mã được tạo ra dạy agent khi nào cần tìm kiếm, ghi nhận gì, và cách truy vấn hiệu quả.
@@ -638,13 +687,13 @@ sage-wiki skill preview --target cursor
 
 **Agent được hỗ trợ:** `claude-code`, `cursor`, `windsurf`, `agents-md` (Antigravity/Codex), `gemini`, `generic`
 
-**Gói miền:** Trình tạo tự động chọn gói dựa trên loại nguồn của bạn:
-- `codebase-memory` — dự án mã nguồn (mặc định). Kích hoạt khi có thay đổi API, tái cấu trúc, thay đổi phá vỡ.
-- `research-library` — dự án bài báo/bài viết. Kích hoạt khi có câu hỏi về lĩnh vực, công trình liên quan.
-- `meeting-notes` — sử dụng vận hành (chỉ ghi đè: `--pack meeting-notes`).
-- `documentation-curator` — dự án tài liệu (chỉ ghi đè: `--pack documentation-curator`).
+File kỹ năng cung cấp mẫu cơ sở chung — khi nào tìm kiếm, cái gì cần lưu, cách truy vấn — sử dụng các loại thực thể và quan hệ từ config.yaml. Để có hành vi agent theo lĩnh vực cụ thể, hãy áp dụng [gói đóng góp](#gói-đóng-góp):
 
-Chạy `skill refresh` chỉ tạo lại phần kỹ năng được đánh dấu — nội dung khác của bạn được giữ nguyên.
+```bash
+sage-wiki init --skill claude-code --pack academic-research
+```
+
+Thư mục `skills/` của gói thêm các trigger theo lĩnh vực bên cạnh kỹ năng cơ sở. Chạy `skill refresh` chỉ tạo lại phần kỹ năng được đánh dấu — nội dung khác của bạn được giữ nguyên.
 
 ## Tích hợp MCP
 
@@ -797,6 +846,8 @@ python3 eval.py ./test-fixture
 - **TUI:** bubbletea + glamour bảng điều khiển terminal 4 tab (duyệt, tìm kiếm, hỏi đáp, biên dịch) với hiển thị phân bố tầng
 - **Web UI:** Preact + Tailwind CSS nhúng qua `go:embed` với build tag (`-tags webui`)
 - **Scribe:** Giao diện mở rộng để nhập tri thức từ cuộc hội thoại. Session scribe xử lý bản ghi JSONL của Claude Code.
+- **Gói:** Hệ thống gói đóng góp — 8 gói tích hợp, registry Git, vòng đời cài đặt/áp dụng/gỡ/cập nhật, áp dụng giao dịch với rollback snapshot.
+- **Trình phân tích ngoài:** Trình phân tích định dạng file có thể cắm nóng qua giao thức subprocess stdin/stdout. Chạy sandbox với timeout, loại bỏ môi trường, cách ly mạng.
 
 Không CGO. Pure Go. Đa nền tảng.
 

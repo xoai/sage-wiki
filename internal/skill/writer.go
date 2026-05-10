@@ -26,13 +26,13 @@ func FormatForTarget(content string, target AgentTarget) string {
 	})
 }
 
-func WriteSkill(projectDir string, target AgentTarget, pack PackName, data TemplateData) error {
+func WriteSkill(projectDir string, target AgentTarget, data TemplateData) error {
 	info, err := TargetInfoFor(target)
 	if err != nil {
 		return err
 	}
 
-	rendered, err := RenderPack(pack, data)
+	rendered, err := RenderSkill(data)
 	if err != nil {
 		return err
 	}
@@ -67,8 +67,8 @@ func WriteSkill(projectDir string, target AgentTarget, pack PackName, data Templ
 	return os.WriteFile(filePath, []byte(content+"\n\n"+markedContent+"\n"), 0644)
 }
 
-func PreviewSkill(target AgentTarget, pack PackName, data TemplateData) (string, error) {
-	rendered, err := RenderPack(pack, data)
+func PreviewSkill(target AgentTarget, data TemplateData) (string, error) {
+	rendered, err := RenderSkill(data)
 	if err != nil {
 		return "", err
 	}

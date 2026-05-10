@@ -1,0 +1,37 @@
+name: study-group
+version: 1.0.0
+description: Ontology and prompts for textbook study, definitions, prerequisites, and learning paths
+author: sage-wiki
+license: MIT
+tags:
+  - study
+  - learning
+  - textbook
+  - education
+config:
+  compiler:
+    default_tier: 2
+ontology:
+  entity_types:
+    - name: topic
+      description: A subject area or chapter topic in a study curriculum
+    - name: definition
+      description: A formal definition of a term or concept
+    - name: exercise
+      description: A practice problem, exercise, or worked example
+  relation_types:
+    - name: explains
+      synonyms: [clarifies, illustrates]
+    - name: prerequisite_of
+      synonyms: [required_for, foundational_to]
+    - name: example_of
+      synonyms: [instance_of, demonstrates]
+    - name: practices
+      synonyms: [applies, exercises]
+prompts:
+  - extract_textbook.txt
+  - extract_definitions.txt
+skills:
+  - study-group.md
+samples:
+  - example-study-guide.md

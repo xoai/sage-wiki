@@ -23,7 +23,7 @@ var parserRegistry = parsers.NewRegistry()
 // indexRawSources indexes source files into FTS5 at Tier 0 (no embedding).
 // Uses "src:" prefix on entry IDs to distinguish from compiled article entries.
 // Skips sources that already have a compiled entry (non-prefixed) in FTS5.
-func indexRawSources(projectDir string, sources []CompileItem, memStore *memory.Store, items *CompileItemStore) int {
+func indexRawSources(projectDir string, sources []CompileItem, memStore *memory.Store, items *CompileItemStore, extractOpts ...extract.ExtractOpts) int {
 	indexed := 0
 	for _, src := range sources {
 		// Skip if a compiled entry already exists (higher quality)
@@ -36,7 +36,7 @@ func indexRawSources(projectDir string, sources []CompileItem, memStore *memory.
 		}
 
 		absPath := filepath.Join(projectDir, src.SourcePath)
-		content, err := extract.Extract(absPath, src.FileType)
+		content, err := extract.Extract(absPath, src.FileType, extractOpts...)
 		if err != nil {
 			log.Warn("tier 0 index: extract failed", "path", src.SourcePath, "error", err)
 			if merr := items.MarkError(src.SourcePath, err); merr != nil {
@@ -84,6 +84,7 @@ func indexAndEmbedSources(
 	chunkStore *memory.ChunkStore,
 	chunkSize int,
 	db *storage.DB,
+	extractOpts ...extract.ExtractOpts,
 ) (indexed, embedded int) {
 	// Step 1: FTS5 index any sources not yet indexed
 	for _, src := range sources {
@@ -101,7 +102,7 @@ func indexAndEmbedSources(
 		}
 
 		absPath := filepath.Join(projectDir, src.SourcePath)
-		content, err := extract.Extract(absPath, src.FileType)
+		content, err := extract.Extract(absPath, src.FileType, extractOpts...)
 		if err != nil {
 			log.Warn("tier 1 index: extract failed", "path", src.SourcePath, "error", err)
 			if merr := items.MarkError(src.SourcePath, err); merr != nil {
@@ -168,7 +169,7 @@ func indexAndEmbedSources(
 			defer release()
 
 			absPath := filepath.Join(projectDir, s.SourcePath)
-			content, err := extract.Extract(absPath, s.FileType)
+			content, err := extract.Extract(absPath, s.FileType, extractOpts...)
 			if err != nil {
 				log.Warn("tier 1 embed: extract failed", "path", s.SourcePath, "error", err)
 				if merr := items.MarkError(s.SourcePath, err); merr != nil {

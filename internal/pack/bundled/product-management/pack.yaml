@@ -1,0 +1,37 @@
+name: product-management
+version: 1.0.0
+description: Ontology and prompts for PRDs, user stories, hypotheses, and product strategy
+author: sage-wiki
+license: MIT
+tags:
+  - product
+  - management
+  - prd
+  - strategy
+config:
+  compiler:
+    default_tier: 3
+ontology:
+  entity_types:
+    - name: user_story
+      description: A user story describing a need from the user's perspective
+    - name: product_hypothesis
+      description: A product hypothesis to be validated through experimentation
+    - name: metric
+      description: A key metric or KPI used to measure product success
+  relation_types:
+    - name: addresses
+      synonyms: [solves, targets, responds_to]
+    - name: prioritizes
+      synonyms: [ranks, orders]
+    - name: validates
+      synonyms: [confirms, proves, disproves]
+    - name: blocks
+      synonyms: [prevents, depends_on]
+prompts:
+  - extract_prd.txt
+  - extract_user_stories.txt
+skills:
+  - product-management.md
+samples:
+  - example-prd.md

@@ -50,6 +50,8 @@ go build -tags webui -o sage-wiki ./cmd/sage-wiki/
 
 只需将文件放入源文件夹 -- sage-wiki 会自动检测格式。图片需要支持 vision 的 LLM (Gemini、Claude、GPT-4o)。
 
+需要列表中没有的格式？sage-wiki 支持**外部解析器** — 任何语言编写的脚本，从 stdin 读取并将纯文本输出到 stdout。详见下方[外部解析器](#外部解析器)。
+
 ## 快速开始
 
 ![Compiler Pipeline](sage-wiki-compiler-pipeline.png)
@@ -135,6 +137,15 @@ docker run -d -p 3333:3333 -v ./my-wiki:/wiki -e GEMINI_API_KEY=... sage-wiki
 | `sage-wiki capture "text"`                                                              | 从文本中捕获知识                      |
 | `sage-wiki add-source <path>`                                                           | 在 manifest 中注册源文件              |
 | `sage-wiki skill <refresh\|preview> [--target <agent>]`                                 | 生成或刷新 Agent 技能文件             |
+| `sage-wiki pack install <name\|url>`                                                    | 安装贡献包                            |
+| `sage-wiki pack apply <name> [--mode merge\|replace]`                                   | 将已安装的包应用到项目                |
+| `sage-wiki pack remove <name>`                                                          | 从项目中移除包                        |
+| `sage-wiki pack list`                                                                   | 列出已应用、已缓存和内置包            |
+| `sage-wiki pack search <query>`                                                         | 搜索包注册表                          |
+| `sage-wiki pack update [name]`                                                          | 更新已安装的包到最新版本              |
+| `sage-wiki pack info <name>`                                                            | 显示包的详细信息                      |
+| `sage-wiki pack create <name>`                                                          | 创建新的包目录框架                    |
+| `sage-wiki pack validate [path]`                                                        | 验证包的模式和文件                    |
 | `sage-wiki auth login --provider <name>`                                                | 通过 OAuth 登录订阅认证              |
 | `sage-wiki auth import --provider <name>`                                               | 从已有 CLI 工具导入凭证              |
 | `sage-wiki auth status`                                                                 | 显示已存储的订阅凭证                  |
@@ -586,6 +597,44 @@ created_at: 2026-04-10T08:00:00+08:00
 
 确定性字段 (`concept`、`aliases`、`sources`、`created_at`) 始终准确 -- 它们来自提取阶段,而非 LLM。语义字段 (`confidence` + 你的自定义字段) 反映 LLM 的判断。
 
+## 贡献包
+
+包是可安装的配置档案，捆绑了特定领域的本体类型、提示和示例源。sage-wiki 附带 8 个内置包，可离线使用：
+
+| 包 | 受众 | 关键本体 |
+|---|------|---------|
+| `academic-research` | 研究人员 | cites, contradicts, finding, hypothesis |
+| `software-engineering` | 开发团队 | implements, depends_on, adr, runbook |
+| `product-management` | 产品经理 | addresses, prioritizes, user_story |
+| `personal-knowledge` | 笔记管理 | relates_to, inspired_by, fleeting_note |
+| `study-group` | 学生 | explains, prerequisite_of, definition |
+| `meeting-organizer` | 管理者 | decided, assigned_to, action_item |
+| `content-creation` | 写作者 | references, revises, draft, published |
+| `legal-compliance` | 法务团队 | regulates, supersedes, policy, control |
+
+```bash
+sage-wiki init --pack academic-research
+sage-wiki pack install academic-research
+sage-wiki pack apply academic-research --mode merge
+sage-wiki pack list
+```
+
+包可以组合使用。社区包通过 [sage-wiki-packs](https://github.com/xoai/sage-wiki-packs) 注册表分发。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+## 外部解析器
+
+sage-wiki 内置了 12 种以上格式的解析器。对于其他格式，可以用任何语言编写脚本添加外部解析器。使用 stdin/stdout 协议。
+
+```yaml
+parsers:
+  - extensions: [".rtf"]
+    command: python3
+    args: ["rtf_parser.py"]
+    timeout: 30s
+```
+
+安全性：外部解析器在超时限制、环境变量清理和 Linux 网络隔离下运行。需要设置 `parsers.external: true`。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
 ## Agent 技能文件
 
 sage-wiki 提供 17 个 MCP 工具,但 Agent 不会主动使用它们,除非上下文中告诉了 Agent *何时*该查询 wiki。技能文件弥补了这个差距 -- 生成的代码片段教会 Agent 何时搜索、何时捕获知识、如何高效查询。
@@ -605,13 +654,13 @@ sage-wiki skill preview --target cursor
 
 **支持的 Agent:** `claude-code`、`cursor`、`windsurf`、`agents-md` (Antigravity/Codex)、`gemini`、`generic`
 
-**领域模板包:**  生成器根据源文件类型自动选择模板包:
-- `codebase-memory` -- 代码项目 (默认)。触发条件: API 变更、重构、破坏性改动。
-- `research-library` -- 论文/文章项目。触发条件: 领域问题、相关工作。
-- `meeting-notes` -- 运营场景 (仅通过 `--pack meeting-notes` 手动指定)。
-- `documentation-curator` -- 文档项目 (仅通过 `--pack documentation-curator` 手动指定)。
+技能文件提供通用基础模板 — 何时搜索、捕获什么、如何查询 — 使用 config.yaml 中的实体和关系类型。要获得特定领域的代理行为（研究触发器、会议捕获模式等），请应用[贡献包](#贡献包)：
 
-运行 `skill refresh` 仅重新生成标记的技能片段 -- 你的其他内容不会被修改。
+```bash
+sage-wiki init --skill claude-code --pack academic-research
+```
+
+包的 `skills/` 目录在基础技能之外添加领域特定的触发器。运行 `skill refresh` 仅重新生成标记的技能片段 -- 你的其他内容不会被修改。
 
 ## MCP 集成
 
@@ -764,6 +813,8 @@ python3 eval.py ./test-fixture
 - **TUI:** bubbletea + glamour 4 标签终端面板 (浏览、搜索、问答、编译),支持层级分布显示
 - **Web UI:** Preact + Tailwind CSS 通过 `go:embed` 嵌入,使用构建标签 (`-tags webui`)
 - **Scribe:** 可扩展接口,从对话中摄取知识。会话 scribe 处理 Claude Code JSONL 记录。
+- **包：** 贡献包系统 — 8 个内置包、Git 注册表、安装/应用/移除/更新生命周期、带快照回滚的事务性应用。
+- **外部解析器：** 通过 stdin/stdout 子进程协议的运行时可插拔文件格式解析器。沙箱执行，包括超时、环境清理和网络隔离。
 
 零 CGO。纯 Go。跨平台。
 

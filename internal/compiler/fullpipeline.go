@@ -7,6 +7,7 @@ import (
 
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
+	"github.com/xoai/sage-wiki/internal/extract"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
@@ -80,6 +81,18 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		maxTokens = 2000
 	}
 
+	// Load external parsers for summarization
+	var sumExOpts []extract.ExtractOpts
+	if cfg.Parsers.External && cfg.Parsers.TrustExternal {
+		exReg, err := extract.LoadExternalParsers(opts.ProjectDir)
+		if err != nil {
+			log.Warn("loading external parsers for summarize", "error", err)
+		} else if exReg.HasParsers() {
+			exReg.Trusted = true
+			sumExOpts = []extract.ExtractOpts{{ExternalParsers: exReg, ParsersEnabled: true}}
+		}
+	}
+
 	summaries := Summarize(SummarizeOpts{
 		Ctx:          opts.Ctx,
 		ProjectDir:   opts.ProjectDir,
@@ -92,6 +105,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		UserTZ:       cfg.Compiler.UserTimeLocation(),
 		Language:     cfg.Language,
 		Backpressure: opts.Backpressure,
+		ExtractOpts:  sumExOpts,
 	})
 
 	for _, sr := range summaries {

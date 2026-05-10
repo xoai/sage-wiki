@@ -70,30 +70,6 @@ func TestTargetInfoFor_MarkerStyles(t *testing.T) {
 	}
 }
 
-func TestSelectPack(t *testing.T) {
-	tests := []struct {
-		name    string
-		sources []config.Source
-		want    PackName
-	}{
-		{"all code", []config.Source{{Type: "code"}, {Type: "code"}}, PackCodebaseMemory},
-		{"all article", []config.Source{{Type: "article"}, {Type: "paper"}}, PackResearchLibrary},
-		{"mixed", []config.Source{{Type: "code"}, {Type: "article"}}, PackCodebaseMemory},
-		{"empty", nil, PackCodebaseMemory},
-		{"auto only", []config.Source{{Type: "auto"}}, PackCodebaseMemory},
-		{"single article", []config.Source{{Type: "article"}}, PackResearchLibrary},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := SelectPack(tt.sources)
-			if got != tt.want {
-				t.Errorf("SelectPack = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestBuildTemplateData(t *testing.T) {
 	cfg := &config.Config{
 		Project: "test-project",
@@ -130,7 +106,6 @@ func TestBuildTemplateData(t *testing.T) {
 		t.Error("HasGraphExpansion should default to true")
 	}
 
-	// Built-in entity types + custom "decision"
 	found := false
 	for _, e := range data.EntityTypes {
 		if e == "decision" {
@@ -141,7 +116,6 @@ func TestBuildTemplateData(t *testing.T) {
 		t.Errorf("EntityTypes should include custom 'decision', got %v", data.EntityTypes)
 	}
 
-	// Should include built-in "concept"
 	foundConcept := false
 	for _, e := range data.EntityTypes {
 		if e == "concept" {
@@ -152,7 +126,6 @@ func TestBuildTemplateData(t *testing.T) {
 		t.Errorf("EntityTypes should include built-in 'concept', got %v", data.EntityTypes)
 	}
 
-	// Should include built-in relation "implements"
 	foundRel := false
 	for _, r := range data.RelationTypes {
 		if r == "implements" {
@@ -184,53 +157,29 @@ func sampleData() TemplateData {
 	}
 }
 
-func TestRenderPack_AllPacks(t *testing.T) {
+func TestRenderSkill(t *testing.T) {
 	data := sampleData()
-	packs := []struct {
-		name     PackName
-		triggers []string // distinct phrases per pack
-	}{
-		{PackCodebaseMemory, []string{"public API", "refactor", "breaking change"}},
-		{PackResearchLibrary, []string{"related work", "prior art", "prerequisites"}},
-		{PackMeetingNotes, []string{"meeting", "person", "action items"}},
-		{PackDocumentationCurator, []string{"documentation", "stale", "duplication"}},
-	}
-
-	for _, tt := range packs {
-		t.Run(string(tt.name), func(t *testing.T) {
-			out, err := RenderPack(tt.name, data)
-			if err != nil {
-				t.Fatalf("RenderPack error: %v", err)
-			}
-			if strings.Contains(out, "{{") {
-				t.Error("output contains unresolved template syntax")
-			}
-			for _, phrase := range tt.triggers {
-				if !strings.Contains(strings.ToLower(out), strings.ToLower(phrase)) {
-					t.Errorf("expected trigger phrase %q in output", phrase)
-				}
-			}
-		})
-	}
-}
-
-func TestRenderPack_TemplateVariables(t *testing.T) {
-	data := sampleData()
-	out, err := RenderPack(PackCodebaseMemory, data)
+	out, err := RenderSkill(data)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("RenderSkill error: %v", err)
+	}
+	if strings.Contains(out, "{{") {
+		t.Error("output contains unresolved template syntax")
 	}
 	if !strings.Contains(out, "myapp") {
-		t.Error("output should contain project name 'myapp'")
-	}
-	if !strings.Contains(out, "decision") {
-		t.Error("output should contain custom entity type 'decision'")
-	}
-	if !strings.Contains(out, "implements") {
-		t.Error("output should contain relation type 'implements'")
+		t.Error("output should contain project name")
 	}
 	if !strings.Contains(out, "wiki_search") {
 		t.Error("output should reference wiki_search tool")
+	}
+	if !strings.Contains(out, "wiki_learn") {
+		t.Error("output should reference wiki_learn tool")
+	}
+	if !strings.Contains(out, "decision") {
+		t.Error("output should contain entity type 'decision'")
+	}
+	if !strings.Contains(out, "implements") {
+		t.Error("output should contain relation type 'implements'")
 	}
 }
 
@@ -238,7 +187,7 @@ func TestWriteSkill_NewFile(t *testing.T) {
 	dir := t.TempDir()
 	data := sampleData()
 
-	err := WriteSkill(dir, TargetClaudeCode, PackCodebaseMemory, data)
+	err := WriteSkill(dir, TargetClaudeCode, data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +211,7 @@ func TestWriteSkill_AppendToExisting(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(existing), 0644)
 
 	data := sampleData()
-	err := WriteSkill(dir, TargetClaudeCode, PackCodebaseMemory, data)
+	err := WriteSkill(dir, TargetClaudeCode, data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +232,7 @@ func TestWriteSkill_RefreshMarkers(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(initial), 0644)
 
 	data := sampleData()
-	err := WriteSkill(dir, TargetClaudeCode, PackCodebaseMemory, data)
+	err := WriteSkill(dir, TargetClaudeCode, data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,14 +259,13 @@ func TestWriteSkill_MalformedMarkers(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(initial), 0644)
 
 	data := sampleData()
-	err := WriteSkill(dir, TargetClaudeCode, PackCodebaseMemory, data)
+	err := WriteSkill(dir, TargetClaudeCode, data)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	content, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
 	s := string(content)
-	// Should append new section, leaving orphan start marker
 	count := strings.Count(s, "<!-- sage-wiki:skill:start -->")
 	if count < 2 {
 		t.Errorf("expected at least 2 start markers (orphan + new), got %d", count)
@@ -326,7 +274,7 @@ func TestWriteSkill_MalformedMarkers(t *testing.T) {
 
 func TestFormatForTarget_Plaintext(t *testing.T) {
 	data := sampleData()
-	out, _ := RenderPack(PackCodebaseMemory, data)
+	out, _ := RenderSkill(data)
 	formatted := FormatForTarget(out, TargetCursor)
 	if strings.Contains(formatted, "## ") || strings.Contains(formatted, "### ") {
 		t.Error("plaintext output should not contain markdown headers")
@@ -340,31 +288,14 @@ func TestPreviewSkill(t *testing.T) {
 	dir := t.TempDir()
 	data := sampleData()
 
-	out, err := PreviewSkill(TargetClaudeCode, PackCodebaseMemory, data)
+	out, err := PreviewSkill(TargetClaudeCode, data)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out, "myapp") {
 		t.Error("preview should contain rendered content")
 	}
-	// Verify no file created
 	if _, err := os.Stat(filepath.Join(dir, "CLAUDE.md")); !os.IsNotExist(err) {
 		t.Error("preview should not create any files")
-	}
-}
-
-func TestWriteSkill_PackOverride(t *testing.T) {
-	dir := t.TempDir()
-	data := sampleData()
-
-	err := WriteSkill(dir, TargetClaudeCode, PackMeetingNotes, data)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	content, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
-	s := string(content)
-	if !strings.Contains(strings.ToLower(s), "meeting") {
-		t.Error("override to meeting-notes pack should produce meeting-related content")
 	}
 }

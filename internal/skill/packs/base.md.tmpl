@@ -1,32 +1,32 @@
 ## sage-wiki — project knowledge base
 
 This project ({{.Project}}) uses sage-wiki as its knowledge layer.
-Sources: {{.SourceTypes}}. The wiki contains architectural decisions,
-concept explanations, and cross-referenced knowledge.
+Sources: {{.SourceTypes}}. The wiki contains structured, interlinked
+knowledge compiled from your sources.
 
 ### When to check the wiki
 
-Before making any of these changes, search the wiki first:
+Before making changes or answering questions, search the wiki first:
 
-- Modifying a public API or cross-module interface
-- Refactoring or redesigning a component
-- Answering "why is it done this way?"
-- Making a breaking change
-- Touching code you haven't worked with before
+- Modifying a component or interface
+- Answering "why is it done this way?" or "what's known about X?"
+- Making a decision that others should know about
+- Touching an area you haven't worked with before
+- Looking for related work or prior context
 
-1. Call `wiki_search` with the module or concept name
+1. Call `wiki_search` with the topic or concept name
 2. Read relevant articles with `wiki_read`{{if .HasOntology}}
-3. Use `wiki_ontology_query` to check dependencies: "what depends on this module?"{{end}}
+3. Use `wiki_ontology_query` to explore relationships and dependencies{{end}}
 4. If search returns uncompiled sources, call `wiki_compile_topic` for richer context
 5. Use `wiki_provenance` to trace which sources produced an article
 
 ### What to capture
 
-After completing work that involved any of these, store what you learned:
+After completing work that produced new knowledge:
 
-- An architectural decision or tradeoff → `wiki_learn` with type "convention"
-- A non-obvious bug fix or gotcha → `wiki_learn` with type "gotcha"
-- A new pattern or established convention → `wiki_learn` with type "convention"
+- A decision or tradeoff → `wiki_learn` with type "decision"
+- A non-obvious finding or gotcha → `wiki_learn` with type "gotcha"
+- A pattern or convention → `wiki_learn` with type "convention"
 - Rich context from a conversation → `wiki_capture` to extract and index it
 
 ### How to query effectively
@@ -36,4 +36,4 @@ After completing work that involved any of these, store what you learned:
 - Entity types available: {{range $i, $e := .EntityTypes}}{{if $i}}, {{end}}{{$e}}{{end}}{{if .HasOntology}}
 - Query relationships: `wiki_ontology_query` with entity ID and relation type
 - Relation types: {{range $i, $r := .RelationTypes}}{{if $i}}, {{end}}{{$r}}{{end}}{{end}}
-- Filter searches with tags: `wiki_search("retry logic", tags="error-handling")`
+- Filter searches with tags: `wiki_search("topic", tags="tag-name")`
