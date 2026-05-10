@@ -19,6 +19,21 @@ https://github.com/user-attachments/assets/c35ee202-e9df-4ccd-b520-8f057163ff26
 
 _외곽 경계의 점들은 지식 베이스에 있는 모든 문서의 요약을 나타내고, 안쪽 원의 점들은 지식 베이스에서 추출된 개념을 나타내며, 링크는 그 개념들이 서로 어떻게 연결되는지를 보여줍니다._
 
+## 가이드
+
+| 가이드 | 설명 |
+|-------|------|
+| [Agent Memory Layer](docs/guides/agent-memory-layer.md) | MCP 설정, 스킬 파일, 캡처 워크플로우 |
+| [Team Setup](docs/guides/team-setup.md) | Git 동기화, 공유 서버, 허브 페더레이션 |
+| [Contribution Packs](CONTRIBUTING.md) | 팩 생성, 파서 개발, 레지스트리 제출 |
+| [Large Vault Performance](docs/guides/large-vault-performance.md) | 계층 컴파일, 백프레셔, 10만 건 이상 스케일링 |
+| [Search Quality](docs/guides/search-quality.md) | 청크 인덱싱, 쿼리 확장, 리랭킹 |
+| [Output Trust](docs/guides/output-trust.md) | 그라운딩 검증, 컨센서스, 승격/강등 |
+| [Subscription Auth](docs/guides/subscription-auth.md) | OAuth 로그인, 토큰 가져오기, 자격 증명 관리 |
+| [Self-Hosted Server](docs/guides/self-hosted-server.md) | Docker Compose, Syncthing, 리버스 프록시 |
+| [Configurable Relations](docs/guides/configurable-relations.md) | 커스텀 온톨로지, 다국어 동의어 |
+| [Local Models](docs/guides/local-models.md) | Ollama 설정, GPU/CPU 라우팅 |
+
 ## 설치
 
 ```bash

@@ -19,6 +19,21 @@ https://github.com/user-attachments/assets/c35ee202-e9df-4ccd-b520-8f057163ff26
 
 _外側の境界上のドットはナレッジベース内のすべてのドキュメントの要約を表し、内側の円のドットはナレッジベースから抽出されたコンセプトを表します。リンクはそれらのコンセプトがどのように相互接続されているかを示しています。_
 
+## ガイド
+
+| ガイド | 説明 |
+|-------|------|
+| [Agent Memory Layer](docs/guides/agent-memory-layer.md) | MCP設定、スキルファイル、キャプチャワークフロー |
+| [Team Setup](docs/guides/team-setup.md) | Git同期、共有サーバー、ハブフェデレーション |
+| [Contribution Packs](CONTRIBUTING.md) | パック作成、パーサー開発、レジストリ登録 |
+| [Large Vault Performance](docs/guides/large-vault-performance.md) | 階層コンパイル、バックプレッシャー、10万件以上のスケーリング |
+| [Search Quality](docs/guides/search-quality.md) | チャンクインデックス、クエリ拡張、リランキング |
+| [Output Trust](docs/guides/output-trust.md) | グラウンディング検証、コンセンサス、昇格/降格 |
+| [Subscription Auth](docs/guides/subscription-auth.md) | OAuthログイン、トークンインポート、資格情報管理 |
+| [Self-Hosted Server](docs/guides/self-hosted-server.md) | Docker Compose、Syncthing、リバースプロキシ |
+| [Configurable Relations](docs/guides/configurable-relations.md) | カスタムオントロジー、多言語シノニム |
+| [Local Models](docs/guides/local-models.md) | Ollamaセットアップ、GPU/CPUルーティング |
+
 ## インストール
 
 ```bash

@@ -19,6 +19,21 @@ https://github.com/user-attachments/assets/c35ee202-e9df-4ccd-b520-8f057163ff26
 
 _Точки на внешней границе представляют резюме всех документов в базе знаний, а точки во внутреннем круге — концепции, извлечённые из базы знаний, со связями, показывающими, как эти концепции соединены друг с другом._
 
+## Руководства
+
+| Руководство | Описание |
+|-------------|----------|
+| [Agent Memory Layer](docs/guides/agent-memory-layer.md) | Настройка MCP, файлы навыков, рабочие процессы захвата |
+| [Team Setup](docs/guides/team-setup.md) | Синхронизация Git, общий сервер, федерация хабов |
+| [Contribution Packs](CONTRIBUTING.md) | Создание пакетов, разработка парсеров, публикация в реестре |
+| [Large Vault Performance](docs/guides/large-vault-performance.md) | Многоуровневая компиляция, backpressure, масштабирование 100K+ |
+| [Search Quality](docs/guides/search-quality.md) | Индексация чанков, расширение запросов, переранжирование |
+| [Output Trust](docs/guides/output-trust.md) | Верификация обоснованности, консенсус, повышение/понижение |
+| [Subscription Auth](docs/guides/subscription-auth.md) | OAuth-авторизация, импорт токенов, управление учётными данными |
+| [Self-Hosted Server](docs/guides/self-hosted-server.md) | Docker Compose, Syncthing, обратный прокси |
+| [Configurable Relations](docs/guides/configurable-relations.md) | Пользовательская онтология, многоязычные синонимы |
+| [Local Models](docs/guides/local-models.md) | Настройка Ollama, маршрутизация GPU/CPU |
+
 ## Установка
 
 ```bash

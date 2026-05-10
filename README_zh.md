@@ -19,6 +19,21 @@ https://github.com/user-attachments/assets/c35ee202-e9df-4ccd-b520-8f057163ff26
 
 _外圈的点代表知识库中所有文档的摘要,内圈的点代表从知识库中提取的概念,连线展示了这些概念之间的关联。_
 
+## 指南
+
+| 指南 | 说明 |
+|------|------|
+| [Agent Memory Layer](docs/guides/agent-memory-layer.md) | MCP 配置、技能文件、捕获工作流 |
+| [Team Setup](docs/guides/team-setup.md) | Git 同步、共享服务器、Hub 联邦 |
+| [Contribution Packs](CONTRIBUTING.md) | 创建包、解析器开发、注册表提交 |
+| [Large Vault Performance](docs/guides/large-vault-performance.md) | 分层编译、背压控制、10万+文档扩展 |
+| [Search Quality](docs/guides/search-quality.md) | 分块索引、查询扩展、重排序 |
+| [Output Trust](docs/guides/output-trust.md) | 事实验证、共识确认、升降级 |
+| [Subscription Auth](docs/guides/subscription-auth.md) | OAuth 登录、令牌导入、凭证管理 |
+| [Self-Hosted Server](docs/guides/self-hosted-server.md) | Docker Compose、Syncthing、反向代理 |
+| [Configurable Relations](docs/guides/configurable-relations.md) | 自定义本体、多语言同义词 |
+| [Local Models](docs/guides/local-models.md) | Ollama 设置、GPU/CPU 路由 |
+
 ## 安装
 
 ```bash

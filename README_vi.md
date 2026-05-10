@@ -19,6 +19,21 @@ https://github.com/user-attachments/assets/c35ee202-e9df-4ccd-b520-8f057163ff26
 
 _Các điểm trên đường biên ngoài đại diện cho tóm tắt của tất cả tài liệu trong cơ sở tri thức, trong khi các điểm ở vòng tròn bên trong đại diện cho các khái niệm được trích xuất từ cơ sở tri thức, với các liên kết cho thấy cách các khái niệm kết nối với nhau._
 
+## Hướng dẫn
+
+| Hướng dẫn | Mô tả |
+|-----------|-------|
+| [Agent Memory Layer](docs/guides/agent-memory-layer.md) | Cấu hình MCP, file kỹ năng, quy trình thu thập |
+| [Team Setup](docs/guides/team-setup.md) | Đồng bộ Git, server dùng chung, liên kết hub |
+| [Contribution Packs](CONTRIBUTING.md) | Tạo gói, phát triển parser, đăng ký registry |
+| [Large Vault Performance](docs/guides/large-vault-performance.md) | Biên dịch phân tầng, backpressure, mở rộng 100K+ |
+| [Search Quality](docs/guides/search-quality.md) | Lập chỉ mục chunk, mở rộng truy vấn, xếp hạng lại |
+| [Output Trust](docs/guides/output-trust.md) | Xác minh grounding, đồng thuận, thăng/giáng cấp |
+| [Subscription Auth](docs/guides/subscription-auth.md) | Đăng nhập OAuth, nhập token, quản lý thông tin xác thực |
+| [Self-Hosted Server](docs/guides/self-hosted-server.md) | Docker Compose, Syncthing, reverse proxy |
+| [Configurable Relations](docs/guides/configurable-relations.md) | Ontology tùy chỉnh, từ đồng nghĩa đa ngôn ngữ |
+| [Local Models](docs/guides/local-models.md) | Cài đặt Ollama, định tuyến GPU/CPU |
+
 ## Cài đặt
 
 ```bash

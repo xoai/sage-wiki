@@ -19,6 +19,21 @@ https://github.com/user-attachments/assets/c35ee202-e9df-4ccd-b520-8f057163ff26
 
 _Les points sur la bordure extérieure représentent les résumés de tous les documents de la base de connaissances, tandis que les points du cercle intérieur représentent les concepts extraits de la base de connaissances, avec des liens montrant comment ces concepts se connectent entre eux._
 
+## Guides
+
+| Guide | Description |
+|-------|-------------|
+| [Agent Memory Layer](docs/guides/agent-memory-layer.md) | Configuration MCP, fichiers de compétences, workflows de capture |
+| [Team Setup](docs/guides/team-setup.md) | Synchronisation Git, serveur partagé, fédération hub |
+| [Contribution Packs](CONTRIBUTING.md) | Création de packs, développement de parseurs, soumission au registre |
+| [Large Vault Performance](docs/guides/large-vault-performance.md) | Compilation par niveaux, backpressure, scaling 100K+ |
+| [Search Quality](docs/guides/search-quality.md) | Indexation par chunks, expansion de requêtes, re-ranking |
+| [Output Trust](docs/guides/output-trust.md) | Vérification de grounding, consensus, promotion/rétrogradation |
+| [Subscription Auth](docs/guides/subscription-auth.md) | Connexion OAuth, import de tokens, gestion des identifiants |
+| [Self-Hosted Server](docs/guides/self-hosted-server.md) | Docker Compose, Syncthing, reverse proxy |
+| [Configurable Relations](docs/guides/configurable-relations.md) | Ontologie personnalisée, synonymes multilingues |
+| [Local Models](docs/guides/local-models.md) | Configuration Ollama, routage GPU/CPU |
+
 ## Installation
 
 ```bash
