@@ -1,4 +1,4 @@
-[English](README.md) | **中文**
+[English](README.md) | **中文** | [日本語](README_ja.md) | [한국어](README_ko.md) | [Tiếng Việt](README_vi.md) | [Français](README_fr.md) | [Русский](README_ru.md)
 
 # sage-wiki
 
@@ -651,6 +651,42 @@ sage-wiki 作为 MCP 服务器运行,因此你可以直接从 AI 对话中捕获
 对于单条事实,`wiki_learn` 可直接存储。对于完整文档,`wiki_add_source` 可导入文件。运行 `wiki_compile` 处理所有内容为文章。
 
 参阅完整配置指南: [Agent 记忆层指南](docs/guides/agent-memory-layer.md)
+
+## 团队协作
+
+sage-wiki 从个人 wiki 扩展到 3-50 人团队的共享知识库。三种部署模式:
+
+**Git 同步仓库** (3-10 人) — wiki 存放在 Git 仓库中。每个人克隆、本地编译、推送。编译后的 `wiki/` 目录被跟踪;数据库通过 `.gitignore` 忽略,每次编译时重建。
+
+**共享服务器** (5-30 人) — 在服务器上运行 sage-wiki 的 Web UI。团队成员通过浏览器访问,Agent 通过 SSE 模式的 MCP 连接。
+
+**Hub 联邦** (多项目) — 每个项目有自己的 wiki。Hub 系统将它们联合为统一的搜索接口。
+
+```bash
+# Hub: 注册并跨多个 wiki 搜索
+sage-wiki hub add /projects/backend-wiki
+sage-wiki hub add /projects/ml-wiki
+sage-wiki hub search "deployment process"
+```
+
+**团队收益:**
+
+- **持续积累的组织记忆。** 一个 Agent 学到的知识,所有 Agent 都能获取。任何会话中捕获的决策、约定和陷阱对所有人可搜索。
+- **信任门控输出。** [输出信任系统](docs/guides/output-trust.md)隔离 LLM 回答,直到通过事实验证和共识确认。单个 Agent 的幻觉不会污染共享语料库。
+- **Agent 技能文件。** 生成的指令教会每个团队成员的 AI Agent 何时查询 wiki、捕获什么、如何查询。支持 Claude Code、Cursor、Windsurf、Codex 和 Gemini。
+- **每用户订阅认证。** 每个开发者使用自己的 LLM 订阅 — 仓库中无需共享 API Key。配置设置 `auth: subscription`;凭证存储在用户本地 `~/.sage-wiki/auth.json`。
+- **完整审计记录。** `auto_commit: true` 每次编译创建 git 提交。谁改了什么,何时改的。
+
+```yaml
+# 推荐的团队配置
+trust:
+  include_outputs: verified    # 验证前隔离
+compiler:
+  default_tier: 1              # 快速索引,按需编译
+  auto_commit: true            # 审计记录
+```
+
+详见[完整团队配置指南](docs/guides/team-setup.md),涵盖源文件组织、Agent 集成工作流、知识捕获流程、扩展考量,以及创业公司、研究实验室和 Obsidian 团队的即用方案。
 
 ## 基准测试
 

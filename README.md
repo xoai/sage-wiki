@@ -1,4 +1,4 @@
-**English** | [中文](README_zh.md)
+**English** | [中文](README_zh.md) | [日本語](README_ja.md) | [한국어](README_ko.md) | [Tiếng Việt](README_vi.md) | [Français](README_fr.md) | [Русский](README_ru.md)
 
 # sage-wiki
 
@@ -684,6 +684,42 @@ The `wiki_capture` tool extracts knowledge items (decisions, discoveries, correc
 For single facts, `wiki_learn` stores a nugget directly. For full documents, `wiki_add_source` ingests a file. Run `wiki_compile` to process everything into articles.
 
 See the full setup guide: [Agent Memory Layer Guide](docs/guides/agent-memory-layer.md)
+
+## Team Setup
+
+sage-wiki scales from a single-person wiki to a shared knowledge base for teams of 3-50. Three deployment patterns:
+
+**Git-synced repo** (3-10 people) — the wiki lives in a Git repository. Everyone clones, compiles locally, and pushes. The compiled `wiki/` directory is tracked; the database is `.gitignore`d and rebuilt on each compile.
+
+**Shared server** (5-30 people) — run sage-wiki on a server with the web UI. Team members browse in the browser and connect agents via MCP over SSE.
+
+**Hub federation** (multi-project) — each project has its own wiki. The hub system federates them into a single search interface with `sage-wiki hub search`.
+
+```bash
+# Hub: register and search across multiple wikis
+sage-wiki hub add /projects/backend-wiki
+sage-wiki hub add /projects/ml-wiki
+sage-wiki hub search "deployment process"
+```
+
+**What teams get:**
+
+- **Compounding institutional memory.** What one agent learns, all agents know. Decisions, conventions, and gotchas captured from any session are searchable by everyone.
+- **Trust-gated outputs.** The [output trust system](docs/guides/output-trust.md) quarantines LLM answers until they're grounding-verified and consensus-confirmed. One agent's hallucination can't poison the shared corpus.
+- **Agent skill files.** Generated instructions teach each team member's AI agent when to check the wiki, what to capture, and how to query. Supports Claude Code, Cursor, Windsurf, Codex, and Gemini.
+- **Per-user subscription auth.** Each developer uses their own LLM subscription — no shared API keys in the repo. Config says `auth: subscription`; credentials are per-user at `~/.sage-wiki/auth.json`.
+- **Full audit trail.** `auto_commit: true` creates a git commit on every compile. Who changed what, when.
+
+```yaml
+# Recommended team config
+trust:
+  include_outputs: verified    # quarantine until verified
+compiler:
+  default_tier: 1              # index fast, compile on demand
+  auto_commit: true            # audit trail
+```
+
+See the [full team setup guide](docs/guides/team-setup.md) for source organization, agent integration workflows, knowledge capture pipelines, scaling considerations, and ready-to-use recipes for startups, research labs, and Obsidian vault teams.
 
 ## Benchmarks
 
