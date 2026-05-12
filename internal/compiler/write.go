@@ -166,8 +166,16 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept) ArticleRes
 	// Extract LLM-judged fields (confidence + any custom fields from config)
 	fields, articleContent := extractFields(articleContent, opts.ArticleFields)
 
+	// Resolve ontology entity type — pass through LLM-assigned type if valid,
+	// fall back to concept for unknown or empty types. This resolved type is
+	// emitted into the article frontmatter AND used for ontology entity creation.
+	entityType := concept.Type
+	if entityType == "" || !opts.OntStore.IsValidType(entityType) {
+		entityType = ontology.TypeConcept
+	}
+
 	// Build frontmatter: ground-truth fields + LLM-judged fields
-	articleContent = buildFrontmatter(concept, fields, opts.ArticleFields, opts.UserTZ) + "\n\n" + articleContent
+	articleContent = buildFrontmatter(concept, entityType, fields, opts.ArticleFields, opts.UserTZ) + "\n\n" + articleContent
 
 	// Note: wikilinks are kept even if targets don't exist yet.
 	// Future compiles will create the missing articles, and the links
@@ -182,13 +190,6 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept) ArticleRes
 		return result
 	}
 	result.ArticlePath = articlePath
-
-	// Create ontology entity — pass through LLM-assigned type if valid,
-	// fall back to concept for unknown or empty types.
-	entityType := concept.Type
-	if entityType == "" || !opts.OntStore.IsValidType(entityType) {
-		entityType = ontology.TypeConcept
-	}
 
 	if err := opts.OntStore.AddEntity(ontology.Entity{
 		ID:          concept.Name,
@@ -305,7 +306,7 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept) ArticleRes
 	return result
 }
 
-func buildFrontmatter(concept ExtractedConcept, fields map[string]string, fieldOrder []string, loc *time.Location) string {
+func buildFrontmatter(concept ExtractedConcept, entityType string, fields map[string]string, fieldOrder []string, loc *time.Location) string {
 	aliases := quoteYAMLList(concept.Aliases)
 	sources := quoteYAMLList(concept.Sources)
 
@@ -315,8 +316,8 @@ func buildFrontmatter(concept ExtractedConcept, fields map[string]string, fieldO
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "---\nconcept: %s\naliases: %s\nsources: %s\nconfidence: %s",
-		concept.Name, aliases, sources, confidence)
+	fmt.Fprintf(&b, "---\nconcept: %s\nentity_type: %s\naliases: %s\nsources: %s\nconfidence: %s",
+		concept.Name, entityType, aliases, sources, confidence)
 
 	// Append custom fields in declared order (deterministic)
 	for _, k := range fieldOrder {

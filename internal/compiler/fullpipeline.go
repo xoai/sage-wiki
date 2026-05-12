@@ -125,7 +125,8 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		result.SucceededSources = append(result.SucceededSources, sr.SourcePath)
 		progress.ItemDone(sr.SourcePath, sr.SummaryPath)
 
-		// Update manifest
+		// Update manifest — refresh both Hash and Type so config-driven type
+		// changes propagate on recompile of existing entries.
 		for _, s := range sources {
 			if s.Path == sr.SourcePath {
 				if _, exists := mf.Sources[sr.SourcePath]; !exists {
@@ -133,6 +134,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 				} else {
 					src := mf.Sources[sr.SourcePath]
 					src.Hash = s.Hash
+					src.Type = s.Type
 					mf.Sources[sr.SourcePath] = src
 				}
 				break
@@ -144,7 +146,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		opts.MemStore.Add(memory.Entry{
 			ID:          sr.SourcePath,
 			Content:     sr.Summary,
-			Tags:        []string{extractType(sr.SourcePath, cfg.TypeSignals)},
+			Tags:        []string{TypeForFile(opts.ProjectDir, sr.SourcePath, cfg)},
 			ArticlePath: sr.SummaryPath,
 		})
 

@@ -621,6 +621,57 @@ func (c *Config) ResolveSources(projectDir string) []string {
 	return paths
 }
 
+// TypeForPath returns the configured Source.Type for the source root that
+// contains the given path, or "" if no source matches or the source has no
+// explicit type. Both unset ("") and "auto" return "" so callers fall back
+// to extension/signal detection.
+//
+// When multiple configured sources have overlapping paths (e.g. "raw/" and
+// "raw/adr/"), the longest matching prefix wins. Path-boundary anchoring
+// prevents "raw/adr" from matching files under "raw/adr-old/".
+//
+// The input path may be absolute or relative to projectDir. Sources with
+// relative paths are resolved against projectDir for comparison.
+func (c *Config) TypeForPath(projectDir, path string) string {
+	if len(c.Sources) == 0 {
+		return ""
+	}
+	absPath := path
+	if !filepath.IsAbs(absPath) {
+		absPath = filepath.Join(projectDir, path)
+	}
+	absPath = filepath.Clean(absPath)
+
+	var bestSrc Source
+	var bestLen int
+	matched := false
+	for _, s := range c.Sources {
+		srcAbs := s.Path
+		if !filepath.IsAbs(srcAbs) {
+			srcAbs = filepath.Join(projectDir, s.Path)
+		}
+		srcAbs = filepath.Clean(srcAbs)
+
+		// path-boundary anchoring: srcAbs is a parent of absPath only if
+		// absPath equals srcAbs OR has srcAbs + separator as prefix
+		sep := string(filepath.Separator)
+		if absPath == srcAbs || strings.HasPrefix(absPath, srcAbs+sep) {
+			if len(srcAbs) > bestLen {
+				bestLen = len(srcAbs)
+				bestSrc = s
+				matched = true
+			}
+		}
+	}
+	if !matched {
+		return ""
+	}
+	if bestSrc.Type == "" || bestSrc.Type == "auto" {
+		return ""
+	}
+	return bestSrc.Type
+}
+
 // expandEnvVars replaces ${VAR} references with environment variable values.
 func expandEnvVars(s string) string {
 	var result strings.Builder

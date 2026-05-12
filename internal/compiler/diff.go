@@ -72,8 +72,15 @@ func Diff(projectDir string, cfg *config.Config, mf *manifest.Manifest) (*DiffRe
 				return nil
 			}
 
+			// Configured Source.Type takes precedence over extension/signal detection.
+			// When config declares a type, bypass the manifest cache so config
+			// changes take effect without --fresh.
+			configuredType := cfg.TypeForPath(projectDir, path)
+
 			var detectedType string
-			if len(cfg.TypeSignals) > 0 {
+			if configuredType != "" {
+				detectedType = configuredType
+			} else if len(cfg.TypeSignals) > 0 {
 				// Reuse cached type from manifest if file is unchanged
 				if existing, ok := mf.Sources[relPath]; ok && existing.Hash == hash && existing.Type != "" {
 					detectedType = existing.Type
@@ -96,12 +103,15 @@ func Diff(projectDir string, cfg *config.Config, mf *manifest.Manifest) (*DiffRe
 		}
 	}
 
-	// Compare against manifest
+	// Compare against manifest. A file is Modified when either the content
+	// (hash) changed OR the resolved source type changed — the latter covers
+	// the case where the user updates cfg.Sources[].type or type_signals and
+	// re-runs compile without modifying file contents.
 	for path, info := range current {
 		existing, exists := mf.Sources[path]
 		if !exists {
 			result.Added = append(result.Added, info)
-		} else if existing.Hash != info.Hash {
+		} else if existing.Hash != info.Hash || existing.Type != info.Type {
 			result.Modified = append(result.Modified, info)
 		}
 	}

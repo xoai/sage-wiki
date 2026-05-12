@@ -2,7 +2,9 @@ package compiler
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/storage"
@@ -236,5 +238,58 @@ func TestExtractRelations_EntityNotFoundWithValidTargets(t *testing.T) {
 	relations, _ := store.ListRelations("", 100)
 	if len(relations) != 0 {
 		t.Errorf("expected 0 (unknown target type '' not in ValidTargets), got %d", len(relations))
+	}
+}
+
+func TestBuildFrontmatter_EmitsEntityType(t *testing.T) {
+	concept := ExtractedConcept{
+		Name:    "flash-attention",
+		Aliases: []string{"fa"},
+		Sources: []string{"raw/transformer.md"},
+	}
+	fields := map[string]string{"confidence": "high"}
+
+	got := buildFrontmatter(concept, "technique", fields, nil, time.UTC)
+
+	if !strings.Contains(got, "concept: flash-attention") {
+		t.Error("missing concept field")
+	}
+	if !strings.Contains(got, "entity_type: technique") {
+		t.Errorf("missing entity_type field; got:\n%s", got)
+	}
+	if !strings.Contains(got, "aliases:") {
+		t.Error("missing aliases field")
+	}
+	if !strings.Contains(got, "sources:") {
+		t.Error("missing sources field")
+	}
+	if !strings.Contains(got, "confidence: high") {
+		t.Error("missing confidence field")
+	}
+
+	// Verify field order: concept → entity_type → aliases → sources → confidence
+	conceptIdx := strings.Index(got, "concept:")
+	entityIdx := strings.Index(got, "entity_type:")
+	aliasIdx := strings.Index(got, "aliases:")
+	srcIdx := strings.Index(got, "sources:")
+	confIdx := strings.Index(got, "confidence:")
+	if !(conceptIdx < entityIdx && entityIdx < aliasIdx && aliasIdx < srcIdx && srcIdx < confIdx) {
+		t.Errorf("frontmatter field order incorrect:\n%s", got)
+	}
+}
+
+func TestBuildFrontmatter_FallbackEntityType(t *testing.T) {
+	concept := ExtractedConcept{
+		Name:    "some-concept",
+		Aliases: nil,
+		Sources: nil,
+	}
+	fields := map[string]string{}
+
+	// Caller passes "concept" as the resolved fallback for empty/invalid types
+	got := buildFrontmatter(concept, "concept", fields, nil, time.UTC)
+
+	if !strings.Contains(got, "entity_type: concept") {
+		t.Errorf("expected entity_type: concept (fallback); got:\n%s", got)
 	}
 }

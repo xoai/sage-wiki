@@ -746,9 +746,16 @@ func resumeBatch(
 		result.Summarized++
 		progress.ItemDone(br.CustomID, summaryPath)
 
-		// Update manifest — ensure source entry exists, then mark compiled
+		// Update manifest — ensure source entry exists with current resolved type,
+		// then mark compiled. Refreshing Type on existing entries propagates
+		// config-driven type changes on recompile.
+		resolvedType := TypeForFile(projectDir, br.CustomID, cfg)
 		if _, exists := mf.Sources[br.CustomID]; !exists {
-			mf.AddSource(br.CustomID, "", extractType(br.CustomID, cfg.TypeSignals), 0)
+			mf.AddSource(br.CustomID, "", resolvedType, 0)
+		} else {
+			src := mf.Sources[br.CustomID]
+			src.Type = resolvedType
+			mf.Sources[br.CustomID] = src
 		}
 		mf.MarkCompiled(br.CustomID, summaryPath, nil)
 
@@ -756,7 +763,7 @@ func resumeBatch(
 		memStore.Add(memory.Entry{
 			ID:          br.CustomID,
 			Content:     summaryText,
-			Tags:        []string{extractType(br.CustomID, cfg.TypeSignals)},
+			Tags:        []string{resolvedType},
 			ArticlePath: summaryPath,
 		})
 

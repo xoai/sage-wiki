@@ -126,6 +126,162 @@ func TestDiffRespectsIgnore(t *testing.T) {
 	}
 }
 
+func TestDiff_TypeFromSourceConfig(t *testing.T) {
+	dir := setupProject(t)
+
+	// Create an ADR source folder with a markdown file
+	adrDir := filepath.Join(dir, "raw", "adrs")
+	if err := os.MkdirAll(adrDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(adrDir, "decision-001.md"), []byte("# ADR 001\nDecided."), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Build a config with raw/adrs declared as type=adr
+	cfg := &config.Config{
+		Sources: []config.Source{
+			{Path: "raw/adrs", Type: "adr"},
+		},
+		Output: "wiki",
+	}
+
+	mf, _ := manifest.Load(filepath.Join(dir, ".manifest.json"))
+	diff, err := Diff(dir, cfg, mf)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+
+	if len(diff.Added) != 1 {
+		t.Fatalf("expected 1 added, got %d", len(diff.Added))
+	}
+	if diff.Added[0].Type != "adr" {
+		t.Errorf("Type = %q, want %q (configured source type should override .md → article default)", diff.Added[0].Type, "adr")
+	}
+}
+
+func TestDiff_TypeFromSourceConfig_AutoFallsBack(t *testing.T) {
+	dir := setupProject(t)
+
+	docsDir := filepath.Join(dir, "raw", "docs")
+	if err := os.MkdirAll(docsDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(docsDir, "guide.md"), []byte("# Guide\nContent."), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	cfg := &config.Config{
+		Sources: []config.Source{
+			{Path: "raw/docs", Type: "auto"},
+		},
+		Output: "wiki",
+	}
+
+	mf, _ := manifest.Load(filepath.Join(dir, ".manifest.json"))
+	diff, err := Diff(dir, cfg, mf)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+
+	if len(diff.Added) != 1 {
+		t.Fatalf("expected 1 added, got %d", len(diff.Added))
+	}
+	if diff.Added[0].Type != "article" {
+		t.Errorf("Type = %q, want %q (auto should fall back to extension detection)", diff.Added[0].Type, "article")
+	}
+}
+
+// TestDiff_TypeChangeFlagsModified verifies that when a user adds or changes
+// cfg.Sources[].type in config.yaml without modifying file contents, the next
+// compile detects the affected files as Modified — so they get re-summarized
+// with the new type instead of being skipped because their hash is unchanged.
+func TestDiff_TypeChangeFlagsModified(t *testing.T) {
+	dir := setupProject(t)
+
+	specDir := filepath.Join(dir, "raw", "specs")
+	if err := os.MkdirAll(specDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	filePath := filepath.Join(specDir, "spec-001.md")
+	if err := os.WriteFile(filePath, []byte("# Spec 001"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Prime the manifest with the file already compiled at the OLD type
+	hash, _ := fileHash(filePath)
+	mfPath := filepath.Join(dir, ".manifest.json")
+	mf, _ := manifest.Load(mfPath)
+	mf.AddSource("raw/specs/spec-001.md", hash, "article", 10)
+	mf.Save(mfPath)
+	mf, _ = manifest.Load(mfPath)
+
+	// User has now added `type: spec` to config — file contents unchanged
+	cfg := &config.Config{
+		Sources: []config.Source{
+			{Path: "raw/specs", Type: "spec"},
+		},
+		Output: "wiki",
+	}
+
+	diff, err := Diff(dir, cfg, mf)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+
+	// File hash is unchanged but the resolved type is now "spec" (vs cached "article")
+	// → must land in Modified so it gets re-summarized with the new type.
+	if len(diff.Modified) != 1 {
+		t.Fatalf("expected 1 Modified, got %d (Added=%d Removed=%d)",
+			len(diff.Modified), len(diff.Added), len(diff.Removed))
+	}
+	if diff.Modified[0].Type != "spec" {
+		t.Errorf("Modified[0].Type = %q, want %q", diff.Modified[0].Type, "spec")
+	}
+	if diff.Modified[0].Hash != hash {
+		t.Errorf("Modified[0].Hash = %q, expected unchanged %q", diff.Modified[0].Hash, hash)
+	}
+}
+
+// TestDiff_NoChangeWhenTypeMatches confirms files are NOT re-flagged when both
+// hash and type match the manifest — guards against trivial-modification noise.
+func TestDiff_NoChangeWhenTypeMatches(t *testing.T) {
+	dir := setupProject(t)
+
+	specDir := filepath.Join(dir, "raw", "specs")
+	if err := os.MkdirAll(specDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	filePath := filepath.Join(specDir, "spec-001.md")
+	if err := os.WriteFile(filePath, []byte("# Spec 001"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	hash, _ := fileHash(filePath)
+	mfPath := filepath.Join(dir, ".manifest.json")
+	mf, _ := manifest.Load(mfPath)
+	mf.AddSource("raw/specs/spec-001.md", hash, "spec", 10)
+	mf.Save(mfPath)
+	mf, _ = manifest.Load(mfPath)
+
+	cfg := &config.Config{
+		Sources: []config.Source{
+			{Path: "raw/specs", Type: "spec"},
+		},
+		Output: "wiki",
+	}
+
+	diff, err := Diff(dir, cfg, mf)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+
+	if len(diff.Added)+len(diff.Modified) != 0 {
+		t.Errorf("expected no Added/Modified when hash AND type match, got Added=%d Modified=%d",
+			len(diff.Added), len(diff.Modified))
+	}
+}
+
 func TestIsIgnored(t *testing.T) {
 	tests := []struct {
 		path    string

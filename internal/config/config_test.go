@@ -356,6 +356,96 @@ func TestResolvePaths(t *testing.T) {
 	}
 }
 
+func TestTypeForPath(t *testing.T) {
+	projectDir := "/home/user/project"
+
+	tests := []struct {
+		name    string
+		sources []Source
+		path    string
+		want    string
+	}{
+		{
+			name:    "explicit type matches relative path",
+			sources: []Source{{Path: "raw/adrs", Type: "adr"}},
+			path:    "raw/adrs/decision-001.md",
+			want:    "adr",
+		},
+		{
+			name:    "explicit type matches absolute path",
+			sources: []Source{{Path: "raw/adrs", Type: "adr"}},
+			path:    filepath.Join(projectDir, "raw/adrs/decision-001.md"),
+			want:    "adr",
+		},
+		{
+			name:    "type auto returns empty (fall through to detection)",
+			sources: []Source{{Path: "raw", Type: "auto"}},
+			path:    "raw/foo.md",
+			want:    "",
+		},
+		{
+			name:    "unset type returns empty",
+			sources: []Source{{Path: "raw", Type: ""}},
+			path:    "raw/foo.md",
+			want:    "",
+		},
+		{
+			name:    "path outside any configured root returns empty",
+			sources: []Source{{Path: "raw/adrs", Type: "adr"}},
+			path:    "raw/other/foo.md",
+			want:    "",
+		},
+		{
+			name: "longest prefix wins",
+			sources: []Source{
+				{Path: "raw", Type: "article"},
+				{Path: "raw/adrs", Type: "adr"},
+			},
+			path: "raw/adrs/foo.md",
+			want: "adr",
+		},
+		{
+			name: "longest prefix wins regardless of order",
+			sources: []Source{
+				{Path: "raw/adrs", Type: "adr"},
+				{Path: "raw", Type: "article"},
+			},
+			path: "raw/adrs/foo.md",
+			want: "adr",
+		},
+		{
+			name: "path-boundary anchoring rejects sibling-prefix",
+			sources: []Source{
+				{Path: "raw/adr", Type: "adr"},
+			},
+			path: "raw/adr-old/foo.md",
+			want: "",
+		},
+		{
+			name:    "empty sources returns empty",
+			sources: nil,
+			path:    "raw/foo.md",
+			want:    "",
+		},
+		{
+			name:    "source path equals file path",
+			sources: []Source{{Path: "raw/adrs/decision.md", Type: "adr"}},
+			path:    "raw/adrs/decision.md",
+			want:    "adr",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{Sources: tt.sources}
+			got := cfg.TypeForPath(projectDir, tt.path)
+			if got != tt.want {
+				t.Errorf("TypeForPath(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCostConfigFields(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")
