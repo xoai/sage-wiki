@@ -29,8 +29,8 @@ ontology:
     - name: blocks
       synonyms: [prevents, depends_on]
 prompts:
-  - extract_prd.txt
-  - extract_user_stories.txt
+  - extract_prd.md
+  - extract_user_stories.md
 skills:
   - product-management.md
 samples:

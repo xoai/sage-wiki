@@ -29,8 +29,8 @@ ontology:
     - name: contrasts_with
       synonyms: [differs_from, opposes]
 prompts:
-  - extract_zettelkasten.txt
-  - distill_note.txt
+  - extract_zettelkasten.md
+  - distill_note.md
 skills:
   - personal-knowledge.md
 samples:

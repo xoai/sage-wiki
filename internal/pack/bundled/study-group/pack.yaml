@@ -29,8 +29,8 @@ ontology:
     - name: practices
       synonyms: [applies, exercises]
 prompts:
-  - extract_textbook.txt
-  - extract_definitions.txt
+  - extract_textbook.md
+  - extract_definitions.md
 skills:
   - study-group.md
 samples:

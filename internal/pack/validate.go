@@ -119,11 +119,11 @@ func Validate(dir string) ([]ValidationError, error) {
 		}
 	}
 
-	// 9. Prompt files are valid markdown
+	// 9. Prompt files are valid text
 	for _, p := range manifest.Prompts {
 		path := filepath.Join(dir, "prompts", p)
-		if !strings.HasSuffix(p, ".md") {
-			errors = append(errors, ValidationError{"warning", "prompts", fmt.Sprintf("%s is not a .md file", p)})
+		if !strings.HasSuffix(p, ".md") && !strings.HasSuffix(p, ".txt") {
+			errors = append(errors, ValidationError{"warning", "prompts", fmt.Sprintf("%s should be .md or .txt", p)})
 		}
 		data, err := os.ReadFile(path)
 		if err == nil && len(data) == 0 {

@@ -29,8 +29,8 @@ ontology:
     - name: requires
       synonyms: [mandates, obligates]
 prompts:
-  - extract_regulatory.txt
-  - extract_obligations.txt
+  - extract_regulatory.md
+  - extract_obligations.md
 skills:
   - legal-compliance.md
 samples:

@@ -29,8 +29,8 @@ ontology:
     - name: targets
       synonyms: [written_for, aimed_at]
 prompts:
-  - summarize_editorial.txt
-  - extract_outline.txt
+  - summarize_editorial.md
+  - extract_outline.md
 skills:
   - content-creation.md
 samples:

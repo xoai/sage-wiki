@@ -29,8 +29,8 @@ ontology:
     - name: extends
       synonyms: [builds_upon, generalizes]
 prompts:
-  - summarize_paper.txt
-  - extract_methodology.txt
+  - summarize_paper.md
+  - extract_methodology.md
 skills:
   - academic-research.md
 samples:

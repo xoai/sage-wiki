@@ -29,8 +29,8 @@ ontology:
     - name: followed_up
       synonyms: [revisited, checked_on]
 prompts:
-  - extract_meeting.txt
-  - extract_action_items.txt
+  - extract_meeting.md
+  - extract_action_items.md
 skills:
   - meeting-organizer.md
 samples:

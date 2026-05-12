@@ -29,8 +29,8 @@ ontology:
     - name: tests
       synonyms: [verifies, validates]
 prompts:
-  - summarize_code.txt
-  - extract_adr.txt
+  - summarize_code.md
+  - extract_adr.md
 skills:
   - software-engineering.md
 samples:
