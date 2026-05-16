@@ -30,11 +30,16 @@ func InitGreenfield(dir string, project string, model string) error {
 		}
 	}
 
-	// Write config template with comments
+	// Write config template — but preserve existing config so users can
+	// safely re-run `sage-wiki init` after deleting .sage/ to recover state.
 	cfgPath := filepath.Join(dir, "config.yaml")
-	cfgContent := configTemplate(project, fmt.Sprintf("sage-wiki project: %s", project), false, model)
-	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0644); err != nil {
-		return fmt.Errorf("init: save config: %w", err)
+	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
+		cfgContent := configTemplate(project, fmt.Sprintf("sage-wiki project: %s", project), false, model)
+		if err := os.WriteFile(cfgPath, []byte(cfgContent), 0644); err != nil {
+			return fmt.Errorf("init: save config: %w", err)
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "config.yaml already exists, preserving it\n")
 	}
 
 	// Create SQLite DB
@@ -101,10 +106,14 @@ func InitVaultOverlay(dir string, project string, sourceFolders []string, ignore
 		ignoreYAML += fmt.Sprintf("  - %s\n", ig)
 	}
 
-	cfgContent := configTemplateVault(project, output, sourcesYAML, ignoreYAML, model)
 	cfgPath := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0644); err != nil {
-		return fmt.Errorf("init: save config: %w", err)
+	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
+		cfgContent := configTemplateVault(project, output, sourcesYAML, ignoreYAML, model)
+		if err := os.WriteFile(cfgPath, []byte(cfgContent), 0644); err != nil {
+			return fmt.Errorf("init: save config: %w", err)
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "config.yaml already exists, preserving it\n")
 	}
 
 	// Create SQLite DB

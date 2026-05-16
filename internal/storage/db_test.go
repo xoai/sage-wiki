@@ -140,3 +140,22 @@ func TestConcurrentReads(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// TestOpen_CreatesParentDir verifies that Open creates a missing parent
+// directory so callers don't need to MkdirAll first (fixes #84 obs 1).
+func TestOpen_CreatesParentDir(t *testing.T) {
+	dir := t.TempDir()
+	// .sage/ does not exist yet — mirror the post-`rm -rf .sage/` state
+	dbPath := filepath.Join(dir, ".sage", "wiki.db")
+
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open with missing parent dir: %v", err)
+	}
+	defer db.Close()
+
+	// Confirm the parent dir was created
+	if _, err := db.WriteDB().Exec("CREATE TABLE t (id INTEGER)"); err != nil {
+		t.Fatalf("write to db: %v", err)
+	}
+}

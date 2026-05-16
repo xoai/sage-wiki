@@ -3,6 +3,8 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/xoai/sage-wiki/internal/log"
@@ -19,7 +21,14 @@ type DB struct {
 
 // Open creates a new DB connection to the given path.
 // It enables WAL mode, foreign keys, and busy timeout.
+// The parent directory is created if it doesn't exist.
 func Open(path string) (*DB, error) {
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("storage.Open: create parent dir: %w", err)
+		}
+	}
+
 	// Write connection
 	writeDB, err := sql.Open("sqlite", path)
 	if err != nil {

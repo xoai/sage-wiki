@@ -3,6 +3,7 @@ package wiki
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -141,5 +142,65 @@ func TestScanFolders(t *testing.T) {
 	}
 	if !clippings.HasMD {
 		t.Error("Clippings should have .md files")
+	}
+}
+
+// TestInitGreenfield_PreservesExistingConfig verifies that re-running
+// `sage-wiki init` (e.g., to recover after deleting .sage/) does not
+// overwrite a user's existing config.yaml. Fixes #84 obs 2.
+func TestInitGreenfield_PreservesExistingConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	customConfig := "# user-customized config\nproject: my-existing\nversion: 1\n"
+	if err := os.WriteFile(cfgPath, []byte(customConfig), 0644); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	if err := InitGreenfield(dir, "fresh-name", "gemini-2.5-flash"); err != nil {
+		t.Fatalf("InitGreenfield: %v", err)
+	}
+
+	got, _ := os.ReadFile(cfgPath)
+	if string(got) != customConfig {
+		t.Errorf("config.yaml was overwritten\nwant:\n%s\ngot:\n%s", customConfig, string(got))
+	}
+
+	// Recovery scenario: .sage/ should still be created
+	if _, err := os.Stat(filepath.Join(dir, ".sage")); err != nil {
+		t.Error(".sage/ should be created even when config exists")
+	}
+}
+
+func TestInitVaultOverlay_PreservesExistingConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	customConfig := "# vault user config\nproject: my-vault\n"
+	if err := os.WriteFile(cfgPath, []byte(customConfig), 0644); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	if err := InitVaultOverlay(dir, "fresh-name", []string{"Notes"}, nil, "_wiki", "gemini-2.5-flash"); err != nil {
+		t.Fatalf("InitVaultOverlay: %v", err)
+	}
+
+	got, _ := os.ReadFile(cfgPath)
+	if string(got) != customConfig {
+		t.Errorf("config.yaml was overwritten\nwant:\n%s\ngot:\n%s", customConfig, string(got))
+	}
+}
+
+func TestInitGreenfield_WritesConfigWhenAbsent(t *testing.T) {
+	dir := t.TempDir()
+
+	if err := InitGreenfield(dir, "new-project", "gemini-2.5-flash"); err != nil {
+		t.Fatalf("InitGreenfield: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	if err != nil {
+		t.Fatalf("config.yaml not created: %v", err)
+	}
+	if !strings.Contains(string(got), "project: new-project") {
+		t.Errorf("config.yaml missing expected project name; got:\n%s", string(got))
 	}
 }
