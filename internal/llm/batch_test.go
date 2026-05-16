@@ -487,3 +487,44 @@ func TestNewGeminiProviderURLDerivation(t *testing.T) {
 		}
 	}
 }
+
+// TestSupportsBatch_PerProvider verifies that only providers with a real
+// Files/Batches API claim BatchProvider support. Ollama, Qwen, and other
+// OpenAI-compatible chat backends share openaiProvider for chat completion
+// but must NOT inherit its batch methods (issue #83).
+func TestSupportsBatch_PerProvider(t *testing.T) {
+	tests := []struct {
+		provider    string
+		wantSupport bool
+	}{
+		{"openai", true},
+		{"anthropic", true},
+		{"gemini", true},
+		{"openai-compatible", false},
+		{"qwen", false},
+		{"ollama", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			c, err := NewClient(tt.provider, "test-key", "", 0, nil)
+			if err != nil {
+				t.Fatalf("NewClient(%q): %v", tt.provider, err)
+			}
+			got := c.SupportsBatch()
+			if got != tt.wantSupport {
+				t.Errorf("%s SupportsBatch() = %v, want %v", tt.provider, got, tt.wantSupport)
+			}
+		})
+	}
+}
+
+// TestNonBatchProvider_DoesNotSatisfyBatchInterface guards against a
+// regression where someone changes nonBatchProvider from a named field
+// to struct embedding (which would re-promote the batch methods).
+func TestNonBatchProvider_DoesNotSatisfyBatchInterface(t *testing.T) {
+	p := &nonBatchProvider{inner: newOpenAIProvider("k", "http://localhost:11434/v1")}
+	if _, ok := interface{}(p).(BatchProvider); ok {
+		t.Error("nonBatchProvider must NOT satisfy BatchProvider — issue #83 regression")
+	}
+}

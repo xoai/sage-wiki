@@ -240,13 +240,15 @@ type Provider interface {
 
 func newProvider(name string, apiKey string, baseURL string) (Provider, error) {
 	switch name {
-	case "openai", "openai-compatible":
+	case "openai":
 		return newOpenAIProvider(apiKey, baseURL), nil
+	case "openai-compatible":
+		return &nonBatchProvider{inner: newOpenAIProvider(apiKey, baseURL)}, nil
 	case "qwen":
 		if baseURL == "" {
 			baseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 		}
-		return newOpenAIProvider(apiKey, baseURL), nil
+		return &nonBatchProvider{inner: newOpenAIProvider(apiKey, baseURL)}, nil
 	case "anthropic":
 		return newAnthropicProvider(apiKey, baseURL), nil
 	case "gemini":
@@ -255,7 +257,7 @@ func newProvider(name string, apiKey string, baseURL string) (Provider, error) {
 		if baseURL == "" {
 			baseURL = "http://localhost:11434"
 		}
-		return newOpenAIProvider("", baseURL+"/v1"), nil
+		return &nonBatchProvider{inner: newOpenAIProvider("", baseURL+"/v1")}, nil
 	default:
 		return nil, fmt.Errorf("llm: unsupported provider %q", name)
 	}
