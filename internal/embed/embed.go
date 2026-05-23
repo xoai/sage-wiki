@@ -193,14 +193,14 @@ func (e *APIEmbedder) Dimensions() int { return e.dims }
 const maxEmbedChars = 5000
 
 func (e *APIEmbedder) Embed(text string) ([]float32, error) {
-	// Whitespace-only input carries no semantic signal and is rejected outright by
-	// some OpenAI-compatible embedding endpoints — e.g. SiliconFlow's bge-m3 returns
-	// HTTP 400 ("code 20015: The parameter is invalid") for empty/newline-only input,
-	// which fails the embed for an entire chunk (commonly an empty section between
-	// headings). Short-circuit with a zero vector instead of a doomed API call; a
-	// zero vector is also the semantically correct representation of "no content".
+	// Defense-in-depth: empty or whitespace-only input is rejected by some
+	// OpenAI-compatible embedding endpoints — bge-m3 returns HTTP 400 (code
+	// 20015) for "" and newline-only input. The chunker (internal/extract) is
+	// the root-cause owner of not producing such chunks; this guards every
+	// other caller too. Fail loud: a post-chunker empty input signals an
+	// upstream bug, not something to silently paper over with a zero vector.
 	if strings.TrimSpace(text) == "" {
-		return make([]float32, e.dims), nil
+		return nil, fmt.Errorf("embed: empty or whitespace-only input text")
 	}
 	if e.limiter != nil {
 		e.limiter.wait()

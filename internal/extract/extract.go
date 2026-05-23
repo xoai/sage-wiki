@@ -247,16 +247,22 @@ func splitByHeadings(text string, maxTokens int) []Chunk {
 	runningTokens := 0
 
 	flush := func() {
-		if current.Len() > 0 {
+		// Guard on the TRIMMED content, not the raw builder length: a segment
+		// holding only whitespace (e.g. a trailing blank line landing in a
+		// freshly-reset buffer after a mid-section token flush) has Len()>0 but
+		// trims to "". Emitting it produced an empty chunk whose embed request
+		// {"input":""} is rejected by bge-m3 with HTTP 400 code 20015.
+		trimmed := strings.TrimSpace(current.String())
+		if trimmed != "" {
 			chunks = append(chunks, Chunk{
 				Index:   chunkIdx,
-				Text:    strings.TrimSpace(current.String()),
+				Text:    trimmed,
 				Heading: currentHeading,
 			})
 			chunkIdx++
-			current.Reset()
-			runningTokens = 0
 		}
+		current.Reset()
+		runningTokens = 0
 	}
 
 	for _, line := range lines {
@@ -306,11 +312,13 @@ func splitByParagraphs(text string, maxTokens int) []Chunk {
 	for _, para := range paragraphs {
 		paraTokens := EstimateTokens(para)
 		if runningTokens+paraTokens > maxTokens && current.Len() > 0 {
-			chunks = append(chunks, Chunk{
-				Index: chunkIdx,
-				Text:  strings.TrimSpace(current.String()),
-			})
-			chunkIdx++
+			if trimmed := strings.TrimSpace(current.String()); trimmed != "" {
+				chunks = append(chunks, Chunk{
+					Index: chunkIdx,
+					Text:  trimmed,
+				})
+				chunkIdx++
+			}
 			current.Reset()
 			runningTokens = 0
 		}
@@ -319,10 +327,10 @@ func splitByParagraphs(text string, maxTokens int) []Chunk {
 		runningTokens += paraTokens + 2 // +2 for paragraph separator newlines
 	}
 
-	if current.Len() > 0 {
+	if trimmed := strings.TrimSpace(current.String()); trimmed != "" {
 		chunks = append(chunks, Chunk{
 			Index: chunkIdx,
-			Text:  strings.TrimSpace(current.String()),
+			Text:  trimmed,
 		})
 	}
 
@@ -409,4 +417,3 @@ type TypeSignal struct {
 	ContentKeywords  []string // keywords matched against content head
 	MinContentHits   int      // minimum content keyword matches required
 }
-

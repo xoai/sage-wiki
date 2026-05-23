@@ -328,3 +328,35 @@ func TestReadHead(t *testing.T) {
 		t.Errorf("ReadHead(10000) = %q, want full content", got)
 	}
 }
+
+func TestChunkSkipsWhitespaceOnlyChunks(t *testing.T) {
+	// Empty/whitespace-only sections between headings used to produce
+	// all-whitespace chunks (builder Len()>0 but trims to ""), whose embed
+	// request {"input":""} is rejected by bge-m3 (HTTP 400 code 20015). The
+	// chunker must never emit such a chunk.
+	text := `# Section A
+
+Real content under section A with enough text to be substantial here.
+
+## Empty Heading
+
+
+## Another Empty
+
+
+## Section B
+
+Real content under section B with enough text to be substantial here too.
+`
+	content := &SourceContent{Text: text}
+	ChunkIfNeeded(content, 20) // small limit forces heading-based chunking
+
+	if content.ChunkCount == 0 {
+		t.Fatal("expected at least one chunk")
+	}
+	for i, chunk := range content.Chunks {
+		if strings.TrimSpace(chunk.Text) == "" {
+			t.Errorf("chunk %d is empty/whitespace-only: %q", i, chunk.Text)
+		}
+	}
+}

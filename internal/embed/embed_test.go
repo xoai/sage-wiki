@@ -392,3 +392,27 @@ func TestEmbedRateLimiter(t *testing.T) {
 		t.Errorf("expected ≥2s for 3 calls at 1/sec, got %v", elapsed)
 	}
 }
+
+func TestEmbedRejectsEmptyAndWhitespace(t *testing.T) {
+	// The embedding API must NOT be called for empty/whitespace-only input —
+	// fail the test if the mock server is ever hit. bge-m3 rejects such input
+	// with HTTP 400 (code 20015); we short-circuit with a fail-loud error.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("embedding API should not be called for whitespace-only input")
+	}))
+	defer server.Close()
+
+	e := &APIEmbedder{
+		provider: "openai",
+		model:    "text-embedding-3-small",
+		apiKey:   "sk-test",
+		baseURL:  server.URL,
+		dims:     1024,
+	}
+
+	for _, input := range []string{"", "   ", "\n\n\n", "\t  \n"} {
+		if _, err := e.Embed(input); err == nil {
+			t.Errorf("Embed(%q): expected error for whitespace-only input, got nil", input)
+		}
+	}
+}
