@@ -123,7 +123,23 @@ func (s *Server) handleAddSource(ctx context.Context, req mcplib.CallToolRequest
 
 	absProject, _ := filepath.Abs(s.projectDir)
 	absPath, _ := filepath.Abs(filepath.Join(s.projectDir, path))
-	if !isSubpath(absProject, absPath) {
+
+	// Accept paths within the project root OR within any configured source
+	// directory. Vault overlays use relative paths like ../../docs/... that
+	// resolve outside the project root but are still legitimate sources
+	// listed in cfg.sources (#51). Random traversal (../../etc/passwd) is
+	// still rejected because it won't match any configured source.
+	allowed := isSubpath(absProject, absPath)
+	if !allowed {
+		for _, src := range s.cfg.ResolveSources(absProject) {
+			absSrc, _ := filepath.Abs(src)
+			if isSubpath(absSrc, absPath) {
+				allowed = true
+				break
+			}
+		}
+	}
+	if !allowed {
 		return errorResult("path traversal not allowed"), nil
 	}
 

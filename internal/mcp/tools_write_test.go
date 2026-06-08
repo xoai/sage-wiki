@@ -260,6 +260,71 @@ func TestAddSourceWithPathTraversal(t *testing.T) {
 	}
 }
 
+// TestAddSourceAllowsConfiguredSourceDir verifies that a file inside a
+// configured source directory is accepted even when that directory resolves
+// outside the project root via a relative path (issue #51). Random
+// ../../etc/passwd traversal stays blocked.
+func TestAddSourceAllowsConfiguredSourceDir(t *testing.T) {
+	// Lay out:
+	//   tmp/
+	//     external-docs/   <- referenced via relative ../external-docs from project
+	//       notes/article.md
+	//     project/         <- the sage-wiki project dir
+	tmp := t.TempDir()
+	externalDocs := filepath.Join(tmp, "external-docs")
+	notesDir := filepath.Join(externalDocs, "notes")
+	if err := os.MkdirAll(notesDir, 0755); err != nil {
+		t.Fatalf("mkdir external: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(notesDir, "article.md"), []byte("# external\n"), 0644); err != nil {
+		t.Fatalf("write article: %v", err)
+	}
+
+	projectDir := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	if err := wiki.InitGreenfield(projectDir, "test", "gemini-2.5-flash"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	// Rewrite config to point sources at the sibling external-docs/ tree.
+	cfgPath := filepath.Join(projectDir, "config.yaml")
+	cfg := "project: test\nsources:\n  - path: ../external-docs\n    type: article\n"
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	srv, err := NewServer(projectDir)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer srv.Close()
+
+	result := srv.CallTool(context.Background(), "wiki_add_source", mcplib.CallToolRequest{
+		Params: mcplib.CallToolParams{
+			Name:      "wiki_add_source",
+			Arguments: map[string]any{"path": "../external-docs/notes/article.md"},
+		},
+	})
+
+	if result.IsError {
+		t.Errorf("expected success for path within configured source dir, got: %s",
+			result.Content[0].(mcplib.TextContent).Text)
+	}
+
+	// Sanity: random traversal still blocked even with the new logic.
+	bad := srv.CallTool(context.Background(), "wiki_add_source", mcplib.CallToolRequest{
+		Params: mcplib.CallToolParams{
+			Name:      "wiki_add_source",
+			Arguments: map[string]any{"path": "../../etc/passwd"},
+		},
+	})
+	if !bad.IsError {
+		t.Error("expected error for random ../../etc/passwd traversal")
+	}
+}
+
 func TestCaptureEmptyContent(t *testing.T) {
 	dir := t.TempDir()
 	wiki.InitGreenfield(dir, "test", "gemini-2.5-flash")
