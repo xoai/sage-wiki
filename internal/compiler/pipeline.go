@@ -28,47 +28,47 @@ import (
 
 // CompileOpts configures a compilation run.
 type CompileOpts struct {
-	DryRun   bool
-	Fresh    bool              // ignore checkpoint
-	Batch    bool              // use batch API (async, 50% discount)
-	NoCache  bool              // disable prompt caching
-	Prune    bool              // delete orphaned articles when sources removed
-	Tracker  *llm.CostTracker  // optional cost tracker
+	DryRun  bool
+	Fresh   bool             // ignore checkpoint
+	Batch   bool             // use batch API (async, 50% discount)
+	NoCache bool             // disable prompt caching
+	Prune   bool             // delete orphaned articles when sources removed
+	Tracker *llm.CostTracker // optional cost tracker
 }
 
 // CompileResult summarizes what happened during compilation.
 type CompileResult struct {
-	Added              int
-	Modified           int
-	Removed            int
-	Summarized         int
-	ConceptsExtracted  int
-	ArticlesWritten    int
-	Errors             int
-	EmbedErrors        int
-	CostReport         *llm.CostReport // nil if no LLM calls were made
-	TierIndexed        int             // sources indexed at Tier 0
-	TierEmbedded       int             // sources embedded at Tier 1
-	TierCompiled       int             // sources sent through full pipeline (Tier 3)
+	Added             int
+	Modified          int
+	Removed           int
+	Summarized        int
+	ConceptsExtracted int
+	ArticlesWritten   int
+	Errors            int
+	EmbedErrors       int
+	CostReport        *llm.CostReport // nil if no LLM calls were made
+	TierIndexed       int             // sources indexed at Tier 0
+	TierEmbedded      int             // sources embedded at Tier 1
+	TierCompiled      int             // sources sent through full pipeline (Tier 3)
 }
 
 // CompileState tracks progress for checkpoint/resume (ADR-018).
 type CompileState struct {
-	CompileID string   `json:"compile_id"`
-	StartedAt string   `json:"started_at"`
-	Pass      int      `json:"pass"`
-	Completed []string `json:"completed"`
-	Pending   []string `json:"pending"`
+	CompileID string         `json:"compile_id"`
+	StartedAt string         `json:"started_at"`
+	Pass      int            `json:"pass"`
+	Completed []string       `json:"completed"`
+	Pending   []string       `json:"pending"`
 	Failed    []FailedSource `json:"failed,omitempty"`
 	Batch     *BatchState    `json:"batch,omitempty"` // non-nil when batch is in flight
 }
 
 // BatchState tracks an in-flight batch job for checkpoint/resume.
 type BatchState struct {
-	BatchID    string `json:"batch_id"`
-	Provider   string `json:"provider"`
-	Pass       string `json:"pass"`        // which compiler pass (summarize, extract)
-	ResultsRef string `json:"results_ref"` // Anthropic: results URL; OpenAI: output_file_id
+	BatchID     string `json:"batch_id"`
+	Provider    string `json:"provider"`
+	Pass        string `json:"pass"`        // which compiler pass (summarize, extract)
+	ResultsRef  string `json:"results_ref"` // Anthropic: results URL; OpenAI: output_file_id
 	SubmittedAt string `json:"submitted_at"`
 
 	// PathByID maps a wire-level custom_id (a short hash of the source path)
@@ -888,23 +888,24 @@ func resumeBatch(
 				relPatterns := ontology.RelationPatterns(merged)
 				progress.StartPhase("Pass 3: Write articles", len(concepts))
 				articles := WriteArticles(ArticleWriteOpts{
-					ProjectDir:       projectDir,
-					OutputDir:        cfg.Output,
-					Client:           client,
-					Model:            writeModel,
-					MaxTokens:        articleMaxTokens,
-					MaxParallel:      cfg.Compiler.MaxParallel,
-					MemStore:         memStore,
-					VecStore:         vecStore,
-					OntStore:         ontStore,
-					ChunkStore:       chunkStore,
-					DB:               db,
-					Embedder:         embedder,
-					UserTZ:           cfg.Compiler.UserTimeLocation(),
-					ArticleFields:    cfg.Compiler.ArticleFields,
-					RelationPatterns: relPatterns,
-					ChunkSize:        cfg.Search.ChunkSizeOrDefault(),
-					Language:         cfg.Language,
+					ProjectDir:         projectDir,
+					OutputDir:          cfg.Output,
+					Client:             client,
+					Model:              writeModel,
+					MaxTokens:          articleMaxTokens,
+					MaxParallel:        cfg.Compiler.MaxParallel,
+					MemStore:           memStore,
+					VecStore:           vecStore,
+					OntStore:           ontStore,
+					ChunkStore:         chunkStore,
+					DB:                 db,
+					Embedder:           embedder,
+					UserTZ:             cfg.Compiler.UserTimeLocation(),
+					ArticleFields:      cfg.Compiler.ArticleFields,
+					RelationPatterns:   relPatterns,
+					ChunkSize:          cfg.Search.ChunkSizeOrDefault(),
+					Language:           cfg.Language,
+					AntiPatternPhrases: cfg.Compiler.AntiPatternPhrasesOrDefault(),
 				}, concepts)
 
 				for _, ar := range articles {
@@ -941,7 +942,7 @@ func resumeBatch(
 		batchMergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 		stores := trust.IndexStores{
 			MemStore: memStore, VecStore: vecStore,
-			OntStore: ontology.NewStore(db, ontology.ValidRelationNames(batchMerged), ontology.ValidEntityTypeNames(batchMergedTypes)),
+			OntStore:   ontology.NewStore(db, ontology.ValidRelationNames(batchMerged), ontology.ValidEntityTypeNames(batchMergedTypes)),
 			ChunkStore: chunkStore, DB: db,
 		}
 		demoted, err := trust.CheckSourceChanges(trustStore, projectDir, &stores)

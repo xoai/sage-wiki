@@ -116,7 +116,37 @@ type CompilerConfig struct {
 	// Article quality scoring (issue #97)
 	Quality QualityConfig `yaml:"quality,omitempty"`
 
+	// Article post-processing (issue #95). Sentences containing any of these
+	// phrases are stripped from compiled articles. nil (omitted) → built-in
+	// default list; explicit `[]` → disabled (no stripping).
+	AntiPatternPhrases []string `yaml:"anti_pattern_phrases,omitempty"`
+
 	resolvedTZ *time.Location `yaml:"-"` // cached by Validate(); not serialized
+}
+
+// defaultAntiPatternPhrases is the built-in bilingual filler/meta-phrase list
+// stripped from article bodies when compiler.anti_pattern_phrases is unset
+// (issue #95). Matched case-insensitively as substrings of a sentence.
+var defaultAntiPatternPhrases = []string{
+	"this article will",
+	"in summary",
+	"in conclusion",
+	"the source documents don't mention",
+	"the source document does not mention",
+	"本文将介绍",
+	"本文将",
+	"综上所述",
+	"源文档未提及",
+}
+
+// AntiPatternPhrasesOrDefault returns the configured anti-pattern phrase list.
+// A nil (omitted) value yields the built-in default; an explicit empty list
+// disables stripping. The returned slice must not be mutated by callers.
+func (c CompilerConfig) AntiPatternPhrasesOrDefault() []string {
+	if c.AntiPatternPhrases == nil {
+		return defaultAntiPatternPhrases
+	}
+	return c.AntiPatternPhrases
 }
 
 // QualityConfig configures the zero-LLM 5-dimension article quality scorer

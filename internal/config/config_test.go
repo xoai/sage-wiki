@@ -840,3 +840,74 @@ func TestQualityValidate(t *testing.T) {
 		t.Errorf("valid quality config rejected: %v", err)
 	}
 }
+
+func TestAntiPatternPhrasesDefault(t *testing.T) {
+	cfg := Defaults()
+	got := cfg.Compiler.AntiPatternPhrasesOrDefault()
+	if len(got) == 0 {
+		t.Fatal("nil config should yield the built-in default list, got empty")
+	}
+	// Spot-check a known default member.
+	found := false
+	for _, p := range got {
+		if p == "综上所述" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("default list missing expected phrase; got %v", got)
+	}
+}
+
+func TestAntiPatternPhrasesExplicitEmptyDisables(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "sage.yaml")
+	content := `project: test
+output: wiki
+api:
+  provider: anthropic
+  api_key: sk-test
+compiler:
+  anti_pattern_phrases: []
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	// Explicit [] is non-nil len 0 → disabled (NOT the default list).
+	if cfg.Compiler.AntiPatternPhrases == nil {
+		t.Error("explicit [] should load as non-nil empty slice")
+	}
+	if got := cfg.Compiler.AntiPatternPhrasesOrDefault(); len(got) != 0 {
+		t.Errorf("explicit [] should disable stripping (len 0), got %v", got)
+	}
+}
+
+func TestAntiPatternPhrasesCustom(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "sage.yaml")
+	content := `project: test
+output: wiki
+api:
+  provider: anthropic
+  api_key: sk-test
+compiler:
+  anti_pattern_phrases:
+    - "foo bar"
+    - "自定义短语"
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	got := cfg.Compiler.AntiPatternPhrasesOrDefault()
+	if len(got) != 2 || got[0] != "foo bar" || got[1] != "自定义短语" {
+		t.Errorf("custom list round-trip failed, got %v", got)
+	}
+}

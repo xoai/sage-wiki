@@ -37,25 +37,26 @@ type ArticleResult struct {
 
 // ArticleWriteOpts bundles all parameters for WriteArticles / writeOneArticle.
 type ArticleWriteOpts struct {
-	ProjectDir       string
-	OutputDir        string
-	Client           *llm.Client
-	Model            string
-	MaxTokens        int
-	MaxParallel      int
-	MemStore         *memory.Store
-	VecStore         *vectors.Store
-	OntStore         *ontology.Store
-	ChunkStore       *memory.ChunkStore
-	DB               *storage.DB
-	Embedder         embed.Embedder
-	UserTZ           *time.Location
-	ArticleFields    []string
-	RelationPatterns []ontology.RelationPattern
-	ChunkSize        int // tokens per chunk (default 800)
-	SplitThreshold   int // chars — enable section-aware writing above this (default 15000)
-	Language         string
-	Backpressure     *BackpressureController // optional; if nil, uses fixed semaphore
+	ProjectDir         string
+	OutputDir          string
+	Client             *llm.Client
+	Model              string
+	MaxTokens          int
+	MaxParallel        int
+	MemStore           *memory.Store
+	VecStore           *vectors.Store
+	OntStore           *ontology.Store
+	ChunkStore         *memory.ChunkStore
+	DB                 *storage.DB
+	Embedder           embed.Embedder
+	UserTZ             *time.Location
+	ArticleFields      []string
+	RelationPatterns   []ontology.RelationPattern
+	ChunkSize          int // tokens per chunk (default 800)
+	SplitThreshold     int // chars — enable section-aware writing above this (default 15000)
+	Language           string
+	Backpressure       *BackpressureController // optional; if nil, uses fixed semaphore
+	AntiPatternPhrases []string                // sentences containing these are stripped (issue #95); nil/empty → no strip
 }
 
 // WriteArticles runs Pass 3: write concept articles with ontology edges.
@@ -69,6 +70,10 @@ func WriteArticles(opts ArticleWriteOpts, concepts []ExtractedConcept) []Article
 	var wg sync.WaitGroup
 	var done atomic.Int32
 	total := len(concepts)
+
+	// Build the alias→concept-id map once for wikilink sanitization (issue #95).
+	// The concept slice is the authoritative alias source at compile time.
+	aliasMap := buildAliasMap(concepts)
 
 	// Use BackpressureController if available, otherwise fixed semaphore
 	var sem chan struct{}
@@ -91,7 +96,7 @@ func WriteArticles(opts ArticleWriteOpts, concepts []ExtractedConcept) []Article
 			defer wg.Done()
 			defer release()
 
-			result := writeOneArticle(opts, c)
+			result := writeOneArticle(opts, c, aliasMap)
 			results[idx] = result
 
 			n := int(done.Add(1))
@@ -115,7 +120,7 @@ func WriteArticles(opts ArticleWriteOpts, concepts []ExtractedConcept) []Article
 	return results
 }
 
-func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept) ArticleResult {
+func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap map[string]string) ArticleResult {
 	result := ArticleResult{ConceptName: concept.Name}
 
 	// Check for existing article
@@ -142,7 +147,7 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept) ArticleRes
 		RelatedList:     strings.Join(relatedNames, ", "),
 		Confidence:      "medium",
 		MaxTokens:       opts.MaxTokens,
-		SourceContext:    sourceContext,
+		SourceContext:   sourceContext,
 	}, opts.Language)
 	if err != nil {
 		result.Error = fmt.Errorf("render write_article prompt: %w", err)
@@ -160,6 +165,10 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept) ArticleRes
 
 	articleContent := resp.Content
 
+	// Strip an outer code fence some LLMs wrap the whole response in — run first
+	// so the inner frontmatter becomes detectable below (issue #95).
+	articleContent = stripOuterCodeFence(articleContent)
+
 	// Strip any LLM-generated frontmatter — code builds frontmatter from ground-truth data.
 	articleContent = stripLLMFrontmatter(articleContent)
 
@@ -173,6 +182,12 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept) ArticleRes
 	if entityType == "" || !opts.OntStore.IsValidType(entityType) {
 		entityType = ontology.TypeConcept
 	}
+
+	// Post-process the article BODY before frontmatter is prepended (issue #95).
+	// Running these on the body (not the assembled doc) guarantees the YAML
+	// frontmatter — which contains source paths with periods — is never touched.
+	articleContent = stripAntiPatternSentences(articleContent, opts.AntiPatternPhrases)
+	articleContent = sanitizeWikilinks(articleContent, aliasMap)
 
 	// Build frontmatter: ground-truth fields + LLM-judged fields
 	articleContent = buildFrontmatter(concept, entityType, fields, opts.ArticleFields, opts.UserTZ) + "\n\n" + articleContent
@@ -426,6 +441,153 @@ func stripLLMFrontmatter(content string) string {
 	}
 
 	return s
+}
+
+// stripOuterCodeFence removes a triple-backtick fence that wraps the ENTIRE
+// article body — some LLMs (GLM/Qwen) emit ```markdown ... ``` around their
+// whole response. It strips ONLY when the trimmed content starts with a fence,
+// ends with a fence, AND contains exactly two fence markers; an article that
+// merely contains a code block (fence not at position 0) or has multiple code
+// blocks (>2 fences) is left untouched, so real code is never corrupted.
+// Issue #95.
+func stripOuterCodeFence(content string) string {
+	s := strings.TrimSpace(content)
+	if !strings.HasPrefix(s, "```") || !strings.HasSuffix(s, "```") {
+		return content
+	}
+	if strings.Count(s, "```") != 2 {
+		return content
+	}
+	// Drop the opening fence line (consumes any ```lang info string).
+	nl := strings.Index(s, "\n")
+	if nl < 0 {
+		return content // single-line like ```x``` — nothing to unwrap
+	}
+	body := s[nl+1:]
+	// Drop the closing fence (the last ``` in the remaining body).
+	closeIdx := strings.LastIndex(body, "```")
+	if closeIdx < 0 {
+		return content
+	}
+	return strings.TrimSpace(body[:closeIdx])
+}
+
+// stripAntiPatternSentences drops sentences containing any forbidden filler/meta
+// phrase. nil or empty phrases → identity (the config accessor resolves the
+// default before this is reached). Lines inside ``` fenced regions are left
+// intact. Sentences split on EN (.!?) and 中文 (。！？) terminators; matching is
+// case-insensitive substring. Never empties the article: if the result is
+// blank, the original input is returned. Issue #95.
+func stripAntiPatternSentences(content string, phrases []string) string {
+	if len(phrases) == 0 {
+		return content
+	}
+	lowered := make([]string, len(phrases))
+	for i, p := range phrases {
+		lowered[i] = strings.ToLower(p)
+	}
+
+	lines := strings.Split(content, "\n")
+	inFence := false
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			inFence = !inFence
+			out = append(out, line)
+			continue
+		}
+		if inFence {
+			out = append(out, line)
+			continue
+		}
+		out = append(out, filterAntiPatternSentences(line, lowered))
+	}
+
+	result := strings.Join(out, "\n")
+	if strings.TrimSpace(result) == "" {
+		return content // guard: never empty the whole article
+	}
+	return result
+}
+
+// filterAntiPatternSentences splits one line into sentences (keeping their
+// terminators) and drops any sentence that contains a lowercased phrase.
+func filterAntiPatternSentences(line string, loweredPhrases []string) string {
+	if strings.TrimSpace(line) == "" {
+		return line
+	}
+	runes := []rune(line)
+	var b strings.Builder
+	start := 0
+
+	flush := func(end int) {
+		seg := string(runes[start:end])
+		start = end
+		low := strings.ToLower(seg)
+		for _, p := range loweredPhrases {
+			if strings.Contains(low, p) {
+				return // drop this sentence
+			}
+		}
+		b.WriteString(seg)
+	}
+
+	for i, r := range runes {
+		switch r {
+		case '.', '!', '?', '。', '！', '？':
+			flush(i + 1)
+		}
+	}
+	if start < len(runes) {
+		flush(len(runes))
+	}
+	return b.String()
+}
+
+// sanitizeWikilinks rewrites [[alias]] (or [[alias|display]]) to the canonical
+// concept id when alias resolves in aliasMap. The link target is the text
+// before any pipe; the display part (if any) is preserved. Unresolved links
+// pass through unchanged. nil/empty map → identity. Issue #95.
+func sanitizeWikilinks(content string, aliasMap map[string]string) string {
+	if len(aliasMap) == 0 {
+		return content
+	}
+	return wikilinkRe.ReplaceAllStringFunc(content, func(match string) string {
+		inner := match[2 : len(match)-2] // strip [[ and ]]
+		target := inner
+		display := ""
+		if i := strings.Index(inner, "|"); i >= 0 {
+			target = inner[:i]
+			display = inner[i:] // keep leading "|" + display text
+		}
+		if mapped, ok := aliasMap[target]; ok && mapped != target {
+			return "[[" + mapped + display + "]]"
+		}
+		return match
+	})
+}
+
+// buildAliasMap builds an alias→concept-id lookup from the in-memory concept
+// slice (the authoritative alias source at compile time — the ontology store
+// holds no aliases). Display-form names are added after aliases so a canonical
+// display name cannot be clobbered by a colliding alias. Issue #95.
+func buildAliasMap(concepts []ExtractedConcept) map[string]string {
+	m := make(map[string]string)
+	for _, c := range concepts {
+		for _, a := range c.Aliases {
+			if a != "" {
+				m[a] = c.Name
+			}
+		}
+	}
+	// Add canonical ids and display forms AFTER aliases so a real concept's
+	// own id/name always wins over a colliding alias from another concept
+	// (e.g. concept B named "attention" must beat concept A's alias "attention").
+	for _, c := range concepts {
+		m[c.Name] = c.Name
+		m[formatConceptName(c.Name)] = c.Name
+	}
+	return m
 }
 
 // quoteYAMLList produces a YAML list with properly quoted values.

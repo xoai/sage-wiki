@@ -10,9 +10,9 @@ import (
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
-	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
@@ -119,23 +119,24 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 		relPatterns := ontology.RelationPatterns(mergedRels)
 		log.Info("Pass 3: writing articles", "concepts", len(concepts))
 		articles := WriteArticles(ArticleWriteOpts{
-			ProjectDir:       projectDir,
-			OutputDir:        cfg.Output,
-			Client:           client,
-			Model:            writeModel,
-			MaxTokens:        articleMaxTokens,
-			MaxParallel:      cfg.Compiler.MaxParallel,
-			MemStore:         memStore,
-			VecStore:         vecStore,
-			OntStore:         ontStore,
-			ChunkStore:       chunkStore,
-			DB:               db,
-			Embedder:         embedder,
-			UserTZ:           cfg.Compiler.UserTimeLocation(),
-			ArticleFields:    cfg.Compiler.ArticleFields,
-			RelationPatterns: relPatterns,
-			ChunkSize:        cfg.Search.ChunkSizeOrDefault(),
-			Language:         cfg.Language,
+			ProjectDir:         projectDir,
+			OutputDir:          cfg.Output,
+			Client:             client,
+			Model:              writeModel,
+			MaxTokens:          articleMaxTokens,
+			MaxParallel:        cfg.Compiler.MaxParallel,
+			MemStore:           memStore,
+			VecStore:           vecStore,
+			OntStore:           ontStore,
+			ChunkStore:         chunkStore,
+			DB:                 db,
+			Embedder:           embedder,
+			UserTZ:             cfg.Compiler.UserTimeLocation(),
+			ArticleFields:      cfg.Compiler.ArticleFields,
+			RelationPatterns:   relPatterns,
+			ChunkSize:          cfg.Search.ChunkSizeOrDefault(),
+			Language:           cfg.Language,
+			AntiPatternPhrases: cfg.Compiler.AntiPatternPhrasesOrDefault(),
 		}, concepts)
 
 		for _, ar := range articles {
