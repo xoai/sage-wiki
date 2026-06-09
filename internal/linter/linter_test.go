@@ -1,6 +1,7 @@
 package linter
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -240,5 +241,57 @@ func TestRecallLearnings(t *testing.T) {
 	results, _ := RecallLearnings(db, "attention", 5)
 	if len(results) != 1 {
 		t.Errorf("expected 1 matching learning, got %d", len(results))
+	}
+}
+
+// TestQualityPassThresholdPrecedence verifies the issue #97 threshold
+// precedence: LintContext.QualityThreshold (>0) → pass field (>0) → 0.5.
+func TestQualityPassThresholdPrecedence(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "wiki.db")
+	db, err := storage.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// One article scoring 0.6.
+	if err := db.WriteTx(func(tx *sql.Tx) error {
+		_, e := tx.Exec("INSERT INTO compile_items (source_path, quality_score) VALUES (?, ?)", "raw/a.md", 0.6)
+		return e
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	flagged := func(ctxThreshold, fieldThreshold float64) bool {
+		pass := &QualityPass{Threshold: fieldThreshold}
+		ctx := &LintContext{DB: db, QualityThreshold: ctxThreshold}
+		findings, err := pass.Run(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range findings {
+			if f.Path == "raw/a.md" {
+				return true
+			}
+		}
+		return false
+	}
+
+	// ctx threshold wins: 0.7 > 0.6 → flagged.
+	if !flagged(0.7, 0) {
+		t.Error("ctx threshold 0.7 should flag score 0.6")
+	}
+	// ctx threshold 0.5 ≤ 0.6 → not flagged (ctx takes precedence).
+	if flagged(0.5, 0.9) {
+		t.Error("ctx threshold 0.5 should win over field and not flag 0.6")
+	}
+	// ctx 0 → fall back to field 0.7 → flagged.
+	if !flagged(0, 0.7) {
+		t.Error("field threshold 0.7 should flag when ctx is 0")
+	}
+	// both 0 → default 0.5 ≤ 0.6 → not flagged.
+	if flagged(0, 0) {
+		t.Error("default 0.5 should not flag score 0.6")
 	}
 }

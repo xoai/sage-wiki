@@ -43,6 +43,7 @@ type LintContext struct {
 	DB               *storage.DB // shared DB connection (optional — opened from DBPath if nil)
 	ValidRelations   []string    // valid ontology relation type names
 	ValidEntityTypes []string    // valid ontology entity type names
+	QualityThreshold float64     // quality_score warning threshold (issue #97); 0 → pass default (0.5)
 }
 
 // LintResult holds the aggregated output of a lint run.

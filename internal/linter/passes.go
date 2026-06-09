@@ -409,7 +409,11 @@ func (p *QualityPass) Fix(_ *LintContext, _ []Finding) error { return nil }
 
 func (p *QualityPass) Run(ctx *LintContext) ([]Finding, error) {
 	var findings []Finding
-	threshold := p.Threshold
+	// Threshold precedence: LintContext (config-driven) → pass field → 0.5.
+	threshold := ctx.QualityThreshold
+	if threshold <= 0 {
+		threshold = p.Threshold
+	}
 	if threshold <= 0 {
 		threshold = 0.5
 	}

@@ -313,6 +313,12 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		Backpressure:     opts.Backpressure,
 	}, concepts)
 
+	// Quality scoring config (issue #97): weights + warning threshold.
+	wf, wg, wc, ww, wa := cfg.Compiler.QualityWeights()
+	qualityWeights := QualityWeights{Format: wf, Grounding: wg, Coverage: wc, Wikilink: ww, AntiPattern: wa}
+	qualityThreshold := cfg.Compiler.QualityThreshold()
+	belowThreshold := 0
+
 	for _, ar := range articles {
 		if ar.Error != nil {
 			result.Errors++
@@ -324,7 +330,15 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 			// Per-article quality scoring
 			if opts.ItemStore != nil {
 				articlePath := filepath.Join(opts.ProjectDir, ar.ArticlePath)
-				articleContent, _ := os.ReadFile(articlePath)
+				articleContent, readErr := os.ReadFile(articlePath)
+				if readErr != nil {
+					// Don't score an unreadable article — an empty read would
+					// produce a spurious near-zero score and false low-quality
+					// warning. Surface the error and skip scoring (no silent fail).
+					log.Warn("quality scoring skipped: read article failed",
+						"concept", ar.ConceptName, "path", ar.ArticlePath, "error", readErr)
+					continue
+				}
 
 				// Read source content for coverage scoring
 				var sourceText string
@@ -337,21 +351,30 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 					}
 				}
 
-				scores := ScoreArticle(string(articleContent), sourceText, ar.ConceptName, mf, writeOntStore)
+				scores := ScoreArticle(string(articleContent), sourceText, ar.ConceptName, mf, qualityWeights)
 				for _, srcPath := range mf.Concepts[ar.ConceptName].Sources {
 					if err := opts.ItemStore.SetQualityScore(srcPath, scores.Combined); err != nil {
 						log.Warn("set quality score failed", "path", srcPath, "error", err)
 					}
 				}
 
-				if scores.Combined < 0.5 {
+				if scores.Combined < qualityThreshold {
+					belowThreshold++
 					log.Warn("low quality article", "concept", ar.ConceptName,
-						"score", scores.Combined, "coverage", scores.SourceCoverage,
-						"completeness", scores.ExtractionCompleteness, "crossref", scores.CrossRefDensity)
+						"score", scores.Combined, "format", scores.Format,
+						"grounding", scores.Grounding, "coverage", scores.Coverage,
+						"wikilink", scores.Wikilink, "antipattern", scores.AntiPattern)
 				}
 			}
 		}
 	}
+
+	// Compile-end summary: surface how many articles fell below the threshold.
+	if belowThreshold > 0 {
+		log.Warn("articles below quality threshold",
+			"count", belowThreshold, "total", result.ArticlesWritten, "threshold", qualityThreshold)
+	}
+
 	progress.EndPhase()
 	client.TeardownCache(writeCacheID)
 

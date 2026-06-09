@@ -16,18 +16,18 @@ var typeNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 // Config represents the sage-wiki project configuration.
 type Config struct {
-	Extends     string       `yaml:"extends,omitempty"`
-	Version     int          `yaml:"version"`
-	Project     string       `yaml:"project"`
-	Description string       `yaml:"description"`
-	Language    string       `yaml:"language,omitempty"`
-	Vault       *VaultConfig `yaml:"vault,omitempty"`
-	Sources     []Source     `yaml:"sources"`
-	Output      string       `yaml:"output"`
-	Ignore      []string     `yaml:"ignore,omitempty"`
-	API         APIConfig    `yaml:"api"`
-	Models      ModelsConfig `yaml:"models"`
-	Embed       *EmbedConfig `yaml:"embed,omitempty"`
+	Extends     string         `yaml:"extends,omitempty"`
+	Version     int            `yaml:"version"`
+	Project     string         `yaml:"project"`
+	Description string         `yaml:"description"`
+	Language    string         `yaml:"language,omitempty"`
+	Vault       *VaultConfig   `yaml:"vault,omitempty"`
+	Sources     []Source       `yaml:"sources"`
+	Output      string         `yaml:"output"`
+	Ignore      []string       `yaml:"ignore,omitempty"`
+	API         APIConfig      `yaml:"api"`
+	Models      ModelsConfig   `yaml:"models"`
+	Embed       *EmbedConfig   `yaml:"embed,omitempty"`
 	Compiler    CompilerConfig `yaml:"compiler"`
 	Search      SearchConfig   `yaml:"search"`
 	Linting     LintingConfig  `yaml:"linting"`
@@ -50,7 +50,7 @@ type Source struct {
 
 type APIConfig struct {
 	Provider    string                 `yaml:"provider"`
-	Auth        string                 `yaml:"auth,omitempty"`         // "api_key" (default) or "subscription"
+	Auth        string                 `yaml:"auth,omitempty"` // "api_key" (default) or "subscription"
 	APIKey      string                 `yaml:"api_key"`
 	BaseURL     string                 `yaml:"base_url,omitempty"`
 	RateLimit   int                    `yaml:"rate_limit,omitempty"`
@@ -75,36 +75,36 @@ type EmbedConfig struct {
 }
 
 type CompilerConfig struct {
-	MaxParallel      int     `yaml:"max_parallel"`
-	DebounceSeconds  int     `yaml:"debounce_seconds"`
-	SummaryMaxTokens int     `yaml:"summary_max_tokens"`
-	ArticleMaxTokens int     `yaml:"article_max_tokens"`
-	ExtractMaxTokens int     `yaml:"extract_max_tokens,omitempty"`  // max output tokens for concept extraction (default: 8192)
-	ExtractBatchSize int     `yaml:"extract_batch_size,omitempty"`  // summaries per concept extraction call (default: 20)
-	AutoCommit       bool    `yaml:"auto_commit"`
-	AutoLint         bool    `yaml:"auto_lint"`
-	Mode             string  `yaml:"mode,omitempty"`              // standard, batch, or auto
-	EstimateBefore   bool    `yaml:"estimate_before,omitempty"`   // prompt with cost estimate before compiling
-	PromptCache      *bool   `yaml:"prompt_cache,omitempty"`      // enable prompt caching (default: true)
-	BatchThreshold   int     `yaml:"batch_threshold,omitempty"`   // min sources to auto-select batch mode
-	TokenPriceOverride float64 `yaml:"token_price_per_million,omitempty"` // override price per 1M input tokens
-	Timezone         string   `yaml:"timezone,omitempty"`          // IANA timezone for user-facing timestamps (default: UTC)
-	ArticleFields    []string `yaml:"article_fields,omitempty"`    // custom frontmatter fields extracted from LLM response
+	MaxParallel        int      `yaml:"max_parallel"`
+	DebounceSeconds    int      `yaml:"debounce_seconds"`
+	SummaryMaxTokens   int      `yaml:"summary_max_tokens"`
+	ArticleMaxTokens   int      `yaml:"article_max_tokens"`
+	ExtractMaxTokens   int      `yaml:"extract_max_tokens,omitempty"` // max output tokens for concept extraction (default: 8192)
+	ExtractBatchSize   int      `yaml:"extract_batch_size,omitempty"` // summaries per concept extraction call (default: 20)
+	AutoCommit         bool     `yaml:"auto_commit"`
+	AutoLint           bool     `yaml:"auto_lint"`
+	Mode               string   `yaml:"mode,omitempty"`                    // standard, batch, or auto
+	EstimateBefore     bool     `yaml:"estimate_before,omitempty"`         // prompt with cost estimate before compiling
+	PromptCache        *bool    `yaml:"prompt_cache,omitempty"`            // enable prompt caching (default: true)
+	BatchThreshold     int      `yaml:"batch_threshold,omitempty"`         // min sources to auto-select batch mode
+	TokenPriceOverride float64  `yaml:"token_price_per_million,omitempty"` // override price per 1M input tokens
+	Timezone           string   `yaml:"timezone,omitempty"`                // IANA timezone for user-facing timestamps (default: UTC)
+	ArticleFields      []string `yaml:"article_fields,omitempty"`          // custom frontmatter fields extracted from LLM response
 
 	// Tiered compilation
-	DefaultTier      int            `yaml:"default_tier,omitempty"`       // default tier for sources (default: 3)
-	TierDefaults     map[string]int `yaml:"tier_defaults,omitempty"`      // file extension → default tier
-	AutoPromote      *bool          `yaml:"auto_promote,omitempty"`       // auto-promote based on signals (default: true)
-	PromoteSignals   PromoteSignals `yaml:"promote_signals,omitempty"`
-	AutoDemote       *bool          `yaml:"auto_demote,omitempty"`        // auto-demote stale articles (default: true)
-	DemoteSignals    DemoteSignals  `yaml:"demote_signals,omitempty"`
+	DefaultTier    int            `yaml:"default_tier,omitempty"`  // default tier for sources (default: 3)
+	TierDefaults   map[string]int `yaml:"tier_defaults,omitempty"` // file extension → default tier
+	AutoPromote    *bool          `yaml:"auto_promote,omitempty"`  // auto-promote based on signals (default: true)
+	PromoteSignals PromoteSignals `yaml:"promote_signals,omitempty"`
+	AutoDemote     *bool          `yaml:"auto_demote,omitempty"` // auto-demote stale articles (default: true)
+	DemoteSignals  DemoteSignals  `yaml:"demote_signals,omitempty"`
 
 	// Document splitting (Phase B)
-	SplitThreshold   int    `yaml:"split_threshold,omitempty"`    // chars, enable section-aware writing above this (default: 15000)
-	SplitStrategy    string `yaml:"split_strategy,omitempty"`     // "headings" (default)
+	SplitThreshold int    `yaml:"split_threshold,omitempty"` // chars, enable section-aware writing above this (default: 15000)
+	SplitStrategy  string `yaml:"split_strategy,omitempty"`  // "headings" (default)
 
 	// Backpressure
-	BackpressureEnabled *bool `yaml:"backpressure,omitempty"`     // enable adaptive backpressure (default: true)
+	BackpressureEnabled *bool `yaml:"backpressure,omitempty"` // enable adaptive backpressure (default: true)
 
 	// Concept deduplication
 	DedupThreshold float64 `yaml:"dedup_threshold,omitempty"` // cosine similarity for auto-merge (default: 0.85)
@@ -113,16 +113,80 @@ type CompilerConfig struct {
 	// Wikilink validation
 	StripBrokenLinks *bool `yaml:"strip_broken_links,omitempty"` // strip [[wikilinks]] to non-existent concept articles after compile (default: true). Set false to preserve broken links (useful when expecting future compiles to fill them in). Issue #90.
 
+	// Article quality scoring (issue #97)
+	Quality QualityConfig `yaml:"quality,omitempty"`
+
 	resolvedTZ *time.Location `yaml:"-"` // cached by Validate(); not serialized
+}
+
+// QualityConfig configures the zero-LLM 5-dimension article quality scorer
+// (issue #97). All fields default when zero — see CompilerConfig.QualityThreshold
+// and CompilerConfig.QualityWeights. The composite score is stored in
+// compile_items.quality_score and surfaced (not gated) by `sage-wiki lint`.
+type QualityConfig struct {
+	Threshold         float64 `yaml:"threshold,omitempty"`          // warn below this composite score (default: 0.5)
+	WeightFormat      float64 `yaml:"weight_format,omitempty"`      // default: 0.15
+	WeightGrounding   float64 `yaml:"weight_grounding,omitempty"`   // default: 0.30
+	WeightCoverage    float64 `yaml:"weight_coverage,omitempty"`    // default: 0.20
+	WeightWikilink    float64 `yaml:"weight_wikilink,omitempty"`    // default: 0.15
+	WeightAntiPattern float64 `yaml:"weight_antipattern,omitempty"` // default: 0.20
+}
+
+// Default quality weights (issue #97 proposal). Kept here so the config
+// accessors can supply per-field fallbacks without importing the compiler.
+const (
+	defaultQualityThreshold         = 0.5
+	defaultQualityWeightFormat      = 0.15
+	defaultQualityWeightGrounding   = 0.30
+	defaultQualityWeightCoverage    = 0.20
+	defaultQualityWeightWikilink    = 0.15
+	defaultQualityWeightAntiPattern = 0.20
+)
+
+// QualityThreshold returns the configured low-quality warning threshold,
+// or the default (0.5) when unset.
+func (c CompilerConfig) QualityThreshold() float64 {
+	if c.Quality.Threshold > 0 {
+		return c.Quality.Threshold
+	}
+	return defaultQualityThreshold
+}
+
+// QualityWeights returns the five scorer dimension weights as plain floats
+// (config must not import the compiler package). Each field falls back to
+// its #97 default when left at zero, so partial overrides work.
+func (c CompilerConfig) QualityWeights() (format, grounding, coverage, wikilink, antiPattern float64) {
+	q := c.Quality
+	format = q.WeightFormat
+	if format == 0 {
+		format = defaultQualityWeightFormat
+	}
+	grounding = q.WeightGrounding
+	if grounding == 0 {
+		grounding = defaultQualityWeightGrounding
+	}
+	coverage = q.WeightCoverage
+	if coverage == 0 {
+		coverage = defaultQualityWeightCoverage
+	}
+	wikilink = q.WeightWikilink
+	if wikilink == 0 {
+		wikilink = defaultQualityWeightWikilink
+	}
+	antiPattern = q.WeightAntiPattern
+	if antiPattern == 0 {
+		antiPattern = defaultQualityWeightAntiPattern
+	}
+	return format, grounding, coverage, wikilink, antiPattern
 }
 
 // PromoteSignals configures when sources are promoted to higher tiers.
 type PromoteSignals struct {
-	QueryHitCount    int    `yaml:"query_hit_count,omitempty"`    // promote after N search hits (default: 3)
-	ClusterSize      int    `yaml:"cluster_size,omitempty"`       // promote when N+ sources on same topic (default: 5)
-	ManualTag        string `yaml:"manual_tag,omitempty"`         // promote if tagged (default: "compile")
-	ImportCentrality int    `yaml:"import_centrality,omitempty"`  // code: promote when N+ files import this (default: 10)
-	SourceRecencyDays int   `yaml:"source_recency_days,omitempty"` // boost recently modified (default: 7)
+	QueryHitCount     int    `yaml:"query_hit_count,omitempty"`     // promote after N search hits (default: 3)
+	ClusterSize       int    `yaml:"cluster_size,omitempty"`        // promote when N+ sources on same topic (default: 5)
+	ManualTag         string `yaml:"manual_tag,omitempty"`          // promote if tagged (default: "compile")
+	ImportCentrality  int    `yaml:"import_centrality,omitempty"`   // code: promote when N+ files import this (default: 10)
+	SourceRecencyDays int    `yaml:"source_recency_days,omitempty"` // boost recently modified (default: 7)
 }
 
 // DemoteSignals configures when sources are demoted to lower tiers.
@@ -173,10 +237,10 @@ type SearchConfig struct {
 	ChunkSize          int     `yaml:"chunk_size,omitempty"`      // tokens per chunk for indexing (default: 800)
 
 	// Graph-enhanced retrieval
-	GraphExpansion       *bool   `yaml:"graph_expansion,omitempty"`        // enable graph-based context expansion (default: true)
-	GraphMaxExpand       int     `yaml:"graph_max_expand,omitempty"`       // max articles added via graph (default: 10)
-	GraphDepth           int     `yaml:"graph_depth,omitempty"`            // traversal depth for expansion (default: 2)
-	ContextMaxTokens     int     `yaml:"context_max_tokens,omitempty"`     // token budget for query context (default: 8000)
+	GraphExpansion       *bool    `yaml:"graph_expansion,omitempty"`        // enable graph-based context expansion (default: true)
+	GraphMaxExpand       int      `yaml:"graph_max_expand,omitempty"`       // max articles added via graph (default: 10)
+	GraphDepth           int      `yaml:"graph_depth,omitempty"`            // traversal depth for expansion (default: 2)
+	ContextMaxTokens     int      `yaml:"context_max_tokens,omitempty"`     // token budget for query context (default: 8000)
 	WeightDirectLink     *float64 `yaml:"weight_direct_link,omitempty"`     // graph signal weight (default: 3.0, set 0 to disable)
 	WeightSourceOverlap  *float64 `yaml:"weight_source_overlap,omitempty"`  // graph signal weight (default: 4.0, set 0 to disable)
 	WeightCommonNeighbor *float64 `yaml:"weight_common_neighbor,omitempty"` // graph signal weight (default: 1.5, set 0 to disable)
@@ -318,11 +382,11 @@ type EntityTypeConfig struct {
 
 // TrustConfig controls the output trust system (staged QA for query outputs).
 type TrustConfig struct {
-	IncludeOutputs      string   `yaml:"include_outputs,omitempty"`      // "false" (default), "verified", "true"
-	ConsensusThreshold  int      `yaml:"consensus_threshold,omitempty"`  // confirmations for promotion (default: 3)
-	GroundingThreshold  float64  `yaml:"grounding_threshold,omitempty"`  // min grounding score (default: 0.8)
-	AutoPromote         *bool    `yaml:"auto_promote,omitempty"`         // auto-promote when thresholds met (default: true)
-	SimilarityThreshold float64  `yaml:"similarity_threshold,omitempty"` // cosine sim for question matching (default: 0.85)
+	IncludeOutputs      string  `yaml:"include_outputs,omitempty"`      // "false" (default), "verified", "true"
+	ConsensusThreshold  int     `yaml:"consensus_threshold,omitempty"`  // confirmations for promotion (default: 3)
+	GroundingThreshold  float64 `yaml:"grounding_threshold,omitempty"`  // min grounding score (default: 0.8)
+	AutoPromote         *bool   `yaml:"auto_promote,omitempty"`         // auto-promote when thresholds met (default: true)
+	SimilarityThreshold float64 `yaml:"similarity_threshold,omitempty"` // cosine sim for question matching (default: 0.85)
 }
 
 // IncludeOutputsMode returns the effective include_outputs mode.
@@ -603,6 +667,27 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("config: invalid compiler.timezone %q: %w", c.Compiler.Timezone, err)
 		}
 		c.Compiler.resolvedTZ = loc
+	}
+	// Quality scorer ranges (issue #97). Zero is valid everywhere — it means
+	// "use the default" (see QualityThreshold / QualityWeights). Reject only
+	// out-of-range values, never zero.
+	if t := c.Compiler.Quality.Threshold; t < 0 || t > 1 {
+		return fmt.Errorf("config: compiler.quality.threshold must be in [0,1], got %g", t)
+	}
+	qw := []struct {
+		name string
+		val  float64
+	}{
+		{"weight_format", c.Compiler.Quality.WeightFormat},
+		{"weight_grounding", c.Compiler.Quality.WeightGrounding},
+		{"weight_coverage", c.Compiler.Quality.WeightCoverage},
+		{"weight_wikilink", c.Compiler.Quality.WeightWikilink},
+		{"weight_antipattern", c.Compiler.Quality.WeightAntiPattern},
+	}
+	for _, w := range qw {
+		if w.val < 0 {
+			return fmt.Errorf("config: compiler.quality.%s must be >= 0, got %g", w.name, w.val)
+		}
 	}
 	return nil
 }

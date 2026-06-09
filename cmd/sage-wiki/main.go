@@ -485,6 +485,7 @@ func runLint(cmd *cobra.Command, args []string) error {
 		DBPath:           filepath.Join(dir, ".sage", "wiki.db"),
 		ValidRelations:   ontology.ValidRelationNames(mergedRels),
 		ValidEntityTypes: ontology.ValidEntityTypeNames(mergedTypes),
+		QualityThreshold: cfg.Compiler.QualityThreshold(),
 	}
 
 	runner := linter.NewRunner()

@@ -4,39 +4,193 @@ import (
 	"strings"
 
 	"github.com/xoai/sage-wiki/internal/manifest"
-	"github.com/xoai/sage-wiki/internal/ontology"
 )
 
-// ConfidenceScores holds quality metrics for a compiled article.
-type ConfidenceScores struct {
-	SourceCoverage         float64 // % of source key phrases found in article
-	ExtractionCompleteness float64 // % of concepts that have articles
-	CrossRefDensity        float64 // % of concepts with ontology relations
-	Combined               float64 // weighted average (0.0-1.0)
+// QualityScores holds the zero-LLM 5-dimension quality metrics for a
+// compiled article (issue #97). Each dimension is in [0,1]; Combined is the
+// normalised weighted average.
+type QualityScores struct {
+	Format      float64 // valid frontmatter, section headings, balanced code fences
+	Grounding   float64 // fraction of source key phrases present in the article
+	Coverage    float64 // article length adequacy vs. source size
+	Wikilink    float64 // fraction of [[wikilinks]] that resolve to known concepts
+	AntiPattern float64 // inverse of filler/meta-phrase density
+	Combined    float64 // weighted average (0.0–1.0)
 }
 
-// ScoreArticle computes confidence for a compiled article.
-// sourceText is the raw source content, articleText is the compiled article.
-// Scores are per-concept: ExtractionCompleteness and CrossRefDensity evaluate
-// THIS concept specifically, not the global manifest.
-func ScoreArticle(articleText string, sourceText string, conceptName string, mf *manifest.Manifest, ontStore *ontology.Store) ConfidenceScores {
-	scores := ConfidenceScores{}
+// QualityWeights are the per-dimension weights for the composite score.
+type QualityWeights struct {
+	Format      float64
+	Grounding   float64
+	Coverage    float64
+	Wikilink    float64
+	AntiPattern float64
+}
 
-	// Source coverage: what fraction of source key phrases appear in the article
-	scores.SourceCoverage = computeSourceCoverage(articleText, sourceText)
+// DefaultQualityWeights returns the issue #97 proposed weights.
+func DefaultQualityWeights() QualityWeights {
+	return QualityWeights{
+		Format:      0.15,
+		Grounding:   0.30,
+		Coverage:    0.20,
+		Wikilink:    0.15,
+		AntiPattern: 0.20,
+	}
+}
 
-	// Extraction completeness: does THIS concept have an article?
-	scores.ExtractionCompleteness = computeExtractionCompleteness(conceptName, mf)
+// Normalized scales the weights so they sum to 1. If the weights sum to
+// zero (or less), it falls back to DefaultQualityWeights — this guards
+// against a mis-configured all-zero weight set.
+func (w QualityWeights) Normalized() QualityWeights {
+	sum := w.Format + w.Grounding + w.Coverage + w.Wikilink + w.AntiPattern
+	if sum <= 0 {
+		return DefaultQualityWeights()
+	}
+	return QualityWeights{
+		Format:      w.Format / sum,
+		Grounding:   w.Grounding / sum,
+		Coverage:    w.Coverage / sum,
+		Wikilink:    w.Wikilink / sum,
+		AntiPattern: w.AntiPattern / sum,
+	}
+}
 
-	// Cross-reference density: does THIS concept have ontology relations?
-	scores.CrossRefDensity = computeCrossRefDensity(conceptName, ontStore)
+// fillerPhrases are lowercased meta/filler phrases the article prompt is
+// expected to suppress. Hits penalise the AntiPattern dimension. Fixed list
+// (issue #97); refine during calibration.
+var fillerPhrases = []string{
+	"in conclusion",
+	"in summary",
+	"it is important to note",
+	"it's important to note",
+	"it is worth noting",
+	"it's worth noting",
+	"as an ai",
+	"this article discusses",
+	"in this article",
+	"this article will",
+	"delve into",
+	"needless to say",
+	"at the end of the day",
+	"when it comes to",
+	"in today's world",
+	"last but not least",
+}
 
-	// Weighted combination
-	scores.Combined = scores.SourceCoverage*0.4 +
-		scores.ExtractionCompleteness*0.3 +
-		scores.CrossRefDensity*0.3
+// ScoreArticle computes the 5-dimension quality score for a compiled article.
+// articleText is the final on-disk article (frontmatter already built),
+// sourceText is the concatenated raw source content, mf provides the set of
+// known concepts for wikilink resolution, and w supplies the dimension
+// weights (normalised internally). conceptName is retained for signature
+// stability and future per-concept heuristics.
+func ScoreArticle(articleText, sourceText, conceptName string, mf *manifest.Manifest, w QualityWeights) QualityScores {
+	nw := w.Normalized()
 
-	return scores
+	s := QualityScores{
+		Format:      scoreFormat(articleText),
+		Grounding:   scoreGrounding(articleText, sourceText),
+		Coverage:    scoreCoverage(articleText, sourceText),
+		Wikilink:    scoreWikilink(articleText, mf),
+		AntiPattern: scoreAntiPattern(articleText),
+	}
+
+	s.Combined = s.Format*nw.Format +
+		s.Grounding*nw.Grounding +
+		s.Coverage*nw.Coverage +
+		s.Wikilink*nw.Wikilink +
+		s.AntiPattern*nw.AntiPattern
+
+	return s
+}
+
+// scoreFormat averages three structural sub-checks (each 0 or 1):
+// valid frontmatter, at least one section heading, and balanced code fences.
+func scoreFormat(article string) float64 {
+	var score float64
+
+	// Sub-check 1: frontmatter present and carries the concept key.
+	trimmed := strings.TrimSpace(article)
+	if strings.HasPrefix(trimmed, "---") && strings.Contains(article, "concept:") {
+		score++
+	}
+
+	// Sub-check 2: at least one "## " section heading.
+	for _, line := range strings.Split(article, "\n") {
+		if strings.HasPrefix(line, "## ") {
+			score++
+			break
+		}
+	}
+
+	// Sub-check 3: balanced (even) count of code fences.
+	if strings.Count(article, "```")%2 == 0 {
+		score++
+	}
+
+	return score / 3.0
+}
+
+// scoreGrounding measures how well the article reflects the source: the
+// fraction of source key phrases that appear in the article.
+func scoreGrounding(article, source string) float64 {
+	return computeSourceCoverage(article, source)
+}
+
+// scoreCoverage measures article length adequacy relative to source size.
+// expected = clamp(len(source)*0.15, 400, 6000) chars; score = min(1, len/expected).
+func scoreCoverage(article, source string) float64 {
+	if source == "" || article == "" {
+		return 0
+	}
+	expected := clampFloat(float64(len(source))*0.15, 400, 6000)
+	ratio := float64(len(article)) / expected
+	if ratio > 1 {
+		return 1
+	}
+	return ratio
+}
+
+// scoreWikilink returns the fraction of [[wikilinks]] in the article that
+// resolve to a known concept. Resolution uses the manifest concept keyset
+// (fully populated before the write loop), NOT on-disk files, so the score
+// is stable regardless of article write ordering. No links (or no manifest)
+// → 1.0 (nothing broken).
+func scoreWikilink(article string, mf *manifest.Manifest) float64 {
+	links := wikilinkRe.FindAllStringSubmatch(article, -1)
+	if len(links) == 0 || mf == nil {
+		return 1.0
+	}
+	resolved := 0
+	for _, m := range links {
+		if _, ok := mf.Concepts[m[1]]; ok {
+			resolved++
+		}
+	}
+	return float64(resolved) / float64(len(links))
+}
+
+// scoreAntiPattern penalises filler/meta phrases: 1 - min(1, 0.1*hits).
+func scoreAntiPattern(article string) float64 {
+	lower := strings.ToLower(article)
+	hits := 0
+	for _, p := range fillerPhrases {
+		hits += strings.Count(lower, p)
+	}
+	penalty := 0.1 * float64(hits)
+	if penalty > 1 {
+		penalty = 1
+	}
+	return 1 - penalty
+}
+
+func clampFloat(v, lo, hi float64) float64 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 // computeSourceCoverage extracts key phrases from the source and checks
@@ -98,37 +252,4 @@ func extractKeyPhrases(text string) []string {
 	}
 
 	return phrases
-}
-
-// computeExtractionCompleteness checks if THIS concept has an article.
-// Returns 1.0 if the concept has an article path, 0.0 otherwise.
-func computeExtractionCompleteness(conceptName string, mf *manifest.Manifest) float64 {
-	if mf == nil || conceptName == "" {
-		return 0
-	}
-	c, ok := mf.Concepts[conceptName]
-	if ok && c.ArticlePath != "" {
-		return 1.0
-	}
-	return 0.0
-}
-
-// computeCrossRefDensity checks if THIS concept has ontology relations.
-// Returns min(1.0, relationsCount / 2.0) — a concept with 2+ relations
-// scores 1.0 (diminishing returns beyond that).
-func computeCrossRefDensity(conceptName string, ontStore *ontology.Store) float64 {
-	if ontStore == nil || conceptName == "" {
-		return 0
-	}
-
-	entity, _ := ontStore.GetEntity(conceptName)
-	if entity == nil {
-		return 0
-	}
-	relations, _ := ontStore.GetRelations(entity.ID, ontology.Both, "")
-	count := float64(len(relations))
-	if count >= 2 {
-		return 1.0
-	}
-	return count / 2.0
 }

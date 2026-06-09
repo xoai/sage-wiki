@@ -507,9 +507,9 @@ func TestCostConfigDefaults(t *testing.T) {
 
 func TestInvalidCompilerMode(t *testing.T) {
 	cfg := Config{
-		Project: "test",
-		Output:  "wiki",
-		Sources: []Source{{Path: "raw"}},
+		Project:  "test",
+		Output:   "wiki",
+		Sources:  []Source{{Path: "raw"}},
 		Compiler: CompilerConfig{Mode: "turbo"},
 	}
 	err := cfg.Validate()
@@ -550,9 +550,9 @@ func TestUserTimeLocation(t *testing.T) {
 
 	// Validate() path: timezone resolved and cached during validation
 	cfg := Config{
-		Project: "test",
-		Output:  "wiki",
-		Sources: []Source{{Path: "raw"}},
+		Project:  "test",
+		Output:   "wiki",
+		Sources:  []Source{{Path: "raw"}},
 		Compiler: CompilerConfig{Timezone: "America/New_York"},
 	}
 	if err := cfg.Validate(); err != nil {
@@ -757,4 +757,86 @@ func searchString(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestQualityDefaults(t *testing.T) {
+	cfg := Defaults()
+	if got := cfg.Compiler.QualityThreshold(); got != 0.5 {
+		t.Errorf("default quality threshold = %g, want 0.5", got)
+	}
+	f, g, c, w, a := cfg.Compiler.QualityWeights()
+	if f != 0.15 || g != 0.30 || c != 0.20 || w != 0.15 || a != 0.20 {
+		t.Errorf("default weights = %g/%g/%g/%g/%g, want 0.15/0.30/0.20/0.15/0.20", f, g, c, w, a)
+	}
+}
+
+func TestQualityPartialOverride(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "sage.yaml")
+	content := `project: test
+output: wiki
+api:
+  provider: anthropic
+  api_key: sk-test
+compiler:
+  quality:
+    threshold: 0.7
+    weight_grounding: 0.5
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if got := cfg.Compiler.QualityThreshold(); got != 0.7 {
+		t.Errorf("threshold = %g, want 0.7 (overridden)", got)
+	}
+	f, g, c, w, a := cfg.Compiler.QualityWeights()
+	if g != 0.5 {
+		t.Errorf("weight_grounding = %g, want 0.5 (overridden)", g)
+	}
+	// Unset weights fall back to defaults (partial override).
+	if f != 0.15 || c != 0.20 || w != 0.15 || a != 0.20 {
+		t.Errorf("fallback weights = %g/%g/%g/%g, want 0.15/0.20/0.15/0.20", f, c, w, a)
+	}
+}
+
+func TestQualityValidate(t *testing.T) {
+	base := func() Config {
+		c := Defaults()
+		c.Project = "test"
+		c.Output = "wiki"
+		c.Sources = []Source{{Path: "raw"}}
+		return c
+	}
+
+	// Zero-value Quality MUST validate (DefaultConfig leaves it zero).
+	zv := base()
+	if err := zv.Validate(); err != nil {
+		t.Fatalf("zero-value Quality should validate, got: %v", err)
+	}
+
+	// threshold > 1 rejected.
+	c := base()
+	c.Compiler.Quality.Threshold = 1.5
+	if err := c.Validate(); err == nil {
+		t.Error("threshold 1.5 should be rejected")
+	}
+
+	// negative weight rejected.
+	c = base()
+	c.Compiler.Quality.WeightFormat = -0.1
+	if err := c.Validate(); err == nil {
+		t.Error("negative weight should be rejected")
+	}
+
+	// in-range values accepted.
+	c = base()
+	c.Compiler.Quality.Threshold = 0.6
+	c.Compiler.Quality.WeightCoverage = 0.25
+	if err := c.Validate(); err != nil {
+		t.Errorf("valid quality config rejected: %v", err)
+	}
 }
