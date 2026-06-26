@@ -424,10 +424,7 @@ type previewContentMsg struct{ content string }
 func (m Model) dirSnapshot() string {
 	var total int64
 	for _, dir := range m.sourcePaths {
-		filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return nil
-			}
+		compiler.WalkSourceDir(dir, func(_, _ string, d os.DirEntry) error {
 			info, err := d.Info()
 			if err != nil {
 				return nil

@@ -35,29 +35,39 @@ func Diff(projectDir string, cfg *config.Config, mf *manifest.Manifest) (*DiffRe
 
 	// Collect current source files
 	current := make(map[string]SourceInfo)
-	sourcePaths := cfg.ResolveSources(projectDir)
 
-	for _, srcDir := range sourcePaths {
+	for _, src := range cfg.Sources {
+		var srcDir string
+		if filepath.IsAbs(src.Path) {
+			srcDir = src.Path
+		} else {
+			srcDir = filepath.Join(projectDir, src.Path)
+		}
+
 		if _, err := os.Stat(srcDir); os.IsNotExist(err) {
 			log.Warn("source directory not found", "path", srcDir)
 			continue
 		}
 
-		if err := filepath.WalkDir(srcDir, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return nil
-			}
-
+		if err := WalkSourceDir(srcDir, func(absPath, relPath string, d os.DirEntry) error {
 			// Skip hidden files (.DS_Store etc.)
 			if strings.HasPrefix(d.Name(), ".") {
 				return nil
 			}
 
-			// Get relative path from project root
-			relPath, _ := filepath.Rel(projectDir, path)
+			// Build manifest path: <source-name>/<path-within-source>
+			manifestPath := filepath.ToSlash(filepath.Join(src.Path, relPath))
+			// Normalize absolute source paths to project-relative keys so
+			// manifest entries survive across runs (the old filepath.Rel
+			// from projectDir gave e.g. ../../external/x.md, not /abs/x.md).
+			if filepath.IsAbs(manifestPath) {
+				if rel, err := filepath.Rel(projectDir, manifestPath); err == nil {
+					manifestPath = filepath.ToSlash(rel)
+				}
+			}
 
 			// Check ignore list
-			if isIgnored(relPath, cfg.Ignore) {
+			if isIgnored(manifestPath, cfg.Ignore) {
 				return nil
 			}
 
@@ -66,33 +76,33 @@ func Diff(projectDir string, cfg *config.Config, mf *manifest.Manifest) (*DiffRe
 				return nil
 			}
 
-			hash, err := fileHash(path)
+			hash, err := fileHash(absPath)
 			if err != nil {
-				log.Warn("failed to hash file", "path", relPath, "error", err)
+				log.Warn("failed to hash file", "path", manifestPath, "error", err)
 				return nil
 			}
 
 			// Configured Source.Type takes precedence over extension/signal detection.
 			// When config declares a type, bypass the manifest cache so config
 			// changes take effect without --fresh.
-			configuredType := cfg.TypeForPath(projectDir, path)
+			configuredType := cfg.TypeForPath(projectDir, manifestPath)
 
 			var detectedType string
 			if configuredType != "" {
 				detectedType = configuredType
 			} else if len(cfg.TypeSignals) > 0 {
 				// Reuse cached type from manifest if file is unchanged
-				if existing, ok := mf.Sources[relPath]; ok && existing.Hash == hash && existing.Type != "" {
+				if existing, ok := mf.Sources[manifestPath]; ok && existing.Hash == hash && existing.Type != "" {
 					detectedType = existing.Type
 				} else {
-					contentHead := extract.ReadHead(path, extract.DefaultHeadRunes)
-					detectedType = extract.DetectSourceTypeWithSignals(path, contentHead, convertSignals(cfg.TypeSignals))
+					contentHead := extract.ReadHead(absPath, extract.DefaultHeadRunes)
+					detectedType = extract.DetectSourceTypeWithSignals(absPath, contentHead, convertSignals(cfg.TypeSignals))
 				}
 			} else {
-				detectedType = extract.DetectSourceType(path)
+				detectedType = extract.DetectSourceType(absPath)
 			}
-			current[relPath] = SourceInfo{
-				Path: relPath,
+			current[manifestPath] = SourceInfo{
+				Path: manifestPath,
 				Hash: hash,
 				Type: detectedType,
 				Size: info.Size(),

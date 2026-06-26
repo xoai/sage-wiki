@@ -89,7 +89,7 @@ func Watch(projectDir string, debounceSeconds int, opts CompileOpts, coordinator
 			watcher.Close()
 		}
 		log.Info("using polling mode (inotify unavailable for these paths)", "sources", sourcePaths, "interval", fmt.Sprintf("%ds", debounceSeconds*2))
-		return watchPoll(projectDir, sourcePaths, cfg.Ignore, debounceSeconds*2, triggerOpts, cc)
+		return watchPoll(projectDir, cfg.Sources, cfg.Ignore, debounceSeconds*2, triggerOpts, cc)
 	}
 
 	defer watcher.Close()
@@ -143,17 +143,17 @@ func watchFsnotify(projectDir string, watcher *fsnotify.Watcher, debounceSeconds
 
 // watchPoll periodically scans source directories for changes.
 // Works on WSL2 /mnt/ paths, network drives, and any filesystem.
-func watchPoll(projectDir string, sourcePaths []string, ignore []string, intervalSeconds int, opts CompileOpts, cc *CompileCoordinator) error {
+func watchPoll(projectDir string, sources []config.Source, ignore []string, intervalSeconds int, opts CompileOpts, cc *CompileCoordinator) error {
 
 	// Build initial snapshot
-	snapshot := scanSnapshot(sourcePaths, ignore)
+	snapshot := scanSnapshot(projectDir, sources, ignore)
 	log.Info("initial snapshot", "files", len(snapshot))
 
 	ticker := time.NewTicker(time.Duration(intervalSeconds) * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
-		newSnapshot := scanSnapshot(sourcePaths, ignore)
+		newSnapshot := scanSnapshot(projectDir, sources, ignore)
 
 		// Detect changes
 		var changed []string
@@ -189,27 +189,34 @@ func watchPoll(projectDir string, sourcePaths []string, ignore []string, interva
 }
 
 // scanSnapshot builds a map of file path → content hash for all source files.
-func scanSnapshot(sourcePaths []string, ignore []string) map[string]string {
+// Uses WalkSourceDir so symlinked source directories are followed correctly.
+// Ignore matching uses manifest paths (source-name/file-path) for consistency
+// with Diff.
+func scanSnapshot(projectDir string, sources []config.Source, ignore []string) map[string]string {
 	snapshot := make(map[string]string)
 
-	for _, dir := range sourcePaths {
-		filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
+	for _, src := range sources {
+		var srcDir string
+		if filepath.IsAbs(src.Path) {
+			srcDir = src.Path
+		} else {
+			srcDir = filepath.Join(projectDir, src.Path)
+		}
+
+		WalkSourceDir(srcDir, func(absPath, relPath string, _ os.DirEntry) error {
+			manifestPath := filepath.ToSlash(filepath.Join(src.Path, relPath))
+			if filepath.IsAbs(manifestPath) {
+				if rel, err := filepath.Rel(projectDir, manifestPath); err == nil {
+					manifestPath = filepath.ToSlash(rel)
+				}
+			}
+			if isIgnored(manifestPath, ignore) {
 				return nil
 			}
 
-			// Use relative path for consistent ignore matching with Diff
-			relPath, relErr := filepath.Rel(dir, path)
-			if relErr != nil {
-				relPath = path
-			}
-			if isIgnored(relPath, ignore) {
-				return nil
-			}
-
-			hash := quickHash(path)
+			hash := quickHash(absPath)
 			if hash != "" {
-				snapshot[path] = hash
+				snapshot[absPath] = hash
 			}
 			return nil
 		})
@@ -268,7 +275,14 @@ func triggerCompile(projectDir string, trigger string, opts CompileOpts, cc *Com
 
 // addRecursive adds a directory and all subdirectories to the watcher.
 func addRecursive(watcher *fsnotify.Watcher, dir string) error {
-	return filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+	walkPath := dir
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		walkPath = resolved
+	} else {
+		log.Warn("addRecursive: failed to resolve symlinks, watching as-is",
+			"path", dir, "error", err)
+	}
+	return filepath.WalkDir(walkPath, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
