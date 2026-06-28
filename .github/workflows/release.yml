@@ -1,0 +1,131 @@
+name: Release
+
+# On a vX.Y.Z tag push: cross-compile the binary for every supported platform,
+# package + checksum the archives, and publish a GitHub Release whose body is
+# the matching CHANGELOG section. Pure-Go (modernc.org/sqlite) → CGO_ENABLED=0.
+on:
+  push:
+    tags: ["v*"]
+
+# Least-privilege by default; only the release job is granted write.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Latest 1.26.x — robust vs an exact patch (go.mod pins 1.26.1) being
+          # absent from the runner's version index.
+          go-version: "1.26"
+
+      - name: Build and package
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          COMMIT="${GITHUB_SHA::7}"
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          BIN="sage-wiki"
+          [ "$GOOS" = "windows" ] && BIN="sage-wiki.exe"
+
+          mkdir -p dist
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+            -o "dist/${BIN}" ./cmd/sage-wiki
+
+          # Stage the files that ship inside the archive (LICENSE only if present).
+          STAGE="$(mktemp -d)"
+          cp "dist/${BIN}" README.md CHANGELOG.md "$STAGE/"
+          [ -f LICENSE ] && cp LICENSE "$STAGE/" || true
+
+          ARCHIVE="sage-wiki_${VERSION}_${GOOS}_${GOARCH}"
+          if [ "$GOOS" = "windows" ]; then
+            (cd "$STAGE" && zip -qr "${GITHUB_WORKSPACE}/dist/${ARCHIVE}.zip" .)
+            echo "ASSET=dist/${ARCHIVE}.zip" >> "$GITHUB_ENV"
+          else
+            tar -czf "dist/${ARCHIVE}.tar.gz" -C "$STAGE" .
+            echo "ASSET=dist/${ARCHIVE}.tar.gz" >> "$GITHUB_ENV"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          # Unique name per matrix leg — v4 rejects duplicate artifact names.
+          name: sage-wiki_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  release:
+    name: Create release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release + upload assets (built-in GITHUB_TOKEN)
+    steps:
+      - uses: actions/checkout@v4 # need CHANGELOG.md + scripts/extract-changelog.sh
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true # v4 does NOT flatten by default
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          shopt -s nullglob
+          files=( *.tar.gz *.zip )
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "no release archives found in dist/" >&2
+            exit 1
+          fi
+          # Explicit globs (never '*', which would self-include SHA256SUMS).
+          sha256sum "${files[@]}" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Release notes from CHANGELOG
+        run: |
+          set -euo pipefail
+          NOTES="$(bash scripts/extract-changelog.sh "${GITHUB_REF_NAME}" CHANGELOG.md || true)"
+          if [ -z "${NOTES//[$'\n\t ']/}" ]; then
+            NOTES="Release ${GITHUB_REF_NAME}. See [CHANGELOG.md](CHANGELOG.md)."
+          fi
+          printf '%s\n' "$NOTES" > NOTES.md
+          echo "----- release notes -----"
+          cat NOTES.md
+
+      - name: Detect prerelease
+        id: pre
+        run: |
+          case "${GITHUB_REF_NAME}" in
+            *-*) echo "prerelease=true"  >> "$GITHUB_OUTPUT" ;;
+            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          body_path: NOTES.md
+          prerelease: ${{ steps.pre.outputs.prerelease }}
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS

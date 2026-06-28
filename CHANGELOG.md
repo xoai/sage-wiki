@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Automated GitHub releases.** Pushing a `vX.Y.Z` tag now builds `sage-wiki`
+  binaries for 5 platforms (linux/macOS/windows × amd64/arm64, windows amd64),
+  attaches them plus a `SHA256SUMS` file to a GitHub Release, and uses that
+  version's CHANGELOG section as the release notes (`.github/workflows/release.yml`).
+  Pre-release tags (e.g. `v1.0.0-rc1`) are marked as pre-releases.
+- **`sage-wiki version` command** (and `--version`) — reports the release
+  version, commit, and build date stamped into the binary at release time
+  (`sage-wiki version --format json` for machine-readable output).
 - **Article quality scorer (#97).** Zero-LLM, 5-dimension article quality score (Format, Grounding, Coverage, Wikilink, AntiPattern) computed at compile time. Weights and threshold are configurable under `compiler.quality`; below-threshold articles are surfaced in a compile-end summary and via the linter (no gate — advisory only).
 - **Article post-processing pass (#95).** Compile-time cleanup of generated articles: strips a stray whole-body code fence, removes bilingual anti-pattern/filler sentences (configurable via `compiler.anti_pattern_phrases`), and sanitizes wikilinks to canonical slugs.
 - **Richer empty-content errors (#85).** LLM failures now surface `finish_reason` and any reasoning text in the error, instead of a bare "empty content" message.

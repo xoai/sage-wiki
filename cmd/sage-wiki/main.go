@@ -41,6 +41,16 @@ var (
 	outputFormat string
 )
 
+// Build metadata, injected at release time via
+// -ldflags "-X main.version=... -X main.commit=... -X main.date=...".
+// Defaults are non-blank so `sage-wiki version` from a plain `go build` is
+// still readable.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	rootCmd.SilenceErrors = true
 	rootCmd.SilenceUsage = true
@@ -143,6 +153,12 @@ var scribeCmd = &cobra.Command{
 	RunE:  runScribe,
 }
 
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Print version information",
+	RunE:  runVersion,
+}
+
 func init() {
 	rootCmd.PersistentFlags().StringVar(&projectDir, "project", ".", "Project directory")
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Config file path (default: <project>/config.yaml)")
@@ -186,7 +202,23 @@ func init() {
 	// Query flags
 	queryCmd.Flags().String("scope", "local", "Query scope: local, global, or all")
 
-	rootCmd.AddCommand(initCmd, compileCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, scribeCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, sourceCmd, hubCmd, skillCmd, packCmd)
+	rootCmd.AddCommand(initCmd, compileCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, scribeCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, sourceCmd, hubCmd, skillCmd, packCmd, versionCmd)
+
+	// Enables `sage-wiki --version` in addition to the `version` subcommand.
+	rootCmd.Version = version
+}
+
+func runVersion(cmd *cobra.Command, args []string) error {
+	if outputFormat == "json" {
+		fmt.Fprintln(cmd.OutOrStdout(), cli.FormatJSON(true, map[string]string{
+			"version": version,
+			"commit":  commit,
+			"date":    date,
+		}, ""))
+		return nil
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "sage-wiki %s (commit %s, built %s)\n", version, commit, date)
+	return nil
 }
 
 func resolveConfigPath(dir string) string {
