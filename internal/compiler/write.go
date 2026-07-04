@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -57,6 +58,11 @@ type ArticleWriteOpts struct {
 	Language           string
 	Backpressure       *BackpressureController // optional; if nil, uses fixed semaphore
 	AntiPatternPhrases []string                // sentences containing these are stripped (issue #95); nil/empty → no strip
+	// AllConcepts is the FULL manifest concept set (Name + Sources), used to
+	// seed each article's "See also" [[wikilinks]] from co-occurring concepts
+	// and to canonicalize display-form links to concepts outside the current
+	// batch. Nil → no related-concept seeding (backward compatible). Issue #106.
+	AllConcepts []ExtractedConcept
 }
 
 // WriteArticles runs Pass 3: write concept articles with ontology edges.
@@ -72,8 +78,17 @@ func WriteArticles(opts ArticleWriteOpts, concepts []ExtractedConcept) []Article
 	total := len(concepts)
 
 	// Build the alias→concept-id map once for wikilink sanitization (issue #95).
-	// The concept slice is the authoritative alias source at compile time.
-	aliasMap := buildAliasMap(concepts)
+	// The in-batch concept slice is the authoritative alias source; AllConcepts
+	// (the full manifest set) additionally lets display-form links to concepts
+	// outside this batch canonicalize instead of being stripped (issue #106).
+	aliasMap := buildAliasMap(concepts, opts.AllConcepts)
+
+	// Build the co-occurrence index once (source-sharing concepts), then look
+	// it up per article to seed the "See also" [[wikilinks]]. Read-only after
+	// construction, so it is safe to share across the write goroutines below.
+	// Sourced from the full manifest set so incremental compiles link to
+	// pre-existing concepts too (issue #106).
+	relatedIndex := buildRelatedConceptsIndex(opts.AllConcepts, maxRelatedConcepts)
 
 	// Use BackpressureController if available, otherwise fixed semaphore
 	var sem chan struct{}
@@ -96,7 +111,7 @@ func WriteArticles(opts ArticleWriteOpts, concepts []ExtractedConcept) []Article
 			defer wg.Done()
 			defer release()
 
-			result := writeOneArticle(opts, c, aliasMap)
+			result := writeOneArticle(opts, c, aliasMap, relatedIndex[c.Name])
 			results[idx] = result
 
 			n := int(done.Add(1))
@@ -120,7 +135,7 @@ func WriteArticles(opts ArticleWriteOpts, concepts []ExtractedConcept) []Article
 	return results
 }
 
-func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap map[string]string) ArticleResult {
+func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap map[string]string, relatedNames []string) ArticleResult {
 	result := ArticleResult{ConceptName: concept.Name}
 
 	// Check for existing article
@@ -134,8 +149,8 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap m
 	// Build source context from relevant sections (document splitting)
 	sourceContext := buildSourceContext(opts.ProjectDir, concept, opts.SplitThreshold)
 
-	// Build prompt
-	relatedNames := findRelatedConcepts(concept)
+	// Build prompt. relatedNames are real, co-occurring concept slugs (issue
+	// #106) that resolve to existing article files and survive the strip pass.
 	prompt, err := prompts.Render("write_article", prompts.WriteArticleData{
 		ConceptName:     formatConceptName(concept.Name),
 		ConceptID:       concept.Name,
@@ -574,11 +589,15 @@ func sanitizeWikilinks(content string, aliasMap map[string]string) string {
 	})
 }
 
-// buildAliasMap builds an alias→concept-id lookup from the in-memory concept
-// slice (the authoritative alias source at compile time — the ontology store
-// holds no aliases). Display-form names are added after aliases so a canonical
-// display name cannot be clobbered by a colliding alias. Issue #95.
-func buildAliasMap(concepts []ExtractedConcept) map[string]string {
+// buildAliasMap builds an alias→concept-id lookup for wikilink sanitization.
+// Aliases come only from the in-batch concept slice (the authoritative alias
+// source at compile time — the ontology store and manifest hold no aliases).
+// Canonical ids and display forms are added for every concept in allConcepts
+// (the full manifest set, a superset of the batch) so display-form links to
+// concepts OUTSIDE the current batch also canonicalize and survive the strip
+// pass rather than being dropped (issue #106). When allConcepts is nil it
+// falls back to the batch, preserving the original issue-#95 behavior.
+func buildAliasMap(concepts []ExtractedConcept, allConcepts []ExtractedConcept) map[string]string {
 	m := make(map[string]string)
 	for _, c := range concepts {
 		for _, a := range c.Aliases {
@@ -590,7 +609,11 @@ func buildAliasMap(concepts []ExtractedConcept) map[string]string {
 	// Add canonical ids and display forms AFTER aliases so a real concept's
 	// own id/name always wins over a colliding alias from another concept
 	// (e.g. concept B named "attention" must beat concept A's alias "attention").
-	for _, c := range concepts {
+	canonicalSet := allConcepts
+	if len(canonicalSet) == 0 {
+		canonicalSet = concepts
+	}
+	for _, c := range canonicalSet {
 		m[c.Name] = c.Name
 		m[formatConceptName(c.Name)] = c.Name
 	}
@@ -621,10 +644,87 @@ func formatConceptName(name string) string {
 	return strings.Join(words, " ")
 }
 
-func findRelatedConcepts(concept ExtractedConcept) []string {
-	// Related concepts are discovered during extraction as co-occurrences
-	// For now, return empty — the ontology will be populated as articles are written
-	return nil
+// maxRelatedConcepts caps how many "See also" links each article is seeded
+// with. The cap is by design: a source cited by many concepts would otherwise
+// flood every article with links. Ranking by shared-source count keeps the
+// strongest co-occurrences; a richer signal (vector similarity) is a follow-up.
+const maxRelatedConcepts = 8
+
+// buildRelatedConceptsIndex builds, for every concept, the list of other
+// concepts it co-occurs with — i.e. concepts that cite at least one common
+// source document. Co-occurrence is the mechanism the original stub intended
+// ("discovered during extraction as co-occurrences"); it needs no embeddings,
+// works on a cold compile, and yields real slugs that resolve to article files
+// and survive the strip pass (issue #106).
+//
+// Results per concept are ranked by shared-source count (desc), tie-broken by
+// name (asc) for determinism despite Go map iteration order, then truncated to
+// cap. Returns conceptName → []relatedSlug. A nil/empty input yields an empty
+// map (so behavior matches the old stub when AllConcepts is unset).
+//
+// Cost is ~O(sources × concepts-per-source); a pathological source cited by
+// every concept is O(N²). The cap bounds output size, not build cost — fine
+// for typical wikis.
+func buildRelatedConceptsIndex(all []ExtractedConcept, limit int) map[string][]string {
+	index := make(map[string][]string, len(all))
+	if len(all) == 0 {
+		return index
+	}
+
+	// source → set of concept names citing it. Sets dedupe repeated sources
+	// within a concept's list (the manifest stores Sources verbatim) so a
+	// duplicate cannot inflate co-occurrence counts.
+	bySource := make(map[string]map[string]bool)
+	for _, c := range all {
+		seen := make(map[string]bool, len(c.Sources))
+		for _, s := range c.Sources {
+			if s == "" || seen[s] {
+				continue
+			}
+			seen[s] = true
+			if bySource[s] == nil {
+				bySource[s] = make(map[string]bool)
+			}
+			bySource[s][c.Name] = true
+		}
+	}
+
+	for _, c := range all {
+		// Count shared sources with each co-occurring concept (exclude self).
+		shared := make(map[string]int)
+		seen := make(map[string]bool, len(c.Sources))
+		for _, s := range c.Sources {
+			if s == "" || seen[s] {
+				continue
+			}
+			seen[s] = true
+			for other := range bySource[s] {
+				if other != c.Name {
+					shared[other]++
+				}
+			}
+		}
+		if len(shared) == 0 {
+			continue
+		}
+
+		related := make([]string, 0, len(shared))
+		for name := range shared {
+			related = append(related, name)
+		}
+		sort.Slice(related, func(i, j int) bool {
+			if shared[related[i]] != shared[related[j]] {
+				return shared[related[i]] > shared[related[j]] // more shared sources first
+			}
+			return related[i] < related[j] // deterministic tie-break
+		})
+		if len(related) > limit {
+			related = related[:limit]
+		}
+		index[c.Name] = related
+	}
+
+	return index
 }
 
 // extractRelations parses article text for relationship patterns and creates ontology edges.

@@ -137,6 +137,7 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 			ChunkSize:          cfg.Search.ChunkSizeOrDefault(),
 			Language:           cfg.Language,
 			AntiPatternPhrases: cfg.Compiler.AntiPatternPhrasesOrDefault(),
+			AllConcepts:        manifestConceptRefs(mf.Concepts),
 		}, concepts)
 
 		for _, ar := range articles {

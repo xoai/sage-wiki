@@ -20,6 +20,22 @@ type ExtractedConcept struct {
 	Type    string   `json:"type"` // concept, technique, claim
 }
 
+// manifestConceptRefs converts the manifest's concept map into a slice of
+// ExtractedConcept carrying just the fields needed for co-occurrence discovery
+// (Name — the map key — and Sources). The manifest is the authoritative FULL
+// concept set at write time (it includes concepts from prior compiles, not
+// just the current batch), so the write pass sources related-concept
+// candidates from here to cover incremental compiles as well as full ones.
+// Aliases are not stored in the manifest; callers that need them use the
+// in-batch concept slice. Issue #106.
+func manifestConceptRefs(m map[string]manifest.Concept) []ExtractedConcept {
+	refs := make([]ExtractedConcept, 0, len(m))
+	for name, c := range m {
+		refs = append(refs, ExtractedConcept{Name: name, Sources: c.Sources})
+	}
+	return refs
+}
+
 // ExtractConcepts runs Pass 2: concept extraction from summaries.
 // It takes new/updated summaries and the existing concept list,
 // asks the LLM to identify and deduplicate concepts.

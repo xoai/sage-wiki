@@ -314,6 +314,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		Language:           cfg.Language,
 		Backpressure:       opts.Backpressure,
 		AntiPatternPhrases: cfg.Compiler.AntiPatternPhrasesOrDefault(),
+		AllConcepts:        manifestConceptRefs(mf.Concepts),
 	}, concepts)
 
 	// Quality scoring config (issue #97): weights + warning threshold.

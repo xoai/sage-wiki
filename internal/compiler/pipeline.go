@@ -917,6 +917,7 @@ func resumeBatch(
 					ChunkSize:          cfg.Search.ChunkSizeOrDefault(),
 					Language:           cfg.Language,
 					AntiPatternPhrases: cfg.Compiler.AntiPatternPhrasesOrDefault(),
+					AllConcepts:        manifestConceptRefs(mf.Concepts),
 				}, concepts)
 
 				for _, ar := range articles {

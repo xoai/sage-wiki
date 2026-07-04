@@ -2,10 +2,13 @@ package compiler
 
 import (
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/storage"
 )
@@ -415,7 +418,7 @@ func TestBuildAliasMap(t *testing.T) {
 		{Name: "attention", Aliases: []string{"自注意力", "self-attention"}},
 		{Name: "flash-attention", Aliases: []string{"闪光注意力"}},
 	}
-	m := buildAliasMap(concepts)
+	m := buildAliasMap(concepts, nil)
 	if m["自注意力"] != "attention" {
 		t.Errorf("alias not mapped: %v", m["自注意力"])
 	}
@@ -448,7 +451,7 @@ func TestBuildAliasMap_CanonicalWinsOverAliasCollision(t *testing.T) {
 		{Name: "transformer", Aliases: []string{"attention"}}, // aliases the OTHER concept's id
 		{Name: "attention", Aliases: []string{"self-attention"}},
 	}
-	m := buildAliasMap(concepts)
+	m := buildAliasMap(concepts, nil)
 	if m["attention"] != "attention" {
 		t.Errorf("canonical id must win over colliding alias: m[attention]=%q, want \"attention\"", m["attention"])
 	}
@@ -466,5 +469,154 @@ func TestStripAntiPatternSentences_UnclosedFence(t *testing.T) {
 	got := stripAntiPatternSentences(in, phrases)
 	if !strings.Contains(got, "this article will survive") {
 		t.Errorf("content after unclosed fence should be left intact: %q", got)
+	}
+}
+
+// TestBuildRelatedConceptsIndex covers co-occurrence discovery (issue #106):
+// concepts sharing a source are related; self is excluded; isolated concepts
+// have no relations; duplicate sources do not double-count; ranking is by
+// shared-source count with a deterministic tie-break.
+func TestBuildRelatedConceptsIndex(t *testing.T) {
+	concepts := []ExtractedConcept{
+		{Name: "a", Sources: []string{"s1", "s2"}},
+		{Name: "b", Sources: []string{"s1"}},        // shares s1 with a
+		{Name: "c", Sources: []string{"s2"}},        // shares s2 with a
+		{Name: "d", Sources: []string{"s9"}},        // isolated
+		{Name: "e", Sources: []string{"s1", "s1"}},  // duplicate source; shares s1 with a
+	}
+	idx := buildRelatedConceptsIndex(concepts, maxRelatedConcepts)
+
+	// a shares s1 with b,e and s2 with c → all three, self excluded, d excluded.
+	gotA := append([]string(nil), idx["a"]...)
+	sort.Strings(gotA)
+	if !reflect.DeepEqual(gotA, []string{"b", "c", "e"}) {
+		t.Errorf("a related = %v, want [b c e]", idx["a"])
+	}
+	for _, name := range idx["a"] {
+		if name == "a" {
+			t.Error("a must not be related to itself")
+		}
+		if name == "d" {
+			t.Error("d is isolated and must not co-occur")
+		}
+	}
+
+	// d is isolated → no relations.
+	if len(idx["d"]) != 0 {
+		t.Errorf("d related = %v, want empty", idx["d"])
+	}
+
+	// Dedup: e lists s1 twice but must appear once under s1, and a↔e share
+	// exactly one source (s1), so e's only relation is a (b also shares s1).
+	gotE := append([]string(nil), idx["e"]...)
+	sort.Strings(gotE)
+	if !reflect.DeepEqual(gotE, []string{"a", "b"}) {
+		t.Errorf("e related = %v, want [a b] (duplicate s1 not double-counted)", idx["e"])
+	}
+
+	// nil input → empty map (matches the old stub when AllConcepts is unset).
+	if got := buildRelatedConceptsIndex(nil, maxRelatedConcepts); len(got) != 0 {
+		t.Errorf("nil input should yield empty index, got %v", got)
+	}
+}
+
+// TestBuildRelatedConceptsIndex_RankingCapDeterminism verifies shared-source
+// ranking, the cap, and that output is stable regardless of input order.
+func TestBuildRelatedConceptsIndex_RankingCapDeterminism(t *testing.T) {
+	// "hub" shares 2 sources with "strong" and 1 source each with many others.
+	concepts := []ExtractedConcept{
+		{Name: "hub", Sources: []string{"s1", "s2", "s3"}},
+		{Name: "strong", Sources: []string{"s1", "s2"}}, // 2 shared → ranks first
+		{Name: "w1", Sources: []string{"s3"}},
+		{Name: "w2", Sources: []string{"s3"}},
+	}
+	idx := buildRelatedConceptsIndex(concepts, maxRelatedConcepts)
+	if len(idx["hub"]) == 0 || idx["hub"][0] != "strong" {
+		t.Errorf("hub related = %v, want 'strong' ranked first (2 shared sources)", idx["hub"])
+	}
+
+	// Cap under ALL-EQUAL counts: one source cited by many concepts, so every
+	// co-occurrence has shared-source count 1 and ranking is pure tie-break.
+	// The surviving `maxRelatedConcepts` must be the alphabetically-first names
+	// (not an arbitrary subset), in sorted order.
+	var many []ExtractedConcept
+	many = append(many, ExtractedConcept{Name: "center", Sources: []string{"s"}})
+	for i := 0; i < maxRelatedConcepts+5; i++ {
+		many = append(many, ExtractedConcept{Name: "n" + string(rune('a'+i)), Sources: []string{"s"}})
+	}
+	wantCap := make([]string, maxRelatedConcepts)
+	for i := 0; i < maxRelatedConcepts; i++ {
+		wantCap[i] = "n" + string(rune('a'+i)) // na, nb, ... (first N by name)
+	}
+	capped := buildRelatedConceptsIndex(many, maxRelatedConcepts)
+	if !reflect.DeepEqual(capped["center"], wantCap) {
+		t.Errorf("center related = %v, want first-%d-by-name %v", capped["center"], maxRelatedConcepts, wantCap)
+	}
+
+	// Determinism under all-equal counts: reversing the many-input (which
+	// changes Go map iteration order) must yield byte-identical ordered output
+	// — this is the case where only the tie-break enforces a stable order.
+	manyReversed := make([]ExtractedConcept, len(many))
+	for i := range many {
+		manyReversed[i] = many[len(many)-1-i]
+	}
+	cappedRev := buildRelatedConceptsIndex(manyReversed, maxRelatedConcepts)
+	if !reflect.DeepEqual(capped["center"], cappedRev["center"]) {
+		t.Errorf("non-deterministic under equal counts: %v vs %v", capped["center"], cappedRev["center"])
+	}
+
+	// Determinism with mixed counts: reversed input yields identical output.
+	reversed := make([]ExtractedConcept, len(concepts))
+	for i := range concepts {
+		reversed[i] = concepts[len(concepts)-1-i]
+	}
+	idx2 := buildRelatedConceptsIndex(reversed, maxRelatedConcepts)
+	if !reflect.DeepEqual(idx["hub"], idx2["hub"]) {
+		t.Errorf("non-deterministic ordering: %v vs %v", idx["hub"], idx2["hub"])
+	}
+}
+
+// TestManifestConceptRefs round-trips a manifest concept map into the
+// []ExtractedConcept{Name, Sources} shape the write pass consumes (issue #106).
+func TestManifestConceptRefs(t *testing.T) {
+	m := map[string]manifest.Concept{
+		"alpha": {ArticlePath: "wiki/concepts/alpha.md", Sources: []string{"s1", "s2"}},
+		"beta":  {ArticlePath: "wiki/concepts/beta.md", Sources: []string{"s2"}},
+	}
+	refs := manifestConceptRefs(m)
+	if len(refs) != 2 {
+		t.Fatalf("expected 2 refs, got %d", len(refs))
+	}
+	byName := map[string][]string{}
+	for _, r := range refs {
+		byName[r.Name] = r.Sources
+	}
+	if !reflect.DeepEqual(byName["alpha"], []string{"s1", "s2"}) {
+		t.Errorf("alpha sources = %v, want [s1 s2]", byName["alpha"])
+	}
+	if !reflect.DeepEqual(byName["beta"], []string{"s2"}) {
+		t.Errorf("beta sources = %v, want [s2]", byName["beta"])
+	}
+}
+
+// TestBuildAliasMap_AllConceptsCanonicalizesOutOfBatch verifies the issue-#106
+// extension: display-form links to concepts OUTSIDE the current batch still
+// canonicalize when allConcepts (the full manifest set) is supplied.
+func TestBuildAliasMap_AllConceptsCanonicalizesOutOfBatch(t *testing.T) {
+	batch := []ExtractedConcept{
+		{Name: "attention", Aliases: []string{"self-attention"}},
+	}
+	all := []ExtractedConcept{
+		{Name: "attention"},
+		{Name: "flash-attention"}, // NOT in the current batch
+	}
+	m := buildAliasMap(batch, all)
+	// In-batch alias still resolves.
+	if m["self-attention"] != "attention" {
+		t.Errorf("in-batch alias lost: %q", m["self-attention"])
+	}
+	// Display form of an out-of-batch concept canonicalizes to its slug.
+	if m["Flash Attention"] != "flash-attention" {
+		t.Errorf("out-of-batch display form not canonicalized: %q", m["Flash Attention"])
 	}
 }

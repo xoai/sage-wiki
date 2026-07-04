@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/xoai/sage-wiki/internal/manifest"
@@ -148,6 +149,113 @@ compiler:
 	changelogPath := filepath.Join(dir, "wiki", "CHANGELOG.md")
 	if _, err := os.Stat(changelogPath); os.IsNotExist(err) {
 		t.Error("CHANGELOG.md should exist")
+	}
+}
+
+// TestCompile_SeedsRelatedConceptsIntoWritePrompt is the reproducing test for
+// issue #106: findRelatedConcepts() was a `return nil` stub, so the write
+// prompt's "See also" [[wikilinks]] block was always empty and the writer
+// never received a list of real concept slugs to link. It runs a full compile
+// with two concepts that share a source (so they co-occur) and asserts each
+// concept's write prompt is seeded with the OTHER concept's slug as a real
+// [[wikilink]]. Pre-fix (stub) the prompts contain no seeded links → RED.
+//
+// The Pass-3 handler captures prompts from concurrent goroutines, so the
+// capture slice is mutex-guarded (write pass fires max_parallel concurrent
+// LLM calls; each httptest request is served on its own goroutine).
+func TestCompile_SeedsRelatedConceptsIntoWritePrompt(t *testing.T) {
+	var mu sync.Mutex
+	var writePrompts []string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+
+		messages, _ := body["messages"].([]any)
+		lastMsg := ""
+		if len(messages) > 0 {
+			if m, ok := messages[len(messages)-1].(map[string]any); ok {
+				lastMsg, _ = m["content"].(string)
+			}
+		}
+
+		var content string
+		switch {
+		case strings.Contains(lastMsg, "concept extraction system"):
+			// Pass 2: two concepts sharing one source → they co-occur.
+			content = `[{"name":"self-attention","aliases":[],"sources":["raw/article1.md"],"type":"concept"},` +
+				`{"name":"flash-attention","aliases":[],"sources":["raw/article1.md"],"type":"concept"}]`
+		case strings.Contains(lastMsg, "wiki author writing a comprehensive article"):
+			// Pass 3: capture the rendered write prompt, return a valid article.
+			mu.Lock()
+			writePrompts = append(writePrompts, lastMsg)
+			mu.Unlock()
+			content = "# Article\n\n## Definition\n\nA mechanism used in transformer models.\n\n## See also\n"
+		default:
+			// Pass 1: summarization (≥100 chars to pass quality validation).
+			content = "## Key claims\n\nThis document discusses self-attention and flash attention, two related " +
+				"mechanisms in transformer models, and the trade-offs between them.\n\n## Concepts\n\nself-attention, flash-attention"
+		}
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]string{"content": content}},
+			},
+			"model": "gpt-4o-mini",
+			"usage": map[string]int{"total_tokens": 100},
+		})
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	wiki.InitGreenfield(dir, "test", "gemini-2.5-flash")
+
+	cfgContent := `
+version: 1
+project: test
+sources:
+  - path: raw
+    type: auto
+    watch: true
+output: wiki
+api:
+  provider: openai
+  api_key: sk-test
+  base_url: ` + server.URL + `
+models:
+  summarize: gpt-4o-mini
+compiler:
+  max_parallel: 2
+  auto_commit: false
+  summary_max_tokens: 500
+  default_tier: 3
+`
+	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfgContent), 0644)
+	os.WriteFile(filepath.Join(dir, "raw", "article1.md"),
+		[]byte("# Self-Attention and Flash Attention\n\nSelf-attention computes contextual "+
+			"representations; flash attention optimizes its memory access pattern."), 0644)
+
+	result, err := Compile(dir, CompileOpts{})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if result.ConceptsExtracted != 2 {
+		t.Fatalf("expected 2 concepts extracted, got %d", result.ConceptsExtracted)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(writePrompts) != 2 {
+		t.Fatalf("expected 2 write prompts captured, got %d", len(writePrompts))
+	}
+	joined := strings.Join(writePrompts, "\n----\n")
+	// Each concept's See-also should list the OTHER co-occurring concept, so
+	// both slugs appear across the two captured prompts.
+	if !strings.Contains(joined, "[[self-attention]]") {
+		t.Errorf("write prompts missing seeded [[self-attention]] link — See-also was not populated from co-occurrence")
+	}
+	if !strings.Contains(joined, "[[flash-attention]]") {
+		t.Errorf("write prompts missing seeded [[flash-attention]] link — See-also was not populated from co-occurrence")
 	}
 }
 
