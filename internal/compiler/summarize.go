@@ -41,6 +41,10 @@ type SummarizeOpts struct {
 	Language     string
 	Backpressure *BackpressureController // optional; if nil, uses fixed semaphore
 	ExtractOpts  []extract.ExtractOpts   // optional; passed to extract.Extract
+	// Summary filename scheme + configured source roots for "relative" naming
+	// (issue #107). SummaryNaming "" behaves as "full".
+	SummaryNaming string
+	SourceRoots   []string
 }
 
 // Summarize processes sources through Pass 1, producing summaries.
@@ -95,7 +99,7 @@ func Summarize(opts SummarizeOpts) []SummaryResult {
 			defer wg.Done()
 			defer release()
 
-			result := summarizeOne(opts.ProjectDir, opts.OutputDir, info, opts.Client, opts.Model, opts.MaxTokens, opts.UserTZ, opts.Language, opts.ExtractOpts...)
+			result := summarizeOne(opts.ProjectDir, opts.OutputDir, info, opts.Client, opts.Model, opts.MaxTokens, opts.UserTZ, opts.Language, opts.SummaryNaming, opts.SourceRoots, opts.ExtractOpts...)
 			results[idx] = result
 
 			n := int(done.Add(1))
@@ -135,15 +139,27 @@ func summarizeOne(
 	maxTokens int,
 	userTZ *time.Location,
 	language string,
+	summaryNaming string,
+	sourceRoots []string,
 	extractOpts ...extract.ExtractOpts,
 ) SummaryResult {
 	result := SummaryResult{SourcePath: info.Path}
+
+	// Resolve the summary filename under the configured naming scheme (issue
+	// #107). The SAME name is used for the reuse-lookup below and every write,
+	// so a scheme change consistently reuses/writes one filename per source.
+	// Root resolution is only needed for "relative"; skip it under the default.
+	root := ""
+	if summaryNaming == "relative" {
+		root = resolveSourceRoot(info.Path, sourceRoots)
+	}
+	summaryName := SummaryFilenameMode(info.Path, root, summaryNaming)
 
 	// Skip LLM call if a valid summary file already exists on disk with a matching
 	// source hash. Restores resume-from-checkpoint behavior when compile-state.json is
 	// missing (e.g. a prior failed run cleared it). The source_hash field in the
 	// frontmatter guards against serving stale summaries for modified sources.
-	summaryPath := filepath.Join(outputDir, "summaries", SummaryFilename(info.Path))
+	summaryPath := filepath.Join(outputDir, "summaries", summaryName)
 	absSummary := filepath.Join(projectDir, summaryPath)
 	if existing, err := os.ReadFile(absSummary); err == nil {
 		body := string(existing)
@@ -191,7 +207,7 @@ func summarizeOne(
 			return result
 		}
 		summaryText = text
-		return writeSummaryFile(projectDir, outputDir, info, content, summaryText, result, userTZ)
+		return writeSummaryFile(projectDir, outputDir, info, summaryName, content, summaryText, result, userTZ)
 	}
 
 	// Chunk if needed
@@ -251,7 +267,7 @@ func summarizeOne(
 		return result
 	}
 
-	return writeSummaryFile(projectDir, outputDir, info, content, summaryText, result, userTZ)
+	return writeSummaryFile(projectDir, outputDir, info, summaryName, content, summaryText, result, userTZ)
 }
 
 // emptyContentError returns a non-nil error when an LLM response carries no
@@ -279,11 +295,11 @@ func validateSummary(text string) error {
 	return nil
 }
 
-func writeSummaryFile(projectDir, outputDir string, info SourceInfo, content *extract.SourceContent, summaryText string, result SummaryResult, loc *time.Location) SummaryResult {
+func writeSummaryFile(projectDir, outputDir string, info SourceInfo, summaryName string, content *extract.SourceContent, summaryText string, result SummaryResult, loc *time.Location) SummaryResult {
 	summaryDir := filepath.Join(projectDir, outputDir, "summaries")
 	os.MkdirAll(summaryDir, 0755)
 
-	summaryPath := filepath.Join(outputDir, "summaries", SummaryFilename(info.Path))
+	summaryPath := filepath.Join(outputDir, "summaries", summaryName)
 	absOutputPath := filepath.Join(projectDir, summaryPath)
 
 	frontmatter := fmt.Sprintf(`---

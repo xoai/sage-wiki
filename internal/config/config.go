@@ -121,6 +121,14 @@ type CompilerConfig struct {
 	// default list; explicit `[]` → disabled (no stripping).
 	AntiPatternPhrases []string `yaml:"anti_pattern_phrases,omitempty"`
 
+	// Summary filename scheme (issue #107). "full" (default) hyphen-joins every
+	// source-path segment (collision-safe, issue #51). "relative" strips the
+	// configured source-root prefix and collapses a duplicated trailing segment
+	// (e.g. marker-pdf's <X>/<X>.md → X.md), trading some cross-path collision
+	// safety for cleaner names. Changing this renames summaries going forward;
+	// enabling it requires a full recompile to rename existing files.
+	SummaryNaming string `yaml:"summary_naming,omitempty"`
+
 	resolvedTZ *time.Location `yaml:"-"` // cached by Validate(); not serialized
 }
 
@@ -147,6 +155,15 @@ func (c CompilerConfig) AntiPatternPhrasesOrDefault() []string {
 		return defaultAntiPatternPhrases
 	}
 	return c.AntiPatternPhrases
+}
+
+// SummaryNamingOrDefault returns the summary filename scheme, defaulting to
+// "full" when unset (issue #107). Validate() rejects any other value.
+func (c CompilerConfig) SummaryNamingOrDefault() string {
+	if c.SummaryNaming == "" {
+		return "full"
+	}
+	return c.SummaryNaming
 }
 
 // QualityConfig configures the zero-LLM 5-dimension article quality scorer
@@ -663,6 +680,12 @@ func (c *Config) Validate() error {
 		validModes := map[string]bool{"standard": true, "batch": true, "auto": true}
 		if !validModes[c.Compiler.Mode] {
 			return fmt.Errorf("config: invalid compiler.mode %q (valid: standard, batch, auto)", c.Compiler.Mode)
+		}
+	}
+	if c.Compiler.SummaryNaming != "" {
+		validNaming := map[string]bool{"full": true, "relative": true}
+		if !validNaming[c.Compiler.SummaryNaming] {
+			return fmt.Errorf("config: invalid summary_naming %q (valid: full, relative)", c.Compiler.SummaryNaming)
 		}
 	}
 	// Merge relation_types (preferred) and relations (deprecated) keys.

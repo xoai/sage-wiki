@@ -190,6 +190,15 @@ func TestValidation(t *testing.T) {
 			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Compiler: CompilerConfig{Timezone: "Asia/Shanghai"}},
 		},
 		{
+			name:    "invalid summary_naming",
+			cfg:     Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Compiler: CompilerConfig{SummaryNaming: "relatve"}},
+			wantErr: "invalid summary_naming",
+		},
+		{
+			name: "valid summary_naming relative",
+			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Compiler: CompilerConfig{SummaryNaming: "relative"}},
+		},
+		{
 			name:    "invalid relation name uppercase",
 			cfg:     Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Ontology: OntologyConfig{Relations: []RelationConfig{{Name: "Extends"}}}},
 			wantErr: "invalid name",

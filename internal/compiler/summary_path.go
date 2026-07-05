@@ -63,3 +63,104 @@ func SummaryFilename(sourcePath string) string {
 
 	return joined + ".md"
 }
+
+// SummaryFilenameMode converts a source path to a summary filename under the
+// configured naming scheme (issue #107).
+//
+// mode "full" (the default) delegates to SummaryFilename — byte-identical to
+// historical behavior. mode "relative" strips the configured sourceRoot prefix
+// and collapses a duplicated trailing path segment, producing cleaner names for
+// nested source trees:
+//
+//	full:      "wiki/pdf2md/Final FS Letter/Final FS Letter.md"
+//	             → "wiki-pdf2md-Final FS Letter-Final FS Letter.md"
+//	relative:  same path, root "wiki/pdf2md"
+//	             → "Final FS Letter.md"
+//
+// relative mode trades some cross-path collision safety for readability: two
+// source roots sharing a relative subpath, or a top-level "foo.md" alongside
+// "foo/foo.md", can collide. "full" remains the collision-safe default.
+func SummaryFilenameMode(sourcePath, sourceRoot, mode string) string {
+	if mode != "relative" {
+		return SummaryFilename(sourcePath)
+	}
+
+	p := filepath.ToSlash(filepath.Clean(sourcePath))
+	parts := strings.Split(p, "/")
+
+	// Strip the source-root prefix so the summary name is relative to the
+	// source the file was discovered under.
+	if sourceRoot != "" {
+		rootParts := strings.Split(filepath.ToSlash(filepath.Clean(sourceRoot)), "/")
+		if hasSegmentPrefix(parts, rootParts) {
+			parts = parts[len(rootParts):]
+		}
+	}
+
+	cleaned := parts[:0]
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			continue
+		}
+		cleaned = append(cleaned, part)
+	}
+	if len(cleaned) == 0 {
+		return "summary.md"
+	}
+
+	// Trim a trailing .md from the LAST segment BEFORE the duplicate compare —
+	// the raw last segment "Final FS Letter.md" only equals the parent dir
+	// "Final FS Letter" once the extension is removed.
+	last := cleaned[len(cleaned)-1]
+	if strings.EqualFold(filepath.Ext(last), ".md") {
+		cleaned[len(cleaned)-1] = strings.TrimSuffix(last, filepath.Ext(last))
+	}
+
+	// Collapse a duplicated TRAILING segment (marker-pdf's one-subdir-per-PDF
+	// convention: <X>/<X>). Only the trailing pair, to bound the collision
+	// blast radius of the collapse.
+	if n := len(cleaned); n >= 2 && cleaned[n-1] == cleaned[n-2] {
+		cleaned = cleaned[:n-1]
+	}
+
+	joined := strings.Join(cleaned, "-")
+	joined = strings.ReplaceAll(joined, ".", "-")
+	return joined + ".md"
+}
+
+// hasSegmentPrefix reports whether path segments begin with the given prefix
+// segments (exact, case-sensitive match per segment).
+func hasSegmentPrefix(parts, prefix []string) bool {
+	if len(prefix) > len(parts) {
+		return false
+	}
+	for i, seg := range prefix {
+		if parts[i] != seg {
+			return false
+		}
+	}
+	return true
+}
+
+// resolveSourceRoot returns the configured source root (from roots) that most
+// specifically prefixes path — the longest segment-prefix match — or "" if none
+// applies. Both sides are slash/clean-normalized so comparison is stable; roots
+// are matched by whole path segments, not raw string prefixes, so "docs" does
+// not match "docsite/...". Issue #107.
+func resolveSourceRoot(path string, roots []string) string {
+	p := strings.Split(filepath.ToSlash(filepath.Clean(path)), "/")
+	best := ""
+	bestLen := -1
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		rNorm := filepath.ToSlash(filepath.Clean(root))
+		rParts := strings.Split(rNorm, "/")
+		if hasSegmentPrefix(p, rParts) && len(rParts) > bestLen {
+			best = rNorm
+			bestLen = len(rParts)
+		}
+	}
+	return best
+}

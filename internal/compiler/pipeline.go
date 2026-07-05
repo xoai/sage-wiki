@@ -736,6 +736,11 @@ func resumeBatch(
 		pendingSet[p] = true
 	}
 
+	// Summary naming (issue #107): resolve roots once and warn on collisions
+	// over the full pending set, matching the standard/on-demand path.
+	batchRoots := sourceRootPaths(cfg.Sources)
+	warnSummaryNameCollisions(state.Pending, batchRoots, cfg.Compiler.SummaryNamingOrDefault())
+
 	// Process batch results as summaries
 	progress.StartPhase("Processing batch results", len(batchResults))
 	var successfulSummaries []SummaryResult
@@ -785,11 +790,13 @@ func resumeBatch(
 			continue
 		}
 
-		// Write summary file
+		// Write summary file (issue #107: honor the configured naming scheme via
+		// the same helper as the standard path, so batch/standard never diverge).
 		summaryText := br.Response.Content
 		summaryDir := filepath.Join(projectDir, cfg.Output, "summaries")
 		os.MkdirAll(summaryDir, 0755)
-		summaryPath := filepath.Join(cfg.Output, "summaries", SummaryFilename(path))
+		summaryName := SummaryFilenameMode(path, resolveSourceRoot(path, batchRoots), cfg.Compiler.SummaryNamingOrDefault())
+		summaryPath := filepath.Join(cfg.Output, "summaries", summaryName)
 		absOutputPath := filepath.Join(projectDir, summaryPath)
 
 		frontmatter := fmt.Sprintf("---\nsource: %s\ncompiled_at: %s\nbatch: true\n---\n\n", path, timeNow(cfg.Compiler.UserTimeLocation()))

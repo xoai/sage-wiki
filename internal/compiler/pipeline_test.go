@@ -259,6 +259,92 @@ compiler:
 	}
 }
 
+// TestCompile_RelativeSummaryNaming is the reproducing/wiring test for issue
+// #107: with compiler.summary_naming=relative, a nested source at
+// docs/Report/Report.md must produce the summary file Report.md — the source
+// root prefix (docs-) stripped and the duplicated marker-pdf stem (Report-
+// Report) collapsed. Against the default (full) scheme the file would be
+// docs-Report-Report.md. Pre-fix (no relative mode) → RED. It exercises the
+// standard-path flag wiring end to end: config → SummarizeOpts → summarizeOne →
+// SummaryFilenameMode → on-disk filename.
+func TestCompile_RelativeSummaryNaming(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		messages, _ := body["messages"].([]any)
+		lastMsg := ""
+		if len(messages) > 0 {
+			if m, ok := messages[len(messages)-1].(map[string]any); ok {
+				lastMsg, _ = m["content"].(string)
+			}
+		}
+
+		var content string
+		switch {
+		case strings.Contains(lastMsg, "concept extraction system"):
+			content = `[{"name":"report","aliases":[],"sources":["docs/Report/Report.md"],"type":"concept"}]`
+		case strings.Contains(lastMsg, "wiki author writing a comprehensive article"):
+			content = "# Article\n\n## Definition\n\nA report concept."
+		default:
+			content = "## Key claims\n\nThis document is a financial report covering the main findings, figures, and conclusions of the review.\n\n## Concepts\n\nreport"
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": content}}},
+			"model":   "gpt-4o-mini",
+			"usage":   map[string]int{"total_tokens": 100},
+		})
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	wiki.InitGreenfield(dir, "test", "gemini-2.5-flash")
+
+	cfgContent := `
+version: 1
+project: test
+sources:
+  - path: docs
+    type: auto
+    watch: true
+output: wiki
+api:
+  provider: openai
+  api_key: sk-test
+  base_url: ` + server.URL + `
+models:
+  summarize: gpt-4o-mini
+compiler:
+  max_parallel: 2
+  auto_commit: false
+  summary_max_tokens: 500
+  default_tier: 3
+  summary_naming: relative
+`
+	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfgContent), 0644)
+	// marker-pdf-style nested layout: one subdir per PDF, subdir name == stem.
+	os.MkdirAll(filepath.Join(dir, "docs", "Report"), 0755)
+	os.WriteFile(filepath.Join(dir, "docs", "Report", "Report.md"),
+		[]byte("# Report\n\nA financial report with figures and conclusions."), 0644)
+
+	if _, err := Compile(dir, CompileOpts{}); err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+
+	summariesDir := filepath.Join(dir, "wiki", "summaries")
+	if _, err := os.Stat(filepath.Join(summariesDir, "Report.md")); err != nil {
+		entries, _ := os.ReadDir(summariesDir)
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("expected relative summary name Report.md, not found. summaries dir: %v", names)
+	}
+	// The full-scheme name must NOT be produced under relative mode.
+	if _, err := os.Stat(filepath.Join(summariesDir, "docs-Report-Report.md")); err == nil {
+		t.Errorf("full-scheme name docs-Report-Report.md should not exist under summary_naming: relative")
+	}
+}
+
 // TestCompile_EmptyArticleNotWritten is the reproducing test for the
 // silent-hollow-write bug: when the article-writing LLM call returns empty
 // content (e.g. a reasoning model exhausting its token budget), the compiler

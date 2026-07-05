@@ -17,6 +17,46 @@ import (
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
+// sourceRootPaths extracts the configured source root paths (sources[].path),
+// used to strip the root prefix under relative summary naming (issue #107).
+func sourceRootPaths(sources []config.Source) []string {
+	roots := make([]string, 0, len(sources))
+	for _, s := range sources {
+		roots = append(roots, s.Path)
+	}
+	return roots
+}
+
+// sourceInfoPaths extracts the discovered file paths from a SourceInfo slice.
+func sourceInfoPaths(sources []SourceInfo) []string {
+	paths := make([]string, 0, len(sources))
+	for _, s := range sources {
+		paths = append(paths, s.Path)
+	}
+	return paths
+}
+
+// warnSummaryNameCollisions logs a warning when, under the given naming mode,
+// two distinct source paths map to the same summary filename (issue #107).
+// Best-effort: it needs the whole source set, so it runs at set-level sites
+// (the full/on-demand pipeline and batch submission), not per file. Under the
+// default "full" mode collisions cannot occur, so this is a no-op there.
+func warnSummaryNameCollisions(paths, roots []string, mode string) {
+	if mode != "relative" {
+		return
+	}
+	seen := make(map[string]string, len(paths))
+	for _, p := range paths {
+		name := SummaryFilenameMode(p, resolveSourceRoot(p, roots), mode)
+		if prev, ok := seen[name]; ok && prev != p {
+			log.Warn("summary_naming: relative filename collision — one summary overwrites another",
+				"filename", name, "source_a", prev, "source_b", p)
+			continue
+		}
+		seen[name] = p
+	}
+}
+
 // FullPipelineOpts bundles all parameters needed for the full compilation
 // pipeline (Pass 1 → Pass 2 → Pass 3).
 type FullPipelineOpts struct {
@@ -93,19 +133,25 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		}
 	}
 
+	summaryNaming := cfg.Compiler.SummaryNamingOrDefault()
+	sourceRoots := sourceRootPaths(cfg.Sources)
+	warnSummaryNameCollisions(sourceInfoPaths(sources), sourceRoots, summaryNaming)
+
 	summaries := Summarize(SummarizeOpts{
-		Ctx:          opts.Ctx,
-		ProjectDir:   opts.ProjectDir,
-		OutputDir:    cfg.Output,
-		Sources:      sources,
-		Client:       client,
-		Model:        model,
-		MaxTokens:    maxTokens,
-		MaxParallel:  cfg.Compiler.MaxParallel,
-		UserTZ:       cfg.Compiler.UserTimeLocation(),
-		Language:     cfg.Language,
-		Backpressure: opts.Backpressure,
-		ExtractOpts:  sumExOpts,
+		Ctx:           opts.Ctx,
+		ProjectDir:    opts.ProjectDir,
+		OutputDir:     cfg.Output,
+		Sources:       sources,
+		Client:        client,
+		Model:         model,
+		MaxTokens:     maxTokens,
+		MaxParallel:   cfg.Compiler.MaxParallel,
+		UserTZ:        cfg.Compiler.UserTimeLocation(),
+		Language:      cfg.Language,
+		Backpressure:  opts.Backpressure,
+		ExtractOpts:   sumExOpts,
+		SummaryNaming: summaryNaming,
+		SourceRoots:   sourceRoots,
 	})
 
 	for _, sr := range summaries {
