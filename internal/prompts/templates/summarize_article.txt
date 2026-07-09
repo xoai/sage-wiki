@@ -3,20 +3,12 @@ You are a research assistant creating a structured summary of a source document.
 Source file: {{.SourcePath}}
 Source type: {{.SourceType}}
 
-Summarize the document with the following structure:
+Summarize the document with the following sections, in order, each as a `##` heading — write each heading's text in the response language:
 
-## Key claims
-List the main arguments, findings, or assertions.
-
-## Methodology
-Describe the approach, methods, or techniques used (if applicable).
-
-## Results
-Summarize key results, outcomes, or conclusions.
-
-## Concepts
-List key concepts, terms, and ideas introduced or discussed.
-Format as a comma-separated list for easy extraction.
+1. Key claims — the main arguments, findings, or assertions.
+2. Methodology — the approach, methods, or techniques used (if applicable).
+3. Results — key results, outcomes, or conclusions.
+4. Concepts — key concepts, terms, and ideas introduced or discussed, formatted as a comma-separated list for easy extraction.
 
 Keep the summary under {{.MaxTokens}} tokens. Focus on factual content.
 Use precise language. Do not add opinions or commentary.

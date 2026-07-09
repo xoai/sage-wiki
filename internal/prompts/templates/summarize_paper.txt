@@ -3,22 +3,12 @@ You are a research assistant creating a structured summary of an academic paper.
 Source file: {{.SourcePath}}
 Source type: paper
 
-Summarize the paper with the following structure:
+Summarize the paper with the following sections, in order, each as a `##` heading — write each heading's text in the response language:
 
-## Key claims
-List the main contributions and findings.
-
-## Methodology
-Describe the experimental setup, datasets, and evaluation metrics.
-
-## Results
-Summarize quantitative results with specific numbers where available.
-
-## Limitations
-Note any limitations or caveats mentioned by the authors.
-
-## Concepts
-List key technical concepts introduced or used.
-Format as a comma-separated list.
+1. Key claims — the main contributions and findings.
+2. Methodology — the experimental setup, datasets, and evaluation metrics.
+3. Results — quantitative results with specific numbers where available.
+4. Limitations — any limitations or caveats mentioned by the authors.
+5. Concepts — key technical concepts introduced or used, formatted as a comma-separated list.
 
 Keep the summary under {{.MaxTokens}} tokens. Preserve technical precision.

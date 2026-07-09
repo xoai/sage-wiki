@@ -19,22 +19,17 @@ Related concepts: {{.RelatedList}}
 {{.Learnings}}
 {{end}}
 
-Write a structured wiki article with:
+Write a comprehensive wiki article about this concept.
 
-## Definition
-Clear, precise definition of the concept.
+Begin with a single `#` H1 title: a natural, readable rendering of the concept in the article's language. Keep genuine proper nouns and product, library, or API names in their original form.
 
-## How it works
-Technical explanation with appropriate depth.
+Then write the following sections, in order, each as a `##` heading — write each heading's text in the article's language:
 
-## Variants
-Known variants, implementations, or alternatives.
-
-## Trade-offs
-Key trade-offs, limitations, or considerations.
-
-## See also
-List related concepts as [[wikilinks]]:
+1. Definition — a clear, precise definition of the concept.
+2. How it works — technical explanation with appropriate depth.
+3. Variants — known variants, implementations, or alternatives.
+4. Trade-offs — key trade-offs, limitations, or considerations.
+5. See also — related concepts as [[wikilinks]]. Keep each wikilink target exactly as written (it is a file identifier); do not translate text inside [[ ]]:
 {{range .RelatedConcepts}}- [[{{.}}]]
 {{end}}
 

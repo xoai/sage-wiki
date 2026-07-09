@@ -504,12 +504,7 @@ func synthesizeHierarchical(summaries []string, sourcePath string, client *llm.C
 				"Combine these %d section summaries into a single coherent summary of the source document %q.\n\n%s",
 				len(group), sourcePath, strings.Join(group, "\n\n---\n\n"),
 			)
-			if language != "" {
-				synthesisPrompt += fmt.Sprintf(
-					"\n\nIMPORTANT: Write your entire response in %s. Keep technical terms, code, and proper nouns in their original form.",
-					language,
-				)
-			}
+			synthesisPrompt += prompts.LanguageInstruction(language)
 
 			resp, err := client.ChatCompletion([]llm.Message{
 				{Role: "system", Content: "You are synthesizing partial summaries into a final summary."},

@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Fuller localization of generated articles (#110).** When `language` is set,
+  the generated article's H1 title and section headings (Definition, How it
+  works, …) are now written in that language too, not just the body. Code,
+  identifiers, proper nouns, and `[[wikilink]]` targets are kept in their
+  original form so cross-references still resolve. The language directive is now
+  a single shared instruction used by both the article writer and the summary
+  synthesis step.
+
 ## 0.1.10 — 2026-06-28
 
 ### Added

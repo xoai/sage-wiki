@@ -42,8 +42,13 @@ func TestRenderSummarize(t *testing.T) {
 	if !strings.Contains(result, "2000") {
 		t.Error("expected max tokens in output")
 	}
-	if !strings.Contains(result, "## Key claims") {
+	if !strings.Contains(result, "Key claims") {
 		t.Error("expected Key claims section")
+	}
+	// Headings are described (not hardcoded as literal English `##`) so they
+	// localize under a language config (issue #110).
+	if !strings.Contains(result, "each as a `##` heading") {
+		t.Error("expected the section-heading instruction")
 	}
 }
 
@@ -65,6 +70,31 @@ func TestRenderWriteArticle(t *testing.T) {
 	}
 	if !strings.Contains(result, "[[multi-head-attention]]") {
 		t.Error("expected wikilinks in See also")
+	}
+}
+
+// TestRenderWriteArticle_LocalizesStructure is the reproducing test for issue
+// #110: under a language config, the rendered write prompt must direct the model
+// to localize the title and section headings (not just the body), and must
+// protect [[wikilink]] targets from translation (translating them would make the
+// strip pass delete the cross-references). Against the pre-fix generic append
+// (which only says "write in X, keep proper nouns original") both assertions
+// fail → RED.
+func TestRenderWriteArticle_LocalizesStructure(t *testing.T) {
+	result, err := Render("write_article", WriteArticleData{
+		ConceptName:     "Self-Attention",
+		ConceptID:       "self-attention",
+		RelatedConcepts: []string{"multi-head-attention"},
+		MaxTokens:       4000,
+	}, "Chinese")
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(result, "section headings") {
+		t.Error("language instruction should tell the model to localize section headings")
+	}
+	if !strings.Contains(result, "never translate") {
+		t.Error("language instruction should protect [[wikilink]] targets from translation")
 	}
 }
 
@@ -119,6 +149,27 @@ func TestRenderLanguageSkippedForCapture(t *testing.T) {
 	}
 	if strings.Contains(result, "Write your entire response in") {
 		t.Error("language instruction should be skipped for JSON-output templates")
+	}
+}
+
+// TestLanguageInstruction guards the shared localization directive (issue #110):
+// empty language is a no-op (default output byte-identical), and a non-empty
+// language directs localizing the title + section headings while protecting
+// [[wikilink]] targets from translation. These are change-detectors on the
+// instruction wording, not proofs the model obeys.
+func TestLanguageInstruction(t *testing.T) {
+	if got := LanguageInstruction(""); got != "" {
+		t.Errorf("empty language should be a no-op, got %q", got)
+	}
+	instr := LanguageInstruction("Chinese")
+	// Contiguous phrase kept so the Render language tests stay green.
+	if !strings.Contains(instr, "Write your entire response in Chinese") {
+		t.Error("must keep the contiguous 'Write your entire response in <lang>' phrase")
+	}
+	for _, want := range []string{"title", "section headings", "never translate"} {
+		if !strings.Contains(instr, want) {
+			t.Errorf("instruction missing %q coverage: %q", want, instr)
+		}
 	}
 }
 

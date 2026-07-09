@@ -108,9 +108,27 @@ func Render(name string, data any, language string) (string, error) {
 	}
 	result := buf.String()
 	if language != "" && !isJSONTemplate(result) {
-		result += fmt.Sprintf("\n\nIMPORTANT: Write your entire response in %s. Keep technical terms, code, and proper nouns in their original form.", language)
+		result += LanguageInstruction(language)
 	}
 	return result, nil
+}
+
+// LanguageInstruction returns the directive appended to a prompt to produce
+// output in the given language, or "" when language is empty. It is the single
+// source of truth for localization wording, shared by Render and the summary
+// synthesis path (summarize.go) so the two cannot drift.
+//
+// The wording explicitly covers the title and section headings (issue #110 —
+// the body was localized but headings/title stayed English), and protects
+// [[wikilink]] targets: a target is a concept-file identifier, and translating
+// it would make the post-compile strip pass delete the cross-reference. This is
+// a PURE string builder — it does no JSON gating; callers (Render) gate on
+// isJSONTemplate themselves.
+func LanguageInstruction(language string) string {
+	if language == "" {
+		return ""
+	}
+	return fmt.Sprintf("\n\nIMPORTANT: Write your entire response in %s — including any title and all section headings. Keep the following in their original form: code, identifiers, file paths, URLs, established proper nouns (product, library, and API names), and the exact text inside every [[...]] wikilink (a wikilink target is a file identifier — never translate it).", language)
 }
 
 // ScaffoldDefaults copies all embedded default templates to a directory

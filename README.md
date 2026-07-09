@@ -235,6 +235,12 @@ sources:
 
 output: wiki # compiled output directory (_wiki for vault overlay)
 
+# Output language for generated articles (default: English). When set, the
+# article body, H1 title, and section headings are all written in this
+# language; code, identifiers, proper nouns, and [[wikilink]] targets are kept
+# in their original form. Use the language's own name, e.g. 简体中文, 日本語.
+# language: 简体中文
+
 # Folders to never read or send to APIs (vault overlay mode)
 # ignore:
 #   - Daily Notes
