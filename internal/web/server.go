@@ -21,6 +21,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/pathsafe"
 	"github.com/xoai/sage-wiki/internal/query"
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/vectors"
@@ -254,12 +255,11 @@ func (s *WebServer) handleArticle(w http.ResponseWriter, r *http.Request) {
 		articlePath += ".md"
 	}
 
-	absPath := filepath.Join(s.projectDir, s.cfg.Output, articlePath)
-
-	// Path traversal protection
-	absProject, _ := filepath.Abs(s.projectDir)
-	absResolved, _ := filepath.Abs(absPath)
-	if !strings.HasPrefix(absResolved, absProject) {
+	// Serve only from the output dir. pathsafe rejects traversal, symlink
+	// escapes, and sibling-prefix dirs (e.g. <output>-secret) that a bare
+	// strings.HasPrefix against the project root would wrongly allow.
+	absPath, err := pathsafe.SafeJoin(filepath.Join(s.projectDir, s.cfg.Output), articlePath)
+	if err != nil {
 		http.Error(w, "path traversal not allowed", http.StatusForbidden)
 		return
 	}
@@ -621,12 +621,9 @@ func (s *WebServer) handleFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	absPath := filepath.Join(s.projectDir, s.cfg.Output, filePath)
-
-	// Path traversal protection
-	absProject, _ := filepath.Abs(s.projectDir)
-	absResolved, _ := filepath.Abs(absPath)
-	if !strings.HasPrefix(absResolved, absProject) {
+	// Serve only from the output dir (same containment as handleArticle).
+	absPath, err := pathsafe.SafeJoin(filepath.Join(s.projectDir, s.cfg.Output), filePath)
+	if err != nil {
 		http.Error(w, "path traversal not allowed", http.StatusForbidden)
 		return
 	}

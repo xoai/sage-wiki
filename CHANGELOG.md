@@ -23,6 +23,17 @@
   a single shared instruction used by both the article writer and the summary
   synthesis step.
 
+### Security
+
+- **Hardened filesystem path containment (SEC-01, P0-2).** All web and MCP
+  filesystem handlers now share one symlink-aware, sibling-prefix-safe containment
+  helper (`internal/pathsafe`). The web article/file APIs are scoped to the output
+  directory, closing an over-exposure where a `../` path could read project files
+  outside it (e.g. `raw/` sources, `config.yaml`, `.manifest.json`); MCP write
+  tools additionally gain symlink-escape protection. This replaces a bare
+  `strings.HasPrefix` check that also treated a sibling like `<output>-secret` as
+  inside `<output>`.
+
 ## 0.1.10 — 2026-06-28
 
 ### Added
