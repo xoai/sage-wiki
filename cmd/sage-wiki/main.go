@@ -1,8 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
 
 	"path/filepath"
 
@@ -188,6 +193,8 @@ func init() {
 	serveCmd.Flags().Int("port", 3333, "SSE/UI port")
 	serveCmd.Flags().Bool("ui", false, "Start web UI viewer")
 	serveCmd.Flags().String("bind", "127.0.0.1", "Bind address (default localhost only)")
+	serveCmd.Flags().String("token", "", "Bearer token gating /api/* and /ws (or SAGE_WIKI_TOKEN env); mandatory for non-loopback binds")
+	serveCmd.Flags().String("allowed-host", "", "Comma-separated extra Host values accepted beyond loopback (or SAGE_WIKI_ALLOWED_HOST env; anti DNS-rebind)")
 
 	// Lint flags
 	lintCmd.Flags().Bool("fix", false, "Auto-fix issues")
@@ -467,18 +474,48 @@ func runServe(cmd *cobra.Command, args []string) error {
 		port, _ := cmd.Flags().GetInt("port")
 		bind, _ := cmd.Flags().GetString("bind")
 
-		if bind != "127.0.0.1" && bind != "localhost" {
-			fmt.Fprintf(os.Stderr, "⚠️  WARNING: binding to %s exposes the wiki on the network. No authentication is enabled.\n\n", bind)
-		}
-
 		webSrv, err := web.NewWebServer(dir)
 		if err != nil {
 			return err
 		}
 		defer webSrv.Close()
 
-		addr := fmt.Sprintf("%s:%d", bind, port)
-		return webSrv.Start(addr)
+		// Resolve auth with precedence flag > env > config (NewWebServer already
+		// applied the config value).
+		token := webSrv.Token()
+		if env := os.Getenv("SAGE_WIKI_TOKEN"); env != "" {
+			token = env
+		}
+		if flagTok, _ := cmd.Flags().GetString("token"); flagTok != "" {
+			token = flagTok
+		}
+		hosts := webSrv.AllowedHosts()
+		if env := os.Getenv("SAGE_WIKI_ALLOWED_HOST"); env != "" {
+			hosts = web.SplitHosts(env)
+		}
+		if flagHost, _ := cmd.Flags().GetString("allowed-host"); flagHost != "" {
+			hosts = web.SplitHosts(flagHost)
+		}
+		webSrv.SetAuth(token, hosts)
+
+		// Refuse to expose beyond loopback without a token (invariant: loopback
+		// stays zero-config; anything wider must be authenticated).
+		if err := web.CheckBindAuth(bind, token); err != nil {
+			return err
+		}
+		if token != "" {
+			fmt.Fprintln(os.Stderr, "🔐 token auth enabled on /api/* and /ws.")
+		}
+		if !web.IsLoopbackBind(bind) && len(hosts) == 0 {
+			fmt.Fprintf(os.Stderr, "⚠️  Host allowlist is loopback-only — browsers reaching this by hostname/IP will be refused (403). Set --allowed-host <host> or SAGE_WIKI_ALLOWED_HOST.\n")
+		}
+
+		addr := net.JoinHostPort(bind, strconv.Itoa(port))
+
+		// Graceful shutdown on SIGINT/SIGTERM.
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return webSrv.Serve(ctx, addr)
 	}
 
 	// MCP server mode

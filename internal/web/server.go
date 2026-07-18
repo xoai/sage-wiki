@@ -1,7 +1,9 @@
 package web
 
 import (
+	"context"
 	"crypto/sha1"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -39,6 +41,14 @@ type WebServer struct {
 	wsClients    map[chan string]bool
 	wsMu         sync.Mutex
 	queryRunning atomic.Int32 // concurrent query limiter
+
+	// token, when non-empty, gates /api/* and /ws (Bearer header or ?token=).
+	// allowedHosts are extra Host values accepted beyond loopback (anti
+	// DNS-rebind). Both default from config and are overridden by the serve
+	// command from flags/env via SetAuth.
+	token        string
+	allowedHosts []string
+	httpSrv      *http.Server // set in Serve; used for graceful shutdown
 }
 
 // NewWebServer creates a web server sharing the project's stores.
@@ -62,7 +72,7 @@ func NewWebServer(projectDir string) (*WebServer, error) {
 	ont := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
 	searcher := hybrid.NewSearcher(mem, vec)
 
-	return &WebServer{
+	s := &WebServer{
 		projectDir: projectDir,
 		db:         db,
 		mem:        mem,
@@ -71,7 +81,28 @@ func NewWebServer(projectDir string) (*WebServer, error) {
 		searcher:   searcher,
 		cfg:        cfg,
 		wsClients:  make(map[chan string]bool),
-	}, nil
+	}
+	s.SetAuth(cfg.Serve.Token, splitHosts(cfg.Serve.AllowedHost))
+	return s, nil
+}
+
+// SetAuth sets the bearer token (empty disables auth) and the extra allowed
+// Host values (beyond loopback). The serve command calls this to apply
+// flag/env overrides on top of the config defaults.
+func (s *WebServer) SetAuth(token string, allowedHosts []string) {
+	s.token = token
+	s.allowedHosts = allowedHosts
+}
+
+// splitHosts parses a comma-separated host list, trimming blanks.
+func splitHosts(csv string) []string {
+	var out []string
+	for _, h := range strings.Split(csv, ",") {
+		if h = strings.TrimSpace(h); h != "" {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 // Handler returns the HTTP handler with all routes registered.
@@ -100,16 +131,55 @@ func (s *WebServer) Handler() http.Handler {
 	return s.securityMiddleware(mux)
 }
 
-// Start begins serving the web UI and watches the output directory for changes.
-func (s *WebServer) Start(addr string) error {
-	handler := s.Handler()
+// Serve builds the HTTP server with hardened timeouts, starts it, and shuts it
+// down gracefully when ctx is cancelled (SIGINT/SIGTERM from the caller). It
+// blocks until the server stops or errors.
+func (s *WebServer) Serve(ctx context.Context, addr string) error {
+	s.httpSrv = &http.Server{
+		Addr:              addr,
+		Handler:           s.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		// WriteTimeout is deliberately 0: /api/query streams via SSE and would be
+		// cut mid-stream by a global write deadline. SSE responses are bounded by
+		// the request context and the per-query limiter instead.
+		WriteTimeout: 0,
+		IdleTimeout:  120 * time.Second,
+	}
 
-	// Start output directory watcher for hot reload
-	go s.watchOutputDir()
+	// Start output directory watcher for hot reload; it stops when ctx cancels.
+	go s.watchOutputDir(ctx)
 
 	log.Info("web UI starting", "addr", addr)
 	fmt.Fprintf(os.Stderr, "\n🌐 sage-wiki web UI: http://%s\n\n", addr)
-	return http.ListenAndServe(addr, handler)
+
+	errCh := make(chan error, 1)
+	go func() {
+		err := s.httpSrv.ListenAndServe()
+		if err == http.ErrServerClosed {
+			err = nil
+		}
+		errCh <- err
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		log.Info("web UI shutting down")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := s.httpSrv.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("web: graceful shutdown: %w", err)
+		}
+		return <-errCh
+	}
+}
+
+// Start serves without external lifecycle control (background context). Retained
+// for callers that don't need graceful shutdown.
+func (s *WebServer) Start(addr string) error {
+	return s.Serve(context.Background(), addr)
 }
 
 // Close cleans up resources.
@@ -117,20 +187,26 @@ func (s *WebServer) Close() error {
 	return s.db.Close()
 }
 
-// watchOutputDir polls the output directory for changes and broadcasts reload.
-func (s *WebServer) watchOutputDir() {
+// watchOutputDir polls the output directory for changes and broadcasts reload
+// until ctx is cancelled (server shutdown), so it does not outlive the server.
+func (s *WebServer) watchOutputDir(ctx context.Context) {
 	outputDir := filepath.Join(s.projectDir, s.cfg.Output)
 	snapshot := s.dirSnapshot(outputDir)
 
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		current := s.dirSnapshot(outputDir)
-		if current != snapshot {
-			snapshot = current
-			log.Info("wiki files changed, broadcasting reload")
-			s.BroadcastReload()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			current := s.dirSnapshot(outputDir)
+			if current != snapshot {
+				snapshot = current
+				log.Info("wiki files changed, broadcasting reload")
+				s.BroadcastReload()
+			}
 		}
 	}
 }
@@ -152,20 +228,44 @@ func (s *WebServer) dirSnapshot(dir string) string {
 	return fmt.Sprintf("%d", total)
 }
 
-// securityMiddleware adds CORS and Origin checking.
+// contentSecurityPolicy locks the SPA to same-origin scripts/styles/connections
+// and forbids framing. 'unsafe-inline' is kept only for styles (Tailwind emits
+// inline styles); scripts stay 'self'-only. data: is allowed for images.
+const contentSecurityPolicy = "default-src 'self'; img-src 'self' data:; " +
+	"style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; " +
+	"frame-ancestors 'none'; base-uri 'none'"
+
+// securityMiddleware enforces the Host allowlist (anti DNS-rebind), bearer auth
+// on /api/* and /ws when a token is configured, an Origin check on
+// state-changing / streaming endpoints, and sets security headers.
 func (s *WebServer) securityMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// CORS: same-origin only
+		// DNS-rebinding defense: the Host must be loopback or explicitly allowed.
+		// Checked first so a rebound name reaches no handler at all.
+		if !s.hostAllowed(r.Host) {
+			http.Error(w, "host not allowed", http.StatusForbidden)
+			return
+		}
+
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
 
-		// CSRF check for mutation endpoints
-		if r.Method == "POST" {
-			origin := r.Header.Get("Origin")
-			if origin != "" {
-				parsed, err := url.Parse(origin)
-				if err != nil || parsed.Host != r.Host {
-					http.Error(w, "CSRF: origin mismatch", http.StatusForbidden)
+		// Auth gates /api/* and /ws when a token is configured; the static SPA
+		// shell stays unauthenticated (it holds no data and must load to prompt
+		// for / carry the token).
+		if s.token != "" && requiresAuth(r.URL.Path) && !s.tokenValid(r) {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		// Origin check for state-changing (POST) and streaming (/api/query SSE)
+		// endpoints — defeats a malicious page issuing cross-origin requests.
+		if r.Method == http.MethodPost || r.URL.Path == "/api/query" {
+			if origin := r.Header.Get("Origin"); origin != "" {
+				if parsed, err := url.Parse(origin); err != nil || parsed.Host != r.Host {
+					http.Error(w, "origin mismatch", http.StatusForbidden)
 					return
 				}
 			}
@@ -173,6 +273,89 @@ func (s *WebServer) securityMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requiresAuth reports whether a path is gated by the bearer token.
+func requiresAuth(path string) bool {
+	return strings.HasPrefix(path, "/api/") || path == "/ws"
+}
+
+// hostAllowed reports whether the request Host is loopback or explicitly allowed
+// via SetAuth. An empty Host (HTTP/1.0, direct socket) is treated as loopback.
+// Matching is case-insensitive (hostnames are case-insensitive). This is a
+// DNS-rebinding defense for browsers; non-browser clients control their own Host,
+// so the bearer token is the real gate for exposed binds.
+func (s *WebServer) hostAllowed(host string) bool {
+	h := strings.ToLower(hostOnly(host))
+	switch h {
+	case "", "127.0.0.1", "::1", "localhost":
+		return true
+	}
+	for _, allowed := range s.allowedHosts {
+		if h == strings.ToLower(hostOnly(allowed)) {
+			return true
+		}
+	}
+	return false
+}
+
+// hostOnly strips the port (and IPv6 brackets) from a Host header value.
+func hostOnly(host string) string {
+	if host == "" {
+		return ""
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		return h
+	}
+	return strings.Trim(host, "[]")
+}
+
+// tokenValid reports whether the request presents the configured token via an
+// Authorization: Bearer header or a ?token= query param. The query fallback
+// exists because browser WebSockets cannot set headers and the SPA bootstraps
+// its token from the URL. Compared in constant time.
+func (s *WebServer) tokenValid(r *http.Request) bool {
+	presented := ""
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		presented = strings.TrimPrefix(auth, "Bearer ")
+	} else {
+		presented = r.URL.Query().Get("token")
+	}
+	if presented == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(presented), []byte(s.token)) == 1
+}
+
+// Token returns the currently configured token (empty if auth is disabled).
+func (s *WebServer) Token() string { return s.token }
+
+// AllowedHosts returns the extra allowed Host values (beyond loopback).
+func (s *WebServer) AllowedHosts() []string { return s.allowedHosts }
+
+// SplitHosts parses a comma-separated host list, trimming blanks. Exported for
+// the serve command to parse the --allowed-host flag / env.
+func SplitHosts(csv string) []string { return splitHosts(csv) }
+
+// IsLoopbackBind reports whether a --bind value is a loopback address. An empty
+// bind is NOT loopback: net/http treats ":port" as every interface, so it must
+// be authenticated like any other public bind.
+func IsLoopbackBind(bind string) bool {
+	switch bind {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	}
+	return false
+}
+
+// CheckBindAuth returns an error when binding to a non-loopback address without
+// a token, which would expose the server unauthenticated. Loopback binds need
+// no token (zero-config local use — see the serve command).
+func CheckBindAuth(bind, token string) error {
+	if token != "" || IsLoopbackBind(bind) {
+		return nil
+	}
+	return fmt.Errorf("web: refusing to bind %q without a token: set --token or SAGE_WIKI_TOKEN (loopback binds need none)", bind)
 }
 
 // --- REST API Handlers ---
@@ -520,6 +703,16 @@ func (s *WebServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject cross-origin upgrades before hijacking. Host and bearer auth are
+	// already enforced by securityMiddleware; Origin defends against a malicious
+	// page opening a socket to a loopback server the user is authed to.
+	if origin := r.Header.Get("Origin"); origin != "" {
+		if parsed, err := url.Parse(origin); err != nil || parsed.Host != r.Host {
+			http.Error(w, "origin mismatch", http.StatusForbidden)
+			return
+		}
+	}
+
 	key := r.Header.Get("Sec-WebSocket-Key")
 	if key == "" {
 		http.Error(w, "missing Sec-WebSocket-Key", http.StatusBadRequest)
@@ -641,15 +834,31 @@ func (s *WebServer) handleFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := os.ReadFile(absPath)
+	// SVG can embed inline scripts; neutralize it — force download and a locked
+	// CSP so it cannot execute even if opened directly. Other image types stay
+	// inline for the SPA.
+	if ext == ".svg" {
+		w.Header().Set("Content-Disposition", "attachment")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	}
+
+	f, err := os.Open(absPath)
 	if err != nil {
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.IsDir() {
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
 
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "public, max-age=3600")
-	w.Write(data)
+	// ServeContent adds Range support (206) and conditional caching while keeping
+	// our explicit Content-Type and the extension allowlist above.
+	http.ServeContent(w, r, filepath.Base(absPath), info.ModTime(), f)
 }
 
 // staticHandler is overridden by the webui build tag to serve embedded assets.

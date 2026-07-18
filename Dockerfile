@@ -27,5 +27,12 @@ VOLUME /wiki
 
 EXPOSE 3333
 
+# The web UI binds 0.0.0.0 for container networking, which is non-loopback, so a
+# token is REQUIRED — the server refuses to start without one. The same bind is
+# subject to the DNS-rebind Host allowlist, so set SAGE_WIKI_ALLOWED_HOST to the
+# hostname/IP you browse to (any non-loopback host, direct or via a proxy):
+#   docker run -e SAGE_WIKI_TOKEN="$(openssl rand -hex 32)" \
+#     -e SAGE_WIKI_ALLOWED_HOST=your-host -p 3333:3333 -v "$PWD:/wiki" <image>
+# then open  http://your-host:3333/?token=<that token>  in a browser.
 ENTRYPOINT ["sage-wiki"]
 CMD ["serve", "--ui", "--bind", "0.0.0.0", "--port", "3333"]

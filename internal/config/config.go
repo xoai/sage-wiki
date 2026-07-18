@@ -406,6 +406,15 @@ type LintingConfig struct {
 type ServeConfig struct {
 	Transport string `yaml:"transport"`
 	Port      int    `yaml:"port"`
+	// Token, when set, requires an `Authorization: Bearer <token>` header (or a
+	// `?token=` query param) on all /api/* and /ws requests. Lowest-precedence
+	// source; the --token flag and SAGE_WIKI_TOKEN env override it. A token is
+	// mandatory when binding to a non-loopback address (see cmd serve).
+	Token string `yaml:"token,omitempty"`
+	// AllowedHost is a comma-separated list of extra Host header values accepted
+	// beyond loopback (defeats DNS rebinding). Set this to the public hostname
+	// when exposing the server beyond localhost.
+	AllowedHost string `yaml:"allowed_host,omitempty"`
 }
 
 // TypeSignal defines a content-based type detection rule.

@@ -1,3 +1,5 @@
+import { authHeaders } from './token';
+
 export interface QueryCallbacks {
   onToken: (text: string) => void;
   onSources: (paths: string[]) => void;
@@ -11,7 +13,7 @@ export function streamQuery(question: string, topK: number, callbacks: QueryCall
 
   fetch('/api/query', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ question, top_k: topK }),
     signal: controller.signal,
   }).then(async (response) => {
