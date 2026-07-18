@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/config"
 )
@@ -206,15 +207,22 @@ func TestTierManager_CheckDemotions(t *testing.T) {
 	items := NewCompileItemStore(db)
 	tm := NewTierManager(cfg, items)
 
+	// Dates are relative to now (not hardcoded) so the test can't rot: the SUT
+	// demotes anything queried before time.Now().AddDate(0,0,-StaleDays), and
+	// StaleDays is 90 here. Same RFC3339 format as the SUT threshold so the
+	// store's string comparison is apples-to-apples.
+	staleAt := time.Now().AddDate(0, 0, -100).Format(time.RFC3339) // >90d old → demoted
+	freshAt := time.Now().AddDate(0, 0, -10).Format(time.RFC3339)  // <90d old → kept
+
 	// Stale source (queried 100 days ago)
 	items.Upsert(CompileItem{
 		SourcePath: "raw/stale.md", Tier: 3, SourceType: "compiler",
-		LastQueriedAt: "2026-01-01T00:00:00Z",
+		LastQueriedAt: staleAt,
 	})
 	// Recent source
 	items.Upsert(CompileItem{
 		SourcePath: "raw/fresh.md", Tier: 3, SourceType: "compiler",
-		LastQueriedAt: "2026-04-13T00:00:00Z",
+		LastQueriedAt: freshAt,
 	})
 
 	demoted, err := tm.CheckDemotions()

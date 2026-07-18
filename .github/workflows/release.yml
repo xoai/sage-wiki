@@ -29,8 +29,8 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          # Latest 1.26.x — robust vs an exact patch (go.mod pins 1.26.1) being
-          # absent from the runner's version index.
+          # Latest 1.26.x — matches go.mod's `go 1.26` and avoids depending on an
+          # exact patch being present in the runner's version index.
           go-version: "1.26"
 
       - name: Build and package
