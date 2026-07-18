@@ -1,3 +1,5 @@
+import { authHeaders } from './token';
+
 const BASE = '';
 
 export interface FileEntry {
@@ -41,29 +43,29 @@ export interface StatusData {
 }
 
 export async function fetchTree(): Promise<TreeData> {
-  const res = await fetch(`${BASE}/api/tree`);
+  const res = await fetch(`${BASE}/api/tree`, { headers: authHeaders() });
   return res.json();
 }
 
 export async function fetchArticle(path: string): Promise<Article> {
-  const res = await fetch(`${BASE}/api/articles/${path}`);
+  const res = await fetch(`${BASE}/api/articles/${path}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Article not found: ${path}`);
   return res.json();
 }
 
 export async function fetchSearch(query: string, limit = 10): Promise<{ results: SearchHit[]; total: number }> {
-  const res = await fetch(`${BASE}/api/search?q=${encodeURIComponent(query)}&limit=${limit}`);
+  const res = await fetch(`${BASE}/api/search?q=${encodeURIComponent(query)}&limit=${limit}`, { headers: authHeaders() });
   return res.json();
 }
 
 export async function fetchGraph(center?: string, depth = 2): Promise<GraphData> {
   let url = `${BASE}/api/graph`;
   if (center) url += `?center=${encodeURIComponent(center)}&depth=${depth}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { headers: authHeaders() });
   return res.json();
 }
 
 export async function fetchStatus(): Promise<StatusData> {
-  const res = await fetch(`${BASE}/api/status`);
+  const res = await fetch(`${BASE}/api/status`, { headers: authHeaders() });
   return res.json();
 }

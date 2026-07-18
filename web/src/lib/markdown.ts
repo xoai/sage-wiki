@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it';
 import hljs from 'highlight.js';
+import { withToken } from './token';
 
 const md = new MarkdownIt({
   html: false,
@@ -47,8 +48,9 @@ function wikilinkInlineRule(state: any, silent: boolean): boolean {
     const target = src.slice(start, end);
 
     if (hasBang || isImage(target)) {
-      // Image embed
-      const imgSrc = `/api/files/${target}`;
+      // Image embed. <img> can't send an auth header, so carry the token as a
+      // query param (the server accepts ?token= for exactly this case).
+      const imgSrc = withToken(`/api/files/${target}`);
       const alt = target.split('/').pop()?.replace(/\.[^.]+$/, '') || target;
       const token = state.push('html_inline', '', 0);
       token.content = `<img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(alt)}" loading="lazy" />`;

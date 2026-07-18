@@ -216,7 +216,17 @@ The web UI is built with Preact + Tailwind CSS and embedded into the Go binary v
 Options:
 
 - `--port 3333` — change the port (default 3333)
-- `--bind 0.0.0.0` — expose on the network (default localhost only, no auth)
+- `--bind 0.0.0.0` — expose on the network (default localhost only)
+- `--token <value>` — require `Authorization: Bearer <value>` on `/api/*` and
+  `/ws` (or set `SAGE_WIKI_TOKEN`). **Mandatory for any non-loopback `--bind`** —
+  the server refuses to start otherwise. Loopback stays zero-config.
+- `--allowed-host <host>` — extra `Host` values accepted beyond loopback
+  (anti DNS-rebind; or `SAGE_WIKI_ALLOWED_HOST`). Set this to your public
+  hostname when exposing the server or running behind a reverse proxy.
+
+When a token is set, open the UI as `http://host:3333/?token=<value>` — the app
+keeps it in memory (never `localStorage`) and strips it from the URL. Exposing to
+the internet? See the [self-hosted server guide](docs/guides/self-hosted-server.md#authentication).
 
 ## Configuration
 

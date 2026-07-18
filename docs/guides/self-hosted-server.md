@@ -13,18 +13,59 @@ docker pull ghcr.io/xoai/sage-wiki:latest
 # Or from Docker Hub
 docker pull xoai/sage-wiki:latest
 
-# Run with your wiki directory mounted
+# Run with your wiki directory mounted. Replace your-server with the hostname or
+# IP you'll browse to (it must match, or the DNS-rebind guard returns 403).
 docker run -d \
   --name sage-wiki \
   -p 3333:3333 \
   -v /path/to/your/wiki:/wiki \
   -e GEMINI_API_KEY=your-key-here \
+  -e SAGE_WIKI_TOKEN="$(openssl rand -hex 32)" \
+  -e SAGE_WIKI_ALLOWED_HOST=your-server \
   ghcr.io/xoai/sage-wiki
 ```
 
-Open `http://your-server:3333` in a browser. That's it.
+The container binds `0.0.0.0` (all interfaces), so a **token is required** — the
+server refuses to start on a non-loopback address without one. Because the same
+bind is subject to the DNS-rebind Host allowlist, set `SAGE_WIKI_ALLOWED_HOST` to
+the exact hostname or IP you browse to (loopback is always allowed; everything
+else must be listed). Then open:
+
+```
+http://your-server:3333/?token=<your token>
+```
+
+The web UI reads the token from the URL once, keeps it in memory, and strips it
+from the address bar. See [Authentication](#authentication) below.
 
 The default command starts the web UI server. Your wiki directory is mounted at `/wiki` inside the container.
+
+## Authentication
+
+The web server gates all `/api/*` and `/ws` requests behind a bearer token
+whenever one is configured, and **refuses to start on a non-loopback bind without
+one** — so exposing the wiki beyond `localhost` is authenticated by construction.
+Loopback (`127.0.0.1`/`localhost`) stays zero-config: no token needed for local
+use.
+
+Set the token by any of (highest precedence first):
+
+- `--token <value>` flag
+- `SAGE_WIKI_TOKEN` environment variable (recommended for Docker)
+- `serve.token` in `config.yaml`
+
+Clients present it as `Authorization: Bearer <token>`; the browser UI accepts it
+as `?token=<token>` on first load (kept in memory, never `localStorage`).
+
+**DNS-rebinding protection.** The server also rejects requests whose `Host`
+header is not loopback or an explicit allowed host. When you access it by
+hostname or put it behind a reverse proxy, set the public host:
+
+- `--allowed-host wiki.example.com` (comma-separated for several), or
+- `SAGE_WIKI_ALLOWED_HOST` environment variable, or
+- `serve.allowed_host` in `config.yaml`
+
+Generate a strong token with `openssl rand -hex 32`.
 
 ### Available tags
 
@@ -349,7 +390,13 @@ server {
 }
 ```
 
-**Important:** sage-wiki has no built-in authentication. If you expose it to the internet, add auth at the reverse proxy layer (e.g., Caddy's `basicauth`, Authelia, Cloudflare Access).
+**Authentication:** sage-wiki has a built-in bearer token (see
+[Authentication](#authentication)) that is mandatory for any non-loopback bind —
+set `SAGE_WIKI_TOKEN`. Behind a proxy, also set `SAGE_WIKI_ALLOWED_HOST` to your
+public hostname so the Host-header check accepts proxied requests, and make sure
+the proxy forwards `Host` (the Caddy/Nginx examples above already do). You can
+layer additional proxy-level auth (Caddy's `basicauth`, Authelia, Cloudflare
+Access) on top for defense in depth.
 
 ## Deploying on a VPS
 
@@ -364,8 +411,11 @@ mkdir -p ~/my-wiki/raw
 cd ~/my-wiki
 docker run --rm -v .:/wiki ghcr.io/xoai/sage-wiki init --model gemini-2.5-flash
 
-# Set your API key
+# Set your API key, a web token (required for the 0.0.0.0 bind), and the host
+# you'll browse to (needed by the DNS-rebind Host allowlist).
 export GEMINI_API_KEY=your-key-here
+export SAGE_WIKI_TOKEN=$(openssl rand -hex 32)
+export SAGE_WIKI_ALLOWED_HOST=your-server   # hostname or IP you open in the browser
 
 # Run
 docker run -d \
@@ -373,8 +423,12 @@ docker run -d \
   -p 3333:3333 \
   -v ~/my-wiki:/wiki \
   -e GEMINI_API_KEY \
+  -e SAGE_WIKI_TOKEN \
+  -e SAGE_WIKI_ALLOWED_HOST \
   --restart unless-stopped \
   ghcr.io/xoai/sage-wiki
+
+# Then browse to  http://your-server:3333/?token=$SAGE_WIKI_TOKEN
 ```
 
 ## Raspberry Pi / ARM

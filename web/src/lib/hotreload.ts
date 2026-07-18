@@ -1,3 +1,5 @@
+import { withToken } from './token';
+
 // Hot reload WebSocket client with auto-reconnect.
 export function connectHotReload(onReload: () => void): () => void {
   let ws: WebSocket | null = null;
@@ -8,7 +10,8 @@ export function connectHotReload(onReload: () => void): () => void {
     if (stopped) return;
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(`${proto}//${location.host}/ws`);
+    // Browser WebSocket can't set headers, so carry the token as a query param.
+    ws = new WebSocket(withToken(`${proto}//${location.host}/ws`));
 
     ws.onmessage = (e) => {
       if (e.data === 'reload') {

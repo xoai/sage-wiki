@@ -25,6 +25,19 @@
 
 ### Security
 
+- **Web server hardening for network exposure (SEC-02/03/05/09/10, P0-3).** The
+  `serve --ui` server now gates `/api/*` and `/ws` behind a bearer token
+  (`--token` / `SAGE_WIKI_TOKEN` / `serve.token`, constant-time compared) and
+  **refuses to start on a non-loopback bind without one** — loopback stays
+  zero-config. Adds a Host-header allowlist (`--allowed-host` /
+  `SAGE_WIKI_ALLOWED_HOST`) that defeats DNS rebinding, Origin checks on
+  state-changing/streaming requests and WebSocket upgrades, a Content-Security-
+  Policy, SVGs served as sandboxed downloads (no inline-script XSS), `http.Server`
+  read/idle timeouts with graceful SIGINT/SIGTERM shutdown, and `http.ServeContent`
+  (HTTP Range) for file serving. The web UI carries the token via `?token=` on
+  first load, in memory only. **Docker users:** the `0.0.0.0` image now requires
+  `-e SAGE_WIKI_TOKEN=...` and is reached at `http://host:3333/?token=...`.
+
 - **Hardened filesystem path containment (SEC-01, P0-2).** All web and MCP
   filesystem handlers now share one symlink-aware, sibling-prefix-safe containment
   helper (`internal/pathsafe`). The web article/file APIs are scoped to the output
