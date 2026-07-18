@@ -1,0 +1,32 @@
+# golangci-lint v2 configuration.
+#
+# v2 is required: prebuilt v1 binaries are built with an older Go toolchain and
+# refuse to analyze this go1.26 module. CI installs golangci-lint via `go install`
+# so it is compiled with the same toolchain (see .github/workflows/ci.yml).
+#
+# The gate is scoped to NEW issues in CI (`--new-from-merge-base`), so the tree's
+# pre-existing findings are grandfathered rather than refactored here. Running
+# `golangci-lint run` locally (no flag) still reports everything for cleanup.
+version: "2"
+
+linters:
+  # `standard` = errcheck, govet, ineffassign, staticcheck, unused.
+  # (gosimple's simplifications are folded into staticcheck in v2 — no separate
+  # gosimple linter exists.)
+  default: standard
+  enable:
+    - bodyclose      # HTTP response bodies must be closed
+    - misspell       # common spelling mistakes in comments/strings
+    - rowserrcheck   # sql.Rows.Err() checked after iteration
+    - sqlclosecheck  # sql.Rows/Stmt closed
+  exclusions:
+    generated: lax
+    presets:
+      # Don't flag unchecked writes to fmt.Fprint*/bytes.Buffer/os.Std* etc.
+      - std-error-handling
+    rules:
+      # Tests routinely ignore Close()/error returns on throwaway resources.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - bodyclose

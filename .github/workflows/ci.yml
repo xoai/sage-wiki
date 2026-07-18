@@ -1,0 +1,148 @@
+name: CI
+
+# Quality gate for every push to main and every PR: build (incl. the `webui`
+# build tag), vet, race-test, lint, vuln-scan, and typecheck the frontend.
+#
+# CGO policy: the release build is pure-Go (`modernc.org/sqlite`) and MUST stay
+# CGO_ENABLED=0 (see .github/workflows/release.yml) — so build/vet run with cgo
+# OFF. The ONE exception is `go test -race`: the race detector links a C runtime
+# and hard-requires cgo (`-race requires cgo` otherwise), so the race step alone
+# runs CGO_ENABLED=1. That pulls in the toolchain's race runtime, NOT any cgo
+# module dependency, so the pure-Go release story is unaffected.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege — CI only reads the repo (mirrors release.yml/docker.yml).
+permissions:
+  contents: read
+
+# bash on every runner (incl. windows) so one inline `CGO_ENABLED=… go …` works
+# uniformly instead of per-shell env juggling.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  go:
+    name: Go ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Latest 1.26.x (go.mod targets `go 1.26`) — a patched toolchain also
+          # picks up stdlib security fixes without editing go.mod.
+          go-version: "1.26"
+          cache: true
+
+      - name: Build
+        run: CGO_ENABLED=0 go build ./...
+
+      - name: Build (webui tag)
+        run: CGO_ENABLED=0 go build -tags webui ./...
+
+      - name: Vet
+        run: CGO_ENABLED=0 go vet ./...
+
+      # Race detector needs cgo; ubuntu/macos ship a C compiler.
+      - name: Test (race)
+        if: runner.os != 'Windows'
+        run: CGO_ENABLED=1 go test -race ./...
+
+      # Windows hosted runners have no guaranteed C compiler on PATH, so run the
+      # suite without the race detector there. -race coverage on linux+macos
+      # satisfies the acceptance bar; Windows still gets full build+vet+test.
+      - name: Test
+        if: runner.os == 'Windows'
+        run: CGO_ENABLED=0 go test ./...
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      # Full history so golangci-lint can diff against the base (new-issue mode).
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      # Build golangci-lint from source with THIS toolchain. A prebuilt binary
+      # built with an older Go refuses a go1.26 module
+      # ("the Go language version used to build golangci-lint is lower than the
+      # targeted Go version"); `go install` sidesteps that. v2 line is required
+      # for go1.26 support.
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+
+      # Ensure the base ref exists for the merge-base diff.
+      - name: Fetch base ref
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+
+      # Gate NEW issues only: the tree carries pre-existing findings that P0-1
+      # deliberately does not refactor (establish the gate, not clean the tree).
+      # A local `golangci-lint run` still reports everything for gradual cleanup.
+      - name: Lint (new issues)
+        run: golangci-lint run --new-from-merge-base=origin/main --timeout=5m ./...
+
+  vuln:
+    name: Vuln scan (advisory)
+    runs-on: ubuntu-latest
+    # Advisory in P0-1: govulncheck currently reports Go stdlib advisories fixed
+    # only in a newer patch toolchain, which would turn CI red on unmodified main
+    # through no fault of a change. Surface findings without blocking; dependabot
+    # is the actionable channel for dependency vulns. (Blocking gate revisited in
+    # master-plan P2-7.)
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: govulncheck
+        run: govulncheck ./...
+
+  frontend:
+    name: Frontend (typecheck + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Match the Dockerfile's builder (node:22-alpine).
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # `npm run build` runs `tsc -b` first — a real typecheck — then `vite build`.
+      # This is the hard gate.
+      - name: Install and build
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      # Advisory drift report: the build above rewrites internal/web/dist. Hosted
+      # Node 22 may not byte-match the committed hash-named Vite assets (built
+      # under node:22-alpine), so this reports drift without failing the build.
+      # The enforcing dist-in-CI check is master-plan P2-7 (MAINT-02).
+      - name: Report dist drift (advisory)
+        continue-on-error: true
+        run: git diff --stat --exit-code internal/web/dist

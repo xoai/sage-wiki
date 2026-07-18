@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Continuous-integration quality gate (P0-1).** Every push to `main` and every
+  pull request now builds (including the `webui` build tag), vets, race-tests
+  (Linux/macOS), lints (golangci-lint v2, gating only newly-introduced issues),
+  scans for known vulnerabilities (advisory), and typechecks the web frontend —
+  all with `CGO_ENABLED=0` except the race step, which requires cgo. Dependabot
+  opens weekly grouped update PRs for Go modules, GitHub Actions, and the web
+  app (`.github/workflows/ci.yml`, `.github/dependabot.yml`, `.golangci.yml`,
+  `Makefile`). `go.mod` now targets `go 1.26` (minor) rather than the exact patch.
+
 ### Changed
 
 - **Fuller localization of generated articles (#110).** When `language` is set,

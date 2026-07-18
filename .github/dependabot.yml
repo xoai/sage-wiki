@@ -1,0 +1,28 @@
+# Dependabot: weekly update PRs for Go modules, GitHub Actions, and the web
+# frontend. Minor/patch bumps are grouped into a single PR per ecosystem to keep
+# the review load low; majors still come as individual PRs.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
