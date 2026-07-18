@@ -18,6 +18,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/pathsafe"
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/vectors"
 	"github.com/xoai/sage-wiki/internal/wiki"
@@ -519,9 +520,11 @@ func splitTags(s string) []string {
 	return tags
 }
 
-// isSubpath checks that child is inside parent directory.
+// isSubpath checks that child is inside parent directory. It delegates to the
+// shared pathsafe helper so every MCP call site gets symlink-safe, fail-closed
+// containment (a symlink inside parent that points out cannot escape). On any
+// resolution error it returns false — deny by default.
 func isSubpath(parent, child string) bool {
-	parent = filepath.Clean(parent) + string(filepath.Separator)
-	child = filepath.Clean(child)
-	return strings.HasPrefix(child, parent) || child == filepath.Clean(parent[:len(parent)-1])
+	ok, err := pathsafe.Contained(parent, child)
+	return err == nil && ok
 }
