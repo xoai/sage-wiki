@@ -267,6 +267,27 @@ func TestHandleArticleRawOverExposureBlocked(t *testing.T) {
 	}
 }
 
+// A percent-encoded traversal (..%2f) must be rejected just like a literal ../.
+// net/http decodes %2f→/ into r.URL.Path before the handler sees it, so the
+// cleaned ../ form reaches pathsafe — this pins that the decoded encoded-slash
+// does not slip past the containment check.
+func TestHandleFileEncodedSlashTraversalBlocked(t *testing.T) {
+	srv := setupTestProject(t)
+	rawDir := filepath.Join(srv.projectDir, "raw")
+	if err := os.MkdirAll(rawDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(rawDir, "leak.png"), []byte("fakepng"), 0o644)
+
+	req := httptest.NewRequest("GET", "/api/files/..%2fraw/leak.png", nil)
+	w := httptest.NewRecorder()
+	srv.handleFile(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for encoded-slash traversal, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestHandleQueryMethodNotAllowed(t *testing.T) {
 	srv := setupTestProject(t)
 	req := httptest.NewRequest("GET", "/api/query", nil)
