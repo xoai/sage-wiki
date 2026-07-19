@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
 
@@ -377,4 +378,75 @@ compiler:
 		}
 	}
 	_ = r2
+}
+
+// TestCompile_ZeroNewConceptsConverges guards the completion-flag boundary: when
+// extraction legitimately yields zero NEW concepts (e.g. all dedup-merge into
+// existing ones), Pass 2/3 DID complete. The source must stay recorded in the
+// manifest and converge — not get rolled back (RemoveSource) and re-summarized on
+// every subsequent compile forever.
+func TestCompile_ZeroNewConceptsConverges(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		messages, _ := body["messages"].([]any)
+		var all strings.Builder
+		for _, mm := range messages {
+			if m, ok := mm.(map[string]any); ok {
+				if c, ok := m["content"].(string); ok {
+					all.WriteString(c)
+					all.WriteByte(' ')
+				}
+			}
+		}
+		msg := all.String()
+		content := "## Key claims\n\nThis document discusses the main concepts and findings related to the test subject at length.\n\n## Concepts\n\ntest-concept: A fundamental concept extracted from the source."
+		if strings.Contains(msg, "concept extraction system") {
+			content = `[]` // valid extraction, zero new concepts
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": content}}},
+			"model":   "gpt-4o-mini",
+			"usage":   map[string]int{"total_tokens": 100},
+		})
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	wiki.InitGreenfield(dir, "test", "gemini-2.5-flash")
+	cfg := `
+version: 1
+project: test
+sources:
+  - path: raw
+    type: auto
+output: wiki
+api:
+  provider: openai
+  api_key: sk-test
+  base_url: ` + server.URL + `
+models:
+  summarize: gpt-4o-mini
+compiler:
+  max_parallel: 1
+  auto_commit: false
+  summary_max_tokens: 500
+  default_tier: 3
+`
+	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfg), 0644)
+	os.WriteFile(filepath.Join(dir, "raw", "a.md"), []byte("# A\n\nContent about attention."), 0644)
+
+	if _, err := Compile(dir, CompileOpts{}); err != nil {
+		t.Fatalf("first compile: %v", err)
+	}
+	// A zero-new-concept run is COMPLETED, so the source must remain in the
+	// manifest. With the buggy flag it was RemoveSource'd (source vanishes and
+	// re-summarizes on every compile — never converges).
+	mf, err := manifest.Load(filepath.Join(dir, ".manifest.json"))
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	if _, ok := mf.Sources["raw/a.md"]; !ok {
+		t.Error("zero-concept run removed raw/a.md from the manifest — non-convergent rollback")
+	}
 }

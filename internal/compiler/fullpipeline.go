@@ -326,6 +326,12 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 
 	// Pass 3: Write articles
 	if len(concepts) == 0 {
+		// Extraction COMPLETED — it just produced no new concepts to write (e.g. an
+		// incremental compile where every concept dedup-merged into an existing
+		// one). Pass 2/3 are done for this run, so mark it completed (unless
+		// cancelled). Leaving it false here would make callers roll these sources
+		// out of the manifest and re-summarize them on every compile, forever. P1-1.
+		result.Pass23Completed = opts.Ctx == nil || opts.Ctx.Err() == nil
 		return result
 	}
 
