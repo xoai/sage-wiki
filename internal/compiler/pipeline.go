@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -28,6 +29,9 @@ import (
 
 // CompileOpts configures a compilation run.
 type CompileOpts struct {
+	// Ctx carries cancellation (Ctrl-C / MCP deadline) into the LLM calls and
+	// compile passes; nil is treated as context.Background().
+	Ctx     context.Context
 	DryRun  bool
 	Fresh   bool             // ignore checkpoint
 	Batch   bool             // use batch API (async, 50% discount)
@@ -367,6 +371,13 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		}
 	}
 
+	// pipelineIncomplete is set when a tiered pipeline run does not complete Pass
+	// 2/3 (cancelled or a total-extraction failure). Such a run persists NO new
+	// compile state: the compile_items MarkPass advances are skipped below and the
+	// manifest Save at the end of Compile is skipped, discarding this run's
+	// in-memory manifest mutations (AddSource / MarkCompiled / AddConcept). The next
+	// compile's Diff then re-includes these sources and reprocesses them cleanly.
+	pipelineIncomplete := false
 	if len(toProcess) > 0 {
 		cacheEnabled := cfg.Compiler.PromptCacheEnabled() && !opts.NoCache
 		if cacheEnabled && cfg.API.Auth == "subscription" && cfg.API.Provider == "gemini" {
@@ -375,6 +386,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 			fmt.Fprintln(os.Stderr, "Prompt caching unavailable with Gemini subscription auth.")
 		}
 		pipelineResult := runFullPipeline(toProcess, FullPipelineOpts{
+			Ctx:          opts.Ctx,
 			ProjectDir:   projectDir,
 			Config:       cfg,
 			Client:       client,
@@ -399,21 +411,27 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		result.EmbedErrors = pipelineResult.EmbedErrors
 		result.TierCompiled = len(toProcess)
 
-		// Mark Tier 3 passes only for sources that succeeded
-		succeeded := make(map[string]bool)
-		for _, p := range pipelineResult.SucceededSources {
-			succeeded[p] = true
-		}
-		for _, s := range toProcess {
-			if succeeded[s.Path] {
-				if err := itemStore.MarkPass(s.Path, "summarized"); err != nil {
-					log.Warn("mark pass failed", "path", s.Path, "pass", "summarized", "error", err)
-				}
-				if err := itemStore.MarkPass(s.Path, "extracted"); err != nil {
-					log.Warn("mark pass failed", "path", s.Path, "pass", "extracted", "error", err)
-				}
-				if err := itemStore.MarkPass(s.Path, "written"); err != nil {
-					log.Warn("mark pass failed", "path", s.Path, "pass", "written", "error", err)
+		// When Pass 2/3 did not complete (cancel or total-extraction failure), this
+		// run is incomplete: mark nothing and (below) skip the manifest Save, so no
+		// new compile state is persisted. Advancing even the "summarized" flag or
+		// saving the manifest would record half-done work — the earlier surgical
+		// rollback (RemoveSource on just the sources) left the run's concepts
+		// orphaned, since RemoveSource deletes Sources only. P1-1 / C1.
+		pipelineIncomplete = !pipelineResult.Pass23Completed
+		if !pipelineIncomplete {
+			// Pass 2/3 completed — advance all three pass flags for the sources that
+			// summarized successfully so ListPending treats them as fully compiled.
+			succeeded := make(map[string]bool)
+			for _, p := range pipelineResult.SucceededSources {
+				succeeded[p] = true
+			}
+			for _, s := range toProcess {
+				if succeeded[s.Path] {
+					for _, pass := range []string{"summarized", "extracted", "written"} {
+						if err := itemStore.MarkPass(s.Path, pass); err != nil {
+							log.Warn("mark pass failed", "path", s.Path, "pass", pass, "error", err)
+						}
+					}
 				}
 			}
 		}
@@ -454,8 +472,16 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	// majority of links being phantom. Issue #90.
 	MaybeStripBrokenWikilinks(projectDir, cfg.Output, cfg.Compiler.StripBrokenLinksEnabled())
 
-	// Save manifest
-	if err := mf.Save(mfPath); err != nil {
+	// Save manifest — unless a tiered pipeline run was interrupted before Pass 2/3
+	// completed. Saving then would persist this run's half-done manifest mutations
+	// (AddSource/MarkCompiled/AddConcept); skipping the Save discards them so the
+	// next compile reprocesses the sources from a clean state (pre-P1-1 hard-kill
+	// behavior). Any handleRemovedSources manifest edits are discarded too, but they
+	// re-run next compile since the removed sources are still absent from the corpus.
+	// P1-1 / C1.
+	if pipelineIncomplete {
+		log.Info("compile interrupted before Pass 2/3 completed — manifest not saved; sources will reprocess on next compile")
+	} else if err := mf.Save(mfPath); err != nil {
 		return nil, fmt.Errorf("compile: save manifest: %w", err)
 	}
 
@@ -859,6 +885,7 @@ func resumeBatch(
 	}
 
 	// Continue with Pass 2 + 3 synchronously
+	batchPass23OK := true // set false if extraction fails or the run is cancelled
 	if len(successfulSummaries) > 0 {
 		model := cfg.Models.Extract
 		if model == "" {
@@ -871,10 +898,11 @@ func resumeBatch(
 		client.SetPass("extract")
 		extCacheID, _ := client.SetupCache("You are an expert knowledge organizer. Extract structured concepts from source summaries.", model)
 		progress.StartPhase("Pass 2: Extract concepts", len(successfulSummaries))
-		concepts, err := ExtractConcepts(successfulSummaries, mf.Concepts, client, model, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel)
+		concepts, err := ExtractConcepts(opts.Ctx, successfulSummaries, mf.Concepts, client, model, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel)
 		if err != nil {
 			progress.ItemError("concept extraction", err)
 			result.Errors++
+			batchPass23OK = false
 			progress.EndPhase()
 			client.TeardownCache(extCacheID)
 		} else {
@@ -906,6 +934,7 @@ func resumeBatch(
 				relPatterns := ontology.RelationPatterns(merged)
 				progress.StartPhase("Pass 3: Write articles", len(concepts))
 				articles := WriteArticles(ArticleWriteOpts{
+					Ctx:                opts.Ctx,
 					ProjectDir:         projectDir,
 					OutputDir:          cfg.Output,
 					Client:             client,
@@ -945,8 +974,21 @@ func resumeBatch(
 	// Pass 4: Images (placeholder)
 	ExtractImages(projectDir, cfg.Output, nil)
 
-	// Save manifest
-	if err := mf.Save(mfPath); err != nil {
+	// If Pass 2/3 did not complete (extraction failure or cancel), this batch-resume
+	// run is incomplete: skip the manifest Save entirely (below), discarding the
+	// run's in-memory manifest mutations (AddSource/MarkCompiled/AddConcept) so the
+	// next compile's Diff re-includes these sources and reprocesses them. The earlier
+	// surgical RemoveSource dropped only the sources, leaving the run's concepts
+	// orphaned (RemoveSource deletes Sources only). Mirrors the full/on-demand paths.
+	// P1-1 / C1.
+	if opts.Ctx != nil && opts.Ctx.Err() != nil {
+		batchPass23OK = false
+	}
+
+	// Save manifest — unless the batch run was interrupted before Pass 2/3 completed.
+	if !batchPass23OK {
+		log.Info("batch compile interrupted before Pass 2/3 completed — manifest not saved; sources will reprocess on next compile")
+	} else if err := mf.Save(mfPath); err != nil {
 		return nil, fmt.Errorf("compile: save manifest: %w", err)
 	}
 

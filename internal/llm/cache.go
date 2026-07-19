@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,12 +29,28 @@ type CachingProvider interface {
 }
 
 // ChatCompletionCached sends a request using prompt caching if supported.
-// Falls back to chatCompletionDirect (bypasses cacheID check) to avoid infinite recursion.
+// Delegates to ChatCompletionCachedCtx with a background context.
 func (c *Client) ChatCompletionCached(cacheID string, messages []Message, opts CallOpts) (*Response, error) {
+	return c.ChatCompletionCachedCtx(context.Background(), cacheID, messages, opts)
+}
+
+// ChatCompletionCachedCtx is the cached path with a cancellation context threaded
+// to the in-flight request. It falls back to chatCompletionDirect (bypassing the
+// cacheID check to avoid recursion) on a cache miss/failure — EXCEPT on context
+// cancellation, where it returns the ctx error promptly rather than retrying via
+// the direct path. This path is the DEFAULT for anthropic/gemini compiles (prompt
+// caching is on by default), so its cancellation matters as much as the direct one.
+func (c *Client) ChatCompletionCachedCtx(ctx context.Context, cacheID string, messages []Message, opts CallOpts) (*Response, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	cp, ok := c.provider.(CachingProvider)
 	if !ok {
 		// Provider doesn't support caching — use direct path
-		return c.chatCompletionDirect(messages, opts)
+		return c.chatCompletionDirect(ctx, messages, opts)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	c.limiter.wait()
@@ -42,12 +59,16 @@ func (c *Client) ChatCompletionCached(cacheID string, messages []Message, opts C
 	if err != nil {
 		return nil, err
 	}
+	req = req.WithContext(ctx) // cancellation reaches the in-flight call
 
 	resp, err := c.client.Do(req)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr // cancelled — return promptly, don't fall back
+		}
 		// Fall back to direct path on cache failure
 		log.Warn("cached request failed, falling back", "error", err)
-		return c.chatCompletionDirect(messages, opts)
+		return c.chatCompletionDirect(ctx, messages, opts)
 	}
 
 	body, err := readBody(resp)
@@ -68,11 +89,11 @@ func (c *Client) ChatCompletionCached(cacheID string, messages []Message, opts C
 	// On error, fall back to direct path (no cacheID check)
 	if resp.StatusCode == 429 {
 		log.Warn("rate limited on cached request, retrying direct")
-		return c.chatCompletionDirect(messages, opts)
+		return c.chatCompletionDirect(ctx, messages, opts)
 	}
 
 	log.Warn("cached request error, falling back", "status", resp.StatusCode)
-	return c.chatCompletionDirect(messages, opts)
+	return c.chatCompletionDirect(ctx, messages, opts)
 }
 
 // SetupCache creates a cache session if the provider supports it.

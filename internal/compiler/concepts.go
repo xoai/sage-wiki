@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -43,6 +44,7 @@ func manifestConceptRefs(m map[string]manifest.Concept) []ExtractedConcept {
 // existingConcepts snapshot as dedup context (not the growing allConcepts),
 // so deduplicateConcepts at the end handles cross-batch merging.
 func ExtractConcepts(
+	ctx context.Context,
 	summaries []SummaryResult,
 	existingConcepts map[string]manifest.Concept,
 	client *llm.Client,
@@ -51,6 +53,9 @@ func ExtractConcepts(
 	maxTokens int,
 	concurrency int,
 ) ([]ExtractedConcept, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if batchSize <= 0 {
 		batchSize = 20
 	}
@@ -123,6 +128,12 @@ func ExtractConcepts(
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
+			// Don't start a batch's LLM call if the compile was cancelled while
+			// this goroutine waited for a concurrency slot.
+			if ctx.Err() != nil {
+				return
+			}
+
 			log.Info("extracting concepts batch", "batch", b.index+1, "of", totalBatches, "summaries", len(b.items))
 
 			var summaryTexts []string
@@ -144,7 +155,7 @@ func ExtractConcepts(
 				return
 			}
 
-			resp, err := client.ChatCompletion([]llm.Message{
+			resp, err := client.ChatCompletionCtx(ctx, []llm.Message{
 				{Role: "system", Content: "You are a concept extraction system for a knowledge wiki. Output valid JSON only."},
 				{Role: "user", Content: prompt},
 			}, llm.CallOpts{Model: model, MaxTokens: maxTokens})

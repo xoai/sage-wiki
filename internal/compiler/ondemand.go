@@ -182,21 +182,30 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 			}
 		}
 
-		// Mark passes only for sources that succeeded
+		// When Pass 2/3 did not complete (cancel or total-extraction failure), this
+		// run is incomplete: mark nothing and skip the manifest Save, persisting no
+		// new compile state. The in-memory AddSource/MarkCompiled/AddConcept mutations
+		// are discarded, so the next compile's Diff re-includes these sources and
+		// reprocesses them cleanly. The earlier surgical RemoveSource dropped only the
+		// sources, leaving the run's concepts orphaned (RemoveSource deletes Sources
+		// only). P1-1 / C1.
+		if !pResult.Pass23Completed {
+			log.Info("on-demand compile interrupted before Pass 2/3 completed — manifest not saved; sources will reprocess")
+			return nil
+		}
+
+		// Pass 2/3 completed — advance all three pass flags for the summarize-
+		// succeeded sources so ListPending treats them as fully compiled.
 		succeeded := make(map[string]bool)
 		for _, p := range pResult.SucceededSources {
 			succeeded[p] = true
 		}
 		for _, src := range uncompiled {
 			if succeeded[src.Path] {
-				if err := items.MarkPass(src.Path, "summarized"); err != nil {
-					log.Warn("on-demand: mark pass failed", "path", src.Path, "pass", "summarized", "error", err)
-				}
-				if err := items.MarkPass(src.Path, "extracted"); err != nil {
-					log.Warn("on-demand: mark pass failed", "path", src.Path, "pass", "extracted", "error", err)
-				}
-				if err := items.MarkPass(src.Path, "written"); err != nil {
-					log.Warn("on-demand: mark pass failed", "path", src.Path, "pass", "written", "error", err)
+				for _, pass := range []string{"summarized", "extracted", "written"} {
+					if err := items.MarkPass(src.Path, pass); err != nil {
+						log.Warn("on-demand: mark pass failed", "path", src.Path, "pass", pass, "error", err)
+					}
 				}
 			}
 		}

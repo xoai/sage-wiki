@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 
@@ -89,6 +90,11 @@ type FullPipelineResult struct {
 	Errors            int
 	EmbedErrors       int
 	SucceededSources  []string // source paths that completed summarization successfully
+	// Pass23Completed is true only when Pass 2 (extract) and Pass 3 (write) ran to
+	// the end without a total-extraction failure and without cancellation. Callers
+	// must not mark SucceededSources extracted/written unless this is true, or an
+	// interrupted/failed run leaves them un-resumable. P1-1 / C1.
+	Pass23Completed bool
 }
 
 // runFullPipeline executes Pass 1 (summarize) → Pass 2 (extract) → Pass 3 (write)
@@ -155,6 +161,13 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	})
 
 	for _, sr := range summaries {
+		// A cancelled source (compile interrupted, or its LLM call cancelled mid-
+		// flight) is neither success nor failure. Skip it: don't count an error,
+		// don't add it to state.Failed, and don't mark it compiled — so the next
+		// compile reprocesses it cleanly.
+		if sr.Cancelled || errors.Is(sr.Error, context.Canceled) || errors.Is(sr.Error, context.DeadlineExceeded) {
+			continue
+		}
 		if sr.Error != nil {
 			result.Errors++
 			progress.ItemError(sr.SourcePath, sr.Error)
@@ -242,7 +255,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		extCacheID, _ = client.SetupCache("You are an expert knowledge organizer. Extract structured concepts from source summaries.", extractModel)
 	}
 	progress.StartPhase("Pass 2: Extract concepts", len(successfulSummaries))
-	concepts, err := ExtractConcepts(successfulSummaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel)
+	concepts, err := ExtractConcepts(opts.Ctx, successfulSummaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel)
 	if err != nil {
 		progress.ItemError("concept extraction", err)
 		result.Errors++
@@ -313,6 +326,12 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 
 	// Pass 3: Write articles
 	if len(concepts) == 0 {
+		// Extraction COMPLETED — it just produced no new concepts to write (e.g. an
+		// incremental compile where every concept dedup-merged into an existing
+		// one). Pass 2/3 are done for this run, so mark it completed (unless
+		// cancelled). Leaving it false here would make callers roll these sources
+		// out of the manifest and re-summarize them on every compile, forever. P1-1.
+		result.Pass23Completed = opts.Ctx == nil || opts.Ctx.Err() == nil
 		return result
 	}
 
@@ -340,6 +359,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	relPatterns := ontology.RelationPatterns(merged)
 	progress.StartPhase("Pass 3: Write articles", len(concepts))
 	articles := WriteArticles(ArticleWriteOpts{
+		Ctx:                opts.Ctx,
 		ProjectDir:         opts.ProjectDir,
 		OutputDir:          cfg.Output,
 		Client:             client,
@@ -427,6 +447,12 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 
 	progress.EndPhase()
 	client.TeardownCache(writeCacheID)
+
+	// Pass 2/3 ran to the end here. Only now — not on the extraction-failure early
+	// returns above, and not if the run was cancelled — are the summarize-succeeded
+	// sources safe to mark extracted/written in the checkpoints. Callers gate their
+	// pass-marking on this so an interrupted/failed run stays resumable. P1-1.
+	result.Pass23Completed = opts.Ctx == nil || opts.Ctx.Err() == nil
 
 	return result
 }

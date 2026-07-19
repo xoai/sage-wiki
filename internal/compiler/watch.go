@@ -115,8 +115,17 @@ func watchFsnotify(projectDir string, watcher *fsnotify.Watcher, debounceSeconds
 	var timer *time.Timer
 	var lastTrigger string
 
+	// A nil channel blocks forever, so watch without a ctx behaves as before.
+	var done <-chan struct{}
+	if opts.Ctx != nil {
+		done = opts.Ctx.Done()
+	}
+
 	for {
 		select {
+		case <-done:
+			log.Info("watch cancelled, stopping")
+			return nil
 		case event, ok := <-watcher.Events:
 			if !ok {
 				return nil
@@ -164,7 +173,18 @@ func watchPoll(projectDir string, sources []config.Source, ignore []string, inte
 	ticker := time.NewTicker(time.Duration(intervalSeconds) * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
+	var done <-chan struct{}
+	if opts.Ctx != nil {
+		done = opts.Ctx.Done()
+	}
+
+	for {
+		select {
+		case <-done:
+			log.Info("watch cancelled, stopping")
+			return nil
+		case <-ticker.C:
+		}
 		newSnapshot := scanSnapshot(projectDir, sources, ignore)
 
 		// Detect changes
@@ -196,8 +216,6 @@ func watchPoll(projectDir string, sources []config.Source, ignore []string, inte
 			triggerCompile(projectDir, changed[0], opts, cc)
 		}
 	}
-
-	return nil
 }
 
 // scanSnapshot builds a map of file path → content hash for all source files.
