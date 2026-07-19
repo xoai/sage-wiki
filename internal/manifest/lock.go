@@ -24,11 +24,16 @@ type lockOptions struct {
 }
 
 func defaultLockOptions() lockOptions {
+	// Ordering matters: heartbeatInterval << staleThreshold < timeout. The
+	// heartbeat keeps a live holder well under the stale threshold; and because a
+	// waiter's timeout EXCEEDS the stale threshold, an orphaned lock left with a
+	// fresh mtime (e.g. a holder killed just after writing it) is reclaimed by
+	// takeover before any waiter spuriously times out.
 	return lockOptions{
-		staleThreshold:    120 * time.Second,
+		staleThreshold:    90 * time.Second,
 		heartbeatInterval: 30 * time.Second,
 		retryInterval:     50 * time.Millisecond,
-		timeout:           60 * time.Second,
+		timeout:           120 * time.Second,
 	}
 }
 
@@ -107,6 +112,14 @@ func acquireLockOpts(ctx context.Context, manifestPath string, opts lockOptions)
 		// writers settle, then verify OUR token survived. Exactly one contender's
 		// token wins, so only one takes over — no double-acquire, and a live holder
 		// is never overwritten because it is never seen as stale.
+		//
+		// Residual (accepted): a portable file lock cannot be perfectly race-free
+		// on the crash-recovery path — if a contender stalls for longer than the
+		// settle window between observing staleness and writing its token, it can
+		// clobber a takeover winner. This needs both a genuine crash AND a
+		// >settle-window scheduler stall between two adjacent syscalls, so it is
+		// vanishingly rare; the alternative (OS flock) sacrifices the network-FS
+		// portability this lock is built for.
 		if info, err := os.Stat(lockPath); err == nil && time.Since(info.ModTime()) > opts.staleThreshold {
 			if wf, werr := os.OpenFile(lockPath, os.O_WRONLY|os.O_TRUNC, 0600); werr == nil {
 				_, _ = wf.WriteString(token)

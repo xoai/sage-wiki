@@ -153,18 +153,21 @@ func (rc *reconciler) reconcileOne(ctx context.Context, eo expectedOutput) error
 	hash := storage.HashBytes(data)
 	oiHash, hasRow, _ := rc.oi.Get(eo.path)
 
-	// Fast path: the recorded hash matches and vectors are complete. Skips the
-	// FTS-content read in the common no-drift case.
-	if hasRow && oiHash == hash && rc.vectorsOK(eo) {
+	// "Processed" means an ONLINE reconcile already handled this exact content and
+	// recorded its hash. We then skip it — even if some chunk embeds failed —
+	// rather than re-index it every startup (thrash). A content change (hash
+	// mismatch) reopens processing. Offline reconciles never mark content
+	// processed, so a later online pass completes them.
+	if hasRow && oiHash == hash {
 		return nil
 	}
 
-	// Slow path: consult ACTUAL DB state, not just output_index. A live compile
-	// that re-indexed this output (updating FTS/vectors but not output_index)
-	// must NOT be re-embedded just because its recorded hash lagged — otherwise a
-	// full recompile would re-embed the whole vault. The FTS content is the truth
-	// for "is the index current"; a missing chunk vector is the truth for
-	// "vectors deferred".
+	// Not processed. Consult ACTUAL DB state, not just output_index. A live compile
+	// that re-indexed this output (updating FTS/vectors but not output_index) must
+	// NOT be re-embedded just because its recorded hash lagged — otherwise a full
+	// recompile would re-embed the whole vault. The FTS content is the truth for
+	// "is the index current"; a missing chunk vector is the truth for "vectors
+	// deferred".
 	ftsEntry, _ := rc.mem.Get(eo.ftsID)
 	switch {
 	case ftsEntry == nil:
@@ -174,8 +177,10 @@ func (rc *reconciler) reconcileOne(ctx context.Context, eo expectedOutput) error
 	case !rc.vectorsOK(eo):
 		return rc.lockedReindex(ctx, eo, data, hash) // indexed & current, vectors missing → fill
 	default:
-		// Consistent: the DB reflects the file. Only refresh the output_index cache.
-		if !hasRow || oiHash != hash {
+		// Consistent: the DB reflects the file. Mark the content processed by
+		// recording its hash — but only when ONLINE, so an offline pass leaves it
+		// unprocessed for a later online pass to fill its vectors.
+		if rc.embedder != nil {
 			return manifest.WithLock(ctx, rc.manifestPath, func() error { return rc.oi.Set(eo.path, hash) })
 		}
 		return nil
@@ -276,9 +281,15 @@ func (rc *reconciler) applyReindex(eo expectedOutput, indexText, hash string, ch
 		return fmt.Errorf("reindex chunks: %w", err)
 	}
 
-	// Completion signal LAST.
-	if err := rc.oi.Set(eo.path, hash); err != nil {
-		return fmt.Errorf("reindex record hash: %w", err)
+	// Completion signal LAST — recorded only when ONLINE (an embedder was
+	// available), so an offline reindex stays "unprocessed" and a later online
+	// reconcile fills its vectors. An online attempt that produced no vectors
+	// (all embeds failed) still records the hash, so it is not re-tried every
+	// startup; a content change reopens it.
+	if !deferVec {
+		if err := rc.oi.Set(eo.path, hash); err != nil {
+			return fmt.Errorf("reindex record hash: %w", err)
+		}
 	}
 
 	rc.res.Reindexed++

@@ -25,6 +25,24 @@ func (e *countingEmbedder) Dimensions() int                 { return 2 }
 func (e *countingEmbedder) Name() string                    { return "counting" }
 func (e *countingEmbedder) calls() int                      { return int(atomic.LoadInt32(&e.n)) }
 
+// failingEmbedder is online but every Embed call fails, modelling a
+// misconfigured/quota-exhausted provider.
+type failingEmbedder struct{ n int32 }
+
+func (e *failingEmbedder) Embed(string) ([]float32, error) {
+	atomic.AddInt32(&e.n, 1)
+	return nil, errTestEmbed
+}
+func (e *failingEmbedder) Dimensions() int { return 2 }
+func (e *failingEmbedder) Name() string    { return "failing" }
+func (e *failingEmbedder) calls() int      { return int(atomic.LoadInt32(&e.n)) }
+
+var errTestEmbed = errTest("embed failed")
+
+type errTest string
+
+func (e errTest) Error() string { return string(e) }
+
 type reconcileEnv struct {
 	dir string
 	cfg *config.Config
@@ -265,6 +283,45 @@ func TestReconcile_CompileUpdatedFTS_NoReembed(t *testing.T) {
 	// The stale output_index hash is refreshed to the current file hash.
 	if h, _, _ := e.oi.Get(rel); h != storage.HashBytes([]byte(content)) {
 		t.Errorf("output_index hash not refreshed: %q", h)
+	}
+}
+
+// TestReconcile_PersistentEmbedFailure_NoThrash verifies that an article whose
+// embeds persistently fail while online is indexed once and its content marked
+// processed — it is NOT re-indexed (thrashed) on every subsequent startup.
+func TestReconcile_PersistentEmbedFailure_NoThrash(t *testing.T) {
+	e := setupReconcile(t)
+	rel := e.writeConceptFile(t, "kappa", "# Kappa\n\nEmbeds always fail.")
+	m := manifest.New()
+	m.AddConcept("kappa", rel, []string{"raw/k.md"})
+	e.saveManifest(t, m)
+
+	// First reconcile: online, but embeds fail → FTS indexed, zero vectors, hash
+	// recorded (content marked processed).
+	fail := &failingEmbedder{}
+	first, err := Reconcile(context.Background(), e.dir, e.cfg, e.db, fail)
+	if err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	if first.Reindexed != 1 {
+		t.Errorf("first Reindexed = %d, want 1", first.Reindexed)
+	}
+	if fail.calls() == 0 {
+		t.Error("expected embed attempts on first reconcile")
+	}
+
+	// Second reconcile: same content, still failing embedder — must be a no-op
+	// (processed), NOT re-indexed/re-attempted.
+	fail2 := &failingEmbedder{}
+	second, err := Reconcile(context.Background(), e.dir, e.cfg, e.db, fail2)
+	if err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if second.Reindexed != 0 {
+		t.Errorf("second Reindexed = %d, want 0 (no thrash)", second.Reindexed)
+	}
+	if fail2.calls() != 0 {
+		t.Errorf("second reconcile re-attempted %d embeds, want 0 (no thrash)", fail2.calls())
 	}
 }
 
