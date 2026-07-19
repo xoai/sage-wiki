@@ -919,7 +919,12 @@ func StripBrokenWikilinks(projectDir, outputDir string, memStore *memory.Store) 
 		// (without .md) is the concept name, so its FTS id is "concept:"+name.
 		if memStore != nil {
 			id := "concept:" + strings.TrimSuffix(e.Name(), ".md")
-			if existing, gerr := memStore.Get(id); gerr == nil && existing != nil {
+			existing, gerr := memStore.Get(id)
+			switch {
+			case gerr != nil:
+				// The reconciler heals the resulting content mismatch next startup.
+				log.Warn("strip-broken-links: FTS lookup failed", "id", id, "error", gerr)
+			case existing != nil:
 				existing.Content = rewritten
 				if uerr := memStore.Update(*existing); uerr != nil {
 					log.Warn("strip-broken-links: FTS re-index failed", "id", id, "error", uerr)

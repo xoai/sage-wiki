@@ -286,6 +286,36 @@ func TestReconcile_CompileUpdatedFTS_NoReembed(t *testing.T) {
 	}
 }
 
+// TestReconcile_ReindexPreservesTags verifies a changed-output re-index keeps
+// the compile's richer FTS tags (entityType + aliases) rather than replacing
+// them with the generic kind tag.
+func TestReconcile_ReindexPreservesTags(t *testing.T) {
+	e := setupReconcile(t)
+	rel := e.writeConceptFile(t, "lambda", "# Lambda\n\nNew content.")
+	// Prior FTS entry with rich tags + STALE content (a changed output).
+	e.mem.Add(memory.Entry{ID: "concept:lambda", Content: "OLD", ArticlePath: rel, Tags: []string{"technique", "flash-attn"}})
+	e.ont.AddEntity(ontology.Entity{ID: "lambda", Type: ontology.TypeConcept, Name: "lambda", ArticlePath: rel})
+
+	m := manifest.New()
+	m.AddConcept("lambda", rel, []string{"raw/l.md"})
+	e.saveManifest(t, m)
+
+	if _, err := Reconcile(context.Background(), e.dir, e.cfg, e.db, &countingEmbedder{}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	entry, _ := e.mem.Get("concept:lambda")
+	if entry == nil {
+		t.Fatal("entry missing after reindex")
+	}
+	got := map[string]bool{}
+	for _, tg := range entry.Tags {
+		got[tg] = true
+	}
+	if !got["technique"] || !got["flash-attn"] {
+		t.Errorf("re-index dropped the compile's tags: got %v", entry.Tags)
+	}
+}
+
 // TestReconcile_PersistentEmbedFailure_NoThrash verifies that an article whose
 // embeds persistently fail while online is indexed once and its content marked
 // processed — it is NOT re-indexed (thrashed) on every subsequent startup.

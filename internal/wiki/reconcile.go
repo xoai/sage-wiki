@@ -235,10 +235,17 @@ func (rc *reconciler) lockedReindex(ctx context.Context, eo expectedOutput, data
 // LAST as the completion signal. FTS uses delete-then-insert so a crash before
 // completion leaves the output out of FTS and is re-detected next run.
 func (rc *reconciler) applyReindex(eo expectedOutput, indexText, hash string, chunks []extract.Chunk, embs [][]float32, deferVec bool) error {
-	// FTS (delete-then-insert). A failed Delete surfaces as a duplicate-insert
-	// error from Add below, so it need not be checked here.
+	// FTS (delete-then-insert). Preserve the existing entry's richer tags (the
+	// compile stores entityType + aliases for articles, the resolved source type
+	// for summaries) when re-indexing a changed output; fall back to the generic
+	// kind tag only when there is no prior entry (a first-time file-no-DB heal).
+	// A failed Delete surfaces as a duplicate-insert error from Add below.
+	tags := []string{eo.kind}
+	if existing, _ := rc.mem.Get(eo.ftsID); existing != nil && len(existing.Tags) > 0 {
+		tags = existing.Tags
+	}
 	_ = rc.mem.Delete(eo.ftsID)
-	if err := rc.mem.Add(memory.Entry{ID: eo.ftsID, Content: indexText, ArticlePath: eo.path, Tags: []string{eo.kind}}); err != nil {
+	if err := rc.mem.Add(memory.Entry{ID: eo.ftsID, Content: indexText, ArticlePath: eo.path, Tags: tags}); err != nil {
 		return fmt.Errorf("reindex FTS: %w", err)
 	}
 	if eo.kind == "article" {
