@@ -204,6 +204,22 @@ func (s *Store) DeleteDocChunkVectors(docID string) error {
 	})
 }
 
+// HasChunkVectors reports whether any chunk vector exists for docID. The
+// reconciler uses it to detect an output that is indexed in FTS but whose vector
+// embedding was deferred (offline) or lost, so it can be filled in once an
+// embedder is available.
+func (s *Store) HasChunkVectors(docID string) (bool, error) {
+	var one int
+	err := s.db.ReadDB().QueryRow("SELECT 1 FROM vec_chunks WHERE doc_id = ? LIMIT 1", docID).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("vectors.HasChunkVectors: %w", err)
+	}
+	return true, nil
+}
+
 // ChunkVectorResult represents a chunk cosine similarity search result.
 type ChunkVectorResult struct {
 	ChunkID string

@@ -136,15 +136,15 @@ func (rc *reconciler) expectedOutputs(mf *manifest.Manifest) []expectedOutput {
 
 func (rc *reconciler) reconcileOne(ctx context.Context, eo expectedOutput) error {
 	data, readErr := os.ReadFile(filepath.Join(rc.projectDir, eo.path))
-	inFTS := rc.isIndexed(eo.ftsID)
 
 	if readErr != nil {
 		if !os.IsNotExist(readErr) {
 			return fmt.Errorf("read output: %w", readErr)
 		}
-		// File gone.
+		// File gone — drop the DB rows if it was indexed.
+		ftsEntry, _ := rc.mem.Get(eo.ftsID)
 		_, hasRow, _ := rc.oi.Get(eo.path)
-		if inFTS || hasRow {
+		if ftsEntry != nil || hasRow {
 			return manifest.WithLock(ctx, rc.manifestPath, func() error { return rc.drop(eo) })
 		}
 		return nil // never indexed, no file — nothing to reconcile.
@@ -153,32 +153,63 @@ func (rc *reconciler) reconcileOne(ctx context.Context, eo expectedOutput) error
 	hash := storage.HashBytes(data)
 	oiHash, hasRow, _ := rc.oi.Get(eo.path)
 
+	// Fast path: the recorded hash matches and vectors are complete. Skips the
+	// FTS-content read in the common no-drift case.
+	if hasRow && oiHash == hash && rc.vectorsOK(eo) {
+		return nil
+	}
+
+	// Slow path: consult ACTUAL DB state, not just output_index. A live compile
+	// that re-indexed this output (updating FTS/vectors but not output_index)
+	// must NOT be re-embedded just because its recorded hash lagged — otherwise a
+	// full recompile would re-embed the whole vault. The FTS content is the truth
+	// for "is the index current"; a missing chunk vector is the truth for
+	// "vectors deferred".
+	ftsEntry, _ := rc.mem.Get(eo.ftsID)
 	switch {
-	case hasRow && oiHash == hash:
-		return nil // consistent
-	case !inFTS:
-		// file present but not indexed (crash between file write and index)
-		return manifest.WithLock(ctx, rc.manifestPath, func() error { return rc.reindex(eo, data, hash) })
-	case hasRow && oiHash != hash:
-		// changed output file
-		return manifest.WithLock(ctx, rc.manifestPath, func() error { return rc.reindex(eo, data, hash) })
+	case ftsEntry == nil:
+		return rc.lockedReindex(ctx, eo, data, hash) // present on disk, not indexed
+	case ftsEntry.Content != rc.indexText(eo, data):
+		return rc.lockedReindex(ctx, eo, data, hash) // content changed, index stale
+	case !rc.vectorsOK(eo):
+		return rc.lockedReindex(ctx, eo, data, hash) // indexed & current, vectors missing → fill
 	default:
-		// already indexed, hash not yet recorded — record it only, no re-embed.
-		return manifest.WithLock(ctx, rc.manifestPath, func() error { return rc.oi.Set(eo.path, hash) })
+		// Consistent: the DB reflects the file. Only refresh the output_index cache.
+		if !hasRow || oiHash != hash {
+			return manifest.WithLock(ctx, rc.manifestPath, func() error { return rc.oi.Set(eo.path, hash) })
+		}
+		return nil
 	}
 }
 
-func (rc *reconciler) isIndexed(ftsID string) bool {
-	e, _ := rc.mem.Get(ftsID)
-	return e != nil
+// vectorsOK reports whether the output's vectors are complete. Only concept
+// articles use chunk vectors uniformly (compiler and reconciler), so vector
+// completeness is enforced for them when an embedder is available; summaries are
+// left to the compile's own (whole-doc) vector handling. Offline (no embedder)
+// is always "ok" so an offline reconcile is idempotent rather than looping.
+func (rc *reconciler) vectorsOK(eo expectedOutput) bool {
+	if rc.embedder == nil || eo.kind != "article" {
+		return true
+	}
+	has, err := rc.vec.HasChunkVectors(eo.ftsID)
+	return err != nil || has // on query error, don't force a re-embed loop
 }
 
-// reindex re-indexes an output across every store, then records the output hash
-// LAST as the completion signal. FTS uses delete-then-insert so a crash before
-// completion leaves the output out of FTS and is re-detected next run.
-func (rc *reconciler) reindex(eo expectedOutput, data []byte, hash string) error {
-	text := string(data)
-	chunks := extract.ChunkText(text, rc.chunkSize)
+// indexText is the text the reconciler indexes into FTS, matching what the
+// compiler stores: the full article for a concept, the frontmatter-stripped body
+// for a summary (the compile indexes the summary body, not its frontmatter).
+func (rc *reconciler) indexText(eo expectedOutput, data []byte) string {
+	if eo.kind == "summary" {
+		return stripFrontmatter(string(data))
+	}
+	return string(data)
+}
+
+// lockedReindex computes embeddings OUTSIDE the manifest lock (network calls must
+// not block other writers), then applies the store writes under the lock.
+func (rc *reconciler) lockedReindex(ctx context.Context, eo expectedOutput, data []byte, hash string) error {
+	indexText := rc.indexText(eo, data)
+	chunks := extract.ChunkText(indexText, rc.chunkSize)
 
 	deferVec := rc.embedder == nil
 	var embs [][]float32
@@ -190,14 +221,21 @@ func (rc *reconciler) reindex(eo expectedOutput, data []byte, hash string) error
 			}
 		}
 	}
+	return manifest.WithLock(ctx, rc.manifestPath, func() error {
+		return rc.applyReindex(eo, indexText, hash, chunks, embs, deferVec)
+	})
+}
 
+// applyReindex writes the index across every store, then records the output hash
+// LAST as the completion signal. FTS uses delete-then-insert so a crash before
+// completion leaves the output out of FTS and is re-detected next run.
+func (rc *reconciler) applyReindex(eo expectedOutput, indexText, hash string, chunks []extract.Chunk, embs [][]float32, deferVec bool) error {
 	// FTS (delete-then-insert). A failed Delete surfaces as a duplicate-insert
 	// error from Add below, so it need not be checked here.
 	_ = rc.mem.Delete(eo.ftsID)
-	if err := rc.mem.Add(memory.Entry{ID: eo.ftsID, Content: text, ArticlePath: eo.path, Tags: []string{eo.kind}}); err != nil {
+	if err := rc.mem.Add(memory.Entry{ID: eo.ftsID, Content: indexText, ArticlePath: eo.path, Tags: []string{eo.kind}}); err != nil {
 		return fmt.Errorf("reindex FTS: %w", err)
 	}
-	// Ontology entity for concept articles.
 	if eo.kind == "article" {
 		if err := rc.ont.AddEntity(ontology.Entity{ID: eo.name, Type: ontology.TypeConcept, Name: eo.name, ArticlePath: eo.path}); err != nil {
 			return fmt.Errorf("reindex ontology: %w", err)
@@ -251,6 +289,22 @@ func (rc *reconciler) reindex(eo expectedOutput, data []byte, hash string) error
 	return nil
 }
 
+// stripFrontmatter removes a leading `---\n...\n---\n` YAML frontmatter block,
+// matching how the compiler indexes a summary's body (not its frontmatter) into
+// FTS, so the reconciler's content comparison lines up.
+func stripFrontmatter(s string) string {
+	if !strings.HasPrefix(s, "---\n") {
+		return s
+	}
+	rest := s[len("---\n"):]
+	end := strings.Index(rest, "\n---\n")
+	if end < 0 {
+		return s // malformed — leave as-is
+	}
+	body := rest[end+len("\n---\n"):]
+	return strings.TrimLeft(body, "\n")
+}
+
 func (rc *reconciler) drop(eo expectedOutput) error {
 	return rc.dropByID(eo.ftsID, eo.kind == "article", eo.name, eo.path)
 }
@@ -290,10 +344,12 @@ func (rc *reconciler) dropOrphanRow(ctx context.Context, path string) error {
 			name := strings.TrimSuffix(filepath.Base(path), ".md")
 			return rc.dropByID("concept:"+name, true, name, path)
 		}
-		if err := rc.oi.Delete(path); err != nil {
-			return err
-		}
-		rc.res.Dropped++
-		return nil
+		// Summary/unknown path: we can't derive the FTS id (a summary's id is its
+		// source path), so we only prune the stale output_index cache row — not a
+		// real DB-row drop, so it does not count toward Dropped. The summary's
+		// FTS/vector rows for a removed source are cleaned by the compile's
+		// handleRemovedSources when the source leaves the manifest.
+		log.Info("reconcile: pruning stale output_index row (non-concept orphan)", "output", path)
+		return rc.oi.Delete(path)
 	})
 }

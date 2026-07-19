@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -110,6 +112,58 @@ func TestLockStaleReclaim(t *testing.T) {
 	}
 	if err := l.Unlock(); err != nil {
 		t.Fatalf("unlock: %v", err)
+	}
+}
+
+// TestLockStaleReclaimMutualExclusion is the regression for the non-atomic
+// reclaim race: with a stale lock already present, many contenders racing to
+// acquire must never both hold it. A plain Stat->Remove->Create reclaim lets two
+// waiters both take the lock (and one delete the other's fresh lock); the atomic
+// rename-aside reclaim must serialize them.
+func TestLockStaleReclaimMutualExclusion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".manifest.json")
+	lockPath := path + ".lock"
+
+	// Plant a stale (crashed-holder) lock.
+	if err := os.WriteFile(lockPath, nil, 0600); err != nil {
+		t.Fatalf("plant stale lock: %v", err)
+	}
+	old := time.Now().Add(-1 * time.Second)
+	if err := os.Chtimes(lockPath, old, old); err != nil {
+		t.Fatalf("age lock: %v", err)
+	}
+
+	opts := fastLockOpts()
+	opts.timeout = 3 * time.Second
+
+	var held atomic.Int32
+	var maxHeld atomic.Int32
+	var wg sync.WaitGroup
+	for i := 0; i < 12; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			l, err := acquireLockOpts(context.Background(), path, opts)
+			if err != nil {
+				return // timed out contending — acceptable, just not a double-hold
+			}
+			n := held.Add(1)
+			for {
+				m := maxHeld.Load()
+				if n <= m || maxHeld.CompareAndSwap(m, n) {
+					break
+				}
+			}
+			time.Sleep(2 * time.Millisecond)
+			held.Add(-1)
+			_ = l.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	if maxHeld.Load() > 1 {
+		t.Fatalf("two goroutines held the lock simultaneously (max=%d) — stale-reclaim double-acquire", maxHeld.Load())
 	}
 }
 

@@ -2,6 +2,7 @@ package wiki
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -12,6 +13,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
 // countingEmbedder records how many Embed calls happen, so a test can assert
@@ -29,7 +31,20 @@ type reconcileEnv struct {
 	db  *storage.DB
 	mem *memory.Store
 	ont *ontology.Store
+	vec *vectors.Store
 	oi  *storage.OutputIndex
+}
+
+// addChunkVector marks an output (by docID) as having a chunk vector, so it looks
+// fully indexed to the reconciler's vector-completeness check.
+func (e *reconcileEnv) addChunkVector(t *testing.T, docID string) {
+	t.Helper()
+	err := e.db.WriteTx(func(tx *sql.Tx) error {
+		return e.vec.UpsertChunk(tx, docID+":c0", docID, []float32{0.1, 0.2})
+	})
+	if err != nil {
+		t.Fatalf("seed chunk vector for %s: %v", docID, err)
+	}
 }
 
 func setupReconcile(t *testing.T) *reconcileEnv {
@@ -53,6 +68,7 @@ func setupReconcile(t *testing.T) *reconcileEnv {
 		dir: dir, cfg: cfg, db: db,
 		mem: memory.NewStore(db),
 		ont: ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes)),
+		vec: vectors.NewStore(db),
 		oi:  storage.NewOutputIndex(db),
 	}
 }
@@ -166,9 +182,11 @@ func TestReconcile_Consistent_NoReembed(t *testing.T) {
 	content := "# Delta\n\nStable content."
 	rel := e.writeConceptFile(t, "delta", content)
 
-	// Already indexed; hash NOT yet recorded (pre-upgrade / fresh-compile state).
+	// Fully indexed (FTS + ontology + a chunk vector); hash NOT yet recorded
+	// (pre-upgrade / fresh-compile state).
 	e.mem.Add(memory.Entry{ID: "concept:delta", Content: content, ArticlePath: rel})
 	e.ont.AddEntity(ontology.Entity{ID: "delta", Type: ontology.TypeConcept, Name: "delta", ArticlePath: rel})
+	e.addChunkVector(t, "concept:delta")
 
 	m := manifest.New()
 	m.AddConcept("delta", rel, []string{"raw/d.md"})
@@ -187,6 +205,84 @@ func TestReconcile_Consistent_NoReembed(t *testing.T) {
 	}
 	if _, ok, _ := e.oi.Get(rel); !ok {
 		t.Error("hash should be recorded for the already-indexed output")
+	}
+}
+
+// TestReconcile_CompileUpdatedFTS_NoReembed is the #3 regression: a live compile
+// re-indexed an output (FTS + vectors reflect the new content) but did not update
+// output_index, so the recorded hash lags. The reconciler must NOT re-embed —
+// the DB already reflects the file — else a full recompile re-embeds the whole
+// vault. It only refreshes the stale output_index hash.
+func TestReconcile_CompileUpdatedFTS_NoReembed(t *testing.T) {
+	e := setupReconcile(t)
+	content := "# Theta\n\nRecompiled content."
+	rel := e.writeConceptFile(t, "theta", content)
+
+	// FTS + vectors already reflect the CURRENT file (compile did this)...
+	e.mem.Add(memory.Entry{ID: "concept:theta", Content: content, ArticlePath: rel})
+	e.ont.AddEntity(ontology.Entity{ID: "theta", Type: ontology.TypeConcept, Name: "theta", ArticlePath: rel})
+	e.addChunkVector(t, "concept:theta")
+	// ...but output_index still has the PRE-recompile hash.
+	e.oi.Set(rel, storage.HashBytes([]byte("# Theta\n\nOLD content.")))
+
+	m := manifest.New()
+	m.AddConcept("theta", rel, []string{"raw/t.md"})
+	e.saveManifest(t, m)
+
+	emb := &countingEmbedder{}
+	res, err := Reconcile(context.Background(), e.dir, e.cfg, e.db, emb)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if res.Reindexed != 0 {
+		t.Errorf("Reindexed = %d, want 0 (FTS already current — must not re-embed)", res.Reindexed)
+	}
+	if emb.calls() != 0 {
+		t.Errorf("embedder called %d times — a compile-current output must not be re-embedded", emb.calls())
+	}
+	// The stale output_index hash is refreshed to the current file hash.
+	if h, _, _ := e.oi.Get(rel); h != storage.HashBytes([]byte(content)) {
+		t.Errorf("output_index hash not refreshed: %q", h)
+	}
+}
+
+// TestReconcile_OfflineThenOnline_FillsVectors is the #2 regression: an output
+// indexed while the embedder was offline has no vectors; a later reconcile with a
+// working embedder must fill them in (not skip forever because a hash was
+// recorded).
+func TestReconcile_OfflineThenOnline_FillsVectors(t *testing.T) {
+	e := setupReconcile(t)
+	rel := e.writeConceptFile(t, "iota", "# Iota\n\nOffline-indexed article.")
+	m := manifest.New()
+	m.AddConcept("iota", rel, []string{"raw/i.md"})
+	e.saveManifest(t, m)
+
+	// First reconcile OFFLINE: indexes FTS/ontology, defers vectors, records hash.
+	off, err := Reconcile(context.Background(), e.dir, e.cfg, e.db, nil)
+	if err != nil {
+		t.Fatalf("offline reconcile: %v", err)
+	}
+	if off.VectorsDeferred == 0 {
+		t.Fatal("expected vectors deferred offline")
+	}
+	if has, _ := e.vec.HasChunkVectors("concept:iota"); has {
+		t.Fatal("did not expect chunk vectors after offline reconcile")
+	}
+
+	// Second reconcile ONLINE: must re-index to fill the missing vectors.
+	emb := &countingEmbedder{}
+	on, err := Reconcile(context.Background(), e.dir, e.cfg, e.db, emb)
+	if err != nil {
+		t.Fatalf("online reconcile: %v", err)
+	}
+	if on.Reindexed != 1 {
+		t.Errorf("Reindexed = %d, want 1 (fill deferred vectors)", on.Reindexed)
+	}
+	if emb.calls() == 0 {
+		t.Error("embedder not called — deferred vectors were never filled")
+	}
+	if has, _ := e.vec.HasChunkVectors("concept:iota"); !has {
+		t.Error("chunk vectors still missing after online reconcile")
 	}
 }
 

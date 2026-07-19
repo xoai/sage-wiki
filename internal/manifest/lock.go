@@ -5,8 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 )
+
+// tokenCounter makes each acquirer's lock token unique within a process.
+var tokenCounter atomic.Uint64
 
 // lockOptions tunes the advisory-lock timing. The only invariant that matters
 // for correctness is heartbeatInterval << staleThreshold: a live holder must
@@ -32,9 +36,21 @@ func defaultLockOptions() lockOptions {
 // Unlock. It is NOT reentrant and must be released by the goroutine tree that
 // acquired it.
 type manifestLock struct {
-	path string        // the lock file path (manifest path + ".lock")
-	stop chan struct{} // closed by Unlock to stop the heartbeat
-	done chan struct{} // closed by the heartbeat goroutine when it exits
+	path  string        // the lock file path (manifest path + ".lock")
+	token string        // our unique holder token, written into the lock file
+	stop  chan struct{} // closed by Unlock to stop the heartbeat
+	done  chan struct{} // closed by the heartbeat goroutine when it exits
+}
+
+func newHeldLock(lockPath, token string, opts lockOptions) *manifestLock {
+	l := &manifestLock{
+		path:  lockPath,
+		token: token,
+		stop:  make(chan struct{}),
+		done:  make(chan struct{}),
+	}
+	go l.heartbeat(opts.heartbeatInterval)
+	return l
 }
 
 // acquireLock blocks until it holds the advisory lock for manifestPath, ctx is
@@ -63,33 +79,51 @@ func acquireLockOpts(ctx context.Context, manifestPath string, opts lockOptions)
 		return nil, fmt.Errorf("manifest: create lock dir: %w", err)
 	}
 
+	// Each acquirer has a unique token, written into the lock file. It fences
+	// stale takeover: two waiters over a crashed holder's lock can't both win,
+	// and Unlock never removes a lock that a takeover handed to someone else.
+	token := fmt.Sprintf("%d-%d", os.Getpid(), tokenCounter.Add(1))
+	// The settle window lets any concurrent takeover writes land before we verify
+	// which token survived; it only applies on the (rare) crash-recovery path.
+	settle := 3 * opts.retryInterval
+	if settle < 10*time.Millisecond {
+		settle = 10 * time.Millisecond
+	}
+
 	deadline := time.Now().Add(opts.timeout)
 	for {
-		// Reclaim a stale lock (a crashed holder no longer refreshing its mtime).
-		// A live holder's heartbeat keeps mtime fresh, so this never fires for it.
-		if info, err := os.Stat(lockPath); err == nil {
-			if time.Since(info.ModTime()) > opts.staleThreshold {
-				os.Remove(lockPath) // best-effort reclaim
-			}
-		}
-
-		f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-		if err == nil {
+		// Fast path: create the lock exclusively. Only one creator wins.
+		if f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600); err == nil {
+			_, _ = f.WriteString(token)
 			f.Close()
-			l := &manifestLock{
-				path: lockPath,
-				stop: make(chan struct{}),
-				done: make(chan struct{}),
-			}
-			go l.heartbeat(opts.heartbeatInterval)
-			return l, nil
-		}
-		if !os.IsExist(err) {
-			// A real error (permissions, missing dir) — not contention.
+			return newHeldLock(lockPath, token, opts), nil
+		} else if !os.IsExist(err) {
 			return nil, fmt.Errorf("manifest: acquire lock %s: %w", lockPath, err)
 		}
 
-		// Held by someone else. Wait, honoring ctx cancellation and the timeout.
+		// The lock exists. If it is stale (a crashed holder no longer heartbeating
+		// — a live holder's heartbeat keeps mtime fresh, so this never fires for
+		// one), attempt a token takeover: write our token, let concurrent takeover
+		// writers settle, then verify OUR token survived. Exactly one contender's
+		// token wins, so only one takes over — no double-acquire, and a live holder
+		// is never overwritten because it is never seen as stale.
+		if info, err := os.Stat(lockPath); err == nil && time.Since(info.ModTime()) > opts.staleThreshold {
+			if wf, werr := os.OpenFile(lockPath, os.O_WRONLY|os.O_TRUNC, 0600); werr == nil {
+				_, _ = wf.WriteString(token)
+				wf.Close()
+				select {
+				case <-ctx.Done():
+					return nil, fmt.Errorf("manifest: acquire lock %s: %w", lockPath, ctx.Err())
+				case <-time.After(settle):
+				}
+				if cur, rerr := os.ReadFile(lockPath); rerr == nil && string(cur) == token {
+					return newHeldLock(lockPath, token, opts), nil
+				}
+				// Lost the takeover race — another token survived; wait below.
+			}
+		}
+
+		// Held by a live holder (or a takeover winner). Wait, honoring ctx and timeout.
 		select {
 		case <-ctx.Done():
 			return nil, fmt.Errorf("manifest: acquire lock %s: %w", lockPath, ctx.Err())
@@ -120,11 +154,17 @@ func (l *manifestLock) heartbeat(interval time.Duration) {
 }
 
 // Unlock stops the heartbeat and removes the lock file. It waits for the
-// heartbeat goroutine to exit before removing so no refresh can race the
-// removal (which would recreate/leave a stray lock).
+// heartbeat goroutine to exit first (so no refresh races the removal), then
+// removes the file only if it still carries OUR token — so we never delete a
+// lock that a stale takeover legitimately handed to a new holder. (The window
+// for that is tiny: we heartbeated within the last interval, so no waiter has
+// yet seen us as stale.)
 func (l *manifestLock) Unlock() error {
 	close(l.stop)
 	<-l.done
+	if cur, err := os.ReadFile(l.path); err != nil || string(cur) != l.token {
+		return nil // already lost/replaced — not ours to remove
+	}
 	if err := os.Remove(l.path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("manifest: release lock %s: %w", l.path, err)
 	}
