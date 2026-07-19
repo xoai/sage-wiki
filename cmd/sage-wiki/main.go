@@ -385,6 +385,40 @@ func runInit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// reconcileStartup heals file<->DB drift once at process start (REL-03 / D5). It
+// is best-effort: any failure is logged and startup continues. It is a no-op for
+// an uninitialized project (no config or no database) and skips the expensive
+// re-embed on already-consistent vaults (the reconciler's own fast paths).
+func reconcileStartup(ctx context.Context, dir string) {
+	cfg, err := config.Load(resolveConfigPath(dir))
+	if err != nil {
+		return // not initialized — nothing to reconcile
+	}
+	dbPath := filepath.Join(dir, ".sage", "wiki.db")
+	if _, err := os.Stat(dbPath); err != nil {
+		return // no database yet
+	}
+	db, err := storage.Open(dbPath)
+	if err != nil {
+		log.Warn("startup reconcile: open db failed", "error", err)
+		return
+	}
+	defer db.Close()
+
+	res, err := wiki.Reconcile(ctx, dir, cfg, db, embed.NewFromConfig(cfg))
+	if err != nil {
+		log.Warn("startup reconcile failed", "error", err)
+		return
+	}
+	if res.Reindexed > 0 || res.Dropped > 0 {
+		msg := fmt.Sprintf("reconcile: %d re-indexed, %d dropped", res.Reindexed, res.Dropped)
+		if res.VectorsDeferred > 0 {
+			msg += fmt.Sprintf(" (%d vectors deferred — embedder offline)", res.VectorsDeferred)
+		}
+		fmt.Fprintln(os.Stderr, msg)
+	}
+}
+
 func runCompile(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -442,6 +476,13 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		os.Exit(130)
 	}()
 
+	// Heal any file<->DB drift before compiling (REL-03 / D5). Runs before the
+	// batch branching (which lives inside Compile) so `compile` and `compile
+	// --batch` both reconcile. Skipped on a dry run, which must not mutate the DB.
+	if !dryRun {
+		reconcileStartup(ctx, dir)
+	}
+
 	if watch {
 		fmt.Println("Watching for changes... (Ctrl+C to stop)")
 		return compiler.Watch(dir, 2, compiler.CompileOpts{
@@ -486,6 +527,11 @@ func runCompile(cmd *cobra.Command, args []string) error {
 
 func runServe(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
+
+	// Heal any file<->DB drift once at server start, before either server is
+	// built (D5). Doing it here — not inside mcp.NewServer and web.NewWebServer —
+	// means `serve --ui` (which builds both) still reconciles exactly once.
+	reconcileStartup(context.Background(), dir)
 
 	// Web UI mode
 	ui, _ := cmd.Flags().GetBool("ui")
