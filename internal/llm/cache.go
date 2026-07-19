@@ -41,6 +41,9 @@ func (c *Client) ChatCompletionCached(cacheID string, messages []Message, opts C
 // the direct path. This path is the DEFAULT for anthropic/gemini compiles (prompt
 // caching is on by default), so its cancellation matters as much as the direct one.
 func (c *Client) ChatCompletionCachedCtx(ctx context.Context, cacheID string, messages []Message, opts CallOpts) (*Response, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	cp, ok := c.provider.(CachingProvider)
 	if !ok {
 		// Provider doesn't support caching — use direct path

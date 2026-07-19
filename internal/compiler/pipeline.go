@@ -409,17 +409,37 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		for _, p := range pipelineResult.SucceededSources {
 			succeeded[p] = true
 		}
+		// On cancel, Pass 2/3 were skipped for these sources (concept extraction
+		// and article writing bail on ctx.Done). Advancing the extract/write flags
+		// would make ListPending treat them as fully compiled, so resume would
+		// never re-extract/re-write them and their concepts + articles would be
+		// silently lost. Mark only the passes that actually completed. P1-1.
+		runCompleted := opts.Ctx == nil || opts.Ctx.Err() == nil
 		for _, s := range toProcess {
 			if succeeded[s.Path] {
 				if err := itemStore.MarkPass(s.Path, "summarized"); err != nil {
 					log.Warn("mark pass failed", "path", s.Path, "pass", "summarized", "error", err)
 				}
-				if err := itemStore.MarkPass(s.Path, "extracted"); err != nil {
-					log.Warn("mark pass failed", "path", s.Path, "pass", "extracted", "error", err)
+				if runCompleted {
+					if err := itemStore.MarkPass(s.Path, "extracted"); err != nil {
+						log.Warn("mark pass failed", "path", s.Path, "pass", "extracted", "error", err)
+					}
+					if err := itemStore.MarkPass(s.Path, "written"); err != nil {
+						log.Warn("mark pass failed", "path", s.Path, "pass", "written", "error", err)
+					}
 				}
-				if err := itemStore.MarkPass(s.Path, "written"); err != nil {
-					log.Warn("mark pass failed", "path", s.Path, "pass", "written", "error", err)
-				}
+			}
+		}
+
+		// On cancel, the summarize-succeeded sources did not finish Pass 2/3. Pass 1
+		// already recorded them in the manifest (AddSource/MarkCompiled), which makes
+		// the next Diff empty so the resume would early-return "nothing to compile"
+		// and their concepts/articles would be silently dropped. Remove them from
+		// the manifest so the Diff re-includes them; their compile_items extract/
+		// write flags stayed 0 above, so the tiered path reprocesses Pass 2/3. P1-1.
+		if !runCompleted {
+			for _, p := range pipelineResult.SucceededSources {
+				mf.RemoveSource(p)
 			}
 		}
 	}

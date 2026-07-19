@@ -55,7 +55,7 @@ func TestCompile_CancelledSourceResumes(t *testing.T) {
 			select {
 			case <-r.Context().Done():
 				return
-			case <-time.After(5 * time.Second):
+			case <-time.After(2 * time.Second):
 			}
 		}
 
@@ -143,4 +143,138 @@ compiler:
 	if r2.ConceptsExtracted < 1 {
 		t.Errorf("resume extracted %d concepts, want >= 1", r2.ConceptsExtracted)
 	}
+}
+
+// TestCompile_CancelAfterSummarizeResumesRemainingPasses is the C1 regression:
+// when a source finishes Pass 1 (summarize) but the compile is cancelled before
+// Pass 2/3, that source must NOT be marked fully compiled — otherwise resume
+// skips it and its concepts/articles are silently lost. Without the cancel guard
+// on the extracted/written pass flags, the resume below produces 0 articles.
+func TestCompile_CancelAfterSummarizeResumesRemainingPasses(t *testing.T) {
+	var blockExtract atomic.Bool
+	blockExtract.Store(true)
+	extractStarted := make(chan struct{})
+	var once sync.Once
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		messages, _ := body["messages"].([]any)
+		var all strings.Builder
+		for _, mm := range messages {
+			if m, ok := mm.(map[string]any); ok {
+				if c, ok := m["content"].(string); ok {
+					all.WriteString(c)
+					all.WriteByte(' ')
+				}
+			}
+		}
+		msg := all.String()
+		isConcept := strings.Contains(msg, "concept extraction system")
+		isArticle := strings.Contains(msg, "wiki author writing comprehensive")
+
+		// All sources summarize (Pass 1 completes → every source is a summarize
+		// success), then block the concept-extraction call (Pass 2) and cancel
+		// there. This is the C1 window: sources are summarize-succeeded but Pass
+		// 2/3 never complete, so they must NOT be marked fully compiled.
+		if isConcept && blockExtract.Load() {
+			once.Do(func() { close(extractStarted) })
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(2 * time.Second):
+			}
+		}
+
+		var content string
+		switch {
+		case isConcept:
+			// Distinct concept per source — the extraction prompt carries the
+			// "### Source: <path>" header, so a source skipped on resume yields a
+			// missing article. This is what makes the test detect C1.
+			var cs []string
+			if strings.Contains(msg, "raw/a.md") {
+				cs = append(cs, `{"name":"alpha","aliases":[],"sources":["raw/a.md"],"type":"concept"}`)
+			}
+			if strings.Contains(msg, "raw/b.md") {
+				cs = append(cs, `{"name":"beta","aliases":[],"sources":["raw/b.md"],"type":"concept"}`)
+			}
+			content = "[" + strings.Join(cs, ",") + "]"
+		case isArticle:
+			content = "---\nconcept: test-concept\n---\n\n# Test Concept\n\nA sufficiently long test concept article body for validation."
+		default:
+			content = "## Key claims\n\nThis document discusses the main concepts and findings related to the test subject at length.\n\n## Concepts\n\ntest-concept: A fundamental concept extracted from the source."
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": content}}},
+			"model":   "gpt-4o-mini",
+			"usage":   map[string]int{"total_tokens": 100},
+		})
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	wiki.InitGreenfield(dir, "test", "gemini-2.5-flash")
+	cfg := `
+version: 1
+project: test
+sources:
+  - path: raw
+    type: auto
+output: wiki
+api:
+  provider: openai
+  api_key: sk-test
+  base_url: ` + server.URL + `
+models:
+  summarize: gpt-4o-mini
+compiler:
+  max_parallel: 1
+  auto_commit: false
+  summary_max_tokens: 500
+  default_tier: 3
+`
+	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfg), 0644)
+	os.WriteFile(filepath.Join(dir, "raw", "a.md"),
+		[]byte("# Attention\n\nSelf-attention computes contextual representations of tokens."), 0644)
+	os.WriteFile(filepath.Join(dir, "raw", "b.md"),
+		[]byte("# Flash Attention\n\nFlash attention optimizes memory access patterns."), 0644)
+
+	// First compile: cancel once the second source's summarize is in flight (so the
+	// first source is a summarize success heading into the cancelled Pass 2/3).
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{}, 1)
+	go func() {
+		Compile(dir, CompileOpts{Ctx: ctx})
+		done <- struct{}{}
+	}()
+	select {
+	case <-extractStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("concept extraction never started")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("compile did not return after cancel")
+	}
+
+	// Resume: the source that summarized before the cancel must have its Pass 2/3
+	// reprocessed — concepts extracted and an article written. Without the C1 fix
+	// it was marked fully compiled and skipped here (0 articles).
+	blockExtract.Store(false)
+	r2, err := Compile(dir, CompileOpts{})
+	if err != nil {
+		t.Fatalf("resume compile: %v", err)
+	}
+	// Both sources must be fully compiled after resume. With the C1 bug the source
+	// that summarized before the cancel is marked done and skipped, so its concept
+	// is never extracted and its article file is missing.
+	for _, name := range []string{"alpha", "beta"} {
+		if _, err := os.Stat(filepath.Join(dir, "wiki", "concepts", name+".md")); err != nil {
+			t.Errorf("resume missing article %s.md — a summarized-then-cancelled source was skipped (C1)", name)
+		}
+	}
+	_ = r2
 }

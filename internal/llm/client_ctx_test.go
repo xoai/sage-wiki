@@ -39,7 +39,7 @@ func TestChatCompletionCtx_CancelsDirect(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
-		case <-time.After(10 * time.Second):
+		case <-time.After(2 * time.Second):
 		}
 	}))
 	defer server.Close()
@@ -96,7 +96,7 @@ func TestChatCompletionCtx_CancelsCachedPath(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
-		case <-time.After(10 * time.Second):
+		case <-time.After(2 * time.Second):
 		}
 	}))
 	defer server.Close()
