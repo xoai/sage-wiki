@@ -156,6 +156,7 @@ func (db *DB) migrate() error {
 		{sql: migrationV4, disableFK: true},
 		{sql: migrationV5},
 		{sql: migrationV6},
+		{sql: migrationV7},
 	}
 
 	for i := version; i < len(migrations); i++ {
@@ -429,5 +430,20 @@ CREATE TABLE IF NOT EXISTS pending_questions_vec (
 	question_hash TEXT PRIMARY KEY,
 	embedding BLOB NOT NULL,
 	dimensions INTEGER NOT NULL
+);
+`
+
+// migrationV7 adds the output_index table: the content hash of each compiled
+// output file (summary/article) the system believes is fully indexed. It is the
+// reconciler's comparand for the "changed output file" drift case (D5) —
+// detected against this indexed-output record, NOT the manifest input hash. A
+// dedicated table (rather than a column on entries/compile_items) covers every
+// output uniformly, including MCP-authored concept articles that have no
+// compile_items row, and the FTS5 entries table cannot take an ALTER ADD COLUMN.
+const migrationV7 = `
+CREATE TABLE IF NOT EXISTS output_index (
+	output_path  TEXT PRIMARY KEY,
+	content_hash TEXT NOT NULL,
+	indexed_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 `
