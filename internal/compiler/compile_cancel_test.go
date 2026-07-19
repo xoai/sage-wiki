@@ -380,6 +380,139 @@ compiler:
 	_ = r2
 }
 
+// TestCompile_CancelDuringPass3NoOrphanState is the 5th-round CRITICAL regression:
+// a cancel during Pass 3 (the concept is already extracted and added to the
+// manifest, the article is not yet written) must NOT persist a concept that has no
+// article on disk. The old surgical rollback RemoveSource'd the summarized source
+// but left the concept in mf.Concepts (RemoveSource only deletes Sources), and
+// mf.Save then wrote that orphan — a concept with no article that converges
+// permanently article-less on resume. The redesign persists no new compile state on
+// an incomplete run (skip mf.Save + MarkPass), so a cancelled Pass 3 leaves the
+// manifest exactly as it was before the compile: no orphaned concept.
+func TestCompile_CancelDuringPass3NoOrphanState(t *testing.T) {
+	var blockWrite atomic.Bool
+	blockWrite.Store(true)
+	writeStarted := make(chan struct{})
+	var once sync.Once
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		messages, _ := body["messages"].([]any)
+		var all strings.Builder
+		for _, mm := range messages {
+			if m, ok := mm.(map[string]any); ok {
+				if c, ok := m["content"].(string); ok {
+					all.WriteString(c)
+					all.WriteByte(' ')
+				}
+			}
+		}
+		msg := all.String()
+		isConcept := strings.Contains(msg, "concept extraction system")
+		isArticle := strings.Contains(msg, "wiki author writing comprehensive")
+
+		// Pass 1 (summarize) and Pass 2 (extract) complete; block the Pass 3 article
+		// write and cancel there. This is the cancel-during-Pass-3 window: the concept
+		// has been added to the manifest, but no article exists yet.
+		if isArticle && blockWrite.Load() {
+			once.Do(func() { close(writeStarted) })
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(2 * time.Second):
+			}
+		}
+
+		var content string
+		switch {
+		case isConcept:
+			content = `[{"name":"alpha","aliases":[],"sources":["raw/a.md"],"type":"concept"}]`
+		case isArticle:
+			content = "---\nconcept: alpha\n---\n\n# Alpha\n\nA sufficiently long test concept article body for validation."
+		default:
+			content = "## Key claims\n\nThis document discusses the main concepts and findings related to the test subject at length.\n\n## Concepts\n\nalpha: A fundamental concept extracted from the source."
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": content}}},
+			"model":   "gpt-4o-mini",
+			"usage":   map[string]int{"total_tokens": 100},
+		})
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	wiki.InitGreenfield(dir, "test", "gemini-2.5-flash")
+	cfg := `
+version: 1
+project: test
+sources:
+  - path: raw
+    type: auto
+output: wiki
+api:
+  provider: openai
+  api_key: sk-test
+  base_url: ` + server.URL + `
+models:
+  summarize: gpt-4o-mini
+compiler:
+  max_parallel: 1
+  auto_commit: false
+  summary_max_tokens: 500
+  default_tier: 3
+`
+	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfg), 0644)
+	os.WriteFile(filepath.Join(dir, "raw", "a.md"),
+		[]byte("# Attention\n\nSelf-attention computes contextual representations of tokens."), 0644)
+
+	// First compile: cancel once the Pass 3 article write is in flight.
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{}, 1)
+	go func() {
+		Compile(dir, CompileOpts{Ctx: ctx})
+		done <- struct{}{}
+	}()
+	select {
+	case <-writeStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("article write never started")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("compile did not return after cancel")
+	}
+
+	// Load-bearing invariant: no concept may be persisted in the manifest without its
+	// article on disk. With the old surgical rollback the source was removed but the
+	// concept "alpha" stayed in mf.Concepts and was saved — an orphan (FAIL-BEFORE).
+	// The redesign skips mf.Save on the incomplete run, so the manifest carries no
+	// concept at all (PASS-AFTER). A missing manifest file (nothing saved) is fine.
+	if mf, err := manifest.Load(filepath.Join(dir, ".manifest.json")); err == nil {
+		for name := range mf.Concepts {
+			if _, statErr := os.Stat(filepath.Join(dir, "wiki", "concepts", name+".md")); statErr != nil {
+				t.Errorf("orphaned concept %q persisted with no article after cancel-during-Pass-3", name)
+			}
+		}
+	}
+
+	// Resume to completion: the article must exist and the run must be clean. (This
+	// end-to-end check passes both before and after the fix in the exact-name case —
+	// CheckDuplicate skips the same-name cache entry so resume self-heals — but it
+	// confirms the redesign still produces a complete wiki.)
+	blockWrite.Store(false)
+	r2, err := Compile(dir, CompileOpts{})
+	if err != nil {
+		t.Fatalf("resume compile: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "wiki", "concepts", "alpha.md")); err != nil {
+		t.Errorf("resume missing article alpha.md — cancelled Pass 3 was not reprocessed")
+	}
+	_ = r2
+}
+
 // TestCompile_ZeroNewConceptsConverges guards the completion-flag boundary: when
 // extraction legitimately yields zero NEW concepts (e.g. all dedup-merge into
 // existing ones), Pass 2/3 DID complete. The source must stay recorded in the

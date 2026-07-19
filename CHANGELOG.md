@@ -7,11 +7,11 @@
 - **Compiles are cancellable end to end (REL-05, P1-1).** `Ctrl-C` (or `SIGTERM`)
   during `sage-wiki compile` now cancels in-flight LLM calls and the retry backoff
   instead of hanging until the current request returns — the first signal cancels
-  gracefully (finishing in-flight work and writing the checkpoint so the next run
-  resumes), a second forces an immediate exit. MCP compile-on-demand honors its
-  request deadline the same way. A cancelled source is treated as unprocessed
-  (neither success nor failure), so it is reprocessed on the next compile rather
-  than marked failed. New `Client.ChatCompletionCtx` / `ChatCompletionCachedCtx` /
+  gracefully, a second forces an immediate exit. MCP compile-on-demand honors its
+  request deadline the same way. An interrupted compile commits no partial state:
+  a run cancelled before its extract/write passes finish is not saved, so the next
+  compile reprocesses those sources cleanly rather than skipping them or marking
+  them failed. New `Client.ChatCompletionCtx` / `ChatCompletionCachedCtx` /
   `ChatCompletionWithImageCtx` carry the context; the existing non-context methods
   are unchanged (they delegate with a background context).
 
