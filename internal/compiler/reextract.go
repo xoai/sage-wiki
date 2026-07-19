@@ -37,6 +37,9 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("re-extract: load manifest: %w", err)
 	}
+	// Merge base (D3): snapshot before mutation so the Save reload-merges the
+	// re-extract run's delta onto any writer that landed during it.
+	base := mf.Clone()
 
 	// Read existing summaries from disk
 	summaryDir := filepath.Join(projectDir, cfg.Output, "summaries")
@@ -158,8 +161,10 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	// solves for the main Compile() path. Issue #94 (follow-up to #90).
 	MaybeStripBrokenWikilinks(projectDir, cfg.Output, cfg.Compiler.StripBrokenLinksEnabled())
 
-	// Save manifest
-	if err := mf.Save(filepath.Join(projectDir, ".manifest.json")); err != nil {
+	// Save manifest via reload-merge under the lock (D3) so a concurrent short
+	// writer is preserved. ReExtract has no cancellation context of its own
+	// (see the ExtractConcepts call above), so use a background context.
+	if err := manifest.MergeSave(context.Background(), filepath.Join(projectDir, ".manifest.json"), base, mf); err != nil {
 		return nil, fmt.Errorf("re-extract: save manifest: %w", err)
 	}
 
