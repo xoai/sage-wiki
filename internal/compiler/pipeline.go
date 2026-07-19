@@ -489,7 +489,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	// LLM to use generous cross-references, but Pass 2 extracts concepts
 	// conservatively, so a wiki of a non-ML corpus can end up with the
 	// majority of links being phantom. Issue #90.
-	MaybeStripBrokenWikilinks(projectDir, cfg.Output, cfg.Compiler.StripBrokenLinksEnabled())
+	MaybeStripBrokenWikilinks(projectDir, cfg.Output, cfg.Compiler.StripBrokenLinksEnabled(), memStore)
 
 	// Save manifest — unless a tiered pipeline run was interrupted before Pass 2/3
 	// completed. Saving then would persist this run's half-done manifest mutations

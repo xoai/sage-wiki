@@ -159,7 +159,7 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	// exist on disk. Re-extract rewrites articles via Pass 3 and would
 	// otherwise leave phantom links in place — same problem the strip pass
 	// solves for the main Compile() path. Issue #94 (follow-up to #90).
-	MaybeStripBrokenWikilinks(projectDir, cfg.Output, cfg.Compiler.StripBrokenLinksEnabled())
+	MaybeStripBrokenWikilinks(projectDir, cfg.Output, cfg.Compiler.StripBrokenLinksEnabled(), memStore)
 
 	// Save manifest via reload-merge under the lock (D3) so a concurrent short
 	// writer is preserved. ReExtract has no cancellation context of its own

@@ -833,11 +833,11 @@ type StripBrokenWikilinkStats struct {
 //
 // The helper is a wrapper around StripBrokenWikilinks; callers that want
 // custom logging or to act on the stats can call that directly.
-func MaybeStripBrokenWikilinks(projectDir, outputDir string, enabled bool) {
+func MaybeStripBrokenWikilinks(projectDir, outputDir string, enabled bool, memStore *memory.Store) {
 	if !enabled {
 		return
 	}
-	stats, err := StripBrokenWikilinks(projectDir, outputDir)
+	stats, err := StripBrokenWikilinks(projectDir, outputDir, memStore)
 	if err != nil {
 		log.Warn("strip-broken-links failed", "error", err)
 		return
@@ -855,7 +855,16 @@ func MaybeStripBrokenWikilinks(projectDir, outputDir string, enabled bool) {
 // replacing the dead link with bare text. Intended to run once after Pass 3
 // completes, when the on-disk set of concept articles is authoritative.
 // Issue #90.
-func StripBrokenWikilinks(projectDir, outputDir string) (StripBrokenWikilinkStats, error) {
+//
+// When memStore is non-nil, each rewritten article's FTS entry is updated to the
+// stripped content, keeping file and index consistent (write-then-index, I2) —
+// otherwise the post-Pass-3 rewrite would leave FTS holding the pre-strip text,
+// which the startup reconciler would later "heal" by re-embedding the article.
+// The article filename equals the concept name, so the FTS id is
+// "concept:"+<filename>. Chunk vectors are intentionally left as-is: removing a
+// dead [[wikilink]] barely changes the article's semantics, so a re-embed is not
+// worth its cost.
+func StripBrokenWikilinks(projectDir, outputDir string, memStore *memory.Store) (StripBrokenWikilinkStats, error) {
 	var stats StripBrokenWikilinkStats
 	conceptsDir := filepath.Join(projectDir, outputDir, "concepts")
 
@@ -905,6 +914,17 @@ func StripBrokenWikilinks(projectDir, outputDir string) (StripBrokenWikilinkStat
 		}
 		if err := fsutil.WriteFileAtomic(articlePath, []byte(rewritten), 0644); err != nil {
 			return stats, fmt.Errorf("strip-broken-links: write %s: %w", e.Name(), err)
+		}
+		// Keep FTS consistent with the rewritten file (I2). The article filename
+		// (without .md) is the concept name, so its FTS id is "concept:"+name.
+		if memStore != nil {
+			id := "concept:" + strings.TrimSuffix(e.Name(), ".md")
+			if existing, gerr := memStore.Get(id); gerr == nil && existing != nil {
+				existing.Content = rewritten
+				if uerr := memStore.Update(*existing); uerr != nil {
+					log.Warn("strip-broken-links: FTS re-index failed", "id", id, "error", uerr)
+				}
+			}
 		}
 		stats.ArticlesEdited++
 		stats.LinksStripped += stripped
