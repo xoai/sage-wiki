@@ -78,16 +78,15 @@ func IngestURL(projectDir string, url string) (*IngestResult, error) {
 		return nil, fmt.Errorf("ingest: write: %w", err)
 	}
 
-	// Update manifest
+	// Update manifest under the exclusive lock (D4) so a concurrent compile or
+	// another writer cannot clobber this source (lost update).
 	hash := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(content)))
 	mfPath := filepath.Join(projectDir, ".manifest.json")
-	mf, err := manifest.Load(mfPath)
-	if err != nil {
-		return nil, fmt.Errorf("ingest: load manifest: %w", err)
-	}
-	mf.AddSource(relPath, hash, "article", int64(len(content)))
-	if err := mf.Save(mfPath); err != nil {
-		return nil, fmt.Errorf("ingest: save manifest: %w", err)
+	if err := manifest.Mutate(context.Background(), mfPath, func(mf *manifest.Manifest) error {
+		mf.AddSource(relPath, hash, "article", int64(len(content)))
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("ingest: update manifest: %w", err)
 	}
 
 	log.Info("ingested URL", "url", url, "path", relPath)
@@ -150,16 +149,15 @@ func IngestPath(projectDir string, srcPath string) (*IngestResult, error) {
 		return nil, fmt.Errorf("ingest: write dest: %w", err)
 	}
 
-	// Update manifest
+	// Update manifest under the exclusive lock (D4) so a concurrent compile or
+	// another writer cannot clobber this source (lost update).
 	hash := fmt.Sprintf("sha256:%x", sha256.Sum256(data))
 	mfPath := filepath.Join(projectDir, ".manifest.json")
-	mf, err := manifest.Load(mfPath)
-	if err != nil {
-		return nil, fmt.Errorf("ingest: load manifest: %w", err)
-	}
-	mf.AddSource(relPath, hash, srcType, info.Size())
-	if err := mf.Save(mfPath); err != nil {
-		return nil, fmt.Errorf("ingest: save manifest: %w", err)
+	if err := manifest.Mutate(context.Background(), mfPath, func(mf *manifest.Manifest) error {
+		mf.AddSource(relPath, hash, srcType, info.Size())
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("ingest: update manifest: %w", err)
 	}
 
 	log.Info("ingested file", "source", absPath, "dest", relPath)

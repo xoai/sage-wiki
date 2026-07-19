@@ -159,12 +159,12 @@ func (s *Server) handleAddSource(ctx context.Context, req mcplib.CallToolRequest
 		srcType = "article"
 	}
 
-	mf, err := manifest.Load(filepath.Join(s.projectDir, ".manifest.json"))
-	if err != nil {
-		return errorResult(err.Error()), nil
-	}
-	mf.AddSource(path, hash, srcType, info.Size())
-	if err := mf.Save(filepath.Join(s.projectDir, ".manifest.json")); err != nil {
+	// Manifest RMW under the exclusive lock (D4) so a concurrent compile or
+	// another writer cannot clobber this source (lost update).
+	if err := manifest.Mutate(ctx, filepath.Join(s.projectDir, ".manifest.json"), func(mf *manifest.Manifest) error {
+		mf.AddSource(path, hash, srcType, info.Size())
+		return nil
+	}); err != nil {
 		return errorResult(err.Error()), nil
 	}
 
@@ -205,15 +205,15 @@ func (s *Server) handleWriteSummary(ctx context.Context, req mcplib.CallToolRequ
 		}
 	}
 
-	mf, err := manifest.Load(filepath.Join(s.projectDir, ".manifest.json"))
-	if err != nil {
-		return errorResult(fmt.Sprintf("manifest load failed: %v", err)), nil
-	}
-	if _, exists := mf.Sources[source]; !exists {
-		mf.AddSource(source, "", "article", int64(len(content)))
-	}
-	mf.MarkCompiled(source, summaryPath, concepts)
-	if err := mf.Save(filepath.Join(s.projectDir, ".manifest.json")); err != nil {
+	// Manifest RMW under the exclusive lock (D4) so a concurrent compile or
+	// another writer cannot clobber this summary's mark (lost update).
+	if err := manifest.Mutate(ctx, filepath.Join(s.projectDir, ".manifest.json"), func(mf *manifest.Manifest) error {
+		if _, exists := mf.Sources[source]; !exists {
+			mf.AddSource(source, "", "article", int64(len(content)))
+		}
+		mf.MarkCompiled(source, summaryPath, concepts)
+		return nil
+	}); err != nil {
 		return errorResult(fmt.Sprintf("manifest save failed: %v", err)), nil
 	}
 
@@ -246,12 +246,14 @@ func (s *Server) handleWriteArticle(ctx context.Context, req mcplib.CallToolRequ
 	s.mem.Add(memory.Entry{ID: "concept:" + conceptID, Content: content, ArticlePath: articlePath})
 	s.tryEmbed("concept:"+conceptID, content)
 
-	mf, err := manifest.Load(filepath.Join(s.projectDir, ".manifest.json"))
-	if err != nil {
-		return errorResult(fmt.Sprintf("manifest load failed: %v", err)), nil
-	}
-	mf.AddConcept(conceptID, articlePath, nil)
-	if err := mf.Save(filepath.Join(s.projectDir, ".manifest.json")); err != nil {
+	// Manifest RMW under the exclusive lock (D4) so a concurrent compile or
+	// another writer cannot clobber this concept (lost update). A concurrent
+	// compile AddConcept for the same key wins on same-key merge (D3) because it
+	// carries real Sources; this MCP AddConcept writes nil Sources.
+	if err := manifest.Mutate(ctx, filepath.Join(s.projectDir, ".manifest.json"), func(mf *manifest.Manifest) error {
+		mf.AddConcept(conceptID, articlePath, nil)
+		return nil
+	}); err != nil {
 		return errorResult(fmt.Sprintf("manifest save failed: %v", err)), nil
 	}
 
@@ -348,9 +350,17 @@ func (s *Server) handleCapture(ctx context.Context, req mcplib.CallToolRequest) 
 		return textResult("No knowledge items found worth extracting."), nil
 	}
 
-	// Write each item as a source file
+	// Write each item as a source file. The manifest RMW is deferred to one
+	// locked Mutate at the end (D4): file writes are per-path and race-free, so
+	// only the manifest update needs the lock, and batching keeps it to a single
+	// locked pass. captureSource records what to register.
+	type captureSource struct {
+		relPath string
+		hash    string
+		size    int64
+	}
 	var titles []string
-	mf, _ := manifest.Load(filepath.Join(s.projectDir, ".manifest.json"))
+	var toAdd []captureSource
 	usedSlugs := map[string]int{}
 
 	for _, item := range items {
@@ -391,17 +401,22 @@ func (s *Server) handleCapture(ctx context.Context, req mcplib.CallToolRequest) 
 			continue
 		}
 
-		// Update manifest
-		if mf != nil {
-			hash := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(fileContent)))
-			mf.AddSource(relPath, hash, "article", int64(len(fileContent)))
-		}
+		// Defer the manifest registration to the single locked Mutate below.
+		hash := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(fileContent)))
+		toAdd = append(toAdd, captureSource{relPath: relPath, hash: hash, size: int64(len(fileContent))})
 		titles = append(titles, item.Title)
 	}
 
-	if mf != nil {
-		if err := mf.Save(filepath.Join(s.projectDir, ".manifest.json")); err != nil {
-			log.Warn("capture: manifest save failed", "error", err)
+	if len(toAdd) > 0 {
+		// Best-effort, as before: a failed manifest update leaves the source
+		// files on disk, which compiler.Diff still discovers on the next run.
+		if err := manifest.Mutate(ctx, filepath.Join(s.projectDir, ".manifest.json"), func(mf *manifest.Manifest) error {
+			for _, a := range toAdd {
+				mf.AddSource(a.relPath, a.hash, "article", a.size)
+			}
+			return nil
+		}); err != nil {
+			log.Warn("capture: manifest update failed", "error", err)
 		}
 	}
 

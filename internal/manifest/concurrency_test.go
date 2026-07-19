@@ -37,6 +37,61 @@ func TestMutateCrossProcessHelper(t *testing.T) {
 	}
 }
 
+// TestMutateInterleaveDisjointKeysBothSurvive is the A2 disjoint case at the
+// Mutate level — the contract every routed writer now relies on. A compile-style
+// mutation (mark a source compiled + add its concept) and an MCP-style mutation
+// (add an unrelated source) run concurrently through Mutate; whatever the
+// interleave, neither clobbers the other because each reloads fresh under the
+// lock.
+func TestMutateInterleaveDisjointKeysBothSurvive(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".manifest.json")
+
+	seed := New()
+	seed.AddSource("raw/paper.md", "sha256:seed", "paper", 100)
+	if err := seed.Save(path); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	opts := fastLockOpts()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		if err := mutateWithOpts(context.Background(), path, opts, func(m *Manifest) error {
+			m.MarkCompiled("raw/paper.md", "wiki/summaries/paper.md", []string{"attention"})
+			m.AddConcept("attention", "wiki/concepts/attention.md", []string{"raw/paper.md"})
+			return nil
+		}); err != nil {
+			t.Errorf("compile-style mutate: %v", err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if err := mutateWithOpts(context.Background(), path, opts, func(m *Manifest) error {
+			m.AddSource("raw/notes.md", "sha256:notes", "article", 50)
+			return nil
+		}); err != nil {
+			t.Errorf("mcp-style mutate: %v", err)
+		}
+	}()
+	wg.Wait()
+
+	m, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if s := m.Sources["raw/paper.md"]; s.Status != "compiled" {
+		t.Errorf("compile mutation lost: status=%q", s.Status)
+	}
+	if _, ok := m.Concepts["attention"]; !ok {
+		t.Error("compile concept lost")
+	}
+	if _, ok := m.Sources["raw/notes.md"]; !ok {
+		t.Error("MCP source lost")
+	}
+}
+
 // TestMutateConcurrencyNoLostUpdate is A1: N in-process goroutines plus a
 // cross-process subprocess all mutate the same manifest concurrently, each
 // adding a distinct source. Every mutation must survive (no lost update) and the
