@@ -4,6 +4,25 @@
 
 ### Changed
 
+- **Cross-store consistency under concurrency and crashes (REL-02/REL-03, P1-2).**
+  Concurrent manifest writers no longer lose each other's updates. Every
+  `.manifest.json` mutation — the MCP write tools, `ingest`, the `add-source` and
+  `write` CLI commands — now serializes on a blocking, context-aware advisory lock
+  and persists via a crash-atomic temp+rename, so a partial write can never leave
+  an unparseable manifest. A long compile keeps its in-memory manifest for reads
+  but, at save time, reloads the manifest fresh under the lock and merges its own
+  changes on top (a structural three-way merge, compile-authoritative on the keys
+  it processed) — so an MCP write that lands mid-compile survives instead of being
+  clobbered, without blocking writers for the whole compile. Article and summary
+  files are written atomically (temp+rename) in the canonical write→index→manifest
+  order. A new startup reconciler (`compile`, `serve`, `serve --ui`) heals
+  file↔database drift left by a crash: it re-indexes an output present on disk but
+  missing from the index, drops index rows whose output file vanished, and
+  re-indexes a changed output (detected against a new per-output content hash);
+  it scans lock-free, locks only each individual repair, and — when launched
+  offline — reconciles full-text/chunks/ontology while deferring vector embedding.
+  The manual `doctor` command is unchanged.
+
 - **Compiles are cancellable end to end (REL-05, P1-1).** `Ctrl-C` (or `SIGTERM`)
   during `sage-wiki compile` now cancels in-flight LLM calls and the retry backoff
   instead of hanging until the current request returns — the first signal cancels

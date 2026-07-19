@@ -56,7 +56,7 @@ func mergeSaveWithOpts(ctx context.Context, path string, opts lockOptions, base,
 	if err != nil {
 		return fmt.Errorf("manifest.MergeSave: %w", err)
 	}
-	defer lock.Unlock()
+	defer func() { _ = lock.Unlock() }()
 
 	theirs, err := Load(path)
 	if err != nil {

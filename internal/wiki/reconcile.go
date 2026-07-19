@@ -191,8 +191,9 @@ func (rc *reconciler) reindex(eo expectedOutput, data []byte, hash string) error
 		}
 	}
 
-	// FTS (delete-then-insert).
-	rc.mem.Delete(eo.ftsID)
+	// FTS (delete-then-insert). A failed Delete surfaces as a duplicate-insert
+	// error from Add below, so it need not be checked here.
+	_ = rc.mem.Delete(eo.ftsID)
 	if err := rc.mem.Add(memory.Entry{ID: eo.ftsID, Content: text, ArticlePath: eo.path, Tags: []string{eo.kind}}); err != nil {
 		return fmt.Errorf("reindex FTS: %w", err)
 	}
@@ -205,8 +206,8 @@ func (rc *reconciler) reindex(eo expectedOutput, data []byte, hash string) error
 
 	// Chunks + chunk-vectors (delete-then-insert); clear any legacy whole-doc vector.
 	docID := eo.ftsID
-	rc.vec.Delete(docID)
-	rc.vec.DeleteDocChunkVectors(docID)
+	_ = rc.vec.Delete(docID)
+	_ = rc.vec.DeleteDocChunkVectors(docID)
 	if err := rc.db.WriteTx(func(tx *sql.Tx) error {
 		if err := rc.chunks.DeleteDocChunks(tx, docID); err != nil {
 			return err
@@ -255,16 +256,19 @@ func (rc *reconciler) drop(eo expectedOutput) error {
 }
 
 func (rc *reconciler) dropByID(ftsID string, isArticle bool, name, outputPath string) error {
-	rc.mem.Delete(ftsID)
-	rc.vec.Delete(ftsID)
-	rc.vec.DeleteDocChunkVectors(ftsID)
+	// Best-effort deletes across stores; a partial drop self-heals because the
+	// next reconcile still sees the missing file and re-drops the remnants. The
+	// output_index delete is the last, checked step (its row is the drift signal).
+	_ = rc.mem.Delete(ftsID)
+	_ = rc.vec.Delete(ftsID)
+	_ = rc.vec.DeleteDocChunkVectors(ftsID)
 	if err := rc.db.WriteTx(func(tx *sql.Tx) error {
 		return rc.chunks.DeleteDocChunks(tx, ftsID)
 	}); err != nil {
 		log.Warn("reconcile: drop chunks failed", "doc", ftsID, "error", err)
 	}
 	if isArticle && name != "" {
-		rc.ont.DeleteEntity(name)
+		_ = rc.ont.DeleteEntity(name)
 	}
 	if err := rc.oi.Delete(outputPath); err != nil {
 		return err

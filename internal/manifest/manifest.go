@@ -111,7 +111,7 @@ func mutateWithOpts(ctx context.Context, path string, opts lockOptions, fn func(
 	if err != nil {
 		return fmt.Errorf("manifest.Mutate: %w", err)
 	}
-	defer lock.Unlock()
+	defer func() { _ = lock.Unlock() }()
 
 	m, err := Load(path)
 	if err != nil {

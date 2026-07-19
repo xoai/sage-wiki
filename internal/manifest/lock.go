@@ -52,7 +52,7 @@ func WithLock(ctx context.Context, manifestPath string, fn func() error) error {
 	if err != nil {
 		return fmt.Errorf("manifest.WithLock: %w", err)
 	}
-	defer lock.Unlock()
+	defer func() { _ = lock.Unlock() }()
 	return fn()
 }
 
@@ -114,7 +114,7 @@ func (l *manifestLock) heartbeat(interval time.Duration) {
 			return
 		case <-t.C:
 			now := time.Now()
-			os.Chtimes(l.path, now, now) // best-effort; a missed beat only shortens the live window
+			_ = os.Chtimes(l.path, now, now) // best-effort; a missed beat only shortens the live window
 		}
 	}
 }
