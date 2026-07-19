@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -63,6 +64,9 @@ type ArticleWriteOpts struct {
 	// and to canonicalize display-form links to concepts outside the current
 	// batch. Nil → no related-concept seeding (backward compatible). Issue #106.
 	AllConcepts []ExtractedConcept
+	// Ctx carries compile cancellation; nil = background. When cancelled, the
+	// write loop stops launching new articles and in-flight LLM calls abort.
+	Ctx context.Context
 }
 
 // WriteArticles runs Pass 3: write concept articles with ontology edges.
@@ -97,6 +101,11 @@ func WriteArticles(opts ArticleWriteOpts, concepts []ExtractedConcept) []Article
 	}
 
 	for i, concept := range concepts {
+		// Stop launching new article writes once the compile is cancelled;
+		// already-launched writes finish or abort via their ctx-bound LLM call.
+		if opts.Ctx != nil && opts.Ctx.Err() != nil {
+			break
+		}
 		wg.Add(1)
 
 		var release func()
@@ -169,7 +178,7 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap m
 		return result
 	}
 
-	resp, err := opts.Client.ChatCompletion([]llm.Message{
+	resp, err := opts.Client.ChatCompletionCtx(opts.Ctx, []llm.Message{
 		{Role: "system", Content: "You are a wiki author writing comprehensive, precise articles for a personal knowledge base. Use [[wikilinks]] for cross-references. Do not include YAML frontmatter."},
 		{Role: "user", Content: prompt},
 	}, llm.CallOpts{Model: opts.Model, MaxTokens: opts.MaxTokens})

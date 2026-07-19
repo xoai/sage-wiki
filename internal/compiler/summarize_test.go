@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -62,7 +63,7 @@ func TestSummarizeOneReusesExistingSummaryOnHashMatch(t *testing.T) {
 	buildSummaryFile(t, filepath.Join(projectDir, outputDir), "sources-doc", sourceHash, longBody)
 
 	info := SourceInfo{Path: "sources/doc.md", Hash: sourceHash, Type: "article"}
-	result := summarizeOne(projectDir, outputDir, info, nil, "", 0, nil, "", "", nil)
+	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil)
 
 	if result.Error != nil {
 		t.Fatalf("expected no error, got: %v", result.Error)
@@ -84,7 +85,7 @@ func TestSummarizeOneSkipsReusedWhenHashMismatch(t *testing.T) {
 
 	// Hash differs → must not reuse; extraction of missing source returns an error
 	info := SourceInfo{Path: "sources/doc.md", Hash: "sha256:new", Type: "article"}
-	result := summarizeOne(projectDir, outputDir, info, nil, "", 0, nil, "", "", nil)
+	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil)
 
 	if result.Error == nil {
 		t.Fatal("expected an error (extract should fail on missing source), got nil")
@@ -103,7 +104,7 @@ func TestSummarizeOneSkipsReusedWhenSummaryTooShort(t *testing.T) {
 
 	// Body below 100 chars → must not reuse
 	info := SourceInfo{Path: "sources/doc.md", Hash: sourceHash, Type: "article"}
-	result := summarizeOne(projectDir, outputDir, info, nil, "", 0, nil, "", "", nil)
+	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil)
 
 	if result.Error == nil {
 		t.Fatal("expected an error (extract should fail on missing source), got nil")
@@ -119,7 +120,7 @@ func TestSummarizeOneSkipsReusedWhenNoSummaryFile(t *testing.T) {
 
 	// No summary file exists → must not reuse
 	info := SourceInfo{Path: "sources/doc.md", Hash: "sha256:abc123", Type: "article"}
-	result := summarizeOne(projectDir, outputDir, info, nil, "", 0, nil, "", "", nil)
+	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil)
 
 	if result.Error == nil {
 		t.Fatal("expected an error (extract should fail on missing source), got nil")
@@ -243,7 +244,7 @@ func TestGroupChunksMaxTokensZero(t *testing.T) {
 }
 
 func TestSynthesizeHierarchicalEmpty(t *testing.T) {
-	_, err := synthesizeHierarchical(nil, "test.md", nil, "", 2000, "")
+	_, err := synthesizeHierarchical(context.Background(), nil, "test.md", nil, "", 2000, "")
 	if err == nil {
 		t.Error("expected error for empty summaries")
 	}
@@ -251,7 +252,7 @@ func TestSynthesizeHierarchicalEmpty(t *testing.T) {
 
 func TestSynthesizeHierarchicalSingleSummary(t *testing.T) {
 	// Single summary should pass through without LLM call
-	result, err := synthesizeHierarchical([]string{"already done"}, "test.md", nil, "", 2000, "")
+	result, err := synthesizeHierarchical(context.Background(), []string{"already done"}, "test.md", nil, "", 2000, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

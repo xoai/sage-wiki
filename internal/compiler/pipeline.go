@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -28,6 +29,9 @@ import (
 
 // CompileOpts configures a compilation run.
 type CompileOpts struct {
+	// Ctx carries cancellation (Ctrl-C / MCP deadline) into the LLM calls and
+	// compile passes; nil is treated as context.Background().
+	Ctx     context.Context
 	DryRun  bool
 	Fresh   bool             // ignore checkpoint
 	Batch   bool             // use batch API (async, 50% discount)
@@ -375,6 +379,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 			fmt.Fprintln(os.Stderr, "Prompt caching unavailable with Gemini subscription auth.")
 		}
 		pipelineResult := runFullPipeline(toProcess, FullPipelineOpts{
+			Ctx:          opts.Ctx,
 			ProjectDir:   projectDir,
 			Config:       cfg,
 			Client:       client,
@@ -871,7 +876,7 @@ func resumeBatch(
 		client.SetPass("extract")
 		extCacheID, _ := client.SetupCache("You are an expert knowledge organizer. Extract structured concepts from source summaries.", model)
 		progress.StartPhase("Pass 2: Extract concepts", len(successfulSummaries))
-		concepts, err := ExtractConcepts(successfulSummaries, mf.Concepts, client, model, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel)
+		concepts, err := ExtractConcepts(opts.Ctx, successfulSummaries, mf.Concepts, client, model, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel)
 		if err != nil {
 			progress.ItemError("concept extraction", err)
 			result.Errors++
@@ -906,6 +911,7 @@ func resumeBatch(
 				relPatterns := ontology.RelationPatterns(merged)
 				progress.StartPhase("Pass 3: Write articles", len(concepts))
 				articles := WriteArticles(ArticleWriteOpts{
+					Ctx:                opts.Ctx,
 					ProjectDir:         projectDir,
 					OutputDir:          cfg.Output,
 					Client:             client,

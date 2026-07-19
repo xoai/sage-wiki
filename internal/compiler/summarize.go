@@ -25,6 +25,10 @@ type SummaryResult struct {
 	Concepts    []string
 	ChunkCount  int
 	Error       error
+	// Cancelled marks a source skipped because the compile was cancelled. It is
+	// neither success nor failure: it stays unmarked in the manifest so the next
+	// compile reprocesses it, and it is NOT added to state.Failed.
+	Cancelled bool
 }
 
 // SummarizeOpts configures a summarization pass.
@@ -72,7 +76,8 @@ func Summarize(opts SummarizeOpts) []SummaryResult {
 		if opts.Ctx != nil {
 			select {
 			case <-opts.Ctx.Done():
-				results[i] = SummaryResult{SourcePath: src.Path, Error: fmt.Errorf("cancelled: %w", opts.Ctx.Err())}
+				// Cancelled != failed: leave it unprocessed so a resume retries it.
+				results[i] = SummaryResult{SourcePath: src.Path, Cancelled: true}
 				stopped.Store(true)
 				continue
 			default:
@@ -99,7 +104,7 @@ func Summarize(opts SummarizeOpts) []SummaryResult {
 			defer wg.Done()
 			defer release()
 
-			result := summarizeOne(opts.ProjectDir, opts.OutputDir, info, opts.Client, opts.Model, opts.MaxTokens, opts.UserTZ, opts.Language, opts.SummaryNaming, opts.SourceRoots, opts.ExtractOpts...)
+			result := summarizeOne(opts.Ctx, opts.ProjectDir, opts.OutputDir, info, opts.Client, opts.Model, opts.MaxTokens, opts.UserTZ, opts.Language, opts.SummaryNaming, opts.SourceRoots, opts.ExtractOpts...)
 			results[idx] = result
 
 			n := int(done.Add(1))
@@ -131,6 +136,7 @@ func Summarize(opts SummarizeOpts) []SummaryResult {
 }
 
 func summarizeOne(
+	ctx context.Context,
 	projectDir string,
 	outputDir string,
 	info SourceInfo,
@@ -201,7 +207,7 @@ func summarizeOne(
 
 	// Handle image sources — use vision if available
 	if extract.IsImageSource(content) {
-		text, err := summarizeImage(projectDir, info, client, model, maxTokens)
+		text, err := summarizeImage(ctx, projectDir, info, client, model, maxTokens)
 		if err != nil {
 			result.Error = err
 			return result
@@ -232,7 +238,7 @@ func summarizeOne(
 			return result
 		}
 
-		resp, err := client.ChatCompletion([]llm.Message{
+		resp, err := client.ChatCompletionCtx(ctx, []llm.Message{
 			{Role: "system", Content: "You are a research assistant creating structured summaries for a personal knowledge wiki."},
 			{Role: "user", Content: prompt + "\n\n---\n\nSource content:\n\n" + content.Text},
 		}, llm.CallOpts{Model: model, MaxTokens: maxTokens})
@@ -248,14 +254,14 @@ func summarizeOne(
 		summaryText = resp.Content
 	} else {
 		// Multi-chunk: summarize each chunk, then synthesize hierarchically
-		chunkSummaries, err := summarizeChunks(content.Chunks, info, templateName, content.Type, client, model, maxTokens, language)
+		chunkSummaries, err := summarizeChunks(ctx, content.Chunks, info, templateName, content.Type, client, model, maxTokens, language)
 		if err != nil {
 			result.Error = err
 			return result
 		}
 
 		// Hierarchical synthesis: reduce in groups until we have a single summary
-		summaryText, err = synthesizeHierarchical(chunkSummaries, info.Path, client, model, maxTokens, language)
+		summaryText, err = synthesizeHierarchical(ctx, chunkSummaries, info.Path, client, model, maxTokens, language)
 		if err != nil {
 			result.Error = err
 			return result
@@ -322,7 +328,7 @@ chunk_count: %d
 	return result
 }
 
-func summarizeImage(projectDir string, info SourceInfo, client *llm.Client, model string, maxTokens int) (string, error) {
+func summarizeImage(ctx context.Context, projectDir string, info SourceInfo, client *llm.Client, model string, maxTokens int) (string, error) {
 	if !client.SupportsVision() {
 		return "", fmt.Errorf("skipping image %s — LLM provider does not support vision", info.Path)
 	}
@@ -338,7 +344,7 @@ func summarizeImage(projectDir string, info SourceInfo, client *llm.Client, mode
 
 	prompt := fmt.Sprintf("Describe this image from a knowledge base.\nSource: %s\n\nProvide:\n1. A brief caption\n2. What the image depicts (diagram, chart, photo, screenshot, etc.)\n3. Key information conveyed\n4. Any text visible in the image\n5. Concepts this relates to", info.Path)
 
-	resp, err := client.ChatCompletionWithImage([]llm.Message{
+	resp, err := client.ChatCompletionWithImageCtx(ctx, []llm.Message{
 		{Role: "system", Content: "You are a research assistant describing images for a personal knowledge wiki."},
 	}, prompt, b64, mimeType, llm.CallOpts{Model: model, MaxTokens: maxTokens})
 	if err != nil {
@@ -372,6 +378,7 @@ const (
 // When the budget per chunk would fall below minChunkTokenBudget, chunks
 // are grouped together to maintain quality.
 func summarizeChunks(
+	ctx context.Context,
 	chunks []extract.Chunk,
 	info SourceInfo,
 	templateName string,
@@ -419,7 +426,7 @@ func summarizeChunks(
 		}
 
 		log.Debug("summarizing group", "source", info.Path, "group", fmt.Sprintf("%d/%d", gi+1, len(groups)), "chunks_in_group", len(group), "budget", perGroupBudget)
-		resp, err := client.ChatCompletion([]llm.Message{
+		resp, err := client.ChatCompletionCtx(ctx, []llm.Message{
 			{Role: "system", Content: "You are summarizing a section of a larger document."},
 			{Role: "user", Content: prompt + "\n\n---\n\nSection:\n\n" + groupText.String()},
 		}, llm.CallOpts{Model: model, MaxTokens: perGroupBudget})
@@ -477,7 +484,7 @@ func groupChunks(chunks []extract.Chunk, maxTokens int) [][]extract.Chunk {
 
 // synthesizeHierarchical reduces summaries in tiers of synthesisGroupSize
 // until a single final summary remains.
-func synthesizeHierarchical(summaries []string, sourcePath string, client *llm.Client, model string, maxTokens int, language string) (string, error) {
+func synthesizeHierarchical(ctx context.Context, summaries []string, sourcePath string, client *llm.Client, model string, maxTokens int, language string) (string, error) {
 	if len(summaries) == 0 {
 		return "", fmt.Errorf("synthesize: no summaries to combine for %q", sourcePath)
 	}
@@ -506,7 +513,7 @@ func synthesizeHierarchical(summaries []string, sourcePath string, client *llm.C
 			)
 			synthesisPrompt += prompts.LanguageInstruction(language)
 
-			resp, err := client.ChatCompletion([]llm.Message{
+			resp, err := client.ChatCompletionCtx(ctx, []llm.Message{
 				{Role: "system", Content: "You are synthesizing partial summaries into a final summary."},
 				{Role: "user", Content: synthesisPrompt},
 			}, llm.CallOpts{Model: model, MaxTokens: maxTokens})

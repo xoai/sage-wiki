@@ -2,6 +2,7 @@ package llm
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -166,13 +167,26 @@ func (c *Client) SetTransport(t http.RoundTripper) {
 
 // ChatCompletion sends a chat completion request with retry on rate limits.
 // If a cache is active (via SetupCache), automatically uses the cached path.
+// It delegates to ChatCompletionCtx with a background context (no cancellation);
+// callers that need Ctrl-C / deadline propagation use ChatCompletionCtx.
 func (c *Client) ChatCompletion(messages []Message, opts CallOpts) (*Response, error) {
+	return c.ChatCompletionCtx(context.Background(), messages, opts)
+}
+
+// ChatCompletionCtx is ChatCompletion with a cancellation context: the context
+// reaches the in-flight HTTP request and the retry backoff, so a cancel or
+// deadline returns promptly instead of blocking on the LLM call. A nil ctx is
+// treated as context.Background().
+func (c *Client) ChatCompletionCtx(ctx context.Context, messages []Message, opts CallOpts) (*Response, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var resp *Response
 	var err error
 	if c.cacheID != "" {
-		resp, err = c.ChatCompletionCached(c.cacheID, messages, opts)
+		resp, err = c.ChatCompletionCachedCtx(ctx, c.cacheID, messages, opts)
 	} else {
-		resp, err = c.chatCompletionDirect(messages, opts)
+		resp, err = c.chatCompletionDirect(ctx, messages, opts)
 	}
 	if err != nil {
 		return nil, err
@@ -182,12 +196,18 @@ func (c *Client) ChatCompletion(messages []Message, opts CallOpts) (*Response, e
 }
 
 // chatCompletionDirect sends a request without checking cacheID.
-// Used by ChatCompletion and as the fallback path for ChatCompletionCached.
-func (c *Client) chatCompletionDirect(messages []Message, opts CallOpts) (*Response, error) {
+// Used by ChatCompletionCtx and as the fallback path for ChatCompletionCached.
+// The ctx bounds the HTTP call and the retry backoff.
+func (c *Client) chatCompletionDirect(ctx context.Context, messages []Message, opts CallOpts) (*Response, error) {
 	var lastErr error
 	var lastStatusCode int
 
 	for attempt := 0; attempt < 4; attempt++ {
+		// Abort before doing more work if already cancelled.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
 		// Wait for rate limiter
 		c.limiter.wait()
 
@@ -195,6 +215,7 @@ func (c *Client) chatCompletionDirect(messages []Message, opts CallOpts) (*Respo
 		if err != nil {
 			return nil, fmt.Errorf("llm: format request: %w", err)
 		}
+		req = req.WithContext(ctx) // cancellation reaches the in-flight call
 
 		resp, err := c.client.Do(req)
 		if err != nil {
@@ -216,7 +237,12 @@ func (c *Client) chatCompletionDirect(messages []Message, opts CallOpts) (*Respo
 		if isRetryable(resp.StatusCode) {
 			delay := backoffDelay(attempt)
 			log.Warn("retryable error, retrying", "status", resp.StatusCode, "attempt", attempt+1, "delay", delay)
-			time.Sleep(delay)
+			// Cancellable backoff: a cancel during the sleep returns promptly.
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
 			lastStatusCode = resp.StatusCode
 			lastErr = fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 			continue
@@ -246,13 +272,19 @@ func (c *Client) SupportsVision() bool {
 // The image is embedded in a Message with ImageBase64/ImageMime fields set.
 // Each provider adapter handles the multimodal format in FormatRequest.
 func (c *Client) ChatCompletionWithImage(messages []Message, prompt string, imageBase64 string, mimeType string, opts CallOpts) (*Response, error) {
+	return c.ChatCompletionWithImageCtx(context.Background(), messages, prompt, imageBase64, mimeType, opts)
+}
+
+// ChatCompletionWithImageCtx is ChatCompletionWithImage with a cancellation
+// context threaded to the underlying call.
+func (c *Client) ChatCompletionWithImageCtx(ctx context.Context, messages []Message, prompt string, imageBase64 string, mimeType string, opts CallOpts) (*Response, error) {
 	visionMsg := Message{
 		Role:        "user",
 		Content:     prompt,
 		ImageBase64: imageBase64,
 		ImageMime:   mimeType,
 	}
-	return c.ChatCompletion(append(messages, visionMsg), opts)
+	return c.ChatCompletionCtx(ctx, append(messages, visionMsg), opts)
 }
 
 // ProviderName returns the provider name.

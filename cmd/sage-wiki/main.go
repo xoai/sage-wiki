@@ -425,9 +425,27 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("batch mode is incompatible with watch mode: batch compiles cannot be triggered by watch events")
 	}
 
+	// Cancellable compile: the first Ctrl-C / SIGTERM cancels gracefully (finishes
+	// in-flight work, writes the checkpoint so the next run resumes); a second
+	// forces an immediate exit.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	go func() {
+		<-sigCh
+		fmt.Fprintln(os.Stderr, "\nCancelling — finishing in-flight work; press Ctrl-C again to force quit.")
+		cancel()
+		<-sigCh
+		fmt.Fprintln(os.Stderr, "\nForce quit.")
+		os.Exit(130)
+	}()
+
 	if watch {
 		fmt.Println("Watching for changes... (Ctrl+C to stop)")
 		return compiler.Watch(dir, 2, compiler.CompileOpts{
+			Ctx:     ctx,
 			Fresh:   fresh,
 			NoCache: noCache,
 			Prune:   prune,
@@ -440,6 +458,7 @@ func runCompile(cmd *cobra.Command, args []string) error {
 	}
 
 	result, err := compiler.Compile(dir, compiler.CompileOpts{
+		Ctx:     ctx,
 		DryRun:  dryRun,
 		Fresh:   fresh,
 		Batch:   batch,

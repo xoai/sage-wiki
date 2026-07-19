@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 
@@ -155,6 +156,13 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	})
 
 	for _, sr := range summaries {
+		// A cancelled source (compile interrupted, or its LLM call cancelled mid-
+		// flight) is neither success nor failure. Skip it: don't count an error,
+		// don't add it to state.Failed, and don't mark it compiled — so the next
+		// compile reprocesses it cleanly.
+		if sr.Cancelled || errors.Is(sr.Error, context.Canceled) || errors.Is(sr.Error, context.DeadlineExceeded) {
+			continue
+		}
 		if sr.Error != nil {
 			result.Errors++
 			progress.ItemError(sr.SourcePath, sr.Error)
@@ -242,7 +250,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		extCacheID, _ = client.SetupCache("You are an expert knowledge organizer. Extract structured concepts from source summaries.", extractModel)
 	}
 	progress.StartPhase("Pass 2: Extract concepts", len(successfulSummaries))
-	concepts, err := ExtractConcepts(successfulSummaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel)
+	concepts, err := ExtractConcepts(opts.Ctx, successfulSummaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel)
 	if err != nil {
 		progress.ItemError("concept extraction", err)
 		result.Errors++
@@ -340,6 +348,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	relPatterns := ontology.RelationPatterns(merged)
 	progress.StartPhase("Pass 3: Write articles", len(concepts))
 	articles := WriteArticles(ArticleWriteOpts{
+		Ctx:                opts.Ctx,
 		ProjectDir:         opts.ProjectDir,
 		OutputDir:          cfg.Output,
 		Client:             client,

@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -94,7 +95,9 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	}
 
 	log.Info("Pass 2: extracting concepts", "from_summaries", len(summaries))
-	concepts, err := ExtractConcepts(summaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel)
+	// ReExtract has no cancellation context of its own; --re-extract cancellation
+	// is a follow-up. Use a background context so the LLM calls still function.
+	concepts, err := ExtractConcepts(context.Background(), summaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel)
 	if err != nil {
 		return nil, fmt.Errorf("re-extract: concept extraction: %w", err)
 	}
