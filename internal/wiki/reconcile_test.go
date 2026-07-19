@@ -208,6 +208,28 @@ func TestReconcile_Consistent_NoReembed(t *testing.T) {
 	}
 }
 
+// TestStripFrontmatter pins the summary body extraction against the exact
+// frontmatter format the compiler writes (`---\n...\n---\n\n` + body), so the #3
+// FTS-content comparison lines up with what the compiler indexed.
+func TestStripFrontmatter(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"compiler summary format", "---\nsource: raw/x.md\ncompiled_at: 2026-07-19\n---\n\n# Attention\n\nBody text.", "# Attention\n\nBody text."},
+		{"no frontmatter", "# Plain\n\nNo frontmatter here.", "# Plain\n\nNo frontmatter here."},
+		{"body contains a rule", "---\nsource: x\n---\n\nAbove.\n---\nBelow.", "Above.\n---\nBelow."},
+		{"body legitimately starts with newline", "---\nsource: x\n---\n\n\nleading blank", "\nleading blank"},
+		{"malformed (no close) left as-is", "---\nsource: x\nno close", "---\nsource: x\nno close"},
+	}
+	for _, tt := range tests {
+		if got := stripFrontmatter(tt.in); got != tt.want {
+			t.Errorf("%s: stripFrontmatter(%q) = %q, want %q", tt.name, tt.in, got, tt.want)
+		}
+	}
+}
+
 // TestReconcile_CompileUpdatedFTS_NoReembed is the #3 regression: a live compile
 // re-indexed an output (FTS + vectors reflect the new content) but did not update
 // output_index, so the recorded hash lags. The reconciler must NOT re-embed —

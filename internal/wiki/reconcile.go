@@ -302,7 +302,10 @@ func stripFrontmatter(s string) string {
 		return s // malformed — leave as-is
 	}
 	body := rest[end+len("\n---\n"):]
-	return strings.TrimLeft(body, "\n")
+	// The compiler writes "...---\n\n" + body, so exactly ONE separator newline
+	// precedes the body. Strip that one only — TrimLeft would also eat a leading
+	// newline that is genuinely part of the body, causing permanent re-index churn.
+	return strings.TrimPrefix(body, "\n")
 }
 
 func (rc *reconciler) drop(eo expectedOutput) error {
