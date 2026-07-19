@@ -43,6 +43,19 @@ func acquireLock(ctx context.Context, manifestPath string) (*manifestLock, error
 	return acquireLockOpts(ctx, manifestPath, defaultLockOptions())
 }
 
+// WithLock runs fn while holding the exclusive manifest lock, without loading or
+// saving the manifest. The reconciler uses it to serialize an individual
+// file/DB repair against other manifest writers (D5 lock-per-repair) — the scan
+// itself stays lock-free.
+func WithLock(ctx context.Context, manifestPath string, fn func() error) error {
+	lock, err := acquireLock(ctx, manifestPath)
+	if err != nil {
+		return fmt.Errorf("manifest.WithLock: %w", err)
+	}
+	defer lock.Unlock()
+	return fn()
+}
+
 // acquireLockOpts is acquireLock with explicit timing (used by tests).
 func acquireLockOpts(ctx context.Context, manifestPath string, opts lockOptions) (*manifestLock, error) {
 	lockPath := manifestPath + ".lock"
