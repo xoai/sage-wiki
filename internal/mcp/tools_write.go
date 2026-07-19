@@ -17,6 +17,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
+	"github.com/xoai/sage-wiki/internal/fsutil"
 	gitpkg "github.com/xoai/sage-wiki/internal/git"
 	"github.com/xoai/sage-wiki/internal/linter"
 	"github.com/xoai/sage-wiki/internal/llm"
@@ -187,8 +188,11 @@ func (s *Server) handleWriteSummary(ctx context.Context, req mcplib.CallToolRequ
 	}
 	os.MkdirAll(filepath.Dir(absPath), 0755)
 
+	// Canonical write-then-index order (I2): (1) write the summary atomically,
+	// (2) index into the DB (mem + vectors, below), (3) update the manifest under
+	// the lock. A crash between steps leaves drift the reconciler heals.
 	frontmatter := fmt.Sprintf("---\nsource: %s\ncompiled_at: %s\n---\n\n", source, s.cfg.Compiler.UserNow())
-	if err := os.WriteFile(absPath, []byte(frontmatter+content), 0644); err != nil {
+	if err := fsutil.WriteFileAtomic(absPath, []byte(frontmatter+content), 0644); err != nil {
 		return errorResult(fmt.Sprintf("write failed: %v", err)), nil
 	}
 
@@ -236,7 +240,10 @@ func (s *Server) handleWriteArticle(ctx context.Context, req mcplib.CallToolRequ
 	}
 	os.MkdirAll(filepath.Dir(absPath), 0755)
 
-	if err := os.WriteFile(absPath, []byte(content), 0644); err != nil {
+	// Canonical write-then-index order (I2): (1) write the article atomically,
+	// (2) index into the DB (ontology + mem + vectors, below), (3) update the
+	// manifest under the lock. A crash between steps leaves drift the reconciler heals.
+	if err := fsutil.WriteFileAtomic(absPath, []byte(content), 0644); err != nil {
 		return errorResult(fmt.Sprintf("write failed: %v", err)), nil
 	}
 

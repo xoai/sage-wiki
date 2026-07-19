@@ -15,6 +15,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/extract"
+	"github.com/xoai/sage-wiki/internal/fsutil"
 	gitpkg "github.com/xoai/sage-wiki/internal/git"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
@@ -845,7 +846,8 @@ func resumeBatch(
 		absOutputPath := filepath.Join(projectDir, summaryPath)
 
 		frontmatter := fmt.Sprintf("---\nsource: %s\ncompiled_at: %s\nbatch: true\n---\n\n", path, timeNow(cfg.Compiler.UserTimeLocation()))
-		if err := os.WriteFile(absOutputPath, []byte(frontmatter+summaryText), 0644); err != nil {
+		// Canonical write-then-index order (I2): summary written atomically first.
+		if err := fsutil.WriteFileAtomic(absOutputPath, []byte(frontmatter+summaryText), 0644); err != nil {
 			result.Errors++
 			progress.ItemError(path, err)
 			continue

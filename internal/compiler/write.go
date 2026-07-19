@@ -16,6 +16,7 @@ import (
 
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/extract"
+	"github.com/xoai/sage-wiki/internal/fsutil"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/memory"
@@ -227,11 +228,13 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap m
 	// Future compiles will create the missing articles, and the links
 	// will resolve naturally. Broken links are surfaced by `sage-wiki lint`.
 
-	// Write article file
+	// Canonical write-then-index order (I2): (1) write the article file
+	// atomically, (2) index into the DB (ontology + FTS + vectors, below),
+	// (3) the manifest is marked once at the end of the compile via MergeSave.
 	articleDir := filepath.Join(opts.ProjectDir, opts.OutputDir, "concepts")
 	os.MkdirAll(articleDir, 0755)
 
-	if err := os.WriteFile(absPath, []byte(articleContent), 0644); err != nil {
+	if err := fsutil.WriteFileAtomic(absPath, []byte(articleContent), 0644); err != nil {
 		result.Error = fmt.Errorf("write file: %w", err)
 		return result
 	}
@@ -900,7 +903,7 @@ func StripBrokenWikilinks(projectDir, outputDir string) (StripBrokenWikilinkStat
 		if stripped == 0 {
 			continue
 		}
-		if err := os.WriteFile(articlePath, []byte(rewritten), 0644); err != nil {
+		if err := fsutil.WriteFileAtomic(articlePath, []byte(rewritten), 0644); err != nil {
 			return stats, fmt.Errorf("strip-broken-links: write %s: %w", e.Name(), err)
 		}
 		stats.ArticlesEdited++
