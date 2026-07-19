@@ -187,9 +187,9 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 		for _, p := range pResult.SucceededSources {
 			succeeded[p] = true
 		}
-		// On cancel, Pass 2/3 were skipped — mark only the passes that completed so
-		// resume re-extracts/re-writes these sources instead of skipping them. P1-1.
-		runCompleted := ctx == nil || ctx.Err() == nil
+		// Mark extract/write only when Pass 2/3 completed (not cancelled, not a
+		// total-extraction failure) so an interrupted/failed run stays resumable. P1-1.
+		runCompleted := pResult.Pass23Completed
 		for _, src := range uncompiled {
 			if succeeded[src.Path] {
 				if err := items.MarkPass(src.Path, "summarized"); err != nil {
@@ -206,10 +206,10 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 			}
 		}
 
-		// On cancel, drop the summarize-succeeded sources from the manifest so the
-		// next Diff re-includes them (their extract/write pass flags stayed 0), else
-		// Pass 1's AddSource makes the Diff empty and resume silently skips their
-		// concept/article passes. P1-1 / C1.
+		// When Pass 2/3 did not complete, drop the summarize-succeeded sources from
+		// the manifest so the next Diff re-includes them (their extract/write pass
+		// flags stayed 0), else Pass 1's AddSource makes the Diff empty and resume
+		// silently skips their concept/article passes. P1-1 / C1.
 		if !runCompleted {
 			for _, p := range pResult.SucceededSources {
 				mf.RemoveSource(p)

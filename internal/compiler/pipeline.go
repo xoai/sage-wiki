@@ -409,12 +409,12 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		for _, p := range pipelineResult.SucceededSources {
 			succeeded[p] = true
 		}
-		// On cancel, Pass 2/3 were skipped for these sources (concept extraction
-		// and article writing bail on ctx.Done). Advancing the extract/write flags
-		// would make ListPending treat them as fully compiled, so resume would
-		// never re-extract/re-write them and their concepts + articles would be
-		// silently lost. Mark only the passes that actually completed. P1-1.
-		runCompleted := opts.Ctx == nil || opts.Ctx.Err() == nil
+		// Advance the extract/write flags only when Pass 2/3 actually completed
+		// (not cancelled, not a total-extraction failure). Otherwise ListPending
+		// would treat these sources as fully compiled and resume would never
+		// re-extract/re-write them — their concepts + articles silently lost.
+		// Mark only the passes that completed. P1-1 / C1.
+		runCompleted := pipelineResult.Pass23Completed
 		for _, s := range toProcess {
 			if succeeded[s.Path] {
 				if err := itemStore.MarkPass(s.Path, "summarized"); err != nil {
@@ -431,12 +431,13 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 			}
 		}
 
-		// On cancel, the summarize-succeeded sources did not finish Pass 2/3. Pass 1
-		// already recorded them in the manifest (AddSource/MarkCompiled), which makes
-		// the next Diff empty so the resume would early-return "nothing to compile"
-		// and their concepts/articles would be silently dropped. Remove them from
-		// the manifest so the Diff re-includes them; their compile_items extract/
-		// write flags stayed 0 above, so the tiered path reprocesses Pass 2/3. P1-1.
+		// When Pass 2/3 did not complete (cancel or total-extraction failure), the
+		// summarize-succeeded sources are only half-done. Pass 1 already recorded
+		// them in the manifest (AddSource/MarkCompiled), which makes the next Diff
+		// empty so the resume would early-return "nothing to compile" and their
+		// concepts/articles would be silently dropped. Remove them from the manifest
+		// so the Diff re-includes them; their compile_items extract/write flags
+		// stayed 0 above, so the tiered path reprocesses Pass 2/3. P1-1 / C1.
 		if !runCompleted {
 			for _, p := range pipelineResult.SucceededSources {
 				mf.RemoveSource(p)
@@ -884,6 +885,7 @@ func resumeBatch(
 	}
 
 	// Continue with Pass 2 + 3 synchronously
+	batchPass23OK := true // set false if extraction fails or the run is cancelled
 	if len(successfulSummaries) > 0 {
 		model := cfg.Models.Extract
 		if model == "" {
@@ -900,6 +902,7 @@ func resumeBatch(
 		if err != nil {
 			progress.ItemError("concept extraction", err)
 			result.Errors++
+			batchPass23OK = false
 			progress.EndPhase()
 			client.TeardownCache(extCacheID)
 		} else {
@@ -970,6 +973,19 @@ func resumeBatch(
 
 	// Pass 4: Images (placeholder)
 	ExtractImages(projectDir, cfg.Output, nil)
+
+	// If Pass 2/3 did not complete (extraction failure or cancel), roll the
+	// batch-summarized sources back out of the manifest so the next compile re-runs
+	// their concept/article passes instead of early-returning "nothing to compile"
+	// and silently dropping them. Mirrors the full-compile/on-demand guard. P1-1 (C1).
+	if opts.Ctx != nil && opts.Ctx.Err() != nil {
+		batchPass23OK = false
+	}
+	if !batchPass23OK {
+		for _, sr := range successfulSummaries {
+			mf.RemoveSource(sr.SourcePath)
+		}
+	}
 
 	// Save manifest
 	if err := mf.Save(mfPath); err != nil {

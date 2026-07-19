@@ -90,6 +90,11 @@ type FullPipelineResult struct {
 	Errors            int
 	EmbedErrors       int
 	SucceededSources  []string // source paths that completed summarization successfully
+	// Pass23Completed is true only when Pass 2 (extract) and Pass 3 (write) ran to
+	// the end without a total-extraction failure and without cancellation. Callers
+	// must not mark SucceededSources extracted/written unless this is true, or an
+	// interrupted/failed run leaves them un-resumable. P1-1 / C1.
+	Pass23Completed bool
 }
 
 // runFullPipeline executes Pass 1 (summarize) → Pass 2 (extract) → Pass 3 (write)
@@ -436,6 +441,12 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 
 	progress.EndPhase()
 	client.TeardownCache(writeCacheID)
+
+	// Pass 2/3 ran to the end here. Only now — not on the extraction-failure early
+	// returns above, and not if the run was cancelled — are the summarize-succeeded
+	// sources safe to mark extracted/written in the checkpoints. Callers gate their
+	// pass-marking on this so an interrupted/failed run stays resumable. P1-1.
+	result.Pass23Completed = opts.Ctx == nil || opts.Ctx.Err() == nil
 
 	return result
 }

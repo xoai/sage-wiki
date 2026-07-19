@@ -278,3 +278,103 @@ compiler:
 	}
 	_ = r2
 }
+
+// TestCompile_ExtractionFailureResumesPasses covers the generalized invariant
+// (not just cancellation): a NON-cancel total extraction failure (Pass 2 errors)
+// must also leave the summarized sources resumable, not marked fully compiled.
+func TestCompile_ExtractionFailureResumesPasses(t *testing.T) {
+	var failExtract atomic.Bool
+	failExtract.Store(true)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		messages, _ := body["messages"].([]any)
+		var all strings.Builder
+		for _, mm := range messages {
+			if m, ok := mm.(map[string]any); ok {
+				if c, ok := m["content"].(string); ok {
+					all.WriteString(c)
+					all.WriteByte(' ')
+				}
+			}
+		}
+		msg := all.String()
+		isConcept := strings.Contains(msg, "concept extraction system")
+		isArticle := strings.Contains(msg, "wiki author writing comprehensive")
+
+		// Fail Pass 2 (extraction) with a non-retryable 400 — no cancellation.
+		if isConcept && failExtract.Load() {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		var content string
+		switch {
+		case isConcept:
+			var cs []string
+			if strings.Contains(msg, "raw/a.md") {
+				cs = append(cs, `{"name":"alpha","aliases":[],"sources":["raw/a.md"],"type":"concept"}`)
+			}
+			if strings.Contains(msg, "raw/b.md") {
+				cs = append(cs, `{"name":"beta","aliases":[],"sources":["raw/b.md"],"type":"concept"}`)
+			}
+			content = "[" + strings.Join(cs, ",") + "]"
+		case isArticle:
+			content = "---\nconcept: c\n---\n\n# C\n\nA sufficiently long test article body for validation."
+		default:
+			content = "## Key claims\n\nThis document discusses the main concepts and findings at length.\n\n## Concepts\n\nc: A fundamental concept."
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": content}}},
+			"model":   "gpt-4o-mini",
+			"usage":   map[string]int{"total_tokens": 100},
+		})
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	wiki.InitGreenfield(dir, "test", "gemini-2.5-flash")
+	cfg := `
+version: 1
+project: test
+sources:
+  - path: raw
+    type: auto
+output: wiki
+api:
+  provider: openai
+  api_key: sk-test
+  base_url: ` + server.URL + `
+models:
+  summarize: gpt-4o-mini
+compiler:
+  max_parallel: 1
+  auto_commit: false
+  summary_max_tokens: 500
+  default_tier: 3
+`
+	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfg), 0644)
+	os.WriteFile(filepath.Join(dir, "raw", "a.md"), []byte("# A\n\nAlpha content about attention."), 0644)
+	os.WriteFile(filepath.Join(dir, "raw", "b.md"), []byte("# B\n\nBeta content about memory."), 0644)
+
+	// First compile: extraction fails (no cancel). Sources summarize but Pass 2/3
+	// don't complete.
+	r1, _ := Compile(dir, CompileOpts{})
+	if r1.Errors == 0 {
+		t.Errorf("expected a Pass-2 extraction error to be recorded, got Errors=0")
+	}
+
+	// Resume: extraction now succeeds; the sources must be reprocessed to articles.
+	failExtract.Store(false)
+	r2, err := Compile(dir, CompileOpts{})
+	if err != nil {
+		t.Fatalf("resume compile: %v", err)
+	}
+	for _, name := range []string{"alpha", "beta"} {
+		if _, err := os.Stat(filepath.Join(dir, "wiki", "concepts", name+".md")); err != nil {
+			t.Errorf("resume missing article %s.md — an extraction-failed source was skipped (MAJOR 2)", name)
+		}
+	}
+	_ = r2
+}
