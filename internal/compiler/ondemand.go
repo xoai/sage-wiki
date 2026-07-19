@@ -143,6 +143,9 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 		if err != nil {
 			return fmt.Errorf("on-demand: load manifest: %w", err)
 		}
+		// Merge base (D3): snapshot before mutation so the Save reload-merges the
+		// on-demand run's delta onto any writer that landed during it.
+		base := mf.Clone()
 
 		bp := NewBackpressureController(cfg.Compiler.MaxParallel)
 		cacheEnabled := cfg.Compiler.PromptCacheEnabled()
@@ -210,8 +213,10 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 			}
 		}
 
-		// Save manifest
-		if err := mf.Save(mfPath); err != nil {
+		// Save manifest via reload-merge under the lock (D3) so a concurrent short
+		// writer is preserved. Stays after the Pass23-incomplete early-return above,
+		// mirroring the compile placement invariant.
+		if err := manifest.MergeSave(orBackground(ctx), mfPath, base, mf); err != nil {
 			return fmt.Errorf("on-demand: save manifest: %w", err)
 		}
 

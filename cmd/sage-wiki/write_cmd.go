@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -91,12 +92,17 @@ func runWriteSummary(cmd *cobra.Command, args []string) error {
 			}
 		}
 	}
-	mf, _ := manifest.Load(filepath.Join(dir, ".manifest.json"))
-	if _, exists := mf.Sources[source]; !exists {
-		mf.AddSource(source, "", "article", int64(len(content)))
+	// Manifest RMW under the exclusive lock (D4). The prior code ignored load
+	// and save errors; routing through Mutate makes them live.
+	if err := manifest.Mutate(context.Background(), filepath.Join(dir, ".manifest.json"), func(mf *manifest.Manifest) error {
+		if _, exists := mf.Sources[source]; !exists {
+			mf.AddSource(source, "", "article", int64(len(content)))
+		}
+		mf.MarkCompiled(source, summaryPath, concepts)
+		return nil
+	}); err != nil {
+		return cli.CLIError(outputFormat, err)
 	}
-	mf.MarkCompiled(source, summaryPath, concepts)
-	mf.Save(filepath.Join(dir, ".manifest.json"))
 
 	msg := fmt.Sprintf("Summary written: %s (%d chars)", summaryPath, len(content))
 	if outputFormat == "json" {
@@ -141,10 +147,14 @@ func runWriteArticle(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Update manifest
-	mf, _ := manifest.Load(filepath.Join(dir, ".manifest.json"))
-	mf.AddConcept(conceptID, articlePath, nil)
-	mf.Save(filepath.Join(dir, ".manifest.json"))
+	// Manifest RMW under the exclusive lock (D4). The prior code ignored load
+	// and save errors; routing through Mutate makes them live.
+	if err := manifest.Mutate(context.Background(), filepath.Join(dir, ".manifest.json"), func(mf *manifest.Manifest) error {
+		mf.AddConcept(conceptID, articlePath, nil)
+		return nil
+	}); err != nil {
+		return cli.CLIError(outputFormat, err)
+	}
 
 	msg := fmt.Sprintf("Article written: %s", articlePath)
 	if outputFormat == "json" {

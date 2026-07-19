@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/extract"
+	"github.com/xoai/sage-wiki/internal/fsutil"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/prompts"
@@ -318,7 +319,9 @@ chunk_count: %d
 
 `, info.Path, content.Type, info.Hash, timeNow(loc), content.ChunkCount)
 
-	if err := os.WriteFile(absOutputPath, []byte(frontmatter+summaryText), 0644); err != nil {
+	// Canonical write-then-index order (I2): write the summary atomically first;
+	// the caller then indexes it into the DB and the compile marks the manifest.
+	if err := fsutil.WriteFileAtomic(absOutputPath, []byte(frontmatter+summaryText), 0644); err != nil {
 		result.Error = fmt.Errorf("write summary: %w", err)
 		return result
 	}

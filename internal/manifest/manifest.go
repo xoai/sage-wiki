@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -72,13 +73,57 @@ func Load(path string) (*Manifest, error) {
 	return &m, nil
 }
 
-// Save writes the manifest to disk.
+// Save writes the manifest to disk atomically: it marshals to a sibling temp
+// file and renames it into place, so a crash mid-write can never leave an
+// unparseable `.manifest.json` and a concurrent reader never observes a partial
+// write (D2/I1). The temp lives next to the target so the rename stays on one
+// filesystem (rename is only atomic within a filesystem).
 func (m *Manifest) Save(path string) error {
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return fmt.Errorf("manifest.Save: %w", err)
 	}
-	return os.WriteFile(path, data, 0644)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return fmt.Errorf("manifest.Save: write temp: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp) // best-effort cleanup; leaving a stale temp is not fatal
+		return fmt.Errorf("manifest.Save: rename: %w", err)
+	}
+	return nil
+}
+
+// Mutate performs a serialized read-modify-write of the manifest at path. It
+// acquires the exclusive advisory lock, loads a FRESH copy from disk (so it sees
+// every other writer's committed mutation — never a stale in-memory copy),
+// applies fn, saves atomically, and releases the lock. Every short-transaction
+// writer (MCP tools, ingest, CLI) must go through this entry point so no writer
+// clobbers another's committed mutation (I1/D4). Long-running owners (compile)
+// use MergeSave instead, which merges a Load-time delta onto the fresh reload.
+func Mutate(ctx context.Context, path string, fn func(*Manifest) error) error {
+	return mutateWithOpts(ctx, path, defaultLockOptions(), fn)
+}
+
+// mutateWithOpts is Mutate with explicit lock timing (used by tests).
+func mutateWithOpts(ctx context.Context, path string, opts lockOptions, fn func(*Manifest) error) error {
+	lock, err := acquireLockOpts(ctx, path, opts)
+	if err != nil {
+		return fmt.Errorf("manifest.Mutate: %w", err)
+	}
+	defer func() { _ = lock.Unlock() }()
+
+	m, err := Load(path)
+	if err != nil {
+		return fmt.Errorf("manifest.Mutate: load: %w", err)
+	}
+	if err := fn(m); err != nil {
+		return err // caller's error, surfaced verbatim
+	}
+	if err := m.Save(path); err != nil {
+		return fmt.Errorf("manifest.Mutate: save: %w", err)
+	}
+	return nil
 }
 
 // AddSource registers a new source file.

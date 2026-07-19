@@ -1,14 +1,59 @@
 package wiki
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/xoai/sage-wiki/internal/manifest"
 )
+
+// TestIngestConcurrentNoLostSource is the routing driver for D4: many ingests
+// running at once must each land in the manifest. The old direct
+// Load->AddSource->Save has no lock, so concurrent read-modify-write cycles
+// clobber each other (last-writer-wins) and sources are lost. Routing IngestPath
+// through manifest.Mutate serializes the RMW so every source survives.
+func TestIngestConcurrentNoLostSource(t *testing.T) {
+	dir := t.TempDir()
+	if err := InitGreenfield(dir, "test", "gemini-2.5-flash"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	srcDir := t.TempDir()
+	const n = 10
+	paths := make([]string, n)
+	for i := 0; i < n; i++ {
+		p := filepath.Join(srcDir, fmt.Sprintf("article-%d.md", i))
+		if err := os.WriteFile(p, []byte(fmt.Sprintf("# Article %d\ncontent", i)), 0644); err != nil {
+			t.Fatalf("write source %d: %v", i, err)
+		}
+		paths[i] = p
+	}
+
+	var wg sync.WaitGroup
+	for _, p := range paths {
+		wg.Add(1)
+		go func(p string) {
+			defer wg.Done()
+			if _, err := IngestPath(dir, p); err != nil {
+				t.Errorf("IngestPath %s: %v", p, err)
+			}
+		}(p)
+	}
+	wg.Wait()
+
+	mf, err := manifest.Load(filepath.Join(dir, ".manifest.json"))
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	if mf.SourceCount() != n {
+		t.Errorf("lost update: expected %d sources, got %d", n, mf.SourceCount())
+	}
+}
 
 func TestIngestLocalFile(t *testing.T) {
 	dir := t.TempDir()

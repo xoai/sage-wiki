@@ -5,7 +5,59 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xoai/sage-wiki/internal/memory"
 )
+
+// TestStripBrokenWikilinks_ReindexesFTS verifies the strip keeps FTS consistent
+// with the rewritten article file (I2), so the startup reconciler does not later
+// re-embed the stripped article to heal a self-inflicted drift.
+func TestStripBrokenWikilinks_ReindexesFTS(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+	mem := memory.NewStore(db)
+
+	dir := t.TempDir()
+	conceptsDir := filepath.Join(dir, "wiki", "concepts")
+	if err := os.MkdirAll(conceptsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// "real" exists; "ghost" does not → the link to ghost is dead.
+	os.WriteFile(filepath.Join(conceptsDir, "real.md"), []byte("# Real\n"), 0644)
+	preStrip := "# Attention\n\nSee [[real]] and [[ghost]].\n"
+	os.WriteFile(filepath.Join(conceptsDir, "attention.md"), []byte(preStrip), 0644)
+
+	// Index the article into FTS with its PRE-strip content, as Pass 3 does.
+	if err := mem.Add(memory.Entry{ID: "concept:attention", Content: preStrip, ArticlePath: "wiki/concepts/attention.md", Tags: []string{"concept"}}); err != nil {
+		t.Fatalf("seed FTS: %v", err)
+	}
+
+	if _, err := StripBrokenWikilinks(dir, "wiki", mem); err != nil {
+		t.Fatalf("strip: %v", err)
+	}
+
+	// The file no longer contains [[ghost]]...
+	fileNow, _ := os.ReadFile(filepath.Join(conceptsDir, "attention.md"))
+	if strings.Contains(string(fileNow), "[[ghost]]") {
+		t.Fatal("dead link not stripped from file")
+	}
+	// ...and the FTS entry was updated to match the file (no drift for the
+	// reconciler to heal).
+	entry, err := mem.Get("concept:attention")
+	if err != nil || entry == nil {
+		t.Fatalf("FTS entry missing: %v", err)
+	}
+	if entry.Content != string(fileNow) {
+		t.Errorf("FTS content not re-indexed after strip:\n file=%q\n  fts=%q", fileNow, entry.Content)
+	}
+	if strings.Contains(entry.Content, "[[ghost]]") {
+		t.Error("FTS still holds the pre-strip dead link")
+	}
+	// The link to the existing "real" article is preserved.
+	if !strings.Contains(entry.Content, "[[real]]") {
+		t.Error("valid link to existing article was wrongly stripped")
+	}
+}
 
 // TestStripBrokenWikilinks verifies the post-compile sweep strips [[wikilinks]]
 // pointing at concept articles that don't exist on disk, while leaving links
@@ -34,7 +86,7 @@ Mentions [[soil-remediation]] which also doesn't exist.
 Baseline for [[flash-attention]] comparisons. No phantoms here.
 `)
 
-	stats, err := StripBrokenWikilinks(dir, "wiki")
+	stats, err := StripBrokenWikilinks(dir, "wiki", nil)
 	if err != nil {
 		t.Fatalf("StripBrokenWikilinks: %v", err)
 	}
@@ -75,7 +127,7 @@ Baseline for [[flash-attention]] comparisons. No phantoms here.
 // (e.g., a project freshly initialized with no compile run yet).
 func TestStripBrokenWikilinks_NoConceptsDir(t *testing.T) {
 	dir := t.TempDir()
-	stats, err := StripBrokenWikilinks(dir, "wiki")
+	stats, err := StripBrokenWikilinks(dir, "wiki", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -92,10 +144,10 @@ func TestStripBrokenWikilinks_IdempotentOnSecondRun(t *testing.T) {
 	os.MkdirAll(conceptsDir, 0755)
 	os.WriteFile(filepath.Join(conceptsDir, "x.md"), []byte("[[phantom]]"), 0644)
 
-	if _, err := StripBrokenWikilinks(dir, "wiki"); err != nil {
+	if _, err := StripBrokenWikilinks(dir, "wiki", nil); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
-	stats, err := StripBrokenWikilinks(dir, "wiki")
+	stats, err := StripBrokenWikilinks(dir, "wiki", nil)
 	if err != nil {
 		t.Fatalf("second run: %v", err)
 	}
@@ -114,7 +166,7 @@ func TestMaybeStripBrokenWikilinks_DisabledByConfig(t *testing.T) {
 	os.MkdirAll(conceptsDir, 0755)
 	os.WriteFile(filepath.Join(conceptsDir, "x.md"), []byte("[[phantom]]"), 0644)
 
-	MaybeStripBrokenWikilinks(dir, "wiki", false)
+	MaybeStripBrokenWikilinks(dir, "wiki", false, nil)
 
 	got, _ := os.ReadFile(filepath.Join(conceptsDir, "x.md"))
 	if string(got) != "[[phantom]]" {
@@ -131,7 +183,7 @@ func TestMaybeStripBrokenWikilinks_RunsWhenEnabled(t *testing.T) {
 	os.MkdirAll(conceptsDir, 0755)
 	os.WriteFile(filepath.Join(conceptsDir, "x.md"), []byte("[[phantom]] and bare text"), 0644)
 
-	MaybeStripBrokenWikilinks(dir, "wiki", true)
+	MaybeStripBrokenWikilinks(dir, "wiki", true, nil)
 
 	got, _ := os.ReadFile(filepath.Join(conceptsDir, "x.md"))
 	if strings.Contains(string(got), "[[phantom]]") {

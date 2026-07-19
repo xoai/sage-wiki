@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -216,5 +217,56 @@ func TestSourcesForArticle(t *testing.T) {
 	sources = m.SourcesForArticle("nonexistent")
 	if sources != nil {
 		t.Errorf("expected nil for nonexistent, got %v", sources)
+	}
+}
+
+// TestSaveIsAtomic verifies that Save writes via temp+rename (D2). The
+// crash-injection framing: a prior crashed Save can leave a garbage
+// `.manifest.json.tmp` on disk; a subsequent clean Save must (1) leave the live
+// manifest fully valid and (2) not leave that garbage temp behind — proof the
+// new Save reuses path+".tmp" and renames it into place atomically, so a reader
+// never observes a partial write. A plain os.WriteFile leaves the stray temp
+// untouched, so this fails on the old code for the right reason.
+func TestSaveIsAtomic(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".manifest.json")
+
+	// A good manifest already exists on disk (V1).
+	v1 := New()
+	v1.AddSource("raw/old.md", "sha256:old", "article", 100)
+	if err := v1.Save(path); err != nil {
+		t.Fatalf("Save v1: %v", err)
+	}
+
+	// A prior crash left a garbage temp file next to the manifest.
+	strayTmp := path + ".tmp"
+	if err := os.WriteFile(strayTmp, []byte("{not valid json, crashed mid-write"), 0644); err != nil {
+		t.Fatalf("plant stray tmp: %v", err)
+	}
+
+	// A clean Save of V2.
+	v2 := New()
+	v2.AddSource("raw/new.md", "sha256:new", "article", 200)
+	v2.AddConcept("attention", "wiki/concepts/attention.md", []string{"raw/new.md"})
+	if err := v2.Save(path); err != nil {
+		t.Fatalf("Save v2: %v", err)
+	}
+
+	// (1) The live manifest is fully valid and reflects V2 — never the garbage.
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load after atomic Save: %v", err)
+	}
+	if _, ok := loaded.Sources["raw/new.md"]; !ok {
+		t.Errorf("expected V2 source raw/new.md, sources=%v", loaded.Sources)
+	}
+	if loaded.ConceptCount() != 1 {
+		t.Errorf("expected 1 concept, got %d", loaded.ConceptCount())
+	}
+
+	// (2) No garbage temp survives — the atomic Save renamed its own temp into
+	// place, consuming the stray. A non-atomic os.WriteFile leaves it behind.
+	if _, err := os.Stat(strayTmp); !os.IsNotExist(err) {
+		t.Errorf("expected no leftover temp file at %s (atomic Save should rename it away), stat err=%v", strayTmp, err)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/extract"
+	"github.com/xoai/sage-wiki/internal/fsutil"
 	gitpkg "github.com/xoai/sage-wiki/internal/git"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
@@ -100,6 +101,17 @@ type FailedSource struct {
 	Attempts int    `json:"attempts"`
 }
 
+// orBackground returns ctx, or context.Background() when ctx is nil, so the
+// manifest lock's context-aware wait never dereferences a nil context. The
+// manifest MergeSave runs on the completed-run branch where cancellation should
+// no longer drop the result, but the lock still honors an explicit cancel.
+func orBackground(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
 // Compile runs Pass 0 (diff) and Pass 1 (summarize) of the compiler pipeline.
 func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	result := &CompileResult{}
@@ -123,6 +135,13 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("compile: load manifest: %w", err)
 	}
+
+	// Snapshot the manifest at Load as the merge base (D3). At Save time the
+	// compile reloads fresh under the lock and applies its delta (ours-base) so a
+	// short writer (MCP/CLI/ingest) that landed mid-compile is preserved rather
+	// than clobbered. Taken before any mutation, so ours-base is exactly this
+	// run's mutations.
+	base := mf.Clone()
 
 	// Check for existing checkpoint
 	statePath := filepath.Join(projectDir, ".sage", "compile-state.json")
@@ -184,7 +203,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		if client.ProviderName() != state.Batch.Provider {
 			return nil, fmt.Errorf("compile: provider changed from %s to %s since batch was submitted — clear checkpoint with --fresh or switch back", state.Batch.Provider, client.ProviderName())
 		}
-		return resumeBatch(projectDir, client, cfg, mf, state, statePath, tracker, opts)
+		return resumeBatch(projectDir, client, cfg, mf, base, state, statePath, tracker, opts)
 	}
 
 	// Subscription auth: disable batch mode (subscription tokens lack batch API access)
@@ -470,7 +489,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	// LLM to use generous cross-references, but Pass 2 extracts concepts
 	// conservatively, so a wiki of a non-ML corpus can end up with the
 	// majority of links being phantom. Issue #90.
-	MaybeStripBrokenWikilinks(projectDir, cfg.Output, cfg.Compiler.StripBrokenLinksEnabled())
+	MaybeStripBrokenWikilinks(projectDir, cfg.Output, cfg.Compiler.StripBrokenLinksEnabled(), memStore)
 
 	// Save manifest — unless a tiered pipeline run was interrupted before Pass 2/3
 	// completed. Saving then would persist this run's half-done manifest mutations
@@ -481,7 +500,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	// P1-1 / C1.
 	if pipelineIncomplete {
 		log.Info("compile interrupted before Pass 2/3 completed — manifest not saved; sources will reprocess on next compile")
-	} else if err := mf.Save(mfPath); err != nil {
+	} else if err := manifest.MergeSave(orBackground(opts.Ctx), mfPath, base, mf); err != nil {
 		return nil, fmt.Errorf("compile: save manifest: %w", err)
 	}
 
@@ -687,6 +706,7 @@ func resumeBatch(
 	client *llm.Client,
 	cfg *config.Config,
 	mf *manifest.Manifest,
+	base *manifest.Manifest,
 	state *CompileState,
 	statePath string,
 	tracker *llm.CostTracker,
@@ -826,7 +846,8 @@ func resumeBatch(
 		absOutputPath := filepath.Join(projectDir, summaryPath)
 
 		frontmatter := fmt.Sprintf("---\nsource: %s\ncompiled_at: %s\nbatch: true\n---\n\n", path, timeNow(cfg.Compiler.UserTimeLocation()))
-		if err := os.WriteFile(absOutputPath, []byte(frontmatter+summaryText), 0644); err != nil {
+		// Canonical write-then-index order (I2): summary written atomically first.
+		if err := fsutil.WriteFileAtomic(absOutputPath, []byte(frontmatter+summaryText), 0644); err != nil {
 			result.Errors++
 			progress.ItemError(path, err)
 			continue
@@ -988,7 +1009,7 @@ func resumeBatch(
 	// Save manifest — unless the batch run was interrupted before Pass 2/3 completed.
 	if !batchPass23OK {
 		log.Info("batch compile interrupted before Pass 2/3 completed — manifest not saved; sources will reprocess on next compile")
-	} else if err := mf.Save(mfPath); err != nil {
+	} else if err := manifest.MergeSave(orBackground(opts.Ctx), mfPath, base, mf); err != nil {
 		return nil, fmt.Errorf("compile: save manifest: %w", err)
 	}
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"os"
@@ -43,12 +44,12 @@ func runAddSource(cmd *cobra.Command, args []string) error {
 		srcType = "article"
 	}
 
-	mf, err := manifest.Load(filepath.Join(dir, ".manifest.json"))
-	if err != nil {
-		return cli.CLIError(outputFormat, err)
-	}
-	mf.AddSource(relPath, hash, srcType, info.Size())
-	if err := mf.Save(filepath.Join(dir, ".manifest.json")); err != nil {
+	// Manifest RMW under the exclusive lock (D4): a CLI `add-source` during a
+	// running `serve` is the same lost-update class as concurrent MCP writes.
+	if err := manifest.Mutate(context.Background(), filepath.Join(dir, ".manifest.json"), func(mf *manifest.Manifest) error {
+		mf.AddSource(relPath, hash, srcType, info.Size())
+		return nil
+	}); err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
 

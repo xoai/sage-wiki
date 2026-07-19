@@ -16,6 +16,7 @@ import (
 
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/extract"
+	"github.com/xoai/sage-wiki/internal/fsutil"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/memory"
@@ -227,11 +228,13 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap m
 	// Future compiles will create the missing articles, and the links
 	// will resolve naturally. Broken links are surfaced by `sage-wiki lint`.
 
-	// Write article file
+	// Canonical write-then-index order (I2): (1) write the article file
+	// atomically, (2) index into the DB (ontology + FTS + vectors, below),
+	// (3) the manifest is marked once at the end of the compile via MergeSave.
 	articleDir := filepath.Join(opts.ProjectDir, opts.OutputDir, "concepts")
 	os.MkdirAll(articleDir, 0755)
 
-	if err := os.WriteFile(absPath, []byte(articleContent), 0644); err != nil {
+	if err := fsutil.WriteFileAtomic(absPath, []byte(articleContent), 0644); err != nil {
 		result.Error = fmt.Errorf("write file: %w", err)
 		return result
 	}
@@ -830,11 +833,11 @@ type StripBrokenWikilinkStats struct {
 //
 // The helper is a wrapper around StripBrokenWikilinks; callers that want
 // custom logging or to act on the stats can call that directly.
-func MaybeStripBrokenWikilinks(projectDir, outputDir string, enabled bool) {
+func MaybeStripBrokenWikilinks(projectDir, outputDir string, enabled bool, memStore *memory.Store) {
 	if !enabled {
 		return
 	}
-	stats, err := StripBrokenWikilinks(projectDir, outputDir)
+	stats, err := StripBrokenWikilinks(projectDir, outputDir, memStore)
 	if err != nil {
 		log.Warn("strip-broken-links failed", "error", err)
 		return
@@ -852,7 +855,16 @@ func MaybeStripBrokenWikilinks(projectDir, outputDir string, enabled bool) {
 // replacing the dead link with bare text. Intended to run once after Pass 3
 // completes, when the on-disk set of concept articles is authoritative.
 // Issue #90.
-func StripBrokenWikilinks(projectDir, outputDir string) (StripBrokenWikilinkStats, error) {
+//
+// When memStore is non-nil, each rewritten article's FTS entry is updated to the
+// stripped content, keeping file and index consistent (write-then-index, I2) —
+// otherwise the post-Pass-3 rewrite would leave FTS holding the pre-strip text,
+// which the startup reconciler would later "heal" by re-embedding the article.
+// The article filename equals the concept name, so the FTS id is
+// "concept:"+<filename>. Chunk vectors are intentionally left as-is: removing a
+// dead [[wikilink]] barely changes the article's semantics, so a re-embed is not
+// worth its cost.
+func StripBrokenWikilinks(projectDir, outputDir string, memStore *memory.Store) (StripBrokenWikilinkStats, error) {
 	var stats StripBrokenWikilinkStats
 	conceptsDir := filepath.Join(projectDir, outputDir, "concepts")
 
@@ -900,8 +912,24 @@ func StripBrokenWikilinks(projectDir, outputDir string) (StripBrokenWikilinkStat
 		if stripped == 0 {
 			continue
 		}
-		if err := os.WriteFile(articlePath, []byte(rewritten), 0644); err != nil {
+		if err := fsutil.WriteFileAtomic(articlePath, []byte(rewritten), 0644); err != nil {
 			return stats, fmt.Errorf("strip-broken-links: write %s: %w", e.Name(), err)
+		}
+		// Keep FTS consistent with the rewritten file (I2). The article filename
+		// (without .md) is the concept name, so its FTS id is "concept:"+name.
+		if memStore != nil {
+			id := "concept:" + strings.TrimSuffix(e.Name(), ".md")
+			existing, gerr := memStore.Get(id)
+			switch {
+			case gerr != nil:
+				// The reconciler heals the resulting content mismatch next startup.
+				log.Warn("strip-broken-links: FTS lookup failed", "id", id, "error", gerr)
+			case existing != nil:
+				existing.Content = rewritten
+				if uerr := memStore.Update(*existing); uerr != nil {
+					log.Warn("strip-broken-links: FTS re-index failed", "id", id, "error", uerr)
+				}
+			}
 		}
 		stats.ArticlesEdited++
 		stats.LinksStripped += stripped
