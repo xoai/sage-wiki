@@ -72,13 +72,25 @@ func Load(path string) (*Manifest, error) {
 	return &m, nil
 }
 
-// Save writes the manifest to disk.
+// Save writes the manifest to disk atomically: it marshals to a sibling temp
+// file and renames it into place, so a crash mid-write can never leave an
+// unparseable `.manifest.json` and a concurrent reader never observes a partial
+// write (D2/I1). The temp lives next to the target so the rename stays on one
+// filesystem (rename is only atomic within a filesystem).
 func (m *Manifest) Save(path string) error {
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return fmt.Errorf("manifest.Save: %w", err)
 	}
-	return os.WriteFile(path, data, 0644)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return fmt.Errorf("manifest.Save: write temp: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp) // best-effort cleanup; leaving a stale temp is not fatal
+		return fmt.Errorf("manifest.Save: rename: %w", err)
+	}
+	return nil
 }
 
 // AddSource registers a new source file.
