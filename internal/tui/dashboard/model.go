@@ -1,11 +1,11 @@
 package dashboard
 
 import (
-	"path/filepath"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/memory"
@@ -266,19 +266,13 @@ func (m Model) renderTabBar() string {
 
 // Run launches the unified TUI dashboard.
 func Run(projectDir string) error {
-	cfgPath := filepath.Join(projectDir, "config.yaml")
-	cfg, err := config.Load(cfgPath)
+	a, err := app.Open(projectDir)
 	if err != nil {
 		return err
 	}
+	defer a.Close()
 
-	db, err := storage.Open(filepath.Join(projectDir, ".sage", "wiki.db"))
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	m := New(projectDir, cfg, db)
+	m := New(projectDir, a.Config, a.DB)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithInputTTY())
 
 	// Set program reference for query streaming

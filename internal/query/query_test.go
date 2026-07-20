@@ -277,3 +277,36 @@ func TestBuildQueryContext_PreambleEnhanced(t *testing.T) {
 		t.Errorf("article content missing from context: %q", ctx)
 	}
 }
+
+// TestQuery_SharedHandlePathDoesNotOpenDB: when the caller supplies a DB
+// (opts[0].DB), Query must NOT open the project's database at all (P1-8
+// adoption is nil-path only). Probe: projectDir has NO .sage/wiki.db on
+// disk and the caller's DB lives elsewhere — a wrong second Open would
+// create the file silently.
+func TestQuery_SharedHandlePathDoesNotOpenDB(t *testing.T) {
+	dir := t.TempDir() // deliberately NO wiki.InitGreenfield — no .sage/wiki.db
+	cfgPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(cfgPath, []byte("version: 1\nproject: test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	otherDB, err := storage.Open(filepath.Join(t.TempDir(), "elsewhere.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer otherDB.Close()
+
+	// Query with the shared handle; it must use it and never touch the
+	// project's (nonexistent) DB path. The empty-context short-circuit
+	// returns before any LLM client is needed.
+	result, err := Query(dir, "anything", "markdown", 5, QueryOpts{DB: otherDB})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if result == nil {
+		t.Fatal("nil result")
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".sage", "wiki.db")); !os.IsNotExist(err) {
+		t.Error("project DB was opened/created on the shared-handle path — adoption must be nil-path only")
+	}
+}
