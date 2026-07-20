@@ -76,10 +76,6 @@ type FullPipelineOpts struct {
 	ItemStore    *CompileItemStore // optional — for per-article quality scoring
 	CacheEnabled bool
 	Progress     *Progress
-
-	// Checkpoint (legacy — retained alongside compile_items for M3 fallback)
-	State     *CompileState
-	StatePath string
 }
 
 // FullPipelineResult summarizes what the full pipeline produced.
@@ -163,7 +159,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	for _, sr := range summaries {
 		// A cancelled source (compile interrupted, or its LLM call cancelled mid-
 		// flight) is neither success nor failure. Skip it: don't count an error,
-		// don't add it to state.Failed, and don't mark it compiled — so the next
+		// don't record a failure, and don't mark it compiled — so the next
 		// compile reprocesses it cleanly.
 		if sr.Cancelled || errors.Is(sr.Error, context.Canceled) || errors.Is(sr.Error, context.DeadlineExceeded) {
 			continue
@@ -171,12 +167,6 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		if sr.Error != nil {
 			result.Errors++
 			progress.ItemError(sr.SourcePath, sr.Error)
-			if opts.State != nil {
-				opts.State.Failed = append(opts.State.Failed, FailedSource{
-					Path:  sr.SourcePath,
-					Error: sr.Error.Error(),
-				})
-			}
 			continue
 		}
 
@@ -219,24 +209,9 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 				opts.VecStore.Upsert(sr.SourcePath, vec)
 			}
 		}
-
-		// Update legacy checkpoint
-		if opts.State != nil {
-			removeFromPending(opts.State, sr.SourcePath)
-			opts.State.Completed = append(opts.State.Completed, sr.SourcePath)
-			if opts.StatePath != "" {
-				saveCompileState(opts.StatePath, opts.State)
-			}
-		}
 	}
 
 	client.TeardownCache(sumCacheID)
-	if opts.State != nil {
-		opts.State.Pass = 2
-		if opts.StatePath != "" {
-			saveCompileState(opts.StatePath, opts.State)
-		}
-	}
 
 	// Pass 2: Concept extraction
 	successfulSummaries := filterSuccessful(summaries)
