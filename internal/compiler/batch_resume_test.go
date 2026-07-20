@@ -96,7 +96,7 @@ func newFakeBatchServer(t *testing.T) *fakeBatchServer {
 			http.Error(w, "unexpected: "+r.Method+" "+r.URL.Path, http.StatusNotFound)
 		}
 	}))
-	t.Cleanup(f.Server.Close)
+	t.Cleanup(f.Close)
 	return f
 }
 
