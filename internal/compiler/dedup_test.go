@@ -1,8 +1,14 @@
 package compiler
 
 import (
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -118,5 +124,88 @@ func TestDedupCache_DefaultThreshold(t *testing.T) {
 	dc := NewDedupCache(nil, nil, 0)
 	if dc.threshold != 0.85 {
 		t.Errorf("default threshold = %.2f, want 0.85", dc.threshold)
+	}
+}
+
+// countingEmbedder wraps mockEmbedder with a call counter (plan T1: the
+// existing mock does not count, and the fallback assertion needs it).
+type countingEmbedder struct {
+	mockEmbedder
+	calls int
+}
+
+func (m *countingEmbedder) Embed(text string) ([]float32, error) {
+	m.calls++
+	return m.mockEmbedder.Embed(text)
+}
+
+// captureLog rebinds internal/log's handler to a pipe (os.Stderr
+// reassignment + SetVerbosity rebind — internal/log has no capture hook;
+// plan T1 mechanism). Process-global: do NOT run parallel. Returns the
+// captured output and restores everything.
+func captureLog(t *testing.T, verbosity int, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	log.SetVerbosity(verbosity)
+	defer func() {
+		os.Stderr = old
+		log.SetVerbosity(verbosity)
+	}()
+
+	fn()
+
+	w.Close()
+	out, _ := io.ReadAll(r)
+	return string(out)
+}
+
+// TestDedupCache_Seed_VecStoreErrorFallsBackToEmbed pins D2 (REL-04): a
+// real vecStore.Get error (closed DB) must NOT be silently swallowed as a
+// cache miss — it logs (bounded: first failure + end-of-Seed summary, never
+// per-name) and STILL embeds every name correctly.
+func TestDedupCache_Seed_VecStoreErrorFallsBackToEmbed(t *testing.T) {
+	dir := t.TempDir()
+	db, err := storage.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	vecStore := vectors.NewStore(db)
+	db.Close() // every Get now errors (REL-04: real error, not a miss)
+
+	names := []string{"alpha", "beta", "gamma", "delta", "epsilon"}
+	emb := &countingEmbedder{}
+	dc := NewDedupCache(emb, vecStore, 0.85)
+
+	out := captureLog(t, 0, func() {
+		dc.Seed(names)
+	})
+
+	// Fallback correctness: every name embedded via the API.
+	if emb.calls != len(names) {
+		t.Errorf("embed calls = %d, want %d (one per name on cache failure)", emb.calls, len(names))
+	}
+	for _, n := range names {
+		if _, _, vec := dc.CheckDuplicate(n); vec == nil {
+			t.Errorf("name %q missing from cache after fallback", n)
+		}
+	}
+
+	// Bounded logging: count lines mentioning the cache-read failure.
+	var warnLines int
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "vector cache") && strings.Contains(line, "embed") {
+			warnLines++
+		}
+	}
+	if warnLines == 0 {
+		t.Error("no cache-read-failure warning logged — real DB error was silently swallowed")
+	}
+	if warnLines > 2 {
+		t.Errorf("cache-read-failure warnings = %d, want ≤ 2 (first failure + Seed summary, no per-name flood):\n%s", warnLines, out)
 	}
 }

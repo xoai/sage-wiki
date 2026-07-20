@@ -33,12 +33,18 @@ func (s *Store) Upsert(id string, embedding []float32) error {
 	})
 }
 
-// Get retrieves a vector by ID. Returns nil, nil if not found.
+// Get retrieves a vector by ID. Returns (nil, nil) ONLY when the ID is
+// genuinely absent (sql.ErrNoRows); any other error (closed/corrupt DB) is
+// wrapped and returned — a real failure must never masquerade as a cache
+// miss (REL-04).
 func (s *Store) Get(id string) ([]float32, error) {
 	var blob []byte
 	err := s.db.ReadDB().QueryRow("SELECT embedding FROM vec_entries WHERE id=?", id).Scan(&blob)
 	if err != nil {
-		return nil, nil // not found or error
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("vectors.Get: %w", err)
 	}
 	return decodeFloat32s(blob), nil
 }

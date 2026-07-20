@@ -60,15 +60,28 @@ func (dc *DedupCache) Seed(names []string) {
 	}
 
 	loaded, embedded, failed := 0, 0, 0
+	cacheReadFailures := 0
+	var firstCacheErr error
 
 	dc.mu.Lock()
 	for _, name := range names {
 		// Try vector store first (no API call needed)
 		if dc.vecStore != nil {
-			if vec, err := dc.vecStore.Get(name); err == nil && vec != nil {
+			vec, err := dc.vecStore.Get(name)
+			if err == nil && vec != nil {
 				dc.cache[name] = vec
 				loaded++
 				continue
+			}
+			if err != nil {
+				// REL-04: a real DB error is not a cache miss. Count it and
+				// fall through to embed (embedding still produces the correct
+				// vector) — degrade, never silently swallow. Logged once
+				// below, not per name: a broken store fails EVERY Get.
+				cacheReadFailures++
+				if firstCacheErr == nil {
+					firstCacheErr = err
+				}
 			}
 		}
 
@@ -84,6 +97,10 @@ func (dc *DedupCache) Seed(names []string) {
 	cacheSize := len(dc.cache)
 	dc.mu.Unlock()
 
+	if firstCacheErr != nil {
+		log.Warn("vector cache read failed — falling back to embed for remaining concepts",
+			"error", firstCacheErr, "failures", cacheReadFailures)
+	}
 	if cacheSize > 0 {
 		log.Info("dedup cache seeded",
 			"total", cacheSize, "from_store", loaded,
@@ -91,6 +108,10 @@ func (dc *DedupCache) Seed(names []string) {
 	}
 	if failed > 0 {
 		log.Warn("dedup cache: some concepts could not be seeded", "failed", failed)
+	}
+	if cacheReadFailures > 1 {
+		log.Warn("vector cache unreadable during seed — concepts embedded via API instead",
+			"cache_read_failures", cacheReadFailures)
 	}
 }
 
