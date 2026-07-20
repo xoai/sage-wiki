@@ -83,7 +83,7 @@ func (dc *DedupCache) Seed(names []string) {
 				cacheReadFailures++
 				if firstCacheErr == nil {
 					firstCacheErr = err
-					log.Warn("vector cache read failed — falling back to embed for remaining concepts",
+					log.Warn("vector cache read failed — embedding via API instead (cache retried per concept)",
 						"error", err)
 				}
 			}

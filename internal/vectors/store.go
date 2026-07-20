@@ -218,7 +218,7 @@ func (s *Store) DeleteDocChunkVectors(docID string) error {
 func (s *Store) HasChunkVectors(docID string) (bool, error) {
 	var one int
 	err := s.db.ReadDB().QueryRow("SELECT 1 FROM vec_chunks WHERE doc_id = ? LIMIT 1", docID).Scan(&one)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
