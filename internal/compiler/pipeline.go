@@ -198,12 +198,22 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	}
 	client.SetTracker(tracker)
 
-	// Check for pending batch to resume
-	if state != nil && state.Batch != nil {
-		if client.ProviderName() != state.Batch.Provider {
-			return nil, fmt.Errorf("compile: provider changed from %s to %s since batch was submitted — clear checkpoint with --fresh or switch back", state.Batch.Provider, client.ProviderName())
+	// Check for pending batch to resume (P1-3: batch state lives in
+	// .sage/batch-state.json; a legacy compile-state.json in-flight batch is
+	// split into it here, on the first run of the new binary). Skipped under
+	// --fresh, matching the legacy state load below; T4 upgrades this to
+	// skip-AND-clear.
+	if !opts.Fresh {
+		bcp, err := loadOrMigrateBatchCheckpoint(projectDir)
+		if err != nil {
+			return nil, fmt.Errorf("compile: load batch checkpoint: %w", err)
 		}
-		return resumeBatch(projectDir, client, cfg, mf, base, state, statePath, tracker, opts)
+		if bcp != nil && bcp.Batch != nil {
+			if client.ProviderName() != bcp.Batch.Provider {
+				return nil, fmt.Errorf("compile: provider changed from %s to %s since batch was submitted — clear checkpoint with --fresh or switch back", bcp.Batch.Provider, client.ProviderName())
+			}
+			return resumeBatch(projectDir, client, cfg, mf, base, bcp, tracker, opts)
+		}
 	}
 
 	// Subscription auth: disable batch mode (subscription tokens lack batch API access)
@@ -236,7 +246,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		if !client.SupportsBatch() {
 			return nil, fmt.Errorf("compile: provider %s does not support batch API", cfg.API.Provider)
 		}
-		return submitBatch(projectDir, client, cfg, mf, diff, statePath, tracker)
+		return submitBatch(projectDir, client, cfg, mf, diff, tracker)
 	}
 
 	// Open DB
@@ -560,14 +570,14 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 }
 
 // submitBatch builds batch requests from the diff and submits them.
-// Saves checkpoint and exits — next `compile` will resume via resumeBatch.
+// Saves the batch checkpoint (.sage/batch-state.json) and exits — the next
+// `compile` resumes via resumeBatch.
 func submitBatch(
 	projectDir string,
 	client *llm.Client,
 	cfg *config.Config,
 	mf *manifest.Manifest,
 	diff *DiffResult,
-	statePath string,
 	tracker *llm.CostTracker,
 ) (*CompileResult, error) {
 	result := &CompileResult{
@@ -666,20 +676,19 @@ func submitBatch(
 		return nil, fmt.Errorf("compile: submit batch: %w", err)
 	}
 
-	// Pending list holds source PATHS (used by non-batch resume logic too) —
-	// the wire-level IDs are kept in BatchState.PathByID below.
+	// Pending list holds source PATHS (used by resumeBatch's result
+	// validation) — the wire-level IDs are kept in BatchState.PathByID.
 	pending := make([]string, 0, len(pathByID))
 	for _, path := range pathByID {
 		pending = append(pending, path)
 	}
 
-	// Save checkpoint
+	// Save the batch checkpoint — the ONLY checkpoint written on this path
+	// (P1-3; no compile-state.json anywhere).
 	utcNow := time.Now().UTC().Format(time.RFC3339)
-	state := &CompileState{
+	bcp := &BatchCheckpoint{
 		CompileID: time.Now().Format("20060102-150405"),
 		StartedAt: utcNow,
-		Pass:      1,
-		Pending:   pending,
 		Batch: &BatchState{
 			BatchID:     batchID,
 			Provider:    client.ProviderName(),
@@ -687,8 +696,9 @@ func submitBatch(
 			SubmittedAt: utcNow,
 			PathByID:    pathByID,
 		},
+		Pending: pending,
 	}
-	if err := saveCompileState(statePath, state); err != nil {
+	if err := saveBatchCheckpoint(projectDir, bcp); err != nil {
 		return nil, fmt.Errorf("compile: CRITICAL — batch %s submitted but checkpoint save failed: %w (batch ID may be lost)", batchID, err)
 	}
 
@@ -701,19 +711,20 @@ func submitBatch(
 }
 
 // resumeBatch polls and retrieves a previously submitted batch, then continues the pipeline.
+// The batch checkpoint (bcp) is the only resume state (P1-3); every terminal
+// path retires it via retireBatchCheckpoint (strip-then-conditional-delete).
 func resumeBatch(
 	projectDir string,
 	client *llm.Client,
 	cfg *config.Config,
 	mf *manifest.Manifest,
 	base *manifest.Manifest,
-	state *CompileState,
-	statePath string,
+	bcp *BatchCheckpoint,
 	tracker *llm.CostTracker,
 	opts CompileOpts,
 ) (*CompileResult, error) {
 	result := &CompileResult{}
-	bs := state.Batch
+	bs := bcp.Batch
 
 	log.Info("checking batch status", "batch_id", bs.BatchID, "provider", bs.Provider)
 	status, err := client.PollBatch(bs.BatchID)
@@ -730,19 +741,13 @@ func resumeBatch(
 	case llm.BatchExpired:
 		log.Warn("batch expired, clearing checkpoint", "batch_id", bs.BatchID)
 		fmt.Fprintf(os.Stderr, "⚠ Batch %s expired (24h window). Re-run with `compile --batch` to resubmit.\n", bs.BatchID)
-		state.Batch = nil
-		if err := saveCompileState(statePath, state); err != nil {
-			log.Warn("failed to save checkpoint after batch expiry", "error", err)
-		}
+		retireBatchCheckpoint(projectDir)
 		return result, nil
 
 	case llm.BatchFailed:
 		log.Error("batch failed", "batch_id", bs.BatchID)
 		fmt.Fprintf(os.Stderr, "✗ Batch %s failed. Re-run with `compile --batch` to resubmit.\n", bs.BatchID)
-		state.Batch = nil
-		if err := saveCompileState(statePath, state); err != nil {
-			log.Warn("failed to save checkpoint after batch failure", "error", err)
-		}
+		retireBatchCheckpoint(projectDir)
 		return result, nil
 
 	case llm.BatchEnded:
@@ -777,15 +782,15 @@ func resumeBatch(
 	mfPath := filepath.Join(projectDir, ".manifest.json")
 
 	// Build set of known pending sources for CustomID validation
-	pendingSet := make(map[string]bool, len(state.Pending))
-	for _, p := range state.Pending {
+	pendingSet := make(map[string]bool, len(bcp.Pending))
+	for _, p := range bcp.Pending {
 		pendingSet[p] = true
 	}
 
 	// Summary naming (issue #107): resolve roots once and warn on collisions
 	// over the full pending set, matching the standard/on-demand path.
 	batchRoots := sourceRootPaths(cfg.Sources)
-	warnSummaryNameCollisions(state.Pending, batchRoots, cfg.Compiler.SummaryNamingOrDefault())
+	warnSummaryNameCollisions(bcp.Pending, batchRoots, cfg.Compiler.SummaryNamingOrDefault())
 
 	// Process batch results as summaries
 	progress.StartPhase("Processing batch results", len(batchResults))
@@ -815,10 +820,6 @@ func resumeBatch(
 		if br.Error != "" {
 			result.Errors++
 			progress.ItemError(path, fmt.Errorf("%s", br.Error))
-			state.Failed = append(state.Failed, FailedSource{
-				Path:  path,
-				Error: br.Error,
-			})
 			continue
 		}
 
@@ -832,7 +833,6 @@ func resumeBatch(
 		if gErr := emptyContentError(br.Response, "batch summary", path); gErr != nil {
 			result.Errors++
 			progress.ItemError(path, gErr)
-			state.Failed = append(state.Failed, FailedSource{Path: path, Error: gErr.Error()})
 			continue
 		}
 
@@ -892,18 +892,17 @@ func resumeBatch(
 			SummaryPath: summaryPath,
 			Summary:     summaryText,
 		})
-
-		removeFromPending(state, path)
-		state.Completed = append(state.Completed, path)
 	}
 	progress.EndPhase()
 
-	// Clear batch state
-	state.Batch = nil
-	state.Pass = 2
-	if err := saveCompileState(statePath, state); err != nil {
-		log.Warn("failed to save checkpoint after batch retrieval", "error", err)
-	}
+	// The batch is consumed: summaries are on disk (atomic writes above), and
+	// the remaining Pass 2/3 work is re-derivable — the manifest is only saved
+	// at the end of this run, so a crash re-diffs these sources and the
+	// standard path reprocesses them (batch summaries lack source_hash
+	// frontmatter, so they re-generate: recompute, never loss). Retire the
+	// checkpoint now (strip legacy marker first; delete only on strip
+	// success — spec D5).
+	retireBatchCheckpoint(projectDir)
 
 	// Continue with Pass 2 + 3 synchronously
 	batchPass23OK := true // set false if extraction fails or the run is cancelled
@@ -1033,13 +1032,6 @@ func resumeBatch(
 		} else if demoted > 0 {
 			log.Info("demoted stale outputs", "count", demoted)
 		}
-	}
-
-	// Clean up checkpoint
-	if result.Errors == 0 {
-		os.Remove(statePath)
-	} else {
-		saveCompileState(statePath, state)
 	}
 
 	// Git auto-commit

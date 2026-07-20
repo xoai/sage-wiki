@@ -114,6 +114,21 @@ func stripLegacyBatch(projectDir string) error {
 	return nil
 }
 
+// retireBatchCheckpoint is the terminal step of every batch resume path
+// (spec D5): strip the legacy batch marker (if any), then — only on strip
+// success — delete batch-state.json. Deleting unconditionally would let an
+// unstripped legacy marker re-materialize a consumed batch on the next run;
+// keeping the file on strip failure degrades to a consistent re-poll.
+func retireBatchCheckpoint(projectDir string) {
+	if err := stripLegacyBatch(projectDir); err != nil {
+		log.Warn("retire batch checkpoint: legacy strip failed — keeping batch-state.json for a consistent re-poll", "error", err)
+		return
+	}
+	if err := os.Remove(batchCheckpointPath(projectDir)); err != nil && !os.IsNotExist(err) {
+		log.Warn("retire batch checkpoint: remove failed", "error", err)
+	}
+}
+
 // loadOrMigrateBatchCheckpoint is the batch-resume entry point (spec D2). It
 // returns the in-flight batch checkpoint, migrating a legacy
 // compile-state.json on first encounter:
