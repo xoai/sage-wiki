@@ -28,7 +28,7 @@ type SummaryResult struct {
 	Error       error
 	// Cancelled marks a source skipped because the compile was cancelled. It is
 	// neither success nor failure: it stays unmarked in the manifest so the next
-	// compile reprocesses it, and it is NOT added to state.Failed.
+	// compile reprocesses it, and it is NOT recorded as a failure.
 	Cancelled bool
 }
 

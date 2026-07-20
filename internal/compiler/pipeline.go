@@ -1044,28 +1044,6 @@ func loadCompileState(path string) (*CompileState, error) {
 	return &state, nil
 }
 
-func saveCompileState(path string, state *CompileState) error {
-	data, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return err
-	}
-	// Atomic write: write to temp file then rename
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
-
-func removeFromPending(state *CompileState, path string) {
-	for i, p := range state.Pending {
-		if p == path {
-			state.Pending = append(state.Pending[:i], state.Pending[i+1:]...)
-			return
-		}
-	}
-}
-
 func extractType(path string, typeSignals []config.TypeSignal) string {
 	var contentHead string
 	if len(typeSignals) > 0 {

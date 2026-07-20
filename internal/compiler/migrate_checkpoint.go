@@ -26,7 +26,7 @@ import (
 //
 // Returns true if migration was performed, false if skipped or not needed.
 func MigrateCheckpoint(projectDir string, db *storage.DB, mf *manifest.Manifest, cfg *config.Config) (bool, error) {
-	statePath := filepath.Join(projectDir, ".sage", "compile-state.json")
+	statePath := legacyCheckpointPath(projectDir)
 	state, err := loadCompileState(statePath)
 	if err != nil {
 		if os.IsNotExist(err) {
