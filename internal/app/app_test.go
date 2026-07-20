@@ -51,12 +51,16 @@ func TestOpen_MissingConfig(t *testing.T) {
 	}
 	// A subsequent Open ON THE SAME PROJECT succeeds once config exists
 	// (spec Tests §2: no poisoned state from the failed Open).
-	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("version: 1\nproject: test\n"), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("version: 1\nproject: test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	a2, err := Open(dir)
 	if err != nil {
 		t.Fatalf("second Open on same project: %v", err)
 	}
-	a2.Close()
+	if err := a2.Close(); err != nil {
+		t.Errorf("second Close: %v", err)
+	}
 }
 
 func TestEmbedder_Lazy(t *testing.T) {
@@ -72,6 +76,14 @@ func TestEmbedder_Lazy(t *testing.T) {
 	oldErr := os.Stderr
 	os.Stderr = w
 	log.SetVerbosity(0)
+	// Restore FIRST, unconditionally — a t.Fatalf below must not leave the
+	// process logger bound to a pipe with no reader (64KB buffer deadlock
+	// across the whole test binary; Gate-8 recheck).
+	defer func() {
+		os.Stderr = oldErr
+		log.SetVerbosity(0)
+		w.Close()
+	}()
 
 	a, err := Open(dir)
 	if err != nil {
