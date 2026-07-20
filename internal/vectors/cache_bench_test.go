@@ -133,3 +133,55 @@ func BenchmarkSearchDoc(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkBruteForceSearchDoc is the doc-level BEFORE baseline (spec test
+// 6 requires doc-level before/after pairs, both recorded).
+func BenchmarkBruteForceSearchDoc(b *testing.B) {
+	dir := b.TempDir()
+	db, err := storage.Open(filepath.Join(dir, "bench.db"))
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer db.Close()
+	s := NewStore(db)
+	rng := uint32(7)
+	next := func() float32 {
+		rng = rng*1664525 + 1013904223
+		return float32(rng%2000)/1000.0 - 1.0
+	}
+	for i := 0; i < 2000; i++ {
+		v := make([]float32, 384)
+		for j := range v {
+			v[j] = next()
+		}
+		if err := s.Upsert(docID(i), v); err != nil {
+			b.Fatal(err)
+		}
+	}
+	query := benchQuery(384)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rows, err := db.ReadDB().Query("SELECT id, embedding, dimensions FROM vec_entries")
+		if err != nil {
+			b.Fatal(err)
+		}
+		var results []VectorResult
+		for rows.Next() {
+			var id string
+			var blob []byte
+			var dims int
+			if err := rows.Scan(&id, &blob, &dims); err != nil {
+				b.Fatal(err)
+			}
+			vec := decodeFloat32s(blob)
+			if len(vec) != len(query) {
+				continue
+			}
+			results = insertSorted(results, VectorResult{ID: id, Score: CosineSimilarity(query, vec)}, 10)
+		}
+		if err := rows.Err(); err != nil {
+			b.Fatal(err)
+		}
+		rows.Close()
+	}
+}

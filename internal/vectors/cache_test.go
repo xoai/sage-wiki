@@ -498,3 +498,47 @@ func TestCache_PatchDuringLoadAppliesAfter(t *testing.T) {
 		t.Errorf("loadCount drifted to %d after patch", s.docCache.loadCount())
 	}
 }
+
+// TestCache_DimChangePatchInvalidates: a patch whose dimension differs from
+// the cached rows (provider change mid-process) must INVALIDATE, not patch
+// — patching would silently corrupt row alignment (Gate-8 MAJOR). The next
+// search reloads from the DB and serves the new dimension coherently.
+func TestCache_DimChangePatchInvalidates(t *testing.T) {
+	s, cleanup := seededFixture(t, 5, 2)
+	defer cleanup()
+
+	// Load both caches (dim 8).
+	s.Search([]float32{1, 0, 0, 0, 0, 0, 0, 0}, 3)
+	s.SearchChunks([]float32{1, 0, 0, 0, 0, 0, 0, 0}, 3)
+	if s.docCache.loadCount() != 1 || s.chunkCache.loadCount() != 1 {
+		t.Fatal("caches not loaded")
+	}
+
+	// Patch with a DIFFERENT dimension — must invalidate, not corrupt.
+	s.Upsert("dim-changed", []float32{1, 0, 0, 0})
+	if s.docCache.isLoaded() {
+		t.Error("dim-mismatched doc patch did not invalidate")
+	}
+	err := s.db.WriteTx(func(tx *sql.Tx) error {
+		return s.UpsertChunk(tx, "doc-0:chunk-dimchanged", "doc-0", []float32{1, 0, 0, 0})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.InvalidateChunkCache()
+
+	// Next searches reload coherently from the DB (mixed dims: mismatched
+	// rows skipped by the loader, as before).
+	got, err := s.Search([]float32{1, 0, 0, 0}, 10)
+	if err != nil {
+		t.Fatalf("post-invalidate search: %v", err)
+	}
+	if s.docCache.loadCount() != 2 {
+		t.Errorf("doc loadCount = %d, want 2 (one coherent reload)", s.docCache.loadCount())
+	}
+	for _, r := range got {
+		if r.ID == "dim-changed" {
+			t.Error("dim-changed row served despite dimension mismatch with query")
+		}
+	}
+}

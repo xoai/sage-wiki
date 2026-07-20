@@ -245,6 +245,8 @@ func (s *WebServer) watchFsnotify(ctx context.Context, outputDir string) {
 			return
 		case ev, ok := <-watcher.Events:
 			if !ok {
+				log.Warn("web watch: fsnotify events channel closed — falling back to polling")
+				s.watchPoll(ctx, outputDir)
 				return
 			}
 			// Newly created subdirectories are added as they appear so
@@ -252,9 +254,20 @@ func (s *WebServer) watchFsnotify(ctx context.Context, outputDir string) {
 			if ev.Op&fsnotify.Create != 0 {
 				if info, err := os.Stat(ev.Name); err == nil && info.IsDir() {
 					if err := watcher.Add(ev.Name); err != nil {
-						log.Warn("web watch: add subdir failed", "path", ev.Name, "error", err)
+						// Watch-descriptor exhaustion (e.g. inotify
+						// max_user_watches) hits at RUNTIME as the vault
+						// grows — degrade to polling rather than silently
+						// watching a partial tree.
+						log.Warn("web watch: add subdir failed, falling back to polling", "path", ev.Name, "error", err)
+						s.watchPoll(ctx, outputDir)
+						return
 					}
 				}
+			}
+			// Only content ops debounce-broadcast; metadata-only events
+			// (chmod) are ignored, matching the old size+mtime poll's view.
+			if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) == 0 {
+				continue
 			}
 			if timer != nil {
 				timer.Stop()

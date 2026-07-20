@@ -80,11 +80,19 @@ func normalizeCopy(v []float32) []float32 {
 }
 
 // upsert appends or replaces a row (normalized at write). No-op when
-// !loaded (patch-on-unloaded rule).
+// !loaded (patch-on-unloaded rule). A vector whose dimension differs from
+// the cached rows (provider/model change mid-process — reembed.go:68 is
+// the real trigger) INVALIDATES instead of patching: patching a
+// longer/shorter row would silently corrupt the matrix or break every
+// row's alignment (Gate-8 MAJOR). The next search reloads coherently.
 func (c *vectorCache) upsert(id, docID string, vec []float32) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.loaded {
+		return
+	}
+	if len(vec) != c.dim {
+		c.loaded = false
 		return
 	}
 	nv := normalizeCopy(vec)
