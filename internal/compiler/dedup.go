@@ -61,7 +61,7 @@ func (dc *DedupCache) Seed(names []string) {
 
 	loaded, embedded, failed := 0, 0, 0
 	cacheReadFailures := 0
-	var firstCacheErr error
+	cacheWarned := false
 
 	dc.mu.Lock()
 	for _, name := range names {
@@ -81,8 +81,8 @@ func (dc *DedupCache) Seed(names []string) {
 				// feedback now, not at the end) and a summary at the end —
 				// never per name: a broken store fails EVERY Get.
 				cacheReadFailures++
-				if firstCacheErr == nil {
-					firstCacheErr = err
+				if !cacheWarned {
+					cacheWarned = true
 					log.Warn("vector cache read failed — embedding via API instead (cache retried per concept)",
 						"error", err)
 				}

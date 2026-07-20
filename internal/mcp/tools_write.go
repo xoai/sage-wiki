@@ -16,7 +16,6 @@ import (
 	"github.com/xoai/sage-wiki/internal/auth"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
-	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/fsutil"
 	gitpkg "github.com/xoai/sage-wiki/internal/git"
 	"github.com/xoai/sage-wiki/internal/linter"
@@ -622,10 +621,12 @@ func (s *Server) handleCompileDiff(ctx context.Context, req mcplib.CallToolReque
 	return textResult(sb.String()), nil
 }
 
+// tryEmbed embeds content into the vector store using the server's shared
+// embedder (built once in NewServer — re-detecting per call would re-probe
+// providers and warn-spam offline deployments on every write).
 func (s *Server) tryEmbed(id string, content string) {
-	embedder := embed.NewFromConfig(s.cfg)
-	if embedder != nil {
-		vec, err := embedder.Embed(content)
+	if s.embedder != nil {
+		vec, err := s.embedder.Embed(content)
 		if err != nil {
 			// A configured-but-failing embedder must be visible (REL-04);
 			// unconfigured embedders short-circuit above and stay silent.
