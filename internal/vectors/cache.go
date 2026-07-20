@@ -162,9 +162,20 @@ type cacheResult struct {
 // search scores every row against the normalized query and returns the top
 // `limit` results (descending score, insertSorted-equivalent stable order).
 // filter (chunk path) restricts rows by docID when non-nil.
+//
+// The dimension check is REPEATED here under the same RLock that reads the
+// matrix: the entry-point guard (dimVal) releases its lock before this
+// call, and an invalidate→reload landing between them can change c.dim
+// (re-embed with a different provider is a real dim-change path). Without
+// the re-check, a longer row dimension would index nq out of range — the
+// pre-cache brute-force path was immune via its per-row skip.
 func (c *vectorCache) search(nq []float32, limit int, filter map[string]bool) []cacheResult {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
+	if len(nq) != c.dim {
+		return nil
+	}
 
 	top := make([]cacheResult, 0, limit)
 	for i := 0; i < len(c.ids); i++ {

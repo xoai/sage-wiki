@@ -1,12 +1,12 @@
 package vectors
 
 import (
-	"time"
 	"database/sql"
 	"math"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/storage"
 )
@@ -59,7 +59,7 @@ func seededFixture(t *testing.T, docs, chunksPerDoc int) (*Store, func()) {
 	return s, func() { db.Close() }
 }
 
-func docID(d int) string   { return "doc-" + itoa(d) }
+func docID(d int) string      { return "doc-" + itoa(d) }
 func chunkID(d, c int) string { return docID(d) + ":chunk-" + itoa(c) }
 func itoa(i int) string {
 	if i == 0 {
