@@ -25,7 +25,9 @@ import (
 // documented non-goal (05 §P1-7).
 var (
 	maxZipEntryBytes int64 = 50 << 20  // 50 MB per decompressed entry
-	maxZipTotalBytes int64 = 200 << 20 // 200 MB aggregate per archive
+	maxZipTotalBytes int64 = 200 << 20 // 200 MB aggregate per archive;
+	// peak RSS is ~2–2.5× this (strings.Builder growth + per-entry string +
+	// token churn) — size host limits accordingly.
 )
 
 // errZipLimitExceeded is the distinctive error boundedReader returns from
