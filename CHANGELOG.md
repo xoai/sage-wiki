@@ -12,8 +12,9 @@
   version, a legacy `compile-state.json` is migrated once — completed/pending/
   failed sources into `compile_items`, an in-flight batch split into
   `batch-state.json` — and then deleted; just run `sage-wiki compile` again to
-  resume. `--fresh` now deletes both checkpoint files outright (this is also the
-  recovery for the "provider changed since batch was submitted" error), and
+  resume. `--fresh` now deletes both checkpoint files (except under `--dry-run`,
+  which stays fully side-effect-free; this is also the recovery for the
+  "provider changed since batch was submitted" error), and
   `--dry-run` with a pending batch reports it without polling the provider. A
   pending batch is now resumed even when its sources were deleted from disk
   (previously an empty diff skipped the resume).

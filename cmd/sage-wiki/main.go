@@ -180,7 +180,7 @@ func init() {
 	// Compile flags
 	compileCmd.Flags().Bool("watch", false, "Watch for changes and recompile")
 	compileCmd.Flags().Bool("dry-run", false, "Show what would change without writing")
-	compileCmd.Flags().Bool("fresh", false, "Ignore checkpoint, clean compile")
+	compileCmd.Flags().Bool("fresh", false, "Clear checkpoint state (batch + legacy) and recompile from scratch")
 	compileCmd.Flags().Bool("re-embed", false, "Re-generate embeddings for all entries without recompiling")
 	compileCmd.Flags().Bool("re-extract", false, "Re-run concept extraction and article writing from existing summaries")
 	compileCmd.Flags().Bool("estimate", false, "Show cost estimate without compiling")
