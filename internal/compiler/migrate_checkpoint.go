@@ -15,12 +15,18 @@ import (
 // It reads the existing JSON checkpoint, populates compile_items with state
 // from both the checkpoint and the manifest, then deletes the JSON file.
 //
-// If a batch is in flight (state.Batch != nil), the migration is skipped —
-// the batch must be completed first via the existing batch resume logic.
+// Batch state is NOT migrated here (P1-3): loadOrMigrateBatchCheckpoint
+// splits an in-flight batch into .sage/batch-state.json at the batch-resume
+// check, long before this runs, so a Batch != nil here is unreachable in
+// practice. The defensive strip below is belt-and-braces, and it is
+// load-bearing rather than redundant with the end-of-function delete: the
+// Upsert error returns between them skip the delete, and without the strip
+// a consumed-batch marker would survive to re-materialize batch-state.json
+// on the next run.
 //
 // Returns true if migration was performed, false if skipped or not needed.
 func MigrateCheckpoint(projectDir string, db *storage.DB, mf *manifest.Manifest, cfg *config.Config) (bool, error) {
-	statePath := filepath.Join(projectDir, ".sage", "compile-state.json")
+	statePath := legacyCheckpointPath(projectDir)
 	state, err := loadCompileState(statePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -29,11 +35,12 @@ func MigrateCheckpoint(projectDir string, db *storage.DB, mf *manifest.Manifest,
 		return false, err
 	}
 
-	// Don't migrate if a batch is in flight — must complete first
 	if state.Batch != nil {
-		log.Info("checkpoint has in-flight batch, skipping migration",
+		log.Warn("legacy checkpoint still has in-flight batch at migration — stripping defensively (batch split should have run first)",
 			"batch_id", state.Batch.BatchID, "provider", state.Batch.Provider)
-		return false, nil
+		if err := stripLegacyBatch(projectDir); err != nil {
+			log.Warn("defensive batch strip failed", "error", err)
+		}
 	}
 
 	items := NewCompileItemStore(db)

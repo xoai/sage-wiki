@@ -420,6 +420,10 @@ compiler:
 	}
 }
 
+// TestCompileCheckpointResume pins the one-version compatibility READ of the
+// legacy checkpoint format (P1-3): loadCompileState must keep parsing
+// pre-P1-3 compile-state.json files (consumed by MigrateCheckpoint, the
+// batch split, and the watch guard).
 func TestCompileCheckpointResume(t *testing.T) {
 	dir := t.TempDir()
 	wiki.InitGreenfield(dir, "test", "gemini-2.5-flash")
@@ -446,36 +450,6 @@ func TestCompileCheckpointResume(t *testing.T) {
 	}
 	if len(loaded.Pending) != 1 {
 		t.Errorf("expected 1 pending, got %d", len(loaded.Pending))
-	}
-}
-
-func TestCompileStateRoundtrip(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "state.json")
-
-	state := &CompileState{
-		CompileID: "20260404-120000",
-		StartedAt: "2026-04-04T12:00:00Z",
-		Pass:      1,
-		Completed: []string{"a.md", "b.md"},
-		Pending:   []string{"c.md"},
-		Failed:    []FailedSource{{Path: "d.md", Error: "rate limited", Attempts: 3}},
-	}
-
-	if err := saveCompileState(path, state); err != nil {
-		t.Fatalf("save: %v", err)
-	}
-
-	loaded, err := loadCompileState(path)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-
-	if loaded.CompileID != state.CompileID {
-		t.Errorf("compile_id mismatch")
-	}
-	if len(loaded.Failed) != 1 {
-		t.Errorf("expected 1 failed, got %d", len(loaded.Failed))
 	}
 }
 

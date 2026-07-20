@@ -226,9 +226,15 @@ Syncthing can produce conflicts if both sides modify the same file. To avoid thi
 .sage/wiki.db
 .sage/wiki.db-wal
 .sage/wiki.db-shm
+.sage/batch-state.json
 .sage/compile-state.json
 .sage/lintlog
 ```
+
+(`.sage/batch-state.json` is machine-local batch progress since vNEXT — an
+in-flight batch can only be resumed by the machine that submitted it.
+`.sage/compile-state.json` is the pre-P1-3 legacy checkpoint; it is no longer
+written but may exist on older installs until first-run migration removes it.)
 
 ## LLM Providers
 

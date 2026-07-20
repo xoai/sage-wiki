@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -112,6 +113,22 @@ func orBackground(ctx context.Context) context.Context {
 	return ctx
 }
 
+// newTrackedClient builds the LLM client and attaches the cost tracker.
+// Extracted so the early batch-resume path and the lazy standard path
+// construct them identically (P1-3).
+func newTrackedClient(cfg *config.Config, opts *CompileOpts) (*llm.Client, *llm.CostTracker, error) {
+	client, err := auth.NewLLMClient(cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("compile: create LLM client: %w", err)
+	}
+	tracker := opts.Tracker
+	if tracker == nil {
+		tracker = llm.NewCostTracker(cfg.API.Provider, cfg.Compiler.TokenPriceOverride)
+	}
+	client.SetTracker(tracker)
+	return client, tracker, nil
+}
+
 // Compile runs Pass 0 (diff) and Pass 1 (summarize) of the compiler pipeline.
 func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	result := &CompileResult{}
@@ -143,13 +160,55 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	// run's mutations.
 	base := mf.Clone()
 
-	// Check for existing checkpoint
-	statePath := filepath.Join(projectDir, ".sage", "compile-state.json")
-	var state *CompileState
+	// P1-3: --fresh clears ALL checkpoint state (batch + legacy), not just
+	// skips it — the provider-mismatch error below tells users to "clear
+	// checkpoint with --fresh", and a skip-without-clear would strand them in
+	// an unrecoverable mismatch loop. NOT under --dry-run: pre-P1-3,
+	// --fresh --dry-run was fully side-effect-free, and deleting a paid
+	// in-flight batch ID on a preview command is not an acceptable change.
+	if opts.Fresh && !opts.DryRun {
+		clearAllCheckpoints(projectDir)
+	}
+
+	// Check for a pending batch BEFORE the diff and its early returns: the
+	// batch's sources may all be gone from disk (empty diff) and the batch
+	// must still be consumed. Batch state lives only in
+	// .sage/batch-state.json; a legacy compile-state.json in-flight batch is
+	// split into it here (spec D2/D3). The LLM client is created early ONLY
+	// on this path; the standard path creates it lazily below.
 	if !opts.Fresh {
-		state, _ = loadCompileState(statePath)
-		if state != nil {
-			log.Info("resuming from checkpoint", "compile_id", state.CompileID, "pass", state.Pass, "completed", len(state.Completed))
+		bcp, err := loadOrMigrateBatchCheckpoint(projectDir)
+		if err != nil {
+			return nil, fmt.Errorf("compile: load batch checkpoint: %w", err)
+		}
+		if bcp != nil && bcp.Batch == nil {
+			// Dead checkpoint (parseable but batch-less) — no writer produces
+			// this today, but don't reload it forever: remove and continue.
+			// Skipped under --dry-run, which defers ALL checkpoint deletion.
+			if !opts.DryRun {
+				log.Warn("removing dead batch checkpoint (no batch state)", "path", batchCheckpointPath(projectDir))
+				if err := os.Remove(batchCheckpointPath(projectDir)); err != nil {
+					log.Warn("failed to remove dead batch checkpoint", "error", err)
+				}
+			}
+			bcp = nil
+		}
+		if bcp != nil && bcp.Batch != nil {
+			if opts.DryRun {
+				// Dry-run contract: report, don't act. The one-time split
+				// above MAY have run (idempotent metadata migration) — only
+				// polling, summaries, and checkpoint deletion are deferred.
+				fmt.Fprintf(os.Stderr, "Batch %s pending resume (dry run — provider not polled, no summaries written).\n", bcp.Batch.BatchID)
+				return result, nil
+			}
+			client, tracker, err := newTrackedClient(cfg, &opts)
+			if err != nil {
+				return nil, err
+			}
+			if client.ProviderName() != bcp.Batch.Provider {
+				return nil, fmt.Errorf("compile: provider changed from %s to %s since batch was submitted — clear checkpoint with --fresh or switch back", bcp.Batch.Provider, client.ProviderName())
+			}
+			return resumeBatch(projectDir, client, cfg, mf, base, bcp, tracker, opts)
 		}
 	}
 
@@ -185,25 +244,11 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		return result, nil
 	}
 
-	// Create LLM client
-	client, err := auth.NewLLMClient(cfg)
+	// Create LLM client (lazy — skipped entirely when a batch resume above
+	// already returned).
+	client, tracker, err := newTrackedClient(cfg, &opts)
 	if err != nil {
-		return nil, fmt.Errorf("compile: create LLM client: %w", err)
-	}
-
-	// Attach cost tracker (with optional price override from config)
-	tracker := opts.Tracker
-	if tracker == nil {
-		tracker = llm.NewCostTracker(cfg.API.Provider, cfg.Compiler.TokenPriceOverride)
-	}
-	client.SetTracker(tracker)
-
-	// Check for pending batch to resume
-	if state != nil && state.Batch != nil {
-		if client.ProviderName() != state.Batch.Provider {
-			return nil, fmt.Errorf("compile: provider changed from %s to %s since batch was submitted — clear checkpoint with --fresh or switch back", state.Batch.Provider, client.ProviderName())
-		}
-		return resumeBatch(projectDir, client, cfg, mf, base, state, statePath, tracker, opts)
+		return nil, err
 	}
 
 	// Subscription auth: disable batch mode (subscription tokens lack batch API access)
@@ -236,7 +281,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		if !client.SupportsBatch() {
 			return nil, fmt.Errorf("compile: provider %s does not support batch API", cfg.API.Provider)
 		}
-		return submitBatch(projectDir, client, cfg, mf, diff, statePath, tracker)
+		return submitBatch(projectDir, client, cfg, mf, diff, tracker)
 	}
 
 	// Open DB
@@ -288,18 +333,9 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		}
 	}
 
-	// Initialize legacy checkpoint state (retained for fallback)
-	if state == nil {
-		state = &CompileState{
-			CompileID: time.Now().Format("20060102-150405"),
-			StartedAt: time.Now().UTC().Format(time.RFC3339),
-			Pass:      1,
-		}
-	}
-
 	// Resolve tiers and upsert compile_items for new/modified sources
 	allSources := append(diff.Added, diff.Modified...)
-	compileID := state.CompileID
+	compileID := time.Now().Format("20060102-150405")
 	for _, src := range allSources {
 		tier := tierMgr.ResolveTier(src.Path, projectDir, nil)
 		itemStore.Upsert(CompileItem{
@@ -367,29 +403,6 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		}
 	}
 
-	// Also include sources from legacy checkpoint pending list
-	completedSet := make(map[string]bool)
-	for _, p := range state.Completed {
-		completedSet[p] = true
-	}
-	pendingSet := make(map[string]bool)
-	for _, p := range state.Pending {
-		pendingSet[p] = true
-	}
-	for _, s := range allSources {
-		if !completedSet[s.Path] && !pendingSet[s.Path] && !tier3Set[s.Path] {
-			// Check if this source should be in the legacy pending list
-			item, _ := itemStore.GetByPath(s.Path)
-			if item != nil && item.Tier >= 3 && !item.PassWritten {
-				state.Pending = append(state.Pending, s.Path)
-				if !tier3Set[s.Path] {
-					toProcess = append(toProcess, s)
-					tier3Set[s.Path] = true
-				}
-			}
-		}
-	}
-
 	// pipelineIncomplete is set when a tiered pipeline run does not complete Pass
 	// 2/3 (cancelled or a total-extraction failure). Such a run persists NO new
 	// compile state: the compile_items MarkPass advances are skipped below and the
@@ -420,8 +433,6 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 			ItemStore:    itemStore,
 			CacheEnabled: cacheEnabled,
 			Progress:     progress,
-			State:        state,
-			StatePath:    statePath,
 		})
 		result.Summarized = pipelineResult.Summarized
 		result.ConceptsExtracted = pipelineResult.ConceptsExtracted
@@ -533,13 +544,6 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		}
 	}
 
-	// Clean up checkpoint on success
-	if result.Errors == 0 {
-		os.Remove(statePath)
-	} else {
-		saveCompileState(statePath, state)
-	}
-
 	// Git auto-commit
 	if cfg.Compiler.AutoCommit {
 		commitMsg := fmt.Sprintf("compile: +%d sources, %d concepts, %d articles",
@@ -560,14 +564,14 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 }
 
 // submitBatch builds batch requests from the diff and submits them.
-// Saves checkpoint and exits — next `compile` will resume via resumeBatch.
+// Saves the batch checkpoint (.sage/batch-state.json) and exits — the next
+// `compile` resumes via resumeBatch.
 func submitBatch(
 	projectDir string,
 	client *llm.Client,
 	cfg *config.Config,
 	mf *manifest.Manifest,
 	diff *DiffResult,
-	statePath string,
 	tracker *llm.CostTracker,
 ) (*CompileResult, error) {
 	result := &CompileResult{
@@ -666,20 +670,21 @@ func submitBatch(
 		return nil, fmt.Errorf("compile: submit batch: %w", err)
 	}
 
-	// Pending list holds source PATHS (used by non-batch resume logic too) —
-	// the wire-level IDs are kept in BatchState.PathByID below.
+	// Pending list holds source PATHS (used by resumeBatch's result
+	// validation) — the wire-level IDs are kept in BatchState.PathByID.
+	// Sorted for deterministic, diff-friendly checkpoint files.
 	pending := make([]string, 0, len(pathByID))
 	for _, path := range pathByID {
 		pending = append(pending, path)
 	}
+	sort.Strings(pending)
 
-	// Save checkpoint
+	// Save the batch checkpoint — the ONLY checkpoint written on this path
+	// (P1-3; no compile-state.json anywhere).
 	utcNow := time.Now().UTC().Format(time.RFC3339)
-	state := &CompileState{
+	bcp := &BatchCheckpoint{
 		CompileID: time.Now().Format("20060102-150405"),
 		StartedAt: utcNow,
-		Pass:      1,
-		Pending:   pending,
 		Batch: &BatchState{
 			BatchID:     batchID,
 			Provider:    client.ProviderName(),
@@ -687,8 +692,9 @@ func submitBatch(
 			SubmittedAt: utcNow,
 			PathByID:    pathByID,
 		},
+		Pending: pending,
 	}
-	if err := saveCompileState(statePath, state); err != nil {
+	if err := saveBatchCheckpoint(projectDir, bcp); err != nil {
 		return nil, fmt.Errorf("compile: CRITICAL — batch %s submitted but checkpoint save failed: %w (batch ID may be lost)", batchID, err)
 	}
 
@@ -701,19 +707,20 @@ func submitBatch(
 }
 
 // resumeBatch polls and retrieves a previously submitted batch, then continues the pipeline.
+// The batch checkpoint (bcp) is the only resume state (P1-3); every terminal
+// path retires it via retireBatchCheckpoint (strip-then-conditional-delete).
 func resumeBatch(
 	projectDir string,
 	client *llm.Client,
 	cfg *config.Config,
 	mf *manifest.Manifest,
 	base *manifest.Manifest,
-	state *CompileState,
-	statePath string,
+	bcp *BatchCheckpoint,
 	tracker *llm.CostTracker,
 	opts CompileOpts,
 ) (*CompileResult, error) {
 	result := &CompileResult{}
-	bs := state.Batch
+	bs := bcp.Batch
 
 	log.Info("checking batch status", "batch_id", bs.BatchID, "provider", bs.Provider)
 	status, err := client.PollBatch(bs.BatchID)
@@ -730,19 +737,13 @@ func resumeBatch(
 	case llm.BatchExpired:
 		log.Warn("batch expired, clearing checkpoint", "batch_id", bs.BatchID)
 		fmt.Fprintf(os.Stderr, "⚠ Batch %s expired (24h window). Re-run with `compile --batch` to resubmit.\n", bs.BatchID)
-		state.Batch = nil
-		if err := saveCompileState(statePath, state); err != nil {
-			log.Warn("failed to save checkpoint after batch expiry", "error", err)
-		}
+		retireBatchCheckpoint(projectDir)
 		return result, nil
 
 	case llm.BatchFailed:
 		log.Error("batch failed", "batch_id", bs.BatchID)
 		fmt.Fprintf(os.Stderr, "✗ Batch %s failed. Re-run with `compile --batch` to resubmit.\n", bs.BatchID)
-		state.Batch = nil
-		if err := saveCompileState(statePath, state); err != nil {
-			log.Warn("failed to save checkpoint after batch failure", "error", err)
-		}
+		retireBatchCheckpoint(projectDir)
 		return result, nil
 
 	case llm.BatchEnded:
@@ -777,15 +778,15 @@ func resumeBatch(
 	mfPath := filepath.Join(projectDir, ".manifest.json")
 
 	// Build set of known pending sources for CustomID validation
-	pendingSet := make(map[string]bool, len(state.Pending))
-	for _, p := range state.Pending {
+	pendingSet := make(map[string]bool, len(bcp.Pending))
+	for _, p := range bcp.Pending {
 		pendingSet[p] = true
 	}
 
 	// Summary naming (issue #107): resolve roots once and warn on collisions
 	// over the full pending set, matching the standard/on-demand path.
 	batchRoots := sourceRootPaths(cfg.Sources)
-	warnSummaryNameCollisions(state.Pending, batchRoots, cfg.Compiler.SummaryNamingOrDefault())
+	warnSummaryNameCollisions(bcp.Pending, batchRoots, cfg.Compiler.SummaryNamingOrDefault())
 
 	// Process batch results as summaries
 	progress.StartPhase("Processing batch results", len(batchResults))
@@ -815,10 +816,6 @@ func resumeBatch(
 		if br.Error != "" {
 			result.Errors++
 			progress.ItemError(path, fmt.Errorf("%s", br.Error))
-			state.Failed = append(state.Failed, FailedSource{
-				Path:  path,
-				Error: br.Error,
-			})
 			continue
 		}
 
@@ -832,7 +829,6 @@ func resumeBatch(
 		if gErr := emptyContentError(br.Response, "batch summary", path); gErr != nil {
 			result.Errors++
 			progress.ItemError(path, gErr)
-			state.Failed = append(state.Failed, FailedSource{Path: path, Error: gErr.Error()})
 			continue
 		}
 
@@ -892,18 +888,17 @@ func resumeBatch(
 			SummaryPath: summaryPath,
 			Summary:     summaryText,
 		})
-
-		removeFromPending(state, path)
-		state.Completed = append(state.Completed, path)
 	}
 	progress.EndPhase()
 
-	// Clear batch state
-	state.Batch = nil
-	state.Pass = 2
-	if err := saveCompileState(statePath, state); err != nil {
-		log.Warn("failed to save checkpoint after batch retrieval", "error", err)
-	}
+	// The batch is consumed: summaries are on disk (atomic writes above), and
+	// the remaining Pass 2/3 work is re-derivable — the manifest is only saved
+	// at the end of this run, so a crash re-diffs these sources and the
+	// standard path reprocesses them (batch summaries lack source_hash
+	// frontmatter, so they re-generate: recompute, never loss). Retire the
+	// checkpoint now (strip legacy marker first; delete only on strip
+	// success — spec D5).
+	retireBatchCheckpoint(projectDir)
 
 	// Continue with Pass 2 + 3 synchronously
 	batchPass23OK := true // set false if extraction fails or the run is cancelled
@@ -1035,13 +1030,6 @@ func resumeBatch(
 		}
 	}
 
-	// Clean up checkpoint
-	if result.Errors == 0 {
-		os.Remove(statePath)
-	} else {
-		saveCompileState(statePath, state)
-	}
-
 	// Git auto-commit
 	if cfg.Compiler.AutoCommit {
 		commitMsg := fmt.Sprintf("compile (batch): +%d sources, %d concepts, %d articles",
@@ -1071,28 +1059,6 @@ func loadCompileState(path string) (*CompileState, error) {
 		return nil, err
 	}
 	return &state, nil
-}
-
-func saveCompileState(path string, state *CompileState) error {
-	data, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return err
-	}
-	// Atomic write: write to temp file then rename
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
-
-func removeFromPending(state *CompileState, path string) {
-	for i, p := range state.Pending {
-		if p == path {
-			state.Pending = append(state.Pending[:i], state.Pending[i+1:]...)
-			return
-		}
-	}
 }
 
 func extractType(path string, typeSignals []config.TypeSignal) string {

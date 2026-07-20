@@ -16,8 +16,8 @@ import (
 )
 
 // validateBatchURL checks that a results URL points to an expected API host.
-// This prevents SSRF if compile-state.json is tampered with, since the URL
-// is fetched with API credentials attached.
+// This prevents SSRF if the batch checkpoint file is tampered with, since the
+// URL is fetched with API credentials attached.
 func validateBatchURL(rawURL string, allowedHost string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {

@@ -122,3 +122,36 @@ func TestWatch_RejectsPendingBatch(t *testing.T) {
 		t.Errorf("error should mention 'batch', got: %s", got)
 	}
 }
+
+// TestWatch_RejectsBatchStateFile: the P1-3 batch checkpoint
+// (.sage/batch-state.json) must also block watch mode (spec D6).
+func TestWatch_RejectsBatchStateFile(t *testing.T) {
+	dir := t.TempDir()
+
+	if err := saveBatchCheckpoint(dir, &BatchCheckpoint{
+		Batch:   &BatchState{BatchID: "batch_w", Provider: "openai"},
+		Pending: []string{"raw/a.md"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := Watch(dir, 1, CompileOpts{})
+	if err == nil {
+		t.Fatal("expected Watch to reject pending batch-state.json, got nil error")
+	}
+	if got := err.Error(); !strings.Contains(got, "batch") {
+		t.Errorf("error should mention 'batch', got: %s", got)
+	}
+}
+
+// TestWatch_AllowsNoCheckpoint: with neither checkpoint file present, watch
+// must NOT fail with the batch error (it may fail later, e.g. missing
+// config — anything but the batch guard).
+func TestWatch_AllowsNoCheckpoint(t *testing.T) {
+	dir := t.TempDir()
+
+	err := Watch(dir, 1, CompileOpts{})
+	if err != nil && strings.Contains(err.Error(), "pending batch") {
+		t.Errorf("clean dir rejected by batch guard: %s", err)
+	}
+}

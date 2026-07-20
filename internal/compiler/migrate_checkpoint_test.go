@@ -119,7 +119,83 @@ func TestMigrateCheckpoint_NoFile(t *testing.T) {
 	}
 }
 
-func TestMigrateCheckpoint_BatchInFlight(t *testing.T) {
+// TestMigrateCheckpoint_AfterBatchSplit covers the P1-3 choreography end to
+// end: a legacy checkpoint with an in-flight batch is SPLIT by
+// loadOrMigrateBatchCheckpoint (batch portion -> batch-state.json, legacy
+// Batch-stripped), then MigrateCheckpoint migrates the rest into
+// compile_items and deletes the legacy file.
+func TestMigrateCheckpoint_AfterBatchSplit(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	projectDir := t.TempDir()
+
+	state := CompileState{
+		CompileID: "20260414-120000",
+		Pass:      1,
+		Completed: []string{"raw/a.md"},
+		Pending:   []string{"raw/c.md"},
+		Failed:    []FailedSource{{Path: "raw/d.md", Error: "rate limited", Attempts: 3}},
+		Batch:     &BatchState{BatchID: "batch_abc", Provider: "anthropic"},
+	}
+	data, _ := json.Marshal(state)
+	sageDir := filepath.Join(projectDir, ".sage")
+	os.MkdirAll(sageDir, 0755)
+	os.WriteFile(filepath.Join(sageDir, "compile-state.json"), data, 0644)
+
+	// Step 1: the split (runs at the batch-resume check, no DB).
+	bcp, err := loadOrMigrateBatchCheckpoint(projectDir)
+	if err != nil {
+		t.Fatalf("split: %v", err)
+	}
+	if bcp == nil || bcp.Batch == nil || bcp.Batch.BatchID != "batch_abc" {
+		t.Fatalf("split returned %+v, want batch_abc", bcp)
+	}
+
+	// Step 2: MigrateCheckpoint finishes the job.
+	mf := manifest.New()
+	mf.AddSource("raw/a.md", "sha256:aaa", "article", 1000)
+	mf.MarkCompiled("raw/a.md", "wiki/summaries/a.md", nil)
+	mf.AddSource("raw/d.md", "sha256:ddd", "article", 500)
+	cfg := &config.Config{}
+
+	migrated, err := MigrateCheckpoint(projectDir, db, mf, cfg)
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if !migrated {
+		t.Error("expected migration to occur")
+	}
+
+	// Legacy JSON gone; batch-state.json survives for the resume.
+	if _, err := os.Stat(filepath.Join(sageDir, "compile-state.json")); !os.IsNotExist(err) {
+		t.Error("compile-state.json should be deleted after migration")
+	}
+	if _, err := os.Stat(filepath.Join(sageDir, "batch-state.json")); err != nil {
+		t.Error("batch-state.json must survive MigrateCheckpoint (batch still in flight)")
+	}
+
+	items := NewCompileItemStore(db)
+	a, _ := items.GetByPath("raw/a.md")
+	if a == nil || !a.PassWritten {
+		t.Error("raw/a.md should be fully compiled in compile_items")
+	}
+	// Failed sources from the split legacy file migrate with error details.
+	d, _ := items.GetByPath("raw/d.md")
+	if d == nil {
+		t.Fatal("raw/d.md missing from compile_items")
+	}
+	if d.Error != "rate limited" || d.ErrorCount != 3 {
+		t.Errorf("raw/d.md error = %q×%d, want 'rate limited'×3", d.Error, d.ErrorCount)
+	}
+}
+
+// TestMigrateCheckpoint_DefensiveStripUnreachableBatch pins the belt-and-braces
+// branch: MigrateCheckpoint encountering Batch != nil (unreachable in practice
+// under abort-on-error splitting) strips it and still completes — and does NOT
+// rescue the batch (no batch-state.json write: a stranded batch ID must never
+// be silently destroyed OR silently resurrected by this path).
+func TestMigrateCheckpoint_DefensiveStripUnreachableBatch(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
@@ -127,29 +203,31 @@ func TestMigrateCheckpoint_BatchInFlight(t *testing.T) {
 	sageDir := filepath.Join(projectDir, ".sage")
 	os.MkdirAll(sageDir, 0755)
 
-	// Checkpoint with batch in flight
 	state := CompileState{
 		CompileID: "20260414-120000",
-		Pass:      1,
+		Completed: []string{"raw/a.md"},
 		Batch:     &BatchState{BatchID: "batch_abc", Provider: "anthropic"},
 	}
 	data, _ := json.Marshal(state)
 	os.WriteFile(filepath.Join(sageDir, "compile-state.json"), data, 0644)
 
 	mf := manifest.New()
+	mf.AddSource("raw/a.md", "sha256:aaa", "article", 1000)
+	mf.MarkCompiled("raw/a.md", "wiki/summaries/a.md", nil)
 	cfg := &config.Config{}
 
 	migrated, err := MigrateCheckpoint(projectDir, db, mf, cfg)
 	if err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if migrated {
-		t.Error("should skip migration when batch is in flight")
+	if !migrated {
+		t.Error("expected migration to occur")
 	}
-
-	// Verify compile-state.json still exists
-	if _, err := os.Stat(filepath.Join(sageDir, "compile-state.json")); os.IsNotExist(err) {
-		t.Error("compile-state.json should NOT be deleted when batch is in flight")
+	if _, err := os.Stat(filepath.Join(sageDir, "compile-state.json")); !os.IsNotExist(err) {
+		t.Error("compile-state.json should be deleted after migration")
+	}
+	if _, err := os.Stat(filepath.Join(sageDir, "batch-state.json")); !os.IsNotExist(err) {
+		t.Error("MigrateCheckpoint must not create batch-state.json (no rescue branch)")
 	}
 }
 
