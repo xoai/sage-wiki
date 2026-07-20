@@ -103,7 +103,10 @@ func captureSnapshot(t *testing.T, dir string, result *CompileResult) compileSna
 	// Output files: sorted list + normalized hashes.
 	walkRoot := filepath.Join(dir, "wiki")
 	if err := filepath.Walk(walkRoot, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
 			return nil
 		}
 		rel, _ := filepath.Rel(dir, path)

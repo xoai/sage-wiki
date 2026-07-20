@@ -159,7 +159,7 @@ type compileRun struct {
 	compileID          string
 }
 
-// Compile runs the compiler pipeline. It is a thin orchestrator over four
+// Compile runs the compiler pipeline (Pass 0 diff → tiered passes). It is a thin orchestrator over four
 // extracted steps (P1-8, behavior-preserving): loadInputs → [inline Pass-0
 // diff + dry-run + lazy client] → resolveMode → setupStores → runTiers →
 // the unchanged tail (images, removed sources, strip, manifest save,
