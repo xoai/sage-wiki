@@ -31,8 +31,16 @@ func newMsgCaptureFake(t *testing.T) *msgCaptureFake {
 	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		json.NewDecoder(r.Body).Decode(&body)
+		// Embeddings endpoint: return a deterministic error so fixture embeds
+		// fail the same way every run (snapshot stability, P1-8 T1).
+		if strings.Contains(r.URL.Path, "embeddings") {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"message": "embeddings disabled in test fake"}})
+			return
+		}
+		messages, _ := body["messages"].([]any)
 		var all strings.Builder
-		for _, mm := range body["messages"].([]any) {
+		for _, mm := range messages {
 			m := mm.(map[string]any)
 			if m["role"] == "user" {
 				if c, ok := m["content"].(string); ok {
