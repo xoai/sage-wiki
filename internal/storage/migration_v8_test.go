@@ -105,14 +105,17 @@ func TestMigrationV8_Upgrade(t *testing.T) {
 		}
 	}
 	var chunkSQL string
-	db.ReadDB().QueryRow("SELECT sql FROM sqlite_master WHERE name='chunks_fts'").Scan(&chunkSQL)
+	if err := db.ReadDB().QueryRow("SELECT sql FROM sqlite_master WHERE name='chunks_fts'").Scan(&chunkSQL); err != nil {
+		t.Fatalf("sqlite_master for chunks_fts: %v", err)
+	}
 	if !strings.Contains(chunkSQL, "chunk_id UNINDEXED") {
 		t.Errorf("chunks_fts lost chunk_id UNINDEXED: %s", chunkSQL)
 	}
 
 	// Prefix queries return expected hits on BOTH tables (2- AND 3-char).
 	var n int
-	for _, q := range []string{"att*", "att*" , "mech*", "tra*"} {
+	// 2-char AND 3-char prefixes (spec test 9 — both must be index-backed).
+	for _, q := range []string{"at*", "me*", "tr*", "att*", "mec*", "tra*"} {
 		if err := db.ReadDB().QueryRow("SELECT COUNT(*) FROM entries WHERE entries MATCH ?", q).Scan(&n); err != nil {
 			t.Fatalf("entries prefix query %q: %v", q, err)
 		}

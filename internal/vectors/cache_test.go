@@ -1,6 +1,7 @@
 package vectors
 
 import (
+	"time"
 	"database/sql"
 	"math"
 	"path/filepath"
@@ -448,5 +449,52 @@ func TestCache_DimensionMismatchGuard(t *testing.T) {
 	fgot, err := s.SearchChunksFiltered(nil, []string{"doc-0"}, 10)
 	if err != nil || fgot != nil {
 		t.Errorf("nil filtered query: got=%v err=%v, want nil,nil", fgot, err)
+	}
+}
+
+// TestCache_PatchDuringLoadAppliesAfter pins the ordering contract: a patch
+// blocked on the write lock while a load is in flight applies AFTER the
+// load completes — the final state contains both the loaded rows and the
+// patched row, and exactly one load happened. (Same-package test: drives
+// the cache mutex directly to create the interleaving deterministically.)
+func TestCache_PatchDuringLoadAppliesAfter(t *testing.T) {
+	s, cleanup := seededFixture(t, 10, 0)
+	defer cleanup()
+
+	// Hold the write lock so BOTH the first search (load) and the patch block.
+	s.docCache.mu.Lock()
+
+	searchDone := make(chan struct{})
+	go func() {
+		defer close(searchDone)
+		s.Search([]float32{1, 0, 0, 0, 0, 0, 0, 0}, 3)
+	}()
+	patchDone := make(chan struct{})
+	go func() {
+		defer close(patchDone)
+		s.Upsert("late-arrival", []float32{1, 0, 0, 0, 0, 0, 0, 0})
+	}()
+
+	// Let both goroutines block on the mutex, then release: the load must
+	// complete first (the patch's write-lock acquisition queues behind it —
+	// Upsert's WriteTx runs first but its cache patch waits for the load).
+	time.Sleep(50 * time.Millisecond)
+	s.docCache.mu.Unlock()
+
+	<-searchDone
+	<-patchDone
+
+	if got := s.docCache.loadCount(); got != 1 {
+		t.Errorf("loadCount = %d, want exactly 1 (patch must not trigger a second load)", got)
+	}
+	got, err := s.Search([]float32{1, 0, 0, 0, 0, 0, 0, 0}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) == 0 || got[0].ID != "late-arrival" {
+		t.Errorf("patch-during-load lost: top-1 = %+v, want late-arrival", got)
+	}
+	if s.docCache.loadCount() != 1 {
+		t.Errorf("loadCount drifted to %d after patch", s.docCache.loadCount())
 	}
 }

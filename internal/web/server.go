@@ -239,6 +239,9 @@ func (s *WebServer) watchFsnotify(ctx context.Context, outputDir string) {
 	for {
 		select {
 		case <-ctx.Done():
+			if timer != nil {
+				timer.Stop()
+			}
 			return
 		case ev, ok := <-watcher.Events:
 			if !ok {

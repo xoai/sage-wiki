@@ -44,6 +44,15 @@ func (c *vectorCache) loadCount() int {
 	return c.loads
 }
 
+// dimVal returns the cache's row dimension under the read lock — the
+// loaders write dim under the write lock, so a bare read races with a
+// concurrent invalidate→reload (Gate-3 i1 MAJOR).
+func (c *vectorCache) dimVal() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.dim
+}
+
 // invalidate marks the cache dirty; the next search reloads from the DB.
 func (c *vectorCache) invalidate() {
 	c.mu.Lock()
