@@ -625,10 +625,15 @@ func (s *Server) handleCompileDiff(ctx context.Context, req mcplib.CallToolReque
 func (s *Server) tryEmbed(id string, content string) {
 	embedder := embed.NewFromConfig(s.cfg)
 	if embedder != nil {
-		if vec, err := embedder.Embed(content); err == nil {
-			if err := s.vec.Upsert(id, vec); err != nil {
-				log.Warn("vector upsert failed (reconciler will heal)", "id", id, "error", err)
-			}
+		vec, err := embedder.Embed(content)
+		if err != nil {
+			// A configured-but-failing embedder must be visible (REL-04);
+			// unconfigured embedders short-circuit above and stay silent.
+			log.Warn("embed failed (reconciler will heal)", "id", id, "error", err)
+			return
+		}
+		if err := s.vec.Upsert(id, vec); err != nil {
+			log.Warn("vector upsert failed (reconciler will heal)", "id", id, "error", err)
 		}
 	}
 }
