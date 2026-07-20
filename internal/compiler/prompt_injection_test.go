@@ -61,7 +61,7 @@ func newMsgCaptureFake(t *testing.T) *msgCaptureFake {
 			"usage":   map[string]int{"total_tokens": 100},
 		})
 	}))
-	t.Cleanup(f.Server.Close)
+	t.Cleanup(f.Close)
 	return f
 }
 
