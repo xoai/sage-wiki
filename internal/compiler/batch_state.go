@@ -114,6 +114,18 @@ func stripLegacyBatch(projectDir string) error {
 	return nil
 }
 
+// clearAllCheckpoints removes both checkpoint files (batch + legacy). Used by
+// --fresh, whose contract is "start clean" — including the provider-mismatch
+// recovery the batch-resume error message promises ("clear checkpoint with
+// --fresh"; spec D3). Best-effort: removal failures are logged, not fatal.
+func clearAllCheckpoints(projectDir string) {
+	for _, p := range []string{batchCheckpointPath(projectDir), legacyCheckpointPath(projectDir)} {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			log.Warn("fresh: failed to remove checkpoint", "path", p, "error", err)
+		}
+	}
+}
+
 // retireBatchCheckpoint is the terminal step of every batch resume path
 // (spec D5): strip the legacy batch marker (if any), then — only on strip
 // success — delete batch-state.json. Deleting unconditionally would let an

@@ -25,6 +25,7 @@ type fakeBatchServer struct {
 	submitCount  atomic.Int32
 	resultsJSONL atomic.Value // string: JSONL body for the output file
 	failIDs      atomic.Value // map[string]bool: custom_ids that return an error result
+	failPaths    atomic.Value // string: source path whose standard-path calls get a 500
 }
 
 func newFakeBatchServer(t *testing.T) *fakeBatchServer {
@@ -33,6 +34,7 @@ func newFakeBatchServer(t *testing.T) *fakeBatchServer {
 	f.status.Store("in_progress")
 	f.resultsJSONL.Store("")
 	f.failIDs.Store(map[string]bool{})
+	f.failPaths.Store("")
 
 	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -69,6 +71,12 @@ func newFakeBatchServer(t *testing.T) *fakeBatchServer {
 				}
 			}
 			msg := all.String()
+			// Poisoned source path → 500 (standard-path failure injection).
+			if fp := f.failPaths.Load().(string); fp != "" && strings.Contains(msg, fp) {
+				w.WriteHeader(http.StatusInternalServerError)
+				json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"message": "poisoned: " + fp}})
+				return
+			}
 			var content string
 			switch {
 			case strings.Contains(msg, "concept extraction system"):

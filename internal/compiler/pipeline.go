@@ -112,6 +112,22 @@ func orBackground(ctx context.Context) context.Context {
 	return ctx
 }
 
+// newTrackedClient builds the LLM client and attaches the cost tracker.
+// Extracted so the early batch-resume path and the lazy standard path
+// construct them identically (P1-3).
+func newTrackedClient(cfg *config.Config, opts *CompileOpts) (*llm.Client, *llm.CostTracker, error) {
+	client, err := auth.NewLLMClient(cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("compile: create LLM client: %w", err)
+	}
+	tracker := opts.Tracker
+	if tracker == nil {
+		tracker = llm.NewCostTracker(cfg.API.Provider, cfg.Compiler.TokenPriceOverride)
+	}
+	client.SetTracker(tracker)
+	return client, tracker, nil
+}
+
 // Compile runs Pass 0 (diff) and Pass 1 (summarize) of the compiler pipeline.
 func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	result := &CompileResult{}
@@ -143,13 +159,41 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	// run's mutations.
 	base := mf.Clone()
 
-	// Check for existing checkpoint
-	statePath := filepath.Join(projectDir, ".sage", "compile-state.json")
-	var state *CompileState
+	// P1-3: --fresh clears ALL checkpoint state (batch + legacy), not just
+	// skips it — the provider-mismatch error below tells users to "clear
+	// checkpoint with --fresh", and a skip-without-clear would strand them in
+	// an unrecoverable mismatch loop.
+	if opts.Fresh {
+		clearAllCheckpoints(projectDir)
+	}
+
+	// Check for a pending batch BEFORE the diff and its early returns: the
+	// batch's sources may all be gone from disk (empty diff) and the batch
+	// must still be consumed. Batch state lives only in
+	// .sage/batch-state.json; a legacy compile-state.json in-flight batch is
+	// split into it here (spec D2/D3). The LLM client is created early ONLY
+	// on this path; the standard path creates it lazily below.
 	if !opts.Fresh {
-		state, _ = loadCompileState(statePath)
-		if state != nil {
-			log.Info("resuming from checkpoint", "compile_id", state.CompileID, "pass", state.Pass, "completed", len(state.Completed))
+		bcp, err := loadOrMigrateBatchCheckpoint(projectDir)
+		if err != nil {
+			return nil, fmt.Errorf("compile: load batch checkpoint: %w", err)
+		}
+		if bcp != nil && bcp.Batch != nil {
+			if opts.DryRun {
+				// Dry-run contract: report, don't act. The one-time split
+				// above MAY have run (idempotent metadata migration) — only
+				// polling, summaries, and checkpoint deletion are deferred.
+				fmt.Fprintf(os.Stderr, "Batch %s pending resume (dry run — no changes made).\n", bcp.Batch.BatchID)
+				return result, nil
+			}
+			client, tracker, err := newTrackedClient(cfg, &opts)
+			if err != nil {
+				return nil, err
+			}
+			if client.ProviderName() != bcp.Batch.Provider {
+				return nil, fmt.Errorf("compile: provider changed from %s to %s since batch was submitted — clear checkpoint with --fresh or switch back", bcp.Batch.Provider, client.ProviderName())
+			}
+			return resumeBatch(projectDir, client, cfg, mf, base, bcp, tracker, opts)
 		}
 	}
 
@@ -185,35 +229,11 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		return result, nil
 	}
 
-	// Create LLM client
-	client, err := auth.NewLLMClient(cfg)
+	// Create LLM client (lazy — skipped entirely when a batch resume above
+	// already returned).
+	client, tracker, err := newTrackedClient(cfg, &opts)
 	if err != nil {
-		return nil, fmt.Errorf("compile: create LLM client: %w", err)
-	}
-
-	// Attach cost tracker (with optional price override from config)
-	tracker := opts.Tracker
-	if tracker == nil {
-		tracker = llm.NewCostTracker(cfg.API.Provider, cfg.Compiler.TokenPriceOverride)
-	}
-	client.SetTracker(tracker)
-
-	// Check for pending batch to resume (P1-3: batch state lives in
-	// .sage/batch-state.json; a legacy compile-state.json in-flight batch is
-	// split into it here, on the first run of the new binary). Skipped under
-	// --fresh, matching the legacy state load below; T4 upgrades this to
-	// skip-AND-clear.
-	if !opts.Fresh {
-		bcp, err := loadOrMigrateBatchCheckpoint(projectDir)
-		if err != nil {
-			return nil, fmt.Errorf("compile: load batch checkpoint: %w", err)
-		}
-		if bcp != nil && bcp.Batch != nil {
-			if client.ProviderName() != bcp.Batch.Provider {
-				return nil, fmt.Errorf("compile: provider changed from %s to %s since batch was submitted — clear checkpoint with --fresh or switch back", bcp.Batch.Provider, client.ProviderName())
-			}
-			return resumeBatch(projectDir, client, cfg, mf, base, bcp, tracker, opts)
-		}
+		return nil, err
 	}
 
 	// Subscription auth: disable batch mode (subscription tokens lack batch API access)
@@ -298,18 +318,9 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		}
 	}
 
-	// Initialize legacy checkpoint state (retained for fallback)
-	if state == nil {
-		state = &CompileState{
-			CompileID: time.Now().Format("20060102-150405"),
-			StartedAt: time.Now().UTC().Format(time.RFC3339),
-			Pass:      1,
-		}
-	}
-
 	// Resolve tiers and upsert compile_items for new/modified sources
 	allSources := append(diff.Added, diff.Modified...)
-	compileID := state.CompileID
+	compileID := time.Now().Format("20060102-150405")
 	for _, src := range allSources {
 		tier := tierMgr.ResolveTier(src.Path, projectDir, nil)
 		itemStore.Upsert(CompileItem{
@@ -377,29 +388,6 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		}
 	}
 
-	// Also include sources from legacy checkpoint pending list
-	completedSet := make(map[string]bool)
-	for _, p := range state.Completed {
-		completedSet[p] = true
-	}
-	pendingSet := make(map[string]bool)
-	for _, p := range state.Pending {
-		pendingSet[p] = true
-	}
-	for _, s := range allSources {
-		if !completedSet[s.Path] && !pendingSet[s.Path] && !tier3Set[s.Path] {
-			// Check if this source should be in the legacy pending list
-			item, _ := itemStore.GetByPath(s.Path)
-			if item != nil && item.Tier >= 3 && !item.PassWritten {
-				state.Pending = append(state.Pending, s.Path)
-				if !tier3Set[s.Path] {
-					toProcess = append(toProcess, s)
-					tier3Set[s.Path] = true
-				}
-			}
-		}
-	}
-
 	// pipelineIncomplete is set when a tiered pipeline run does not complete Pass
 	// 2/3 (cancelled or a total-extraction failure). Such a run persists NO new
 	// compile state: the compile_items MarkPass advances are skipped below and the
@@ -430,8 +418,6 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 			ItemStore:    itemStore,
 			CacheEnabled: cacheEnabled,
 			Progress:     progress,
-			State:        state,
-			StatePath:    statePath,
 		})
 		result.Summarized = pipelineResult.Summarized
 		result.ConceptsExtracted = pipelineResult.ConceptsExtracted
@@ -541,13 +527,6 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		} else if demoted > 0 {
 			log.Info("demoted stale outputs", "count", demoted)
 		}
-	}
-
-	// Clean up checkpoint on success
-	if result.Errors == 0 {
-		os.Remove(statePath)
-	} else {
-		saveCompileState(statePath, state)
 	}
 
 	// Git auto-commit
