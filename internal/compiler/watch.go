@@ -30,9 +30,14 @@ func Watch(projectDir string, debounceSeconds int, opts CompileOpts, coordinator
 		debounceSeconds = 2
 	}
 
-	// D5: reject watch when a pending batch exists on disk
-	statePath := filepath.Join(projectDir, ".sage", "compile-state.json")
-	if state, _ := loadCompileState(statePath); state != nil && state.Batch != nil {
+	// Batch guard (P1-3 D6): reject watch when a pending batch exists in
+	// EITHER checkpoint file — the current .sage/batch-state.json or a legacy
+	// .sage/compile-state.json with Batch != nil (the legacy case migrates on
+	// the next real compile, but watch refuses before compiling).
+	if bcp, _ := loadBatchCheckpoint(projectDir); bcp != nil && bcp.Batch != nil {
+		return fmt.Errorf("pending batch compile detected; run 'sage-wiki compile' to complete it before starting watch mode")
+	}
+	if state, _ := loadCompileState(legacyCheckpointPath(projectDir)); state != nil && state.Batch != nil {
 		return fmt.Errorf("pending batch compile detected; run 'sage-wiki compile' to complete it before starting watch mode")
 	}
 
