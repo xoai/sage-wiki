@@ -741,3 +741,41 @@ from multiple machines. Solutions:
 - Use batch mode for large initial compilations (50% discount)
 - Mix cheap and quality models via the `models` config
 - Enable prompt caching (on by default)
+
+## External Parser Security
+
+External parsers (`parsers/`) let a project declare custom extraction
+commands for file types the built-in extractors don't cover. They are a
+**supply-chain trust boundary**, and the opt-ins exist because of it:
+
+- `parsers.external: true` loads parser definitions from the project's
+  `parsers/` directory.
+- `parsers.trust_external: true` acknowledges that those definitions run as
+  **unsandboxed subprocesses on every compile** (with timeout enforcement
+  and environment stripping — see the README).
+- Contribution packs containing parsers additionally require
+  `pack apply --enable-parsers`.
+
+The threat model that matters for teams: **if you git-sync a project (or
+apply a registry pack), parser code pulled from the remote executes on your
+machine at the next compile.** A malicious or compromised upstream can
+change `parsers/` in one commit and get arbitrary code execution on every
+team member's machine on their next `sage-wiki compile` — the
+`sage-wiki compile` step is the payload trigger, no other action needed.
+
+Recommendations:
+
+1. **Review parser diffs before syncing.** Treat changes under `parsers/`
+   like changes to CI workflows or build scripts — they are executable
+   definitions, not data. `git diff` the `parsers/` tree explicitly when
+   pulling.
+2. **Pin to reviewed commits.** Where the workflow allows it, sync to a
+   reviewed ref rather than tracking a moving branch head.
+3. **Prefer built-in extractors.** Only enable external parsers for file
+   types the built-ins genuinely can't handle; every parser you don't
+   enable is attack surface you don't have.
+4. **Defense in depth, not reliance.** The P1-7 zip resource limits
+   (50 MB per entry / 200 MB aggregate) apply to the built-in zip
+   extractors only — external parser output is NOT bounded by them, so an
+   over-producing parser can still exhaust memory. Keep parsers simple,
+   and run compiles on hosts whose limits you control.
