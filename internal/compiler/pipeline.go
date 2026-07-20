@@ -163,8 +163,10 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	// P1-3: --fresh clears ALL checkpoint state (batch + legacy), not just
 	// skips it — the provider-mismatch error below tells users to "clear
 	// checkpoint with --fresh", and a skip-without-clear would strand them in
-	// an unrecoverable mismatch loop.
-	if opts.Fresh {
+	// an unrecoverable mismatch loop. NOT under --dry-run: pre-P1-3,
+	// --fresh --dry-run was fully side-effect-free, and deleting a paid
+	// in-flight batch ID on a preview command is not an acceptable change.
+	if opts.Fresh && !opts.DryRun {
 		clearAllCheckpoints(projectDir)
 	}
 

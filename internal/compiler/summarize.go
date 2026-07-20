@@ -163,9 +163,10 @@ func summarizeOne(
 	summaryName := SummaryFilenameMode(info.Path, root, summaryNaming)
 
 	// Skip LLM call if a valid summary file already exists on disk with a matching
-	// source hash. Restores resume-from-checkpoint behavior when compile-state.json is
-	// missing (e.g. a prior failed run cleared it). The source_hash field in the
-	// frontmatter guards against serving stale summaries for modified sources.
+	// source hash. This is what makes an interrupted compile cheap to resume:
+	// sources whose summaries survived are reused instead of re-billed. The
+	// source_hash field in the frontmatter guards against serving stale summaries
+	// for modified sources.
 	summaryPath := filepath.Join(outputDir, "summaries", summaryName)
 	absSummary := filepath.Join(projectDir, summaryPath)
 	if existing, err := os.ReadFile(absSummary); err == nil {

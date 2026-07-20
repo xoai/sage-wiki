@@ -188,3 +188,44 @@ func TestCompile_FailedSourceStaysPending_NoLegacyJSON(t *testing.T) {
 		t.Error("raw-b.md summary missing after retry")
 	}
 }
+
+// TestCompile_FreshDryRunPreservesCheckpoints: --fresh --dry-run must be
+// fully side-effect-free (Gate-8 finding): pre-P1-3 it only skipped the
+// checkpoint load; deleting a paid in-flight batch ID on a preview command
+// is a regression, not a cleanup.
+func TestCompile_FreshDryRunPreservesCheckpoints(t *testing.T) {
+	fake := newFakeBatchServer(t)
+	dir := writeBatchProject(t, fake.URL, "", "raw/a.md")
+
+	if err := saveBatchCheckpoint(dir, &BatchCheckpoint{
+		Batch:   &BatchState{BatchID: "batch_keep", Provider: "openai", Pass: "summarize"},
+		Pending: []string{"raw/a.md"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	writeLegacyState(t, dir, CompileState{CompileID: "legacy-keep", Completed: []string{"raw/old.md"}})
+
+	if _, err := Compile(dir, CompileOpts{Fresh: true, DryRun: true}); err != nil {
+		t.Fatalf("fresh+dry-run compile: %v", err)
+	}
+	if _, err := os.Stat(batchCheckpointPath(dir)); err != nil {
+		t.Error("--fresh --dry-run deleted batch-state.json — must be side-effect-free")
+	}
+	if _, err := os.Stat(legacyCheckpointPath(dir)); err != nil {
+		t.Error("--fresh --dry-run deleted compile-state.json — must be side-effect-free")
+	}
+	if fake.pollCount.Load() != 0 {
+		t.Error("--fresh --dry-run polled the provider")
+	}
+
+	// A real --fresh (no dry-run) still clears.
+	if _, err := Compile(dir, CompileOpts{Fresh: true}); err != nil {
+		t.Fatalf("fresh compile: %v", err)
+	}
+	if _, err := os.Stat(batchCheckpointPath(dir)); !os.IsNotExist(err) {
+		t.Error("real --fresh must clear batch-state.json")
+	}
+	if _, err := os.Stat(legacyCheckpointPath(dir)); !os.IsNotExist(err) {
+		t.Error("real --fresh must clear compile-state.json")
+	}
+}
