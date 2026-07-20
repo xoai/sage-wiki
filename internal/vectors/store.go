@@ -6,25 +6,153 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"strings"
 
+	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/storage"
 )
 
 // Store manages vector embeddings as BLOBs in SQLite.
 type Store struct {
-	db *storage.DB
+	db         *storage.DB
+	docCache   *vectorCache
+	chunkCache *vectorCache
 }
 
-// NewStore creates a new vector store.
-func NewStore(db *storage.DB) *Store {
-	return &Store{db: db}
+// loadDocCache populates the doc-level cache from SQLite, single-flight:
+// the first caller takes the write lock and RE-CHECKS loaded
+// (double-checked locking), so concurrent first searches load exactly once.
+func (s *Store) loadDocCache() error {
+	s.docCache.mu.RLock()
+	loaded := s.docCache.loaded
+	s.docCache.mu.RUnlock()
+	if loaded {
+		return nil
+	}
+
+	s.docCache.mu.Lock()
+	defer s.docCache.mu.Unlock()
+	if s.docCache.loaded {
+		return nil
+	}
+
+	rows, err := s.db.ReadDB().Query("SELECT id, embedding, dimensions FROM vec_entries")
+	if err != nil {
+		return fmt.Errorf("vectors.loadDocCache: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	ids := []string{}
+	mat := []float32{}
+	dim := 0
+	skipped := 0
+	for rows.Next() {
+		var id string
+		var blob []byte
+		var dims int
+		if err := rows.Scan(&id, &blob, &dims); err != nil {
+			return err
+		}
+		vec := decodeFloat32s(blob)
+		if dim == 0 {
+			dim = len(vec)
+		}
+		if len(vec) != dim {
+			skipped++ // dimension-mismatch rows skipped (as in Search)
+			continue
+		}
+		ids = append(ids, id)
+		mat = append(mat, normalizeCopy(vec)...)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if skipped > 0 {
+		log.Warn("vector cache: skipped dimension-mismatch rows", "count", skipped)
+	}
+
+	s.docCache.dim = dim
+	s.docCache.ids = ids
+	s.docCache.mat = mat
+	s.docCache.loads++
+	s.docCache.loaded = true
+	return nil
 }
 
-// Upsert stores or replaces a vector for the given ID.
+// loadChunkCache populates the chunk-level cache (same single-flight rule).
+func (s *Store) loadChunkCache() error {
+	s.chunkCache.mu.RLock()
+	loaded := s.chunkCache.loaded
+	s.chunkCache.mu.RUnlock()
+	if loaded {
+		return nil
+	}
+
+	s.chunkCache.mu.Lock()
+	defer s.chunkCache.mu.Unlock()
+	if s.chunkCache.loaded {
+		return nil
+	}
+
+	rows, err := s.db.ReadDB().Query("SELECT chunk_id, doc_id, embedding, dimensions FROM vec_chunks")
+	if err != nil {
+		return fmt.Errorf("vectors.loadChunkCache: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	ids := []string{}
+	docIDs := []string{}
+	mat := []float32{}
+	dim := 0
+	skipped := 0
+	for rows.Next() {
+		var cid, did string
+		var blob []byte
+		var dims int
+		if err := rows.Scan(&cid, &did, &blob, &dims); err != nil {
+			return err
+		}
+		vec := decodeFloat32s(blob)
+		if dim == 0 {
+			dim = len(vec)
+		}
+		if len(vec) != dim {
+			skipped++
+			continue
+		}
+		ids = append(ids, cid)
+		docIDs = append(docIDs, did)
+		mat = append(mat, normalizeCopy(vec)...)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if skipped > 0 {
+		log.Warn("chunk vector cache: skipped dimension-mismatch rows", "count", skipped)
+	}
+
+	s.chunkCache.dim = dim
+	s.chunkCache.ids = ids
+	s.chunkCache.docIDs = docIDs
+	s.chunkCache.mat = mat
+	s.chunkCache.loads++
+	s.chunkCache.loaded = true
+	return nil
+}
+
+// InvalidateChunkCache marks the chunk-level cache dirty; the next chunk
+// search reloads from the DB. Callers that write vec_chunks inside their
+// OWN transaction (UpsertChunk with a caller tx, ChunkStore.DeleteDocChunks)
+// MUST call this after their WriteTx commits — the Store cannot observe
+// the commit itself (spec §A, mechanism 2). Coalesces write bursts into
+// one reload at the next search.
+func (s *Store) InvalidateChunkCache() {
+	s.chunkCache.invalidate()
+}
+
+// Upsert stores or replaces a vector.
 func (s *Store) Upsert(id string, embedding []float32) error {
-	blob := encodeFloat32s(embedding)
-	return s.db.WriteTx(func(tx *sql.Tx) error {
+	err := s.db.WriteTx(func(tx *sql.Tx) error {
+		blob := encodeFloat32s(embedding)
 		_, err := tx.Exec(
 			`INSERT INTO vec_entries (id, embedding, dimensions) VALUES (?, ?, ?)
 			 ON CONFLICT(id) DO UPDATE SET embedding=excluded.embedding, dimensions=excluded.dimensions`,
@@ -32,6 +160,20 @@ func (s *Store) Upsert(id string, embedding []float32) error {
 		)
 		return err
 	})
+	if err != nil {
+		return err
+	}
+	s.docCache.upsert(id, "", embedding)
+	return nil
+}
+
+// NewStore creates a new vector store.
+func NewStore(db *storage.DB) *Store {
+	return &Store{
+		db:         db,
+		docCache:   &vectorCache{},
+		chunkCache: &vectorCache{docIDs: []string{}},
+	}
 }
 
 // Get retrieves a vector by ID. Returns (nil, nil) ONLY when the ID is
@@ -59,10 +201,15 @@ func (s *Store) Get(id string) ([]float32, error) {
 
 // Delete removes a vector by ID.
 func (s *Store) Delete(id string) error {
-	return s.db.WriteTx(func(tx *sql.Tx) error {
+	err := s.db.WriteTx(func(tx *sql.Tx) error {
 		_, err := tx.Exec("DELETE FROM vec_entries WHERE id=?", id)
 		return err
 	})
+	if err != nil {
+		return err
+	}
+	s.docCache.remove(id)
+	return nil
 }
 
 // VectorResult represents a cosine similarity search result.
@@ -72,42 +219,31 @@ type VectorResult struct {
 	Rank  int
 }
 
-// Search performs brute-force cosine similarity search.
+// Search performs cosine similarity search over the in-memory matrix cache
+// (PERF-01): one lazy load from SQLite, then dot-product passes with no
+// SQL, no BLOB decode, and no per-vector norm recomputation. The query is
+// normalized into a COPY — the caller's slice is never mutated.
 func (s *Store) Search(query []float32, limit int) ([]VectorResult, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-
-	rows, err := s.db.ReadDB().Query("SELECT id, embedding, dimensions FROM vec_entries")
-	if err != nil {
-		return nil, fmt.Errorf("vectors.Search: %w", err)
+	if err := s.loadDocCache(); err != nil {
+		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-
-	var results []VectorResult
-	for rows.Next() {
-		var id string
-		var blob []byte
-		var dims int
-		if err := rows.Scan(&id, &blob, &dims); err != nil {
-			return nil, err
-		}
-
-		vec := decodeFloat32s(blob)
-		if len(vec) != len(query) {
-			continue // dimension mismatch, skip
-		}
-
-		score := CosineSimilarity(query, vec)
-		results = insertSorted(results, VectorResult{ID: id, Score: score}, limit)
+	// Dimension-mismatch guard (preserved from the brute-force path): a
+	// query whose length differs from the cache's row dimension matches
+	// nothing — including a nil/empty query from a caller with no embedder.
+	if len(query) != s.docCache.dimVal() {
+		return nil, nil
 	}
 
-	// Assign ranks
-	for i := range results {
-		results[i].Rank = i + 1
+	nq := normalizeCopy(query)
+	hits := s.docCache.search(nq, limit, nil)
+	results := make([]VectorResult, len(hits))
+	for i, h := range hits {
+		results[i] = VectorResult{ID: h.id, Score: h.score, Rank: i + 1}
 	}
-
-	return results, rows.Err()
+	return results, nil
 }
 
 // UpsertChunk stores or replaces a chunk vector within an existing transaction.
@@ -121,38 +257,26 @@ func (s *Store) UpsertChunk(tx *sql.Tx, chunkID string, docID string, embedding 
 	return err
 }
 
-// SearchChunks performs brute-force cosine similarity search on chunk vectors.
+// SearchChunks performs cosine similarity search on chunk vectors, backed
+// by the chunk-level in-memory cache (PERF-01).
 func (s *Store) SearchChunks(query []float32, limit int) ([]ChunkVectorResult, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-
-	rows, err := s.db.ReadDB().Query("SELECT chunk_id, doc_id, embedding, dimensions FROM vec_chunks")
-	if err != nil {
-		return nil, fmt.Errorf("vectors.SearchChunks: %w", err)
+	if err := s.loadChunkCache(); err != nil {
+		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-
-	var results []ChunkVectorResult
-	for rows.Next() {
-		var chunkID, docID string
-		var blob []byte
-		var dims int
-		if err := rows.Scan(&chunkID, &docID, &blob, &dims); err != nil {
-			return nil, err
-		}
-		vec := decodeFloat32s(blob)
-		if len(vec) != len(query) {
-			continue
-		}
-		score := CosineSimilarity(query, vec)
-		results = insertChunkSorted(results, ChunkVectorResult{ChunkID: chunkID, DocID: docID, Score: score}, limit)
+	if len(query) != s.chunkCache.dimVal() {
+		return nil, nil
 	}
 
-	for i := range results {
-		results[i].Rank = i + 1
+	nq := normalizeCopy(query)
+	hits := s.chunkCache.search(nq, limit, nil)
+	results := make([]ChunkVectorResult, len(hits))
+	for i, h := range hits {
+		results[i] = ChunkVectorResult{ChunkID: h.id, DocID: h.docID, Score: h.score, Rank: i + 1}
 	}
-	return results, rows.Err()
+	return results, nil
 }
 
 // SearchChunksFiltered performs cosine search only on chunks belonging to the given doc IDs.
@@ -170,52 +294,36 @@ func (s *Store) SearchChunksFiltered(query []float32, docIDs []string, limit int
 		docIDs = docIDs[:100]
 	}
 
-	// Build query with IN clause
-	ph := make([]string, len(docIDs))
-	args := make([]any, len(docIDs))
-	for i, id := range docIDs {
-		ph[i] = "?"
-		args[i] = id
+	if err := s.loadChunkCache(); err != nil {
+		return nil, err
 	}
-	sqlStr := fmt.Sprintf(
-		"SELECT chunk_id, doc_id, embedding, dimensions FROM vec_chunks WHERE doc_id IN (%s)",
-		strings.Join(ph, ","),
-	)
-
-	rows, err := s.db.ReadDB().Query(sqlStr, args...)
-	if err != nil {
-		return nil, fmt.Errorf("vectors.SearchChunksFiltered: %w", err)
+	if len(query) != s.chunkCache.dimVal() {
+		return nil, nil
 	}
-	defer func() { _ = rows.Close() }()
-
-	var results []ChunkVectorResult
-	for rows.Next() {
-		var chunkID, docID string
-		var blob []byte
-		var dims int
-		if err := rows.Scan(&chunkID, &docID, &blob, &dims); err != nil {
-			return nil, err
-		}
-		vec := decodeFloat32s(blob)
-		if len(vec) != len(query) {
-			continue
-		}
-		score := CosineSimilarity(query, vec)
-		results = insertChunkSorted(results, ChunkVectorResult{ChunkID: chunkID, DocID: docID, Score: score}, limit)
+	filter := make(map[string]bool, len(docIDs))
+	for _, id := range docIDs {
+		filter[id] = true
 	}
-
-	for i := range results {
-		results[i].Rank = i + 1
+	nq := normalizeCopy(query)
+	hits := s.chunkCache.search(nq, limit, filter)
+	results := make([]ChunkVectorResult, len(hits))
+	for i, h := range hits {
+		results[i] = ChunkVectorResult{ChunkID: h.id, DocID: h.docID, Score: h.score, Rank: i + 1}
 	}
-	return results, rows.Err()
+	return results, nil
 }
 
 // DeleteDocChunkVectors removes all chunk vectors for a document.
 func (s *Store) DeleteDocChunkVectors(docID string) error {
-	return s.db.WriteTx(func(tx *sql.Tx) error {
+	err := s.db.WriteTx(func(tx *sql.Tx) error {
 		_, err := tx.Exec("DELETE FROM vec_chunks WHERE doc_id = ?", docID)
 		return err
 	})
+	if err != nil {
+		return err
+	}
+	s.chunkCache.removeDoc(docID)
+	return nil
 }
 
 // HasChunkVectors reports whether any chunk vector exists for docID. The

@@ -55,7 +55,27 @@
   message; post-write index failures are logged (the startup reconciler heals
   them) rather than misreporting the successful file write as failed.
 
+
 ### Changed
+
+- **Search performance: in-memory vector cache, FTS prefix indexes, event-driven reload (PERF-01/02/03, P1-5).**
+  Vector search no longer re-reads and re-decodes every embedding from
+  SQLite on each query: doc- and chunk-level searches now run dot-product
+  passes over an in-memory matrix of normalized vectors (lazy single-flight
+  load, RWMutex-guarded), **11.2× faster with 31× fewer allocations** on a
+  10K-chunk benchmark (27.8ms → 2.5ms/op; doc-level 2K entries: 5.75ms →
+  0.54ms/op, 10.65×). Writes patch the cache
+  incrementally; chunk writes inside caller transactions (compile, ingest,
+  reconcile) invalidate it so the next search reloads once. The FTS5 tables
+  are rebuilt by a new migration (V8) with `prefix='2 3'` indexes, so
+  `term*` search queries are index-backed — a one-time rebuild at first
+  open that transiently grows the database journal by roughly the size of
+  the FTS tables. The web UI's hot reload is now event-driven (fsnotify, 300ms
+  debounce) with the 3s poll kept as a fallback for WSL `/mnt/` paths and
+  other unwatchable locations. **Operational note:** a long-lived MCP/web
+  server's cache does not observe vector writes made by a separate CLI
+  process until restart — restart the server after bulk out-of-process
+  writes (e.g. `sage-wiki write` against a running server's project).
 
 - **Single checkpoint system: legacy `compile-state.json` retired (REL-06, P1-3).**
   `compile_items` (SQLite) is now the only source of compile-resume truth; the

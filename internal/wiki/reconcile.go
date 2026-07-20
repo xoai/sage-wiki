@@ -287,6 +287,7 @@ func (rc *reconciler) applyReindex(eo expectedOutput, indexText, hash string, ch
 	}); err != nil {
 		return fmt.Errorf("reindex chunks: %w", err)
 	}
+	rc.vec.InvalidateChunkCache() // chunk cache invalidation (P1-5): caller-tx writes are invisible to vectors.Store until post-commit
 
 	// Completion signal LAST — recorded only when ONLINE (an embedder was
 	// available), so an offline reindex stays "unprocessed" and a later online
@@ -341,6 +342,8 @@ func (rc *reconciler) dropByID(ftsID string, isArticle bool, name, outputPath st
 		return rc.chunks.DeleteDocChunks(tx, ftsID)
 	}); err != nil {
 		log.Warn("reconcile: drop chunks failed", "doc", ftsID, "error", err)
+	} else {
+		rc.vec.InvalidateChunkCache() // chunk cache invalidation (P1-5): caller-tx writes are invisible to vectors.Store until post-commit
 	}
 	if isArticle && name != "" {
 		_ = rc.ont.DeleteEntity(name)

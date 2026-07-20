@@ -126,6 +126,7 @@ func BackfillChunks(projectDir string, outputDir string, chunkSize int,
 				log.Warn("backfill: chunk indexing failed", "doc", docID, "error", err)
 				continue
 			}
+			vecStore.InvalidateChunkCache() // chunk cache invalidation (P1-5): caller-tx writes are invisible to vectors.Store until post-commit
 
 			count++
 			if count%50 == 0 {

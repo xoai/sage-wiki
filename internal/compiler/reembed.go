@@ -125,6 +125,7 @@ func ReEmbed(projectDir string) (int, error) {
 	if err := tx.Commit(); err != nil {
 		return embedded, fmt.Errorf("re-embed: commit chunks: %w", err)
 	}
+	vecStore.InvalidateChunkCache() // chunk cache invalidation (P1-5): caller-tx writes are invisible to vectors.Store until post-commit
 
 	log.Info("chunk re-embedding complete", "embedded", chunkOK, "total", len(chunks))
 	return embedded + chunkOK, nil

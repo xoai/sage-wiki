@@ -129,6 +129,7 @@ func PromoteOutput(store *Store, id string, projectDir string, stores IndexStore
 		}); err != nil {
 			return fmt.Errorf("trust: chunk indexing: %w", err)
 		}
+		stores.VecStore.InvalidateChunkCache() // chunk cache invalidation (P1-5): caller-tx writes are invisible to vectors.Store until post-commit
 	}
 
 	// Mark confirmed LAST — only after all artifacts are durable
@@ -151,9 +152,11 @@ func DemoteOutput(store *Store, id string, stores IndexStores) error {
 	stores.OntStore.DeleteEntity(docID)
 
 	if stores.ChunkStore != nil && stores.DB != nil {
-		stores.DB.WriteTx(func(tx *sql.Tx) error {
+		if err := stores.DB.WriteTx(func(tx *sql.Tx) error {
 			return stores.ChunkStore.DeleteDocChunks(tx, docID)
-		})
+		}); err == nil {
+			stores.VecStore.InvalidateChunkCache() // chunk cache invalidation (P1-5): caller-tx writes are invisible to vectors.Store until post-commit
+		}
 	}
 
 	return nil
@@ -166,9 +169,11 @@ func DeindexOutput(id string, stores IndexStores) {
 	stores.OntStore.DeleteEntity(docID)
 
 	if stores.ChunkStore != nil && stores.DB != nil {
-		stores.DB.WriteTx(func(tx *sql.Tx) error {
+		if err := stores.DB.WriteTx(func(tx *sql.Tx) error {
 			return stores.ChunkStore.DeleteDocChunks(tx, docID)
-		})
+		}); err == nil {
+			stores.VecStore.InvalidateChunkCache() // chunk cache invalidation (P1-5): caller-tx writes are invisible to vectors.Store until post-commit
+		}
 	}
 }
 
