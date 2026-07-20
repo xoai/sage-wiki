@@ -186,7 +186,9 @@ func (s *Server) handleWriteSummary(ctx context.Context, req mcplib.CallToolRequ
 	if !isSubpath(absProject, absPath) {
 		return errorResult("path traversal not allowed"), nil
 	}
-	os.MkdirAll(filepath.Dir(absPath), 0755)
+	if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
+		return errorResult(fmt.Sprintf("create dir %s: %v", filepath.Dir(absPath), err)), nil
+	}
 
 	// Canonical write-then-index order (I2): (1) write the summary atomically,
 	// (2) index into the DB (mem + vectors, below), (3) update the manifest under
@@ -238,7 +240,9 @@ func (s *Server) handleWriteArticle(ctx context.Context, req mcplib.CallToolRequ
 	if !isSubpath(absProject, absPath) {
 		return errorResult("path traversal not allowed"), nil
 	}
-	os.MkdirAll(filepath.Dir(absPath), 0755)
+	if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
+		return errorResult(fmt.Sprintf("create dir %s: %v", filepath.Dir(absPath), err)), nil
+	}
 
 	// Canonical write-then-index order (I2): (1) write the article atomically,
 	// (2) index into the DB (ontology + mem + vectors, below), (3) update the
@@ -483,7 +487,9 @@ func extractKnowledgeItems(cfg *config.Config, content, captureCtx, tags string)
 
 func writeRawCapture(projectDir, content, captureCtx, tags, userNow string) (string, error) {
 	capturesDir := filepath.Join(projectDir, "raw", "captures")
-	os.MkdirAll(capturesDir, 0755)
+	if err := os.MkdirAll(capturesDir, 0755); err != nil {
+		return "", fmt.Errorf("create captures dir: %w", err)
+	}
 
 	slug := fmt.Sprintf("raw-%s", time.Now().Format("20060102-150405"))
 	relPath := filepath.Join("raw", "captures", slug+".md")
