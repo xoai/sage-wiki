@@ -530,6 +530,8 @@ func docIDToArticlePath(docID string, outputDir string) string {
 	return ""
 }
 
+// P1-8: SaveAnswer stays explicit (caller-supplied db — shared-handle
+// pattern); there is no Open duplication for internal/app to remove.
 // SaveAnswer saves a Q&A answer to the outputs/ directory with frontmatter,
 // FTS5 indexing, embeddings, and ontology edges.
 func SaveAnswer(projectDir string, question string, answer string, sources []string, db *storage.DB) (string, error) {

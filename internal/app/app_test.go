@@ -1,8 +1,13 @@
 package app
 
 import (
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
@@ -44,12 +49,12 @@ func TestOpen_MissingConfig(t *testing.T) {
 	if a != nil {
 		t.Error("App must be nil on error")
 	}
-	// A subsequent Open with a valid project succeeds (no leaked state).
-	dir2 := t.TempDir()
-	wiki.InitGreenfield(dir2, "test", "gpt-4o-mini")
-	a2, err := Open(dir2)
+	// A subsequent Open ON THE SAME PROJECT succeeds once config exists
+	// (spec Tests §2: no poisoned state from the failed Open).
+	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("version: 1\nproject: test\n"), 0644)
+	a2, err := Open(dir)
 	if err != nil {
-		t.Fatalf("second Open: %v", err)
+		t.Fatalf("second Open on same project: %v", err)
 	}
 	a2.Close()
 }
@@ -58,14 +63,29 @@ func TestEmbedder_Lazy(t *testing.T) {
 	dir := t.TempDir()
 	wiki.InitGreenfield(dir, "test", "gpt-4o-mini")
 
+	// Lazy proven by OUTPUT, not internals (a white-box nil check would miss
+	// an eager build that probes and returns nil): Open must emit NO
+	// embedding-provider output at all — the offline warn and the Ollama
+	// probe both happen inside NewFromConfig. internal/log binds os.Stderr
+	// at SetVerbosity time; capture via pipe swap (P1-4 mechanism).
+	r, w, _ := os.Pipe()
+	oldErr := os.Stderr
+	os.Stderr = w
+	log.SetVerbosity(0)
+
 	a, err := Open(dir)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	defer a.Close()
 
-	// Lazy: Open must not have built an embedder (no Ollama probe fired at
-	// Open time — embedder field is nil until first Embedder() call).
+	os.Stderr = oldErr
+	log.SetVerbosity(0)
+	w.Close()
+	out, _ := io.ReadAll(r)
+	if strings.Contains(string(out), "embedding provider") || strings.Contains(string(out), "ollama") {
+		t.Errorf("Open produced embedder output — must be lazy (spec D1): %s", out)
+	}
 	if a.embedder != nil {
 		t.Error("embedder built eagerly at Open — must be lazy (spec D1)")
 	}

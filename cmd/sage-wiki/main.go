@@ -642,6 +642,9 @@ func runLint(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// P1-8: intentionally NOT adopted onto internal/app — runSearch tolerates
+// config-load failure (BM25-only degrade) and honors the global --config
+// flag via resolveConfigPath; both break under app.Open's strict shape.
 func runSearch(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
 	queryStr := strings.Join(args, " ")

@@ -812,6 +812,9 @@ func submitBatch(
 	return result, nil
 }
 
+// P1-8: deliberately NOT refactored onto setupStores — resumeBatch's
+// construction lacks itemStore/tierMgr/backpressure, and verbatim reuse
+// would add the chunk backfill to the batch-resume path (a behavior change).
 // resumeBatch polls and retrieves a previously submitted batch, then continues the pipeline.
 // The batch checkpoint (bcp) is the only resume state (P1-3); every terminal
 // path retires it via retireBatchCheckpoint (strip-then-conditional-delete).

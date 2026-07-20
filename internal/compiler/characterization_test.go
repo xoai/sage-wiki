@@ -239,6 +239,13 @@ func TestCharacterization_CompileSnapshotDeterministic(t *testing.T) {
 	// main, never on a refactor branch).
 	goldenPath := filepath.Join("testdata", "compile_snapshot_golden.json")
 	if os.Getenv("SAGE_CHARACTERIZATION_RECORD") == "1" {
+		// Guard against accidental re-recording (a leaked env var in CI or a
+		// refactor-branch shell must not silently rewrite the baseline):
+		// the golden is written ONLY when absent, or with an explicit
+		// SAGE_CHARACTERIZATION_FORCE=1 overwrite acknowledgement.
+		if _, err := os.Stat(goldenPath); err == nil && os.Getenv("SAGE_CHARACTERIZATION_FORCE") != "1" {
+			t.Fatalf("golden exists at %s — refusing to overwrite (set SAGE_CHARACTERIZATION_FORCE=1 from pre-refactor main to regenerate)", goldenPath)
+		}
 		if err := os.MkdirAll("testdata", 0755); err != nil {
 			t.Fatal(err)
 		}
