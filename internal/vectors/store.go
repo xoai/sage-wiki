@@ -3,6 +3,7 @@ package vectors
 import (
 	"database/sql"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -41,7 +42,7 @@ func (s *Store) Get(id string) ([]float32, error) {
 	var blob []byte
 	err := s.db.ReadDB().QueryRow("SELECT embedding FROM vec_entries WHERE id=?", id).Scan(&blob)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("vectors.Get: %w", err)
@@ -74,7 +75,7 @@ func (s *Store) Search(query []float32, limit int) ([]VectorResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("vectors.Search: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var results []VectorResult
 	for rows.Next() {
@@ -123,7 +124,7 @@ func (s *Store) SearchChunks(query []float32, limit int) ([]ChunkVectorResult, e
 	if err != nil {
 		return nil, fmt.Errorf("vectors.SearchChunks: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var results []ChunkVectorResult
 	for rows.Next() {
@@ -178,7 +179,7 @@ func (s *Store) SearchChunksFiltered(query []float32, docIDs []string, limit int
 	if err != nil {
 		return nil, fmt.Errorf("vectors.SearchChunksFiltered: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var results []ChunkVectorResult
 	for rows.Next() {

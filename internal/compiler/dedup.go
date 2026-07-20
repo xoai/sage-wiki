@@ -76,11 +76,15 @@ func (dc *DedupCache) Seed(names []string) {
 			if err != nil {
 				// REL-04: a real DB error is not a cache miss. Count it and
 				// fall through to embed (embedding still produces the correct
-				// vector) — degrade, never silently swallow. Logged once
-				// below, not per name: a broken store fails EVERY Get.
+				// vector) — degrade, never silently swallow. Log the FIRST
+				// failure immediately (a 10K-name Seed with a dead store gets
+				// feedback now, not at the end) and a summary at the end —
+				// never per name: a broken store fails EVERY Get.
 				cacheReadFailures++
 				if firstCacheErr == nil {
 					firstCacheErr = err
+					log.Warn("vector cache read failed — falling back to embed for remaining concepts",
+						"error", err)
 				}
 			}
 		}
@@ -97,10 +101,6 @@ func (dc *DedupCache) Seed(names []string) {
 	cacheSize := len(dc.cache)
 	dc.mu.Unlock()
 
-	if firstCacheErr != nil {
-		log.Warn("vector cache read failed — falling back to embed for remaining concepts",
-			"error", firstCacheErr, "failures", cacheReadFailures)
-	}
 	if cacheSize > 0 {
 		log.Info("dedup cache seeded",
 			"total", cacheSize, "from_store", loaded,

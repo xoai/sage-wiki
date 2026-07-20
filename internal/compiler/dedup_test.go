@@ -141,9 +141,11 @@ func (m *countingEmbedder) Embed(text string) ([]float32, error) {
 
 // captureLog rebinds internal/log's handler to a pipe (os.Stderr
 // reassignment + SetVerbosity rebind — internal/log has no capture hook;
-// plan T1 mechanism). Process-global: do NOT run parallel. Returns the
-// captured output and restores everything.
-func captureLog(t *testing.T, verbosity int, fn func()) string {
+// plan T1 mechanism). Process-global: do NOT run parallel. Always uses and
+// restores the package default verbosity 0 — internal/log has no level
+// getter, so do NOT parameterize the level (a non-default value would leak
+// into the rest of the package's tests).
+func captureLog(t *testing.T, fn func()) string {
 	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -151,10 +153,10 @@ func captureLog(t *testing.T, verbosity int, fn func()) string {
 	}
 	old := os.Stderr
 	os.Stderr = w
-	log.SetVerbosity(verbosity)
+	log.SetVerbosity(0)
 	defer func() {
 		os.Stderr = old
-		log.SetVerbosity(verbosity)
+		log.SetVerbosity(0)
 	}()
 
 	fn()
@@ -181,7 +183,7 @@ func TestDedupCache_Seed_VecStoreErrorFallsBackToEmbed(t *testing.T) {
 	emb := &countingEmbedder{}
 	dc := NewDedupCache(emb, vecStore, 0.85)
 
-	out := captureLog(t, 0, func() {
+	out := captureLog(t, func() {
 		dc.Seed(names)
 	})
 

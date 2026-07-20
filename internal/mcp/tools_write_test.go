@@ -611,8 +611,10 @@ func blockDir(t *testing.T, path string) {
 
 // blockDirPerm makes parent read-only so MkdirAll(path) fails with EACCES
 // while the pathsafe traversal guard still passes (it resolves the existing
-// parent fine). Windows: the read-only dir attribute does not prevent
-// subdirectory creation, so these tests skip there.
+// parent fine). Skips where the mechanism can't bite: Windows (the
+// read-only dir attribute does not prevent subdirectory creation) and root
+// (permission checks bypassed — verified by probing an actual mkdir, no
+// platform-specific APIs needed).
 func blockDirPerm(t *testing.T, parent string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -622,6 +624,11 @@ func blockDirPerm(t *testing.T, parent string) {
 		t.Fatalf("blockDirPerm: %v", err)
 	}
 	t.Cleanup(func() { os.Chmod(parent, 0755) })
+	probe := filepath.Join(parent, ".blockDirPerm-probe")
+	if err := os.Mkdir(probe, 0755); err == nil {
+		os.Remove(probe)
+		t.Skip("read-only parent does not block mkdir (running as root?)")
+	}
 }
 
 func resultText(result *mcplib.CallToolResult) string {
