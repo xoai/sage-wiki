@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Security
+
+- **Zip-bomb protection for Office and EPUB sources (SEC-08, P1-7).** The
+  `.docx`/`.xlsx`/`.pptx`/`.epub` extractors now enforce a 50 MB per-entry
+  and 200 MB per-archive decompression cap, scoped to the entries each
+  extractor actually reads (a large embedded image or video you never see in
+  the text is unaffected). Over-cap archives are rejected with a
+  `zip resource limit` error naming the archive, entry, and cap, and the
+  source is skipped with a warning instead of risking OOM. Lying-header
+  bombs (declared small, inflate huge) are already hard-rejected by Go's zip
+  reader itself; the caps close the honestly-declared and many-small-entries
+  (aggregate) vectors.
+
 ### Fixed
 
 - **Real errors no longer masquerade as "not found" or success (REL-04, P1-4).**

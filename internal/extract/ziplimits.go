@@ -93,6 +93,32 @@ func (b *zipBudget) entryLimit() int64 {
 	return maxZipEntryBytes
 }
 
+// open runs the layer-1 pre-check on a MATCHED entry and, if it passes,
+// opens it wrapped in a layer-2 bounded reader. A pre-check failure returns
+// the *ZipLimitError directly; an f.Open failure returns the raw error so
+// callers can keep their existing open-error behavior (continue in
+// xlsx/pptx/epub, wrapped return in docx). After reading, callers MUST
+// check br.exceeded (return b.limitError on true) and then b.charge.
+func (b *zipBudget) open(archive string, f *zip.File) (io.ReadCloser, *boundedReader, error) {
+	if err := b.preCheck(archive, f); err != nil {
+		return nil, nil, err
+	}
+	rc, err := f.Open()
+	if err != nil {
+		return nil, nil, err
+	}
+	return rc, &boundedReader{r: rc, limit: b.entryLimit()}, nil
+}
+
+// limitError builds the ZipLimitError for a streaming (layer-2) overflow,
+// choosing the breached cap by which bound was tighter at the time.
+func (b *zipBudget) limitError(archive, entry string) *ZipLimitError {
+	if b.remaining < maxZipEntryBytes {
+		return &ZipLimitError{Archive: archive, Entry: entry, Limit: maxZipTotalBytes, Reason: "archive-total-exceeded"}
+	}
+	return &ZipLimitError{Archive: archive, Entry: entry, Limit: maxZipEntryBytes, Reason: "entry-too-large"}
+}
+
 // boundedReader enforces layer 2: a hard streaming cap on ONE entry's
 // decompressed bytes. On overflow it sets exceeded and returns
 // errZipLimitExceeded from Read — a hard error, never a silent truncation
