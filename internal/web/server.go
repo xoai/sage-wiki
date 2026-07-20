@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/fsnotify/fsnotify"
 	"net"
 	"net/http"
 	"net/url"
@@ -31,16 +32,20 @@ import (
 
 // WebServer serves the web UI and REST API.
 type WebServer struct {
-	projectDir string
-	db         *storage.DB
-	mem        *memory.Store
-	vec        *vectors.Store
-	ont        *ontology.Store
-	searcher   *hybrid.Searcher
-	cfg        *config.Config
+	projectDir   string
+	db           *storage.DB
+	mem          *memory.Store
+	vec          *vectors.Store
+	ont          *ontology.Store
+	searcher     *hybrid.Searcher
+	cfg          *config.Config
 	wsClients    map[chan string]bool
 	wsMu         sync.Mutex
 	queryRunning atomic.Int32 // concurrent query limiter
+
+	// pollInterval is the output-watch polling fallback interval (default
+	// 3s; tests inject a short interval). Zero means default.
+	pollInterval time.Duration
 
 	// token, when non-empty, gates /api/* and /ws (Bearer header or ?token=).
 	// allowedHosts are extra Host values accepted beyond loopback (anti
@@ -187,13 +192,117 @@ func (s *WebServer) Close() error {
 	return s.db.Close()
 }
 
-// watchOutputDir polls the output directory for changes and broadcasts reload
-// until ctx is cancelled (server shutdown), so it does not outlive the server.
+// watchOutputDir watches the output directory for changes and broadcasts
+// reload until ctx is cancelled (server shutdown), so it does not outlive
+// the server. Event-driven (fsnotify) where the platform supports it, with
+// the pre-existing dirSnapshot poll as fallback (PERF-03, P1-5).
 func (s *WebServer) watchOutputDir(ctx context.Context) {
 	outputDir := filepath.Join(s.projectDir, s.cfg.Output)
+	s.watchFsnotify(ctx, outputDir)
+}
+
+// watchFsnotify runs the event-driven watch, falling back to watchPoll
+// when fsnotify can't work here: NewWatcher fails, the recursive add fails
+// (e.g. the output dir doesn't exist yet), or the path is a /mnt/ WSL
+// mount after symlink resolution — the same static check the compiler's
+// watch mode uses (there is NO silent-no-events detection anywhere in the
+// codebase; network drives not under /mnt/ silently fail in the compiler
+// too, and this fallback inherits that gap).
+func (s *WebServer) watchFsnotify(ctx context.Context, outputDir string) {
+	resolved, err := filepath.EvalSymlinks(outputDir)
+	if err == nil {
+		outputDir = resolved
+	}
+	if strings.HasPrefix(outputDir, "/mnt/") {
+		log.Info("web watch: /mnt/ path — using polling fallback", "path", outputDir)
+		s.watchPoll(ctx, outputDir)
+		return
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Warn("web watch: fsnotify unavailable, using polling fallback", "error", err)
+		s.watchPoll(ctx, outputDir)
+		return
+	}
+	defer watcher.Close()
+
+	if err := addRecursiveWatch(watcher, outputDir); err != nil {
+		log.Warn("web watch: cannot watch output dir, using polling fallback", "path", outputDir, "error", err)
+		s.watchPoll(ctx, outputDir)
+		return
+	}
+
+	const debounce = 300 * time.Millisecond
+	var timer *time.Timer
+	var fired <-chan time.Time
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			// Newly created subdirectories are added as they appear so
+			// their files are watched too.
+			if ev.Op&fsnotify.Create != 0 {
+				if info, err := os.Stat(ev.Name); err == nil && info.IsDir() {
+					if err := watcher.Add(ev.Name); err != nil {
+						log.Warn("web watch: add subdir failed", "path", ev.Name, "error", err)
+					}
+				}
+			}
+			if timer != nil {
+				timer.Stop()
+			}
+			timer = time.NewTimer(debounce)
+			fired = timer.C
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			log.Warn("web watch: fsnotify error", "error", err)
+		case <-fired:
+			log.Info("wiki files changed, broadcasting reload")
+			s.BroadcastReload()
+			fired = nil
+		}
+	}
+}
+
+// addRecursiveWatch adds a directory and all subdirectories to the watcher.
+// The root must exist — otherwise fsnotify would silently watch nothing and
+// the caller's polling fallback would never engage (that gap is exactly
+// what the fallback exists for). Duplicated from compiler's unexported
+// addRecursive (~15 lines) rather than exporting API for one consumer.
+func addRecursiveWatch(watcher *fsnotify.Watcher, dir string) error {
+	if _, err := os.Stat(dir); err != nil {
+		return fmt.Errorf("web watch: output dir: %w", err)
+	}
+	return filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if err := watcher.Add(path); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// watchPoll is the pre-P1-5 polling watcher: snapshot-compare on an
+// interval (pollInterval, injectable for tests).
+func (s *WebServer) watchPoll(ctx context.Context, outputDir string) {
 	snapshot := s.dirSnapshot(outputDir)
 
-	ticker := time.NewTicker(3 * time.Second)
+	interval := s.pollInterval
+	if interval <= 0 {
+		interval = 3 * time.Second
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
@@ -416,12 +525,12 @@ func (s *WebServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	relCount, _ := s.ont.RelationCount()
 
 	writeJSON(w, map[string]any{
-		"project":   s.cfg.Project,
-		"entries":   entryCount,
-		"vectors":   vecCount,
+		"project":    s.cfg.Project,
+		"entries":    entryCount,
+		"vectors":    vecCount,
 		"dimensions": vecDims,
-		"entities":  entityCount,
-		"relations": relCount,
+		"entities":   entityCount,
+		"relations":  relCount,
 	})
 }
 
@@ -548,7 +657,7 @@ func (s *WebServer) handleGraph(w http.ResponseWriter, r *http.Request) {
 	}
 	type edge struct {
 		Source   string `json:"source"`
-		Target  string `json:"target"`
+		Target   string `json:"target"`
 		Relation string `json:"relation"`
 	}
 
