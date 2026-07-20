@@ -71,12 +71,18 @@ func BenchmarkBruteForceSearchChunks(b *testing.B) {
 			var cid, did string
 			var blob []byte
 			var dims int
-			rows.Scan(&cid, &did, &blob, &dims)
+			if err := rows.Scan(&cid, &did, &blob, &dims); err != nil {
+				b.Fatal(err)
+			}
 			vec := decodeFloat32s(blob)
 			if len(vec) != len(query) {
 				continue
 			}
 			results = insertChunkSorted(results, ChunkVectorResult{ChunkID: cid, DocID: did, Score: CosineSimilarity(query, vec)}, 20)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			b.Fatal(err)
 		}
 		rows.Close()
 		_ = s

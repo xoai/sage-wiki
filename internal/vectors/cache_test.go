@@ -93,12 +93,17 @@ func bruteForceDoc(t *testing.T, s *Store, query []float32, limit int) []VectorR
 	for rows.Next() {
 		var id string
 		var blob []byte
-		rows.Scan(&id, &blob)
+		if err := rows.Scan(&id, &blob); err != nil {
+			t.Fatal(err)
+		}
 		vec := decodeFloat32s(blob)
 		if len(vec) != len(query) {
 			continue
 		}
 		results = insertSorted(results, VectorResult{ID: id, Score: CosineSimilarity(query, vec)}, limit)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
 	}
 	for i := range results {
 		results[i].Rank = i + 1
@@ -301,9 +306,15 @@ func TestCache_ChunkParityAndFiltered(t *testing.T) {
 	for rows.Next() {
 		var cid, did string
 		var blob []byte
-		rows.Scan(&cid, &did, &blob)
+		if err := rows.Scan(&cid, &did, &blob); err != nil {
+			t.Fatal(err)
+		}
 		vec := decodeFloat32s(blob)
 		want = insertChunkSorted(want, ChunkVectorResult{ChunkID: cid, DocID: did, Score: CosineSimilarity(query, vec)}, 10)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		t.Fatal(err)
 	}
 	rows.Close()
 	for i := range want {
