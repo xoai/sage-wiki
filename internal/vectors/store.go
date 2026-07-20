@@ -229,6 +229,12 @@ func (s *Store) Search(query []float32, limit int) ([]VectorResult, error) {
 	if err := s.loadDocCache(); err != nil {
 		return nil, err
 	}
+	// Dimension-mismatch guard (preserved from the brute-force path): a
+	// query whose length differs from the cache's row dimension matches
+	// nothing — including a nil/empty query from a caller with no embedder.
+	if len(query) != s.docCache.dim {
+		return nil, nil
+	}
 
 	nq := normalizeCopy(query)
 	hits := s.docCache.search(nq, limit, nil)
@@ -259,6 +265,9 @@ func (s *Store) SearchChunks(query []float32, limit int) ([]ChunkVectorResult, e
 	if err := s.loadChunkCache(); err != nil {
 		return nil, err
 	}
+	if len(query) != s.chunkCache.dim {
+		return nil, nil
+	}
 
 	nq := normalizeCopy(query)
 	hits := s.chunkCache.search(nq, limit, nil)
@@ -286,6 +295,9 @@ func (s *Store) SearchChunksFiltered(query []float32, docIDs []string, limit int
 
 	if err := s.loadChunkCache(); err != nil {
 		return nil, err
+	}
+	if len(query) != s.chunkCache.dim {
+		return nil, nil
 	}
 	filter := make(map[string]bool, len(docIDs))
 	for _, id := range docIDs {

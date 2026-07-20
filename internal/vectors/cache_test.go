@@ -414,3 +414,29 @@ func TestCache_ExternalTxInvalidation(t *testing.T) {
 		t.Errorf("clean search reloaded: loadCount = %d, want 2", s.chunkCache.loadCount())
 	}
 }
+
+// TestCache_DimensionMismatchGuard: a query whose length differs from the
+// cache's row dimension — including a nil query from an embedder-less
+// caller (the linter path) — matches nothing and must NOT panic. Preserved
+// from the brute-force path's len(vec) != len(query) skip.
+func TestCache_DimensionMismatchGuard(t *testing.T) {
+	s, cleanup := seededFixture(t, 5, 2)
+	defer cleanup()
+
+	got, err := s.Search(nil, 10)
+	if err != nil || got != nil {
+		t.Errorf("nil query: got=%v err=%v, want nil,nil", got, err)
+	}
+	got, err = s.Search([]float32{1, 2, 3}, 10)
+	if err != nil || got != nil {
+		t.Errorf("short query: got=%v err=%v, want nil,nil", got, err)
+	}
+	cgot, err := s.SearchChunks(nil, 10)
+	if err != nil || cgot != nil {
+		t.Errorf("nil chunk query: got=%v err=%v, want nil,nil", cgot, err)
+	}
+	fgot, err := s.SearchChunksFiltered(nil, []string{"doc-0"}, 10)
+	if err != nil || fgot != nil {
+		t.Errorf("nil filtered query: got=%v err=%v, want nil,nil", fgot, err)
+	}
+}

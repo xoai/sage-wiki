@@ -157,6 +157,7 @@ func (db *DB) migrate() error {
 		{sql: migrationV5},
 		{sql: migrationV6},
 		{sql: migrationV7},
+		{sql: migrationV8},
 	}
 
 	for i := version; i < len(migrations); i++ {
@@ -446,4 +447,36 @@ CREATE TABLE IF NOT EXISTS output_index (
 	content_hash TEXT NOT NULL,
 	indexed_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
+`
+
+// migrationV8 adds FTS5 prefix indexes (prefix='2 3') to entries and
+// chunks_fts so buildFTSQuery's "term"* prefix queries are index-backed
+// instead of full index scans (PERF-02, P1-5). FTS5 virtual tables can't
+// ALTER ADD options, so the tables are recreated with the same columns,
+// tokenizer, and the chunk_id UNINDEXED property (dropping it would
+// pollute BM25 rankings with chunk IDs), then refilled from the old
+// tables — the same CREATE _new → INSERT OR IGNORE SELECT → DROP → RENAME
+// pattern V2/V4 used. One-time rebuild cost at open; the runner's single
+// transaction makes it atomic.
+const migrationV8 = `
+CREATE VIRTUAL TABLE entries_new USING fts5(
+	id, content, tags, article_path,
+	tokenize='porter unicode61',
+	prefix='2 3'
+);
+INSERT OR IGNORE INTO entries_new (id, content, tags, article_path)
+	SELECT id, content, tags, article_path FROM entries;
+DROP TABLE entries;
+ALTER TABLE entries_new RENAME TO entries;
+
+CREATE VIRTUAL TABLE chunks_fts_new USING fts5(
+	chunk_id UNINDEXED,
+	heading, content,
+	tokenize='porter unicode61',
+	prefix='2 3'
+);
+INSERT OR IGNORE INTO chunks_fts_new (chunk_id, heading, content)
+	SELECT chunk_id, heading, content FROM chunks_fts;
+DROP TABLE chunks_fts;
+ALTER TABLE chunks_fts_new RENAME TO chunks_fts;
 `
