@@ -55,8 +55,11 @@ func loadBatchCheckpoint(projectDir string) (*BatchCheckpoint, error) {
 	return &bcp, nil
 }
 
-// saveBatchCheckpoint writes .sage/batch-state.json atomically (temp +
-// rename, same pattern the legacy saveCompileState used).
+// saveBatchCheckpoint writes .sage/batch-state.json atomically (unique temp
+// file + rename). The temp name is randomized via os.CreateTemp: the old
+// fixed path+".tmp" pattern let concurrent writers interleave bytes into
+// each other's temp file and rename the corrupted result, or abort on a
+// rename collision — in the submit path that could orphan a paid batch ID.
 func saveBatchCheckpoint(projectDir string, bcp *BatchCheckpoint) error {
 	path := batchCheckpointPath(projectDir)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -66,13 +69,32 @@ func saveBatchCheckpoint(projectDir string, bcp *BatchCheckpoint) error {
 	if err != nil {
 		return fmt.Errorf("compiler.saveBatchCheckpoint: marshal: %w", err)
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return fmt.Errorf("compiler.saveBatchCheckpoint: write: %w", err)
+	if err := writeFileAtomicUnique(path, data); err != nil {
+		return fmt.Errorf("compiler.saveBatchCheckpoint: %w", err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp) // don't orphan the temp file
-		return fmt.Errorf("compiler.saveBatchCheckpoint: rename: %w", err)
+	return nil
+}
+
+// writeFileAtomicUnique writes data to path atomically using a uniquely-named
+// temp file in the same directory (concurrent-writer safe) + rename.
+func writeFileAtomicUnique(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("mktemp: %w", err)
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("write: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("close: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName) // don't orphan the temp file
+		return fmt.Errorf("rename: %w", err)
 	}
 	return nil
 }
@@ -105,13 +127,8 @@ func stripLegacyBatch(projectDir string) error {
 	if err != nil {
 		return fmt.Errorf("compiler.stripLegacyBatch: marshal: %w", err)
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return fmt.Errorf("compiler.stripLegacyBatch: write: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp) // don't orphan the temp file
-		return fmt.Errorf("compiler.stripLegacyBatch: rename: %w", err)
+	if err := writeFileAtomicUnique(path, data); err != nil {
+		return fmt.Errorf("compiler.stripLegacyBatch: %w", err)
 	}
 	return nil
 }
@@ -147,34 +164,40 @@ func retireBatchCheckpoint(projectDir string) {
 // returns the in-flight batch checkpoint, migrating a legacy
 // compile-state.json on first encounter:
 //
-//  1. batch-state.json exists → load and return it.
-//  2. Else legacy compile-state.json has Batch != nil → SPLIT: write the
-//     batch portion to batch-state.json FIRST, then strip Batch from the
-//     legacy JSON. This order is mandatory — the reverse can lose the batch
-//     ID on a crash between the two writes; this order degrades to an
-//     idempotent re-split. A failure of either write, or corrupt JSON in
-//     either file, is an ERROR (aborts the caller) — never fall through to
-//     nil,nil, which could strand the in-flight batch and let
-//     MigrateCheckpoint's delete destroy the only copy of the batch ID.
-//  3. Else → nil, nil.
+//  1. batch-state.json exists with Batch != nil → load and return it.
+//  2. Else (no file, or a DEAD batch-less file — hand-edit/corruption, since
+//     no writer produces one): check the legacy compile-state.json. A dead
+//     file must not mask a legacy in-flight batch — without the fall-through,
+//     Compile's dead-file removal plus MigrateCheckpoint's defensive strip
+//     would silently strand a paid batch (independent-verification finding).
+//     Legacy Batch != nil → SPLIT: write the batch portion to
+//     batch-state.json FIRST, then strip Batch from the legacy JSON. This
+//     order is mandatory — the reverse can lose the batch ID on a crash
+//     between the two writes; this order degrades to an idempotent re-split.
+//     A failure of either write, or corrupt JSON in either file, is an ERROR
+//     (aborts the caller) — never fall through to nil,nil, which could strand
+//     the in-flight batch and let MigrateCheckpoint's delete destroy the only
+//     copy of the batch ID.
+//  3. Legacy has no batch → return whatever step 1 loaded (possibly a dead
+//     batch-less file, which Compile removes as dead state; possibly nil).
 func loadOrMigrateBatchCheckpoint(projectDir string) (*BatchCheckpoint, error) {
 	bcp, err := loadBatchCheckpoint(projectDir)
 	if err != nil {
 		return nil, err
 	}
-	if bcp != nil {
+	if bcp != nil && bcp.Batch != nil {
 		return bcp, nil
 	}
 
 	state, err := loadCompileState(legacyCheckpointPath(projectDir))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return bcp, nil
 		}
 		return nil, fmt.Errorf("compiler.loadOrMigrateBatchCheckpoint: load legacy: %w", err)
 	}
 	if state.Batch == nil {
-		return nil, nil // batch-less legacy checkpoint — MigrateCheckpoint owns it
+		return bcp, nil // batch-less legacy checkpoint — MigrateCheckpoint owns it
 	}
 
 	bcp = &BatchCheckpoint{

@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"sync"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -280,5 +281,87 @@ func TestStripLegacyBatchAbsentIsNoOp(t *testing.T) {
 	projectDir := t.TempDir()
 	if err := stripLegacyBatch(projectDir); err != nil {
 		t.Errorf("absent legacy file must be a silent no-op, got %v", err)
+	}
+}
+
+// TestLoadOrMigrateBatchCheckpoint_DeadFileDoesNotMaskLegacyBatch: a
+// batch-less batch-state.json (hand-edit/corruption — no writer produces
+// one) must NOT mask a legacy in-flight batch: the legacy batch is rescued
+// (split overwrites the dead file), not stranded (verification finding 1).
+func TestLoadOrMigrateBatchCheckpoint_DeadFileDoesNotMaskLegacyBatch(t *testing.T) {
+	projectDir := t.TempDir()
+
+	// Dead current-format file (Batch == nil)...
+	if err := saveBatchCheckpoint(projectDir, &BatchCheckpoint{CompileID: "dead"}); err != nil {
+		t.Fatal(err)
+	}
+	// ...plus a legacy in-flight batch.
+	writeLegacyState(t, projectDir, CompileState{
+		CompileID: "legacy-1",
+		Pending:   []string{"raw/a.md"},
+		Batch:     &BatchState{BatchID: "batch_rescue", Provider: "openai", Pass: "summarize"},
+	})
+
+	bcp, err := loadOrMigrateBatchCheckpoint(projectDir)
+	if err != nil {
+		t.Fatalf("loadOrMigrateBatchCheckpoint: %v", err)
+	}
+	if bcp == nil || bcp.Batch == nil || bcp.Batch.BatchID != "batch_rescue" {
+		t.Fatalf("legacy batch was masked by the dead file: bcp=%+v", bcp)
+	}
+
+	// The dead file is overwritten with the rescued batch; legacy stripped.
+	onDisk, err := loadBatchCheckpoint(projectDir)
+	if err != nil || onDisk == nil || onDisk.Batch == nil || onDisk.Batch.BatchID != "batch_rescue" {
+		t.Errorf("batch-state.json not overwritten with rescued batch: %+v", onDisk)
+	}
+	legacy := readLegacyState(t, projectDir)
+	if legacy.Batch != nil {
+		t.Error("legacy JSON not Batch-stripped after rescue")
+	}
+}
+
+// TestBatchCheckpointWriters_Concurrent: concurrent writers must not
+// spuriously abort on a shared tmp filename (verification finding 2 —
+// inherited from the old saveCompileState fixed-name pattern).
+func TestBatchCheckpointWriters_Concurrent(t *testing.T) {
+	projectDir := t.TempDir()
+	writeLegacyState(t, projectDir, CompileState{
+		CompileID: "c1",
+		Pending:   []string{"raw/a.md"},
+		Batch:     &BatchState{BatchID: "batch_race", Provider: "openai"},
+	})
+
+	const goroutines = 8
+	errs := make(chan error, goroutines)
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Race the split AND direct saves — both writer paths.
+			if _, err := loadOrMigrateBatchCheckpoint(projectDir); err != nil {
+				errs <- err
+			}
+			if err := saveBatchCheckpoint(projectDir, &BatchCheckpoint{
+				Batch: &BatchState{BatchID: "batch_race"},
+			}); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent writer aborted spuriously: %v", err)
+	}
+
+	// Final state consistent: valid batch file, no orphan tmp files.
+	if _, err := loadBatchCheckpoint(projectDir); err != nil {
+		t.Errorf("final batch-state.json invalid: %v", err)
+	}
+	matches, _ := filepath.Glob(filepath.Join(projectDir, ".sage", "*.tmp"))
+	if len(matches) != 0 {
+		t.Errorf("orphan tmp files: %v", matches)
 	}
 }

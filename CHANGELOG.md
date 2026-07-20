@@ -14,10 +14,13 @@
   `batch-state.json` — and then deleted; just run `sage-wiki compile` again to
   resume. `--fresh` now deletes both checkpoint files (except under `--dry-run`,
   which stays fully side-effect-free; this is also the recovery for the
-  "provider changed since batch was submitted" error), and
-  `--dry-run` with a pending batch reports it without polling the provider. A
-  pending batch is now resumed even when its sources were deleted from disk
-  (previously an empty diff skipped the resume).
+  "provider changed since batch was submitted" error), and `--dry-run` with a
+  pending batch reports it without polling the provider. A pending batch is now
+  resumed even when its sources were deleted from disk (previously an empty
+  diff skipped the resume). Checkpoint writes use uniquely-named temp files, so
+  concurrent writers can't interleave a corrupted checkpoint or abort on a
+  rename collision; and a batch-less (hand-edited) `batch-state.json` no longer
+  masks a legacy in-flight batch — it is rescued instead of stranded.
 
 - **Cross-store consistency under concurrency and crashes (REL-02/REL-03, P1-2).**
   Concurrent manifest writers no longer lose each other's updates. Every
