@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"runtime"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -592,3 +593,137 @@ func searchString(s, substr string) bool {
 
 // Suppress unused import warning
 var _ = json.Marshal
+
+// blockDir replaces the directory at path with a regular FILE so MkdirAll
+// on it fails (portable, incl. Windows). NOTE: unusable on handlers with the
+// pathsafe traversal guard — a file in the chain makes lstat return ENOTDIR
+// and the guard fails closed as "path traversal" BEFORE the mkdir runs.
+func blockDir(t *testing.T, path string) {
+	t.Helper()
+	os.RemoveAll(path)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("blockDir mkdir parent: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("blocker"), 0644); err != nil {
+		t.Fatalf("blockDir: %v", err)
+	}
+}
+
+// blockDirPerm makes parent read-only so MkdirAll(path) fails with EACCES
+// while the pathsafe traversal guard still passes (it resolves the existing
+// parent fine). Skips where the mechanism can't bite: Windows (the
+// read-only dir attribute does not prevent subdirectory creation) and root
+// (permission checks bypassed — verified by probing an actual mkdir, no
+// platform-specific APIs needed).
+func blockDirPerm(t *testing.T, parent string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("read-only dir attribute does not block mkdir on Windows")
+	}
+	if err := os.Chmod(parent, 0555); err != nil {
+		t.Fatalf("blockDirPerm: %v", err)
+	}
+	t.Cleanup(func() { os.Chmod(parent, 0755) })
+	probe := filepath.Join(parent, ".blockDirPerm-probe")
+	if err := os.Mkdir(probe, 0755); err == nil {
+		os.Remove(probe)
+		t.Skip("read-only parent does not block mkdir (running as root?)")
+	}
+}
+
+func resultText(result *mcplib.CallToolResult) string {
+	if result == nil || len(result.Content) == 0 {
+		return ""
+	}
+	if tc, ok := result.Content[0].(mcplib.TextContent); ok {
+		return tc.Text
+	}
+	return ""
+}
+
+// TestWriteSummary_MkdirBlocked pins D3: a failed MkdirAll must surface as
+// an error result NAMING the mkdir failure — pre-change it falls through to
+// a generic "write failed" from the downstream WriteFileAtomic.
+func TestWriteSummary_MkdirBlocked(t *testing.T) {
+	dir := t.TempDir()
+	wiki.InitGreenfield(dir, "test", "gemini-2.5-flash")
+
+	srv, err := NewServer(dir)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer srv.Close()
+
+	// Remove the target dir (MkdirAll no-ops on existing dirs) and make its
+	// parent read-only: the mkdir itself must fail with EACCES while the
+	// pathsafe traversal guard still passes.
+	os.RemoveAll(filepath.Join(dir, "wiki", "summaries"))
+	blockDirPerm(t, filepath.Join(dir, "wiki"))
+
+	result := srv.CallTool(context.Background(), "wiki_write_summary", mcplib.CallToolRequest{
+		Params: mcplib.CallToolParams{
+			Name:      "wiki_write_summary",
+			Arguments: map[string]any{"source": "raw/test.md", "content": "x"},
+		},
+	})
+
+	if !result.IsError {
+		t.Fatal("expected error result when summaries dir is blocked")
+	}
+	text := resultText(result)
+	if !strings.Contains(text, "create dir") {
+		t.Errorf("error should name the mkdir failure (create dir ...), got generic downstream error: %s", text)
+	}
+	if strings.Contains(text, "write failed") {
+		t.Errorf("error surfaced the downstream write failure instead of the mkdir: %s", text)
+	}
+}
+
+// TestWriteArticle_MkdirBlocked: same guard on the article write path (:241).
+func TestWriteArticle_MkdirBlocked(t *testing.T) {
+	dir := t.TempDir()
+	wiki.InitGreenfield(dir, "test", "gemini-2.5-flash")
+
+	srv, err := NewServer(dir)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer srv.Close()
+
+	os.RemoveAll(filepath.Join(dir, "wiki", "concepts"))
+	blockDirPerm(t, filepath.Join(dir, "wiki"))
+
+	result := srv.CallTool(context.Background(), "wiki_write_article", mcplib.CallToolRequest{
+		Params: mcplib.CallToolParams{
+			Name:      "wiki_write_article",
+			Arguments: map[string]any{"concept": "test-concept", "content": "x"},
+		},
+	})
+
+	if !result.IsError {
+		t.Fatal("expected error result when concepts dir is blocked")
+	}
+	text := resultText(result)
+	if !strings.Contains(text, "create dir") {
+		t.Errorf("error should name the mkdir failure (create dir ...), got generic downstream error: %s", text)
+	}
+	if strings.Contains(text, "write failed") {
+		t.Errorf("error surfaced the downstream write failure instead of the mkdir: %s", text)
+	}
+}
+
+// TestWriteRawCapture_MkdirBlocked: writeRawCapture's own mkdir (:486) is
+// only reachable unchecked via a direct call — the tool path hits the
+// already-checked :340 mkdir for the same directory first.
+func TestWriteRawCapture_MkdirBlocked(t *testing.T) {
+	dir := t.TempDir()
+	blockDir(t, filepath.Join(dir, "raw", "captures"))
+
+	_, err := writeRawCapture(dir, "content", "ctx", "", "now")
+	if err == nil {
+		t.Fatal("expected error when captures dir is blocked")
+	}
+	if !strings.Contains(err.Error(), "captures dir") {
+		t.Errorf("error should name the captures dir mkdir failure, got: %v", err)
+	}
+}

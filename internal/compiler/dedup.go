@@ -60,15 +60,32 @@ func (dc *DedupCache) Seed(names []string) {
 	}
 
 	loaded, embedded, failed := 0, 0, 0
+	cacheReadFailures := 0
+	cacheWarned := false
 
 	dc.mu.Lock()
 	for _, name := range names {
 		// Try vector store first (no API call needed)
 		if dc.vecStore != nil {
-			if vec, err := dc.vecStore.Get(name); err == nil && vec != nil {
+			vec, err := dc.vecStore.Get(name)
+			if err == nil && vec != nil {
 				dc.cache[name] = vec
 				loaded++
 				continue
+			}
+			if err != nil {
+				// REL-04: a real DB error is not a cache miss. Count it and
+				// fall through to embed (embedding still produces the correct
+				// vector) — degrade, never silently swallow. Log the FIRST
+				// failure immediately (a 10K-name Seed with a dead store gets
+				// feedback now, not at the end) and a summary at the end —
+				// never per name: a broken store fails EVERY Get.
+				cacheReadFailures++
+				if !cacheWarned {
+					cacheWarned = true
+					log.Warn("vector cache read failed — embedding via API instead (cache retried per concept)",
+						"error", err)
+				}
 			}
 		}
 
@@ -91,6 +108,10 @@ func (dc *DedupCache) Seed(names []string) {
 	}
 	if failed > 0 {
 		log.Warn("dedup cache: some concepts could not be seeded", "failed", failed)
+	}
+	if cacheReadFailures > 1 {
+		log.Warn("vector cache unreadable during seed — concepts embedded via API instead",
+			"cache_read_failures", cacheReadFailures)
 	}
 }
 

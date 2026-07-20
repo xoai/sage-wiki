@@ -16,7 +16,6 @@ import (
 	"github.com/xoai/sage-wiki/internal/auth"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
-	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/fsutil"
 	gitpkg "github.com/xoai/sage-wiki/internal/git"
 	"github.com/xoai/sage-wiki/internal/linter"
@@ -186,7 +185,9 @@ func (s *Server) handleWriteSummary(ctx context.Context, req mcplib.CallToolRequ
 	if !isSubpath(absProject, absPath) {
 		return errorResult("path traversal not allowed"), nil
 	}
-	os.MkdirAll(filepath.Dir(absPath), 0755)
+	if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
+		return errorResult(fmt.Sprintf("create dir %s: %v", filepath.Dir(absPath), err)), nil
+	}
 
 	// Canonical write-then-index order (I2): (1) write the summary atomically,
 	// (2) index into the DB (mem + vectors, below), (3) update the manifest under
@@ -196,7 +197,12 @@ func (s *Server) handleWriteSummary(ctx context.Context, req mcplib.CallToolRequ
 		return errorResult(fmt.Sprintf("write failed: %v", err)), nil
 	}
 
-	s.mem.Add(memory.Entry{ID: source, Content: content, ArticlePath: summaryPath})
+	// Post-write index failures are logged, not returned: the file is already
+	// on disk (an error result would misreport the write), and the P1-2
+	// startup reconciler heals the drift. REL-04.
+	if err := s.mem.Add(memory.Entry{ID: source, Content: content, ArticlePath: summaryPath}); err != nil {
+		log.Warn("index summary failed (reconciler will heal)", "source", source, "error", err)
+	}
 	s.tryEmbed(source, content)
 
 	conceptsStr, _ := args["concepts"].(string)
@@ -238,7 +244,9 @@ func (s *Server) handleWriteArticle(ctx context.Context, req mcplib.CallToolRequ
 	if !isSubpath(absProject, absPath) {
 		return errorResult("path traversal not allowed"), nil
 	}
-	os.MkdirAll(filepath.Dir(absPath), 0755)
+	if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
+		return errorResult(fmt.Sprintf("create dir %s: %v", filepath.Dir(absPath), err)), nil
+	}
 
 	// Canonical write-then-index order (I2): (1) write the article atomically,
 	// (2) index into the DB (ontology + mem + vectors, below), (3) update the
@@ -247,10 +255,16 @@ func (s *Server) handleWriteArticle(ctx context.Context, req mcplib.CallToolRequ
 		return errorResult(fmt.Sprintf("write failed: %v", err)), nil
 	}
 
-	s.ont.AddEntity(ontology.Entity{
+	// Post-write index failures are logged, not returned (reconciler heals;
+	// the article file is already on disk). REL-04.
+	if err := s.ont.AddEntity(ontology.Entity{
 		ID: conceptID, Type: ontology.TypeConcept, Name: conceptID, ArticlePath: articlePath,
-	})
-	s.mem.Add(memory.Entry{ID: "concept:" + conceptID, Content: content, ArticlePath: articlePath})
+	}); err != nil {
+		log.Warn("index article entity failed (reconciler will heal)", "concept", conceptID, "error", err)
+	}
+	if err := s.mem.Add(memory.Entry{ID: "concept:" + conceptID, Content: content, ArticlePath: articlePath}); err != nil {
+		log.Warn("index article failed (reconciler will heal)", "concept", conceptID, "error", err)
+	}
 	s.tryEmbed("concept:"+conceptID, content)
 
 	// Manifest RMW under the exclusive lock (D4) so a concurrent compile or
@@ -483,7 +497,9 @@ func extractKnowledgeItems(cfg *config.Config, content, captureCtx, tags string)
 
 func writeRawCapture(projectDir, content, captureCtx, tags, userNow string) (string, error) {
 	capturesDir := filepath.Join(projectDir, "raw", "captures")
-	os.MkdirAll(capturesDir, 0755)
+	if err := os.MkdirAll(capturesDir, 0755); err != nil {
+		return "", fmt.Errorf("create captures dir: %w", err)
+	}
 
 	slug := fmt.Sprintf("raw-%s", time.Now().Format("20060102-150405"))
 	relPath := filepath.Join("raw", "captures", slug+".md")
@@ -605,11 +621,20 @@ func (s *Server) handleCompileDiff(ctx context.Context, req mcplib.CallToolReque
 	return textResult(sb.String()), nil
 }
 
+// tryEmbed embeds content into the vector store using the server's shared
+// embedder (built once in NewServer — re-detecting per call would re-probe
+// providers and warn-spam offline deployments on every write).
 func (s *Server) tryEmbed(id string, content string) {
-	embedder := embed.NewFromConfig(s.cfg)
-	if embedder != nil {
-		if vec, err := embedder.Embed(content); err == nil {
-			s.vec.Upsert(id, vec)
+	if s.embedder != nil {
+		vec, err := s.embedder.Embed(content)
+		if err != nil {
+			// A configured-but-failing embedder must be visible (REL-04);
+			// unconfigured embedders short-circuit above and stay silent.
+			log.Warn("embed failed (reconciler will heal)", "id", id, "error", err)
+			return
+		}
+		if err := s.vec.Upsert(id, vec); err != nil {
+			log.Warn("vector upsert failed (reconciler will heal)", "id", id, "error", err)
 		}
 	}
 }
