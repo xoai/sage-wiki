@@ -10,7 +10,7 @@
   passes over an in-memory matrix of normalized vectors (lazy single-flight
   load, RWMutex-guarded), **11.2× faster with 31× fewer allocations** on a
   10K-chunk benchmark (27.8ms → 2.5ms/op; doc-level 2K entries: 5.75ms →
-  0.54ms/op, 10.7×). Writes patch the cache
+  0.54ms/op, 10.65×). Writes patch the cache
   incrementally; chunk writes inside caller transactions (compile, ingest,
   reconcile) invalidate it so the next search reloads once. The FTS5 tables
   are rebuilt by a new migration (V8) with `prefix='2 3'` indexes, so

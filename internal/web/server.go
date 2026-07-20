@@ -276,6 +276,11 @@ func (s *WebServer) watchFsnotify(ctx context.Context, outputDir string) {
 			fired = timer.C
 		case err, ok := <-watcher.Errors:
 			if !ok {
+				// Events AND Errors close together on internal watcher
+				// failure — both paths must fall back, or the watch is
+				// silently dead half the time (Gate-8 recheck).
+				log.Warn("web watch: fsnotify errors channel closed — falling back to polling")
+				s.watchPoll(ctx, outputDir)
 				return
 			}
 			log.Warn("web watch: fsnotify error", "error", err)

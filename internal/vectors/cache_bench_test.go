@@ -62,30 +62,32 @@ func BenchmarkBruteForceSearchChunks(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rows, err := db.ReadDB().Query("SELECT chunk_id, doc_id, embedding, dimensions FROM vec_chunks")
-		if err != nil {
-			b.Fatal(err)
-		}
-		defer rows.Close()
-		var results []ChunkVectorResult
-		for rows.Next() {
-			var cid, did string
-			var blob []byte
-			var dims int
-			if err := rows.Scan(&cid, &did, &blob, &dims); err != nil {
+		func() { // closure so defer rows.Close() fires per query, not per b.N (read pool caps at 4 conns)
+			rows, err := db.ReadDB().Query("SELECT chunk_id, doc_id, embedding, dimensions FROM vec_chunks")
+			if err != nil {
 				b.Fatal(err)
 			}
-			vec := decodeFloat32s(blob)
-			if len(vec) != len(query) {
-				continue
+			defer rows.Close()
+			var results []ChunkVectorResult
+			for rows.Next() {
+				var cid, did string
+				var blob []byte
+				var dims int
+				if err := rows.Scan(&cid, &did, &blob, &dims); err != nil {
+					b.Fatal(err)
+				}
+				vec := decodeFloat32s(blob)
+				if len(vec) != len(query) {
+					continue
+				}
+				results = insertChunkSorted(results, ChunkVectorResult{ChunkID: cid, DocID: did, Score: CosineSimilarity(query, vec)}, 20)
 			}
-			results = insertChunkSorted(results, ChunkVectorResult{ChunkID: cid, DocID: did, Score: CosineSimilarity(query, vec)}, 20)
-		}
-		if err := rows.Err(); err != nil {
-			b.Fatal(err)
-		}
-		_ = s
+			if err := rows.Err(); err != nil {
+				b.Fatal(err)
+			}
+		}()
 	}
+	_ = s
 }
 
 // BenchmarkSearchChunks is the cache-backed AFTER path (first iteration
@@ -161,27 +163,29 @@ func BenchmarkBruteForceSearchDoc(b *testing.B) {
 	query := benchQuery(384)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rows, err := db.ReadDB().Query("SELECT id, embedding, dimensions FROM vec_entries")
-		if err != nil {
-			b.Fatal(err)
-		}
-		var results []VectorResult
-		for rows.Next() {
-			var id string
-			var blob []byte
-			var dims int
-			if err := rows.Scan(&id, &blob, &dims); err != nil {
+		func() {
+			rows, err := db.ReadDB().Query("SELECT id, embedding, dimensions FROM vec_entries")
+			if err != nil {
 				b.Fatal(err)
 			}
-			vec := decodeFloat32s(blob)
-			if len(vec) != len(query) {
-				continue
+			defer rows.Close()
+			var results []VectorResult
+			for rows.Next() {
+				var id string
+				var blob []byte
+				var dims int
+				if err := rows.Scan(&id, &blob, &dims); err != nil {
+					b.Fatal(err)
+				}
+				vec := decodeFloat32s(blob)
+				if len(vec) != len(query) {
+					continue
+				}
+				results = insertSorted(results, VectorResult{ID: id, Score: CosineSimilarity(query, vec)}, 10)
 			}
-			results = insertSorted(results, VectorResult{ID: id, Score: CosineSimilarity(query, vec)}, 10)
-		}
-		if err := rows.Err(); err != nil {
-			b.Fatal(err)
-		}
-		rows.Close()
+			if err := rows.Err(); err != nil {
+				b.Fatal(err)
+			}
+		}()
 	}
 }

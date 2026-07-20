@@ -503,6 +503,9 @@ func TestCache_PatchDuringLoadAppliesAfter(t *testing.T) {
 // the cached rows (provider change mid-process) must INVALIDATE, not patch
 // — patching would silently corrupt row alignment (Gate-8 MAJOR). The next
 // search reloads from the DB and serves the new dimension coherently.
+// NOTE: only the DOC cache has a production patch path; the chunk cache is
+// invalidated explicitly (caller-tx design), so the dim guard in the shared
+// upsert() is exercised there via the explicit-invalidate flow.
 func TestCache_DimChangePatchInvalidates(t *testing.T) {
 	s, cleanup := seededFixture(t, 5, 2)
 	defer cleanup()
@@ -540,5 +543,13 @@ func TestCache_DimChangePatchInvalidates(t *testing.T) {
 		if r.ID == "dim-changed" {
 			t.Error("dim-changed row served despite dimension mismatch with query")
 		}
+	}
+
+	// Chunk cache: the explicit invalidate reloads coherently too.
+	if _, err := s.SearchChunks([]float32{1, 0, 0, 0}, 10); err != nil {
+		t.Fatalf("post-invalidate chunk search: %v", err)
+	}
+	if s.chunkCache.loadCount() != 2 {
+		t.Errorf("chunk loadCount = %d, want 2", s.chunkCache.loadCount())
 	}
 }

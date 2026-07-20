@@ -108,3 +108,42 @@ func TestWatchFsnotify_NewSubdirWatched(t *testing.T) {
 		t.Fatal("no broadcast for file in newly-created subdir")
 	}
 }
+
+// TestWatchFsnotify_IgnoresChmod: metadata-only events don't broadcast —
+// the op filter keeps the fallback poll's size+mtime semantics (Gate-8).
+func TestWatchFsnotify_IgnoresChmod(t *testing.T) {
+	srv := newWatchTestServer(t)
+	outDir := filepath.Join(srv.projectDir, srv.cfg.Output)
+	os.MkdirAll(outDir, 0755)
+	target := filepath.Join(outDir, "target.md")
+	os.WriteFile(target, []byte("x"), 0644)
+
+	ch := srv.registerTestClient()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go srv.watchFsnotify(ctx, outDir)
+
+	// Let the watcher arm AND any arming events flush past the debounce.
+	time.Sleep(600 * time.Millisecond)
+	// Drain any broadcast from the initial state.
+	select {
+	case <-ch:
+	default:
+	}
+
+	os.Chmod(target, 0600)
+	select {
+	case msg := <-ch:
+		t.Errorf("chmod triggered a broadcast (%q) — metadata-only events must be ignored", msg)
+	case <-time.After(1 * time.Second):
+		// correct: no broadcast
+	}
+
+	// And a real write still broadcasts (the filter didn't over-suppress).
+	os.WriteFile(target, []byte("y"), 0644)
+	select {
+	case <-ch:
+	case <-time.After(3 * time.Second):
+		t.Fatal("content write did not broadcast after chmod suppression")
+	}
+}
