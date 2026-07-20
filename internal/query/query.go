@@ -701,6 +701,8 @@ format: %s
 			return nil
 		}); err != nil {
 			log.Warn("chunk indexing failed for output", "path", relPath, "error", err)
+		} else {
+			vecStore.InvalidateChunkCache() // chunk cache invalidation (P1-5): caller-tx writes are invisible to vectors.Store until post-commit
 		}
 	}
 

@@ -349,6 +349,8 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap m
 			return nil
 		}); err != nil {
 			log.Error("chunk indexing failed", "concept", concept.Name, "error", err)
+		} else {
+			opts.VecStore.InvalidateChunkCache() // chunk cache invalidation (P1-5): caller-tx writes are invisible to vectors.Store until post-commit
 		}
 	}
 

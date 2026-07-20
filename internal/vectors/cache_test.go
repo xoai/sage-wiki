@@ -344,3 +344,73 @@ func TestCache_ChunkParityAndFiltered(t *testing.T) {
 		t.Errorf("150-docID filter (cap 100) errored: %v", err)
 	}
 }
+
+// TestCache_ExternalTxInvalidation characterizes the mechanism-2 contract:
+// vec_chunks writes inside a CALLER-OWNED WriteTx are invisible to the
+// Store until InvalidateChunkCache is called post-commit. Without it, the
+// loaded cache serves stale rows; with it, the NEXT search reloads exactly
+// once despite N writes, and a follow-up search does NOT reload again.
+func TestCache_ExternalTxInvalidation(t *testing.T) {
+	s, cleanup := seededFixture(t, 5, 2)
+	defer cleanup()
+
+	query := []float32{0.5, -0.3, 0.8, 0.1, -0.6, 0.2, 0.9, -0.4}
+
+	// Load (counter 1).
+	if _, err := s.SearchChunks(query, 5); err != nil {
+		t.Fatal(err)
+	}
+	if s.chunkCache.loadCount() != 1 {
+		t.Fatalf("loadCount = %d", s.chunkCache.loadCount())
+	}
+
+	// N writes inside caller-owned txs WITHOUT invalidate → stale: the new
+	// chunk is invisible to the cache even though it's in the DB.
+	err := s.db.WriteTx(func(tx *sql.Tx) error {
+		return s.UpsertChunk(tx, "doc-0:chunk-new", "doc-0", []float32{1, 0, 0, 0, 0, 0, 0, 0})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.SearchChunks([]float32{1, 0, 0, 0, 0, 0, 0, 0}, 50)
+	for _, r := range got {
+		if r.ChunkID == "doc-0:chunk-new" {
+			t.Fatal("stale read expected but chunk visible — did invalidation semantics change?")
+		}
+	}
+	if s.chunkCache.loadCount() != 1 {
+		t.Fatal("caller-tx write must not reload the cache")
+	}
+
+	// More writes, then ONE invalidate → next search reloads once.
+	for i := 0; i < 5; i++ {
+		err := s.db.WriteTx(func(tx *sql.Tx) error {
+			return s.UpsertChunk(tx, chunkID(200, i), "doc-200", []float32{0.9, 0.1, 0, 0, 0, 0, 0, 0})
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.InvalidateChunkCache()
+	got, _ = s.SearchChunks([]float32{1, 0, 0, 0, 0, 0, 0, 0}, 50)
+	found := false
+	for _, r := range got {
+		if r.ChunkID == "doc-0:chunk-new" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("post-invalidate reload missed the new chunk")
+	}
+	if s.chunkCache.loadCount() != 2 {
+		t.Errorf("loadCount = %d, want 2 (one coalesced reload after N writes)", s.chunkCache.loadCount())
+	}
+
+	// Follow-up search on a clean cache: NO further reload.
+	if _, err := s.SearchChunks(query, 5); err != nil {
+		t.Fatal(err)
+	}
+	if s.chunkCache.loadCount() != 2 {
+		t.Errorf("clean search reloaded: loadCount = %d, want 2", s.chunkCache.loadCount())
+	}
+}

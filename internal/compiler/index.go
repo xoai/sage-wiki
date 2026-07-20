@@ -245,6 +245,7 @@ func indexAndEmbedSources(
 					}
 					return
 				}
+				vecStore.InvalidateChunkCache() // chunk cache invalidation (P1-5): caller-tx writes are invisible to vectors.Store until post-commit
 			} else {
 				// Fallback: single-vector embed (legacy path when chunk infra unavailable)
 				if len(chunkEmbeddings) > 0 && chunkEmbeddings[0] != nil {
