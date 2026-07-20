@@ -466,5 +466,7 @@ LLM that processes it. There are two orders of this risk:
    shouldn't) add their own.
 4. **Know the limits.** Delimiters reduce injection risk; they don't
    eliminate it — a capable model can still be talked out of a frame, and
-   external parsers (if enabled) are a separate trust boundary covered in
+   tag neutralization matches only the exact ASCII sequence (Unicode
+   lookalikes like fullwidth `＜/untrusted_source＞` pass through). External
+   parsers (if enabled) are a separate trust boundary covered in
    `team-setup.md`.
