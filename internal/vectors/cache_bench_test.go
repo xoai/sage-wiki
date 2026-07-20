@@ -66,6 +66,7 @@ func BenchmarkBruteForceSearchChunks(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
+		defer rows.Close()
 		var results []ChunkVectorResult
 		for rows.Next() {
 			var cid, did string
@@ -81,10 +82,8 @@ func BenchmarkBruteForceSearchChunks(b *testing.B) {
 			results = insertChunkSorted(results, ChunkVectorResult{ChunkID: cid, DocID: did, Score: CosineSimilarity(query, vec)}, 20)
 		}
 		if err := rows.Err(); err != nil {
-			rows.Close()
 			b.Fatal(err)
 		}
-		rows.Close()
 		_ = s
 	}
 }

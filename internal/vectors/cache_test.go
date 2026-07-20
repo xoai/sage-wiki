@@ -302,6 +302,7 @@ func TestCache_ChunkParityAndFiltered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer rows.Close()
 	var want []ChunkVectorResult
 	for rows.Next() {
 		var cid, did string
@@ -313,10 +314,8 @@ func TestCache_ChunkParityAndFiltered(t *testing.T) {
 		want = insertChunkSorted(want, ChunkVectorResult{ChunkID: cid, DocID: did, Score: CosineSimilarity(query, vec)}, 10)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
 		t.Fatal(err)
 	}
-	rows.Close()
 	for i := range want {
 		want[i].Rank = i + 1
 	}
