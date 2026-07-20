@@ -447,7 +447,8 @@ func TestCompile_DeadBatchCheckpointRemoved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := Compile(dir, CompileOpts{}); err != nil {
+	r, err := Compile(dir, CompileOpts{})
+	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
 	if _, err := os.Stat(batchCheckpointPath(dir)); !os.IsNotExist(err) {
@@ -455,5 +456,34 @@ func TestCompile_DeadBatchCheckpointRemoved(t *testing.T) {
 	}
 	if fake.pollCount.Load() != 0 {
 		t.Error("dead checkpoint must not trigger a batch resume")
+	}
+	// The compile must proceed standard, not return early.
+	if r.Summarized != 1 {
+		t.Errorf("Summarized = %d, want 1 (standard compile after dead-checkpoint removal)", r.Summarized)
+	}
+}
+
+// TestCompile_DeadBatchCheckpoint_DryRunRetains: under --dry-run the dead
+// checkpoint is NOT removed (dry-run defers all checkpoint deletion) and the
+// run falls through to the standard dry-run report.
+func TestCompile_DeadBatchCheckpoint_DryRunRetains(t *testing.T) {
+	fake := newFakeBatchServer(t)
+	dir := writeBatchProject(t, fake.URL, "", "raw/a.md")
+
+	if err := saveBatchCheckpoint(dir, &BatchCheckpoint{CompileID: "dead", Pending: []string{"raw/a.md"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Compile(dir, CompileOpts{DryRun: true}); err != nil {
+		t.Fatalf("dry-run compile: %v", err)
+	}
+	if _, err := os.Stat(batchCheckpointPath(dir)); err != nil {
+		t.Error("dry-run must not delete even a dead checkpoint")
+	}
+	if fake.pollCount.Load() != 0 {
+		t.Error("dead checkpoint must not trigger a batch resume")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "wiki", "summaries", "raw-a.md")); !os.IsNotExist(err) {
+		t.Error("dry-run wrote a summary")
 	}
 }

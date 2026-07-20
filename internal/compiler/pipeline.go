@@ -182,9 +182,12 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		if bcp != nil && bcp.Batch == nil {
 			// Dead checkpoint (parseable but batch-less) — no writer produces
 			// this today, but don't reload it forever: remove and continue.
-			log.Warn("removing dead batch checkpoint (no batch state)", "path", batchCheckpointPath(projectDir))
-			if err := os.Remove(batchCheckpointPath(projectDir)); err != nil {
-				log.Warn("failed to remove dead batch checkpoint", "error", err)
+			// Skipped under --dry-run, which defers ALL checkpoint deletion.
+			if !opts.DryRun {
+				log.Warn("removing dead batch checkpoint (no batch state)", "path", batchCheckpointPath(projectDir))
+				if err := os.Remove(batchCheckpointPath(projectDir)); err != nil {
+					log.Warn("failed to remove dead batch checkpoint", "error", err)
+				}
 			}
 			bcp = nil
 		}
