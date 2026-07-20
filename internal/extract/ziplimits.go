@@ -62,13 +62,15 @@ func newZipBudget() *zipBudget {
 // cap fails before a single byte is decompressed. archive/zip populates
 // UncompressedSize64 from the central directory, so it is reliable even for
 // data-descriptor entries; a lying (small) declared size falls through to
-// layer 2 by design — do NOT special-case declared == 0.
+// layer 2 by design — do NOT special-case declared == 0. Comparisons stay
+// in uint64: a hostile declared size ≥ 2^63 would wrap negative in int64
+// and silently bypass both checks.
 func (b *zipBudget) preCheck(archive string, f *zip.File) error {
-	declared := int64(f.UncompressedSize64)
-	if declared > maxZipEntryBytes {
+	declared := f.UncompressedSize64
+	if declared > uint64(maxZipEntryBytes) {
 		return &ZipLimitError{Archive: archive, Entry: f.Name, Limit: maxZipEntryBytes, Reason: "entry-too-large"}
 	}
-	if declared > b.remaining {
+	if declared > uint64(b.remaining) {
 		return &ZipLimitError{Archive: archive, Entry: f.Name, Limit: maxZipTotalBytes, Reason: "archive-total-exceeded"}
 	}
 	return nil

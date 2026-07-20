@@ -58,8 +58,7 @@ func TestBoundedReader_Overflow(t *testing.T) {
 }
 
 func TestZipBudget_PreCheck(t *testing.T) {
-	restore := setTestCaps(1000, 5000)
-	defer restore()
+	t.Cleanup(setTestCaps(1000, 5000))
 
 	b := newZipBudget()
 	// Entry under both caps → ok.
@@ -90,9 +89,20 @@ func TestZipBudget_PreCheck(t *testing.T) {
 	}
 }
 
+func TestZipBudget_PreCheck_HostileHugeDeclared(t *testing.T) {
+	t.Cleanup(setTestCaps(1000, 5000))
+
+	// A declared size ≥ 2^63 must not wrap negative and bypass layer 1.
+	b := newZipBudget()
+	err := b.preCheck("arc.zip", fakeZipEntryRaw(1<<63+4000))
+	var zle *ZipLimitError
+	if !errors.As(err, &zle) {
+		t.Errorf("hostile 2^63 declared size bypassed preCheck (int64 wrap): err=%v", err)
+	}
+}
+
 func TestZipBudget_ChargeTakesMax(t *testing.T) {
-	restore := setTestCaps(1000, 5000)
-	defer restore()
+	t.Cleanup(setTestCaps(1000, 5000))
 
 	b := newZipBudget()
 	b.charge(100, 400) // lying header: declared small, read more
@@ -126,8 +136,12 @@ func setTestCaps(entry, total int64) (restore func()) {
 // fakeZipEntry builds a *zip.File with a given declared size for preCheck
 // tests (no real archive needed — only UncompressedSize64 and Name are read).
 func fakeZipEntry(declared int64) *zip.File {
+	return fakeZipEntryRaw(uint64(declared))
+}
+
+func fakeZipEntryRaw(declared uint64) *zip.File {
 	return &zip.File{
-		FileHeader: zip.FileHeader{Name: "e.xml", UncompressedSize64: uint64(declared)},
+		FileHeader: zip.FileHeader{Name: "e.xml", UncompressedSize64: declared},
 	}
 }
 
@@ -186,16 +200,12 @@ func patchCentralDeclaredSize(t *testing.T, path, entryName string, newSize uint
 			continue
 		}
 		nameLen := int(binary.LittleEndian.Uint16(data[i+28:]))
-		extraLen := int(binary.LittleEndian.Uint16(data[i+30:]))
-		commentLen := int(binary.LittleEndian.Uint16(data[i+32:]))
 		if i+46+nameLen > len(data) {
 			continue
 		}
 		if string(data[i+46:i+46+nameLen]) != entryName {
 			continue
 		}
-		_ = extraLen
-		_ = commentLen
 		binary.LittleEndian.PutUint32(data[i+24:], newSize)
 		if err := os.WriteFile(path, data, 0644); err != nil {
 			t.Fatal(err)
@@ -260,12 +270,12 @@ func TestExtractDocx_LyingHeader_Rejected(t *testing.T) {
 	path := buildZip(t, map[string][]byte{"word/document.xml": validDocxEntry(t, text)})
 	patchCentralDeclaredSize(t, path, "word/document.xml", 1024)
 
-	sc, err := extractDocx(path)
-	if err == nil {
-		t.Fatalf("lying-header bomb must be rejected, got content (%d bytes)", len(sc.Text))
-	}
-	// The inflation must not have happened: no path may return the real
-	// ~64KB of text.
+	// The SECURITY invariant is "no inflation past the patched 1KB
+	// declaration" — not a particular error. Go's stdlib bounds reads to the
+	// declared size, so depending on flate's fill boundaries the outcome is
+	// either an extraction error OR a ≤1KB truncated result; both are safe.
+	// (An err!=nil assertion would be implementation-defined — Gate-3 i1.)
+	sc, _ := extractDocx(path)
 	if sc != nil && len(sc.Text) > 2048 {
 		t.Errorf("inflated content returned (%d bytes) despite lying header", len(sc.Text))
 	}
