@@ -40,10 +40,9 @@ type Server struct {
 	coordinator *compiler.CompileCoordinator // serializes compiles
 }
 
-// NewServer creates an MCP server with read tools registered.
-// If coordinator is provided, it's used to serialize compile-on-demand
-// with background compiles. If nil, a new coordinator is created.
-// NewServer creates an MCP server via the shared app container (P1-8).
+// NewServer creates an MCP server with read tools registered, via the
+// shared app container (P1-8). If coordinator is provided, it's used to
+// serialize compile-on-demand with background compiles.
 // All fields are aliased from it (s.db = a.DB, closeOnce-idempotent), and
 // the embedder is built at exactly this point — the same construction
 // moment as before (app.Embedder() is lazy; calling it here preserves the

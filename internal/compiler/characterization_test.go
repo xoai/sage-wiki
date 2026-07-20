@@ -102,14 +102,16 @@ func captureSnapshot(t *testing.T, dir string, result *CompileResult) compileSna
 
 	// Output files: sorted list + normalized hashes.
 	walkRoot := filepath.Join(dir, "wiki")
-	filepath.Walk(walkRoot, func(path string, info os.FileInfo, err error) error {
+	if err := filepath.Walk(walkRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
 		rel, _ := filepath.Rel(dir, path)
 		snap.Files[rel] = hashFileNormalized(t, path)
 		return nil
-	})
+	}); err != nil {
+		t.Fatalf("walk output files: %v", err)
+	}
 
 	// compile_items: path → pass flags ONLY (no timestamps).
 	db := openTestProjectDB(t, dir)
@@ -233,7 +235,7 @@ func TestCharacterization_CompileSnapshotDeterministic(t *testing.T) {
 	// (generates testdata/compile_snapshot_golden.json — regenerate ONLY on
 	// main, never on a refactor branch).
 	goldenPath := filepath.Join("testdata", "compile_snapshot_golden.json")
-	if os.Getenv("SAGE_CHARACTERIZATION_RECORD") != "" {
+	if os.Getenv("SAGE_CHARACTERIZATION_RECORD") == "1" {
 		if err := os.MkdirAll("testdata", 0755); err != nil {
 			t.Fatal(err)
 		}
