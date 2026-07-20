@@ -198,7 +198,12 @@ func (s *Server) handleWriteSummary(ctx context.Context, req mcplib.CallToolRequ
 		return errorResult(fmt.Sprintf("write failed: %v", err)), nil
 	}
 
-	s.mem.Add(memory.Entry{ID: source, Content: content, ArticlePath: summaryPath})
+	// Post-write index failures are logged, not returned: the file is already
+	// on disk (an error result would misreport the write), and the P1-2
+	// startup reconciler heals the drift. REL-04.
+	if err := s.mem.Add(memory.Entry{ID: source, Content: content, ArticlePath: summaryPath}); err != nil {
+		log.Warn("index summary failed (reconciler will heal)", "source", source, "error", err)
+	}
 	s.tryEmbed(source, content)
 
 	conceptsStr, _ := args["concepts"].(string)
@@ -251,10 +256,16 @@ func (s *Server) handleWriteArticle(ctx context.Context, req mcplib.CallToolRequ
 		return errorResult(fmt.Sprintf("write failed: %v", err)), nil
 	}
 
-	s.ont.AddEntity(ontology.Entity{
+	// Post-write index failures are logged, not returned (reconciler heals;
+	// the article file is already on disk). REL-04.
+	if err := s.ont.AddEntity(ontology.Entity{
 		ID: conceptID, Type: ontology.TypeConcept, Name: conceptID, ArticlePath: articlePath,
-	})
-	s.mem.Add(memory.Entry{ID: "concept:" + conceptID, Content: content, ArticlePath: articlePath})
+	}); err != nil {
+		log.Warn("index article entity failed (reconciler will heal)", "concept", conceptID, "error", err)
+	}
+	if err := s.mem.Add(memory.Entry{ID: "concept:" + conceptID, Content: content, ArticlePath: articlePath}); err != nil {
+		log.Warn("index article failed (reconciler will heal)", "concept", conceptID, "error", err)
+	}
 	s.tryEmbed("concept:"+conceptID, content)
 
 	// Manifest RMW under the exclusive lock (D4) so a concurrent compile or
@@ -615,7 +626,9 @@ func (s *Server) tryEmbed(id string, content string) {
 	embedder := embed.NewFromConfig(s.cfg)
 	if embedder != nil {
 		if vec, err := embedder.Embed(content); err == nil {
-			s.vec.Upsert(id, vec)
+			if err := s.vec.Upsert(id, vec); err != nil {
+				log.Warn("vector upsert failed (reconciler will heal)", "id", id, "error", err)
+			}
 		}
 	}
 }
