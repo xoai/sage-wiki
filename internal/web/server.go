@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/log"
@@ -57,37 +58,26 @@ type WebServer struct {
 }
 
 // NewWebServer creates a web server sharing the project's stores.
+// Construction is via the shared app container (P1-8); all fields are
+// aliased from it, and s.db = a.DB so Close semantics are unchanged
+// (closeOnce-idempotent).
 func NewWebServer(projectDir string) (*WebServer, error) {
-	cfgPath := filepath.Join(projectDir, "config.yaml")
-	cfg, err := config.Load(cfgPath)
+	a, err := app.Open(projectDir)
 	if err != nil {
-		return nil, fmt.Errorf("web: load config: %w", err)
+		return nil, fmt.Errorf("web: %w", err)
 	}
-
-	dbPath := filepath.Join(projectDir, ".sage", "wiki.db")
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("web: open db: %w", err)
-	}
-
-	mem := memory.NewStore(db)
-	vec := vectors.NewStore(db)
-	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
-	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-	ont := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
-	searcher := hybrid.NewSearcher(mem, vec)
 
 	s := &WebServer{
 		projectDir: projectDir,
-		db:         db,
-		mem:        mem,
-		vec:        vec,
-		ont:        ont,
-		searcher:   searcher,
-		cfg:        cfg,
+		db:         a.DB,
+		mem:        a.Mem,
+		vec:        a.Vec,
+		ont:        a.Ont,
+		searcher:   a.Searcher,
+		cfg:        a.Config,
 		wsClients:  make(map[chan string]bool),
 	}
-	s.SetAuth(cfg.Serve.Token, splitHosts(cfg.Serve.AllowedHost))
+	s.SetAuth(a.Config.Serve.Token, splitHosts(a.Config.Serve.AllowedHost))
 	return s, nil
 }
 
