@@ -11,6 +11,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/prompts"
 )
 
 // maxEntitiesPerSession caps entity extraction to prevent noise.
@@ -250,8 +251,7 @@ Rules:
 Output valid JSON array only:
 [{"id": "entity-id", "name": "Human Name", "type": "concept", "definition": "One-line definition", "relations": [{"target": "other-id", "type": "implements"}]}]
 
-Session:
-%s`, maxEntitiesPerSession, typeList, text)
+%s`, maxEntitiesPerSession, typeList, prompts.WrapUntrusted(text))
 
 	resp, err := s.client.ChatCompletion([]llm.Message{
 		{Role: "system", Content: "You extract structured knowledge entities from conversation transcripts. Output valid JSON only."},

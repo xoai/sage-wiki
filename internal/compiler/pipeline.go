@@ -653,7 +653,7 @@ func submitBatch(
 			CustomID: customID,
 			Messages: []llm.Message{
 				{Role: "system", Content: "You are a research assistant creating structured summaries for a personal knowledge wiki."},
-				{Role: "user", Content: prompt + "\n\n---\n\nSource content:\n\n" + content.Text},
+				{Role: "user", Content: prompt + "\n\n" + prompts.WrapUntrusted(content.Text)},
 			},
 			Opts: llm.CallOpts{Model: model, MaxTokens: maxTokens},
 		})

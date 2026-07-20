@@ -242,7 +242,7 @@ func summarizeOne(
 
 		resp, err := client.ChatCompletionCtx(ctx, []llm.Message{
 			{Role: "system", Content: "You are a research assistant creating structured summaries for a personal knowledge wiki."},
-			{Role: "user", Content: prompt + "\n\n---\n\nSource content:\n\n" + content.Text},
+			{Role: "user", Content: prompt + "\n\n" + prompts.WrapUntrusted(content.Text)},
 		}, llm.CallOpts{Model: model, MaxTokens: maxTokens})
 		if err != nil {
 			result.Error = fmt.Errorf("llm call: %w", err)
@@ -432,7 +432,7 @@ func summarizeChunks(
 		log.Debug("summarizing group", "source", info.Path, "group", fmt.Sprintf("%d/%d", gi+1, len(groups)), "chunks_in_group", len(group), "budget", perGroupBudget)
 		resp, err := client.ChatCompletionCtx(ctx, []llm.Message{
 			{Role: "system", Content: "You are summarizing a section of a larger document."},
-			{Role: "user", Content: prompt + "\n\n---\n\nSection:\n\n" + groupText.String()},
+			{Role: "user", Content: prompt + "\n\n" + prompts.WrapUntrusted(groupText.String())},
 		}, llm.CallOpts{Model: model, MaxTokens: perGroupBudget})
 		if err != nil {
 			return nil, fmt.Errorf("group %d llm: %w", gi, err)
@@ -513,7 +513,7 @@ func synthesizeHierarchical(ctx context.Context, summaries []string, sourcePath 
 
 			synthesisPrompt := fmt.Sprintf(
 				"Combine these %d section summaries into a single coherent summary of the source document %q.\n\n%s",
-				len(group), sourcePath, strings.Join(group, "\n\n---\n\n"),
+				len(group), sourcePath, prompts.WrapUntrusted(strings.Join(group, "\n\n---\n\n")),
 			)
 			synthesisPrompt += prompts.LanguageInstruction(language)
 

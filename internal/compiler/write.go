@@ -989,5 +989,8 @@ func buildSourceContext(projectDir string, concept ExtractedConcept, threshold i
 		}
 	}
 
-	return strings.Join(parts, "\n\n---\n\n")
+	// Neutralize literal delimiter tags in the raw source text so a hostile
+	// document can't close the write_article template's untrusted frame
+	// early (SEC-04, site 5 — the template wraps this whole string).
+	return prompts.NeutralizeTags(strings.Join(parts, "\n\n---\n\n"))
 }

@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"io"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -26,6 +27,7 @@ type fakeBatchServer struct {
 	resultsJSONL atomic.Value // string: JSONL body for the output file
 	failIDs      atomic.Value // map[string]bool: custom_ids that return an error result
 	failPaths    atomic.Value // string: source path whose standard-path calls get a 500
+	uploadedJSONL atomic.Value // string: last batch input JSONL uploaded to /files (multipart)
 }
 
 func newFakeBatchServer(t *testing.T) *fakeBatchServer {
@@ -35,10 +37,18 @@ func newFakeBatchServer(t *testing.T) *fakeBatchServer {
 	f.resultsJSONL.Store("")
 	f.failIDs.Store(map[string]bool{})
 	f.failPaths.Store("")
+	f.uploadedJSONL.Store("")
 
 	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "POST" && r.URL.Path == "/files":
+			// Capture the uploaded batch input JSONL (multipart form file) —
+			// the batch prompt assertions (P1-6) need it; it's NOT on /batches.
+			if file, _, err := r.FormFile("file"); err == nil {
+				data, _ := io.ReadAll(file)
+				file.Close()
+				f.uploadedJSONL.Store(string(data))
+			}
 			json.NewEncoder(w).Encode(map[string]any{"id": "file-input-1"})
 
 		case r.Method == "POST" && r.URL.Path == "/batches":
