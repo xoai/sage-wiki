@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Real errors no longer masquerade as "not found" or success (REL-04, P1-4).**
+  `vectors.Get` returned `(nil, nil)` for ANY database error — a closed or
+  corrupt `.sage/wiki.db` was indistinguishable from a cache miss, silently
+  degrading to spurious embed-API calls and hiding DB breakage. It now returns
+  `(nil, nil)` only for a genuine miss and wraps real errors; the dedup seeder
+  logs a bounded warning (first failure + summary, never per-name) while still
+  falling back to embedding so compiles produce correct results. The MCP write
+  tools (`wiki_write_summary`, `wiki_write_article`, raw capture) now check
+  their `os.MkdirAll` calls and name the failing directory, instead of
+  surfacing a generic downstream write error or a misleading "path traversal"
+  message; post-write index failures are logged (the startup reconciler heals
+  them) rather than misreporting the successful file write as failed.
+
 ### Changed
 
 - **Single checkpoint system: legacy `compile-state.json` retired (REL-06, P1-3).**
