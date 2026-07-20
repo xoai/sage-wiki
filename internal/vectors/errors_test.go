@@ -67,3 +67,32 @@ func TestGet_MissingID_StillNilNil(t *testing.T) {
 		t.Errorf("Get present ID: vec=%v, want %v", vec, stored)
 	}
 }
+
+// TestGet_CorruptBlob_ReturnsError closes the decode-layer hole in the
+// REL-04 contract (independent verification): a blob that is empty or not a
+// multiple of 4 bytes cannot be a valid embedding — it must surface as an
+// error, NOT decode silently to a (non-nil!) empty/garbage vector that
+// callers like dedup Seed would count as a cache HIT.
+func TestGet_CorruptBlob_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	db, err := storage.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	s := NewStore(db)
+
+	// Plant corrupt blobs directly (Upsert only writes valid ones).
+	for name, blob := range map[string][]byte{
+		"short":  {1, 2, 3},
+		"ragged": {1, 2, 3, 4, 5},
+	} {
+		if _, err := db.WriteDB().Exec("INSERT OR REPLACE INTO vec_entries (id, embedding, dimensions) VALUES (?, ?, ?)", "corrupt-"+name, blob, len(blob)/4); err != nil {
+			t.Fatalf("plant corrupt blob: %v", err)
+		}
+		vec, err := s.Get("corrupt-"+name)
+		if err == nil {
+			t.Errorf("blob %v: expected corrupt-blob error, got vec=%v (len %d) nil — corrupt data must not masquerade as a hit", blob, vec, len(vec))
+		}
+	}
+}

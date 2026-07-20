@@ -47,6 +47,13 @@ func (s *Store) Get(id string) ([]float32, error) {
 		}
 		return nil, fmt.Errorf("vectors.Get: %w", err)
 	}
+	// A blob that is empty or not a multiple of 4 bytes cannot be a valid
+	// embedding — decodeFloat32s would silently return a non-nil empty or
+	// garbage vector that callers read as a cache HIT (dedup Seed poisons its
+	// cache with it). Corrupt data must not masquerade as a hit (REL-04).
+	if len(blob) == 0 || len(blob)%4 != 0 {
+		return nil, fmt.Errorf("vectors.Get: corrupt embedding blob for %q (%d bytes)", id, len(blob))
+	}
 	return decodeFloat32s(blob), nil
 }
 
