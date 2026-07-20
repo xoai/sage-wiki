@@ -334,8 +334,10 @@ compiler:
 
 	// The fake's summarize response is fixed; check the extraction prompt
 	// wraps the summaries block (site 4's delimiter).
+	matched := 0
 	for _, m := range fake.snapshot() {
 		if strings.Contains(m, "concept extraction system") {
+			matched++
 			if !strings.Contains(m, "<untrusted_source>") {
 				t.Error("extraction prompt missing <untrusted_source> wrapper around summaries")
 			}
@@ -343,5 +345,8 @@ compiler:
 				t.Error("extraction prompt missing NEVER-follow preamble")
 			}
 		}
+	}
+	if matched == 0 {
+		t.Fatal("no extraction-class message matched — assertions would pass vacuously")
 	}
 }
