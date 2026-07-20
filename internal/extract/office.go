@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"encoding/csv"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -20,14 +21,25 @@ func extractDocx(path string) (*SourceContent, error) {
 	defer r.Close()
 
 	var text strings.Builder
+	budget := newZipBudget()
 	for _, f := range r.File {
 		if f.Name == "word/document.xml" {
-			rc, err := f.Open()
+			rc, br, err := budget.open(path, f)
 			if err != nil {
+				var zle *ZipLimitError
+				if errors.As(err, &zle) {
+					return nil, err
+				}
 				return nil, fmt.Errorf("extract docx: open document.xml: %w", err)
 			}
-			content := extractXMLText(rc)
+			content := extractXMLText(br)
 			rc.Close()
+			// The exceeded flag — not the decoder's error return — is the
+			// overflow signal: partial text from a capped entry is discarded.
+			if br.exceeded {
+				return nil, budget.limitError(path, f.Name)
+			}
+			budget.charge(int64(f.UncompressedSize64), br.n)
 			text.WriteString(content)
 		}
 	}
@@ -53,16 +65,25 @@ func extractXlsx(path string) (*SourceContent, error) {
 	defer r.Close()
 
 	var text strings.Builder
+	budget := newZipBudget() // ONE budget spans BOTH loops below
 
 	// Extract shared strings (most cell values are here)
 	for _, f := range r.File {
 		if f.Name == "xl/sharedStrings.xml" {
-			rc, err := f.Open()
+			rc, br, err := budget.open(path, f)
 			if err != nil {
+				var zle *ZipLimitError
+				if errors.As(err, &zle) {
+					return nil, err
+				}
 				continue
 			}
-			content := extractXMLText(rc)
+			content := extractXMLText(br)
 			rc.Close()
+			if br.exceeded {
+				return nil, budget.limitError(path, f.Name)
+			}
+			budget.charge(int64(f.UncompressedSize64), br.n)
 			text.WriteString(content)
 			text.WriteString("\n")
 		}
@@ -71,12 +92,20 @@ func extractXlsx(path string) (*SourceContent, error) {
 	// Also extract from sheet data
 	for _, f := range r.File {
 		if strings.HasPrefix(f.Name, "xl/worksheets/sheet") && strings.HasSuffix(f.Name, ".xml") {
-			rc, err := f.Open()
+			rc, br, err := budget.open(path, f)
 			if err != nil {
+				var zle *ZipLimitError
+				if errors.As(err, &zle) {
+					return nil, err
+				}
 				continue
 			}
-			content := extractXMLText(rc)
+			content := extractXMLText(br)
 			rc.Close()
+			if br.exceeded {
+				return nil, budget.limitError(path, f.Name)
+			}
+			budget.charge(int64(f.UncompressedSize64), br.n)
 			if content != "" {
 				text.WriteString("\n--- Sheet: ")
 				text.WriteString(f.Name)
@@ -107,16 +136,25 @@ func extractPptx(path string) (*SourceContent, error) {
 	defer r.Close()
 
 	var text strings.Builder
+	budget := newZipBudget()
 	slideNum := 0
 
 	for _, f := range r.File {
 		if strings.HasPrefix(f.Name, "ppt/slides/slide") && strings.HasSuffix(f.Name, ".xml") {
-			rc, err := f.Open()
+			rc, br, err := budget.open(path, f)
 			if err != nil {
+				var zle *ZipLimitError
+				if errors.As(err, &zle) {
+					return nil, err
+				}
 				continue
 			}
-			content := extractXMLText(rc)
+			content := extractXMLText(br)
 			rc.Close()
+			if br.exceeded {
+				return nil, budget.limitError(path, f.Name)
+			}
+			budget.charge(int64(f.UncompressedSize64), br.n)
 			if content != "" {
 				slideNum++
 				text.WriteString(fmt.Sprintf("\n--- Slide %d ---\n", slideNum))

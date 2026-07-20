@@ -2,6 +2,7 @@ package extract
 
 import (
 	"archive/zip"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,7 @@ func extractEpub(path string) (*SourceContent, error) {
 	defer r.Close()
 
 	var text strings.Builder
+	budget := newZipBudget()
 	chapterNum := 0
 
 	for _, f := range r.File {
@@ -24,13 +26,22 @@ func extractEpub(path string) (*SourceContent, error) {
 			continue
 		}
 
-		rc, err := f.Open()
+		rc, br, err := budget.open(path, f)
 		if err != nil {
+			var zle *ZipLimitError
+			if errors.As(err, &zle) {
+				return nil, err
+			}
 			continue
 		}
 
-		content := extractXMLText(rc)
+		content := extractXMLText(br)
 		rc.Close()
+
+		if br.exceeded {
+			return nil, budget.limitError(path, f.Name)
+		}
+		budget.charge(int64(f.UncompressedSize64), br.n)
 
 		if content != "" {
 			chapterNum++
