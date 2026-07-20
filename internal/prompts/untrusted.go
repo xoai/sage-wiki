@@ -6,9 +6,12 @@ import (
 )
 
 // UntrustedBlock is the canonical untrusted-data delimiter (SEC-04, P1-6).
-// Every prompt that embeds source-document text — or the output of an
-// earlier LLM pass over one — wraps it in this block so a hostile document
-// can't hijack the pass with injected instructions.
+// The compile and capture prompts that embed source-document text — or the
+// output of an earlier LLM pass over one — wrap it in this block so a
+// hostile document can't hijack the pass with injected instructions.
+// Deliberately NOT wrapped: the write_article template's ExistingArticle/
+// Learnings sections (accepted risk, see spec D3) and the trust-judge
+// scoring prompts (outputs are metrics, not content).
 //
 // The embedded default templates (extract_concepts.txt, write_article.txt)
 // duplicate this text VERBATIM with the %s slot replaced by their template

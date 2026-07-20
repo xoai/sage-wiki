@@ -138,10 +138,12 @@ compiler:
 	// ...and the doc's OWN spoof closing tag was neutralized — the only true
 	// closing tags are the wrappers'. Assert on SUMMARIZE-class messages only
 	// (T1's sites); the article-write path (site 5) is T2's, not wired yet.
+	matched := 0
 	for _, m := range fake.snapshot() {
 		if !strings.Contains(m, "Summarize the document with the following sections") {
 			continue
 		}
+		matched++
 		if !strings.Contains(m, redTeamPayload) {
 			t.Error("payload missing from the summarize prompt")
 			continue
@@ -152,6 +154,9 @@ compiler:
 		if !strings.Contains(m, "< /untrusted_source>") {
 			t.Errorf("spoof tag not neutralized in this message")
 		}
+	}
+	if matched == 0 {
+		t.Fatal("no summarize-class message matched — template marker drifted, spoof assertions would pass vacuously")
 	}
 }
 
