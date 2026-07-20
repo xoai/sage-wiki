@@ -71,6 +71,7 @@ func saveBatchCheckpoint(projectDir string, bcp *BatchCheckpoint) error {
 		return fmt.Errorf("compiler.saveBatchCheckpoint: write: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp) // don't orphan the temp file
 		return fmt.Errorf("compiler.saveBatchCheckpoint: rename: %w", err)
 	}
 	return nil
@@ -109,6 +110,7 @@ func stripLegacyBatch(projectDir string) error {
 		return fmt.Errorf("compiler.stripLegacyBatch: write: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp) // don't orphan the temp file
 		return fmt.Errorf("compiler.stripLegacyBatch: rename: %w", err)
 	}
 	return nil

@@ -331,6 +331,18 @@ func TestResumeBatch_ExpiredAndFailed(t *testing.T) {
 			if _, err := os.Stat(batchCheckpointPath(dir)); !os.IsNotExist(err) {
 				t.Errorf("batch-state.json should be deleted on %s", status)
 			}
+
+			// Recovery contract (spec test 6): a re-run resubmits cleanly.
+			if _, err := Compile(dir, CompileOpts{Batch: true}); err != nil {
+				t.Fatalf("resubmit compile: %v", err)
+			}
+			if fake.submitCount.Load() != 1 {
+				t.Errorf("submitCount = %d after %s, want 1 (clean resubmit)", fake.submitCount.Load(), status)
+			}
+			bcp, err := loadBatchCheckpoint(dir)
+			if err != nil || bcp == nil || bcp.Batch == nil {
+				t.Errorf("new batch checkpoint missing after resubmit: %+v", bcp)
+			}
 		})
 	}
 }
@@ -421,5 +433,27 @@ func TestCompile_LegacyBatchSplitWriteFails_Aborts(t *testing.T) {
 	}
 	if fake.submitCount.Load() != 0 || fake.pollCount.Load() != 0 {
 		t.Error("no provider calls should happen after a split-write abort")
+	}
+}
+
+// TestCompile_DeadBatchCheckpointRemoved: a parseable batch-state.json with
+// Batch == nil is dead state (no writer produces it) — Compile removes it
+// and proceeds standard rather than reloading it forever (Gate-3 fix).
+func TestCompile_DeadBatchCheckpointRemoved(t *testing.T) {
+	fake := newFakeBatchServer(t)
+	dir := writeBatchProject(t, fake.URL, "", "raw/a.md")
+
+	if err := saveBatchCheckpoint(dir, &BatchCheckpoint{CompileID: "dead", Pending: []string{"raw/a.md"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Compile(dir, CompileOpts{}); err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if _, err := os.Stat(batchCheckpointPath(dir)); !os.IsNotExist(err) {
+		t.Error("dead batch checkpoint should be removed")
+	}
+	if fake.pollCount.Load() != 0 {
+		t.Error("dead checkpoint must not trigger a batch resume")
 	}
 }

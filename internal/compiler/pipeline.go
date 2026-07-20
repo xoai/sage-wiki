@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -178,12 +179,21 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		if err != nil {
 			return nil, fmt.Errorf("compile: load batch checkpoint: %w", err)
 		}
+		if bcp != nil && bcp.Batch == nil {
+			// Dead checkpoint (parseable but batch-less) — no writer produces
+			// this today, but don't reload it forever: remove and continue.
+			log.Warn("removing dead batch checkpoint (no batch state)", "path", batchCheckpointPath(projectDir))
+			if err := os.Remove(batchCheckpointPath(projectDir)); err != nil {
+				log.Warn("failed to remove dead batch checkpoint", "error", err)
+			}
+			bcp = nil
+		}
 		if bcp != nil && bcp.Batch != nil {
 			if opts.DryRun {
 				// Dry-run contract: report, don't act. The one-time split
 				// above MAY have run (idempotent metadata migration) — only
 				// polling, summaries, and checkpoint deletion are deferred.
-				fmt.Fprintf(os.Stderr, "Batch %s pending resume (dry run — no changes made).\n", bcp.Batch.BatchID)
+				fmt.Fprintf(os.Stderr, "Batch %s pending resume (dry run — provider not polled, no summaries written).\n", bcp.Batch.BatchID)
 				return result, nil
 			}
 			client, tracker, err := newTrackedClient(cfg, &opts)
@@ -657,10 +667,12 @@ func submitBatch(
 
 	// Pending list holds source PATHS (used by resumeBatch's result
 	// validation) — the wire-level IDs are kept in BatchState.PathByID.
+	// Sorted for deterministic, diff-friendly checkpoint files.
 	pending := make([]string, 0, len(pathByID))
 	for _, path := range pathByID {
 		pending = append(pending, path)
 	}
+	sort.Strings(pending)
 
 	// Save the batch checkpoint — the ONLY checkpoint written on this path
 	// (P1-3; no compile-state.json anywhere).

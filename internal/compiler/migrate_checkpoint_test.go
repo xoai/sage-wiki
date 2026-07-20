@@ -135,6 +135,7 @@ func TestMigrateCheckpoint_AfterBatchSplit(t *testing.T) {
 		Pass:      1,
 		Completed: []string{"raw/a.md"},
 		Pending:   []string{"raw/c.md"},
+		Failed:    []FailedSource{{Path: "raw/d.md", Error: "rate limited", Attempts: 3}},
 		Batch:     &BatchState{BatchID: "batch_abc", Provider: "anthropic"},
 	}
 	data, _ := json.Marshal(state)
@@ -155,6 +156,7 @@ func TestMigrateCheckpoint_AfterBatchSplit(t *testing.T) {
 	mf := manifest.New()
 	mf.AddSource("raw/a.md", "sha256:aaa", "article", 1000)
 	mf.MarkCompiled("raw/a.md", "wiki/summaries/a.md", nil)
+	mf.AddSource("raw/d.md", "sha256:ddd", "article", 500)
 	cfg := &config.Config{}
 
 	migrated, err := MigrateCheckpoint(projectDir, db, mf, cfg)
@@ -177,6 +179,14 @@ func TestMigrateCheckpoint_AfterBatchSplit(t *testing.T) {
 	a, _ := items.GetByPath("raw/a.md")
 	if a == nil || !a.PassWritten {
 		t.Error("raw/a.md should be fully compiled in compile_items")
+	}
+	// Failed sources from the split legacy file migrate with error details.
+	d, _ := items.GetByPath("raw/d.md")
+	if d == nil {
+		t.Fatal("raw/d.md missing from compile_items")
+	}
+	if d.Error != "rate limited" || d.ErrorCount != 3 {
+		t.Errorf("raw/d.md error = %q×%d, want 'rate limited'×3", d.Error, d.ErrorCount)
 	}
 }
 

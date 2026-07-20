@@ -33,11 +33,18 @@ func Watch(projectDir string, debounceSeconds int, opts CompileOpts, coordinator
 	// Batch guard (P1-3 D6): reject watch when a pending batch exists in
 	// EITHER checkpoint file — the current .sage/batch-state.json or a legacy
 	// .sage/compile-state.json with Batch != nil (the legacy case migrates on
-	// the next real compile, but watch refuses before compiling).
-	if bcp, _ := loadBatchCheckpoint(projectDir); bcp != nil && bcp.Batch != nil {
+	// the next real compile, but watch refuses before compiling). Read errors
+	// are logged, not swallowed: a corrupt checkpoint fails every compile it
+	// meets, and watch mode must surface that rather than fail silently
+	// forever.
+	if bcp, err := loadBatchCheckpoint(projectDir); err != nil {
+		log.Warn("batch checkpoint unreadable — compiles will fail until it is fixed or removed", "error", err)
+	} else if bcp != nil && bcp.Batch != nil {
 		return fmt.Errorf("pending batch compile detected; run 'sage-wiki compile' to complete it before starting watch mode")
 	}
-	if state, _ := loadCompileState(legacyCheckpointPath(projectDir)); state != nil && state.Batch != nil {
+	if state, err := loadCompileState(legacyCheckpointPath(projectDir)); err != nil && !os.IsNotExist(err) {
+		log.Warn("legacy checkpoint unreadable — compiles will fail until it is fixed or removed", "error", err)
+	} else if state != nil && state.Batch != nil {
 		return fmt.Errorf("pending batch compile detected; run 'sage-wiki compile' to complete it before starting watch mode")
 	}
 
