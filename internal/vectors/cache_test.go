@@ -1,0 +1,346 @@
+package vectors
+
+import (
+	"database/sql"
+	"math"
+	"path/filepath"
+	"sync"
+	"testing"
+
+	"github.com/xoai/sage-wiki/internal/storage"
+)
+
+// seededFixture builds a deterministic DB with doc-level and chunk vectors.
+// Vectors are pseudo-random unit-ish directions; no exact score ties.
+// One doc entry is a ZERO vector (zero-norm guard, i1).
+func seededFixture(t *testing.T, docs, chunksPerDoc int) (*Store, func()) {
+	t.Helper()
+	dir := t.TempDir()
+	db, err := storage.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s := NewStore(db)
+
+	rng := uint32(42)
+	next := func() float32 {
+		rng = rng*1664525 + 1013904223
+		return float32(rng%2000)/1000.0 - 1.0
+	}
+	vec := func(dim int) []float32 {
+		v := make([]float32, dim)
+		for i := range v {
+			v[i] = next()
+		}
+		return v
+	}
+
+	const dim = 8
+	for d := 0; d < docs; d++ {
+		var v []float32
+		if d == 0 {
+			v = make([]float32, dim) // zero vector, zero-norm guard
+		} else {
+			v = vec(dim)
+		}
+		if err := s.Upsert(docID(d), v); err != nil {
+			t.Fatal(err)
+		}
+		for c := 0; c < chunksPerDoc; c++ {
+			cid := chunkID(d, c)
+			if err := db.WriteTx(func(tx *sql.Tx) error {
+				return s.UpsertChunk(tx, cid, docID(d), vec(dim))
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	return s, func() { db.Close() }
+}
+
+func docID(d int) string   { return "doc-" + itoa(d) }
+func chunkID(d, c int) string { return docID(d) + ":chunk-" + itoa(c) }
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	var b [8]byte
+	p := len(b)
+	for i > 0 {
+		p--
+		b[p] = byte('0' + i%10)
+		i /= 10
+	}
+	return string(b[p:])
+}
+
+// bruteForceDoc computes the reference top-K with the ORIGINAL
+// CosineSimilarity semantics over the fixture read straight from the DB.
+func bruteForceDoc(t *testing.T, s *Store, query []float32, limit int) []VectorResult {
+	t.Helper()
+	// Read all entries through the public (uncached-after-T1) SQL path by
+	// constructing a second Store on the same DB and forcing... simplest:
+	// compute from the same rows via Get-by-iteration is unavailable, so
+	// re-query via a fresh Store sharing the DB file is overkill — instead
+	// mirror the fixture deterministically is fragile; the honest reference
+	// is CosineSimilarity over ALL rows via a direct SQL read.
+	rows, err := s.db.ReadDB().Query("SELECT id, embedding FROM vec_entries")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var results []VectorResult
+	for rows.Next() {
+		var id string
+		var blob []byte
+		rows.Scan(&id, &blob)
+		vec := decodeFloat32s(blob)
+		if len(vec) != len(query) {
+			continue
+		}
+		results = insertSorted(results, VectorResult{ID: id, Score: CosineSimilarity(query, vec)}, limit)
+	}
+	for i := range results {
+		results[i].Rank = i + 1
+	}
+	return results
+}
+
+func TestCache_Parity_DocLevel(t *testing.T) {
+	s, cleanup := seededFixture(t, 50, 0)
+	defer cleanup()
+
+	query := []float32{0.5, -0.3, 0.8, 0.1, -0.6, 0.2, 0.9, -0.4}
+	want := bruteForceDoc(t, s, query, 10)
+
+	got, err := s.Search(query, 10)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	assertParity(t, want, got)
+
+	// Second search must hit the cache (load counter stays 1) with same result.
+	if s.docCache.loadCount() != 1 {
+		t.Fatalf("loadCount = %d, want 1", s.docCache.loadCount())
+	}
+	got2, _ := s.Search(query, 10)
+	assertParity(t, want, got2)
+	if s.docCache.loadCount() != 1 {
+		t.Errorf("second search reloaded: loadCount = %d", s.docCache.loadCount())
+	}
+}
+
+func assertParity(t *testing.T, want, got []VectorResult) {
+	t.Helper()
+	if len(want) != len(got) {
+		t.Fatalf("len: want %d, got %d", len(want), len(got))
+	}
+	for i := range want {
+		if want[i].ID != got[i].ID {
+			t.Fatalf("rank %d: want %s (%.6f), got %s (%.6f)", i, want[i].ID, want[i].Score, got[i].ID, got[i].Score)
+		}
+		if math.Abs(want[i].Score-got[i].Score) > 1e-6 {
+			t.Errorf("score %s: want %.8f, got %.8f", want[i].ID, want[i].Score, got[i].Score)
+		}
+	}
+}
+
+func TestCache_ZeroNormRow(t *testing.T) {
+	s, cleanup := seededFixture(t, 5, 0)
+	defer cleanup()
+	// doc-0 is the zero vector. A nonzero query: cosine = 0, cache dot = 0 —
+	// no NaN anywhere, doc-0 simply ranks last (or out of top-K).
+	query := []float32{0.5, -0.3, 0.8, 0.1, -0.6, 0.2, 0.9, -0.4}
+	got, err := s.Search(query, 50)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	for _, r := range got {
+		if math.IsNaN(r.Score) {
+			t.Fatalf("NaN score for %s", r.ID)
+		}
+		if r.ID == "doc-0" && r.Score != 0 {
+			t.Errorf("zero vector scored %f, want 0", r.Score)
+		}
+	}
+}
+
+func TestCache_PatchOnUnloaded(t *testing.T) {
+	s, cleanup := seededFixture(t, 5, 0)
+	defer cleanup()
+
+	// Patch before ANY search: must be a no-op and must NOT set loaded —
+	// a materialized partial cache would serve incomplete results forever.
+	s.Upsert("doc-new", []float32{1, 0, 0, 0, 0, 0, 0, 0})
+	if s.docCache.isLoaded() {
+		t.Fatal("patch on unloaded cache set loaded=true")
+	}
+	got, err := s.Search([]float32{1, 0, 0, 0, 0, 0, 0, 0}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) == 0 || got[0].ID != "doc-new" {
+		t.Errorf("fresh load after unloaded patch missed the upsert: %+v", got)
+	}
+}
+
+func TestCache_OwnedInvalidation(t *testing.T) {
+	s, cleanup := seededFixture(t, 10, 0)
+	defer cleanup()
+
+	query := []float32{1, 0, 0, 0, 0, 0, 0, 0}
+	s.Search(query, 3)
+	if s.docCache.loadCount() != 1 {
+		t.Fatalf("loadCount = %d", s.docCache.loadCount())
+	}
+
+	// Upsert a new top-1 — incremental patch, NO reload.
+	s.Upsert("champion", []float32{1, 0, 0, 0, 0, 0, 0, 0})
+	got, _ := s.Search(query, 3)
+	if len(got) == 0 || got[0].ID != "champion" {
+		t.Errorf("upsert not reflected: %+v", got)
+	}
+	if s.docCache.loadCount() != 1 {
+		t.Errorf("upsert caused reload: loadCount = %d", s.docCache.loadCount())
+	}
+
+	// Delete the top-1 — patch again, still no reload.
+	s.Delete("champion")
+	got, _ = s.Search(query, 3)
+	for _, r := range got {
+		if r.ID == "champion" {
+			t.Error("delete not reflected")
+		}
+	}
+	if s.docCache.loadCount() != 1 {
+		t.Errorf("delete caused reload: loadCount = %d", s.docCache.loadCount())
+	}
+}
+
+func TestCache_SingleFlight(t *testing.T) {
+	s, cleanup := seededFixture(t, 20, 0)
+	defer cleanup()
+
+	query := []float32{0.5, -0.3, 0.8, 0.1, -0.6, 0.2, 0.9, -0.4}
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.Search(query, 5)
+		}()
+	}
+	wg.Wait()
+	if got := s.docCache.loadCount(); got != 1 {
+		t.Errorf("concurrent first searches loaded %d times, want exactly 1", got)
+	}
+}
+
+func TestCache_MixedWorkloadRace(t *testing.T) {
+	s, cleanup := seededFixture(t, 30, 2)
+	defer cleanup()
+
+	query := []float32{0.5, -0.3, 0.8, 0.1, -0.6, 0.2, 0.9, -0.4}
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				s.Search(query, 5)
+				s.SearchChunks(query, 5)
+			}
+		}()
+	}
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			for j := 0; j < 10; j++ {
+				s.Upsert(docID(100+n*10+j), []float32{1, 0.1, 0, 0, 0, 0, 0, 0})
+				s.Delete(docID(100 + n*10 + j))
+				s.InvalidateChunkCache()
+			}
+		}(i)
+	}
+	wg.Wait()
+	// Postcondition: cache coherent with DB after the dust settles.
+	want := bruteForceDoc(t, s, query, 5)
+	got, _ := s.Search(query, 5)
+	assertParity(t, want, got)
+}
+
+func TestCache_QueryNotMutated(t *testing.T) {
+	s, cleanup := seededFixture(t, 5, 0)
+	defer cleanup()
+	query := []float32{0.5, -0.3, 0.8, 0.1, -0.6, 0.2, 0.9, -0.4}
+	orig := make([]float32, len(query))
+	copy(orig, query)
+	if _, err := s.Search(query, 3); err != nil {
+		t.Fatal(err)
+	}
+	for i := range query {
+		if query[i] != orig[i] {
+			t.Fatalf("query slice mutated at %d: %v -> %v", i, orig, query)
+		}
+	}
+}
+
+func TestCache_ChunkParityAndFiltered(t *testing.T) {
+	s, cleanup := seededFixture(t, 10, 5)
+	defer cleanup()
+
+	query := []float32{0.5, -0.3, 0.8, 0.1, -0.6, 0.2, 0.9, -0.4}
+
+	// Unfiltered parity vs brute-force SQL reference.
+	rows, err := s.db.ReadDB().Query("SELECT chunk_id, doc_id, embedding FROM vec_chunks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want []ChunkVectorResult
+	for rows.Next() {
+		var cid, did string
+		var blob []byte
+		rows.Scan(&cid, &did, &blob)
+		vec := decodeFloat32s(blob)
+		want = insertChunkSorted(want, ChunkVectorResult{ChunkID: cid, DocID: did, Score: CosineSimilarity(query, vec)}, 10)
+	}
+	rows.Close()
+	for i := range want {
+		want[i].Rank = i + 1
+	}
+
+	got, err := s.SearchChunks(query, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(want) != len(got) {
+		t.Fatalf("len: want %d got %d", len(want), len(got))
+	}
+	for i := range want {
+		if want[i].ChunkID != got[i].ChunkID {
+			t.Fatalf("rank %d: want %s got %s", i, want[i].ChunkID, got[i].ChunkID)
+		}
+		if math.Abs(want[i].Score-got[i].Score) > 1e-6 {
+			t.Errorf("score %s: want %.8f got %.8f", want[i].ChunkID, want[i].Score, got[i].Score)
+		}
+	}
+
+	// Filtered: only doc-3 and doc-7 chunks, and the >100 cap survives.
+	fGot, err := s.SearchChunksFiltered(query, []string{"doc-3", "doc-7"}, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range fGot {
+		if r.DocID != "doc-3" && r.DocID != "doc-7" {
+			t.Errorf("filtered search returned %s (doc %s)", r.ChunkID, r.DocID)
+		}
+	}
+	big := make([]string, 150)
+	for i := range big {
+		big[i] = docID(i)
+	}
+	if _, err := s.SearchChunksFiltered(query, big, 5); err != nil {
+		t.Errorf("150-docID filter (cap 100) errored: %v", err)
+	}
+}
