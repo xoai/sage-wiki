@@ -226,4 +226,28 @@ func TestCharacterization_CompileSnapshotDeterministic(t *testing.T) {
 	if string(a) != string(b) {
 		t.Errorf("snapshots differ across identical runs:\n--- run1 ---\n%s\n--- run2 ---\n%s", a, b)
 	}
+
+	// D4's actual proof: the snapshot must also equal the GOLDEN baseline
+	// captured from pre-refactor code (main before P1-8). Record with:
+	//   SAGE_CHARACTERIZATION_RECORD=1 go test -run TestCharacterization ./internal/compiler/
+	// (generates testdata/compile_snapshot_golden.json — regenerate ONLY on
+	// main, never on a refactor branch).
+	goldenPath := filepath.Join("testdata", "compile_snapshot_golden.json")
+	if os.Getenv("SAGE_CHARACTERIZATION_RECORD") != "" {
+		if err := os.MkdirAll("testdata", 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(goldenPath, a, 0644); err != nil {
+			t.Fatalf("record golden: %v", err)
+		}
+		t.Logf("recorded golden snapshot to %s", goldenPath)
+		return
+	}
+	golden, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatalf("read golden snapshot (regenerate from main with SAGE_CHARACTERIZATION_RECORD=1): %v", err)
+	}
+	if string(a) != string(golden) {
+		t.Errorf("snapshot differs from PRE-REFACTOR golden baseline:\n--- current ---\n%s\n--- golden ---\n%s", a, golden)
+	}
 }

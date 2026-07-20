@@ -48,13 +48,13 @@ func Open(projectDir string) (*App, error) {
 	cfgPath := filepath.Join(projectDir, "config.yaml")
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		return nil, fmt.Errorf("app: load config: %w", err)
+		return nil, fmt.Errorf("load config: %w", err)
 	}
 
 	dbPath := filepath.Join(projectDir, ".sage", "wiki.db")
 	db, err := storage.Open(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("app: open db: %w", err)
+		return nil, fmt.Errorf("open db: %w", err)
 	}
 
 	mem := memory.NewStore(db)

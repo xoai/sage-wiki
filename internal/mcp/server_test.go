@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/wiki"
@@ -215,5 +216,36 @@ func makeToolRequest(args map[string]any) mcp.CallToolRequest {
 			Name:      "test",
 			Arguments: args,
 		},
+	}
+}
+
+// TestNewServer_ServesAppData: the adopted container shares state — an
+// entry written via a separate app.Open is visible to the MCP server's
+// stores (construction parity, P1-8 T3).
+func TestNewServer_ServesAppData(t *testing.T) {
+	dir := t.TempDir()
+	wiki.InitGreenfield(dir, "test", "gpt-4o-mini")
+
+	a, err := app.Open(dir)
+	if err != nil {
+		t.Fatalf("app.Open: %v", err)
+	}
+	if err := a.Mem.Add(memory.Entry{ID: "concept:parity", Content: "container parity content"}); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	a.Close()
+
+	srv, err := NewServer(dir)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer srv.Close()
+
+	n, err := srv.mem.Count()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("server mem count = %d, want 1 (written via the container)", n)
 	}
 }

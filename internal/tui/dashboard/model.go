@@ -268,7 +268,7 @@ func (m Model) renderTabBar() string {
 func Run(projectDir string) error {
 	a, err := app.Open(projectDir)
 	if err != nil {
-		return err
+		return err // text: "load config: ..." / "open db: ..." (prefix-free by design, P1-8)
 	}
 	defer a.Close()
 
