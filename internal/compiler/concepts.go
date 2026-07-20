@@ -142,7 +142,10 @@ func ExtractConcepts(
 				if len(summary) > 1000 {
 					summary = summary[:1000] + "\n..."
 				}
-				summaryTexts = append(summaryTexts, fmt.Sprintf("### Source: %s\n%s", s.SourcePath, summary))
+				// Summaries are LLM output over untrusted text — neutralize
+				// spoof delimiter tags (second-order injection, SEC-04 site 4)
+				// before they join the extract_concepts template's frame.
+				summaryTexts = append(summaryTexts, fmt.Sprintf("### Source: %s\n%s", s.SourcePath, prompts.NeutralizeTags(summary)))
 			}
 
 			prompt, err := prompts.Render("extract_concepts", prompts.ExtractData{

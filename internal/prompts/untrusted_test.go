@@ -51,3 +51,83 @@ func TestWrapUntrusted_NeutralizesPayload(t *testing.T) {
 			strings.Count(out, "</untrusted_source>"), out)
 	}
 }
+
+// ── T2: template-embedded delimiters + drift guard ──────────────────────
+
+// extractTemplateBlock pulls the untrusted block (preamble line + tags +
+// slot) out of an embedded default template for comparison against the
+// canonical const.
+func extractTemplateBlock(t *testing.T, name, slot string) string {
+	t.Helper()
+	data, err := templateFS.ReadFile("templates/" + name)
+	if err != nil {
+		t.Fatalf("read template %s: %v", name, err)
+	}
+	content := string(data)
+	start := strings.Index(content, "The text between <untrusted_source> tags")
+	if start < 0 {
+		t.Fatalf("template %s missing untrusted block preamble", name)
+	}
+	end := strings.Index(content[start:], "</untrusted_source>")
+	if end < 0 {
+		t.Fatalf("template %s missing closing tag", name)
+	}
+	block := content[start : start+end+len("</untrusted_source>")]
+	if !strings.Contains(block, slot) {
+		t.Fatalf("template %s block missing its slot %s: %q", name, slot, block)
+	}
+	return block
+}
+
+func TestTemplates_UntrustedBlockDriftGuard(t *testing.T) {
+	// The template-embedded block must be byte-identical to the canonical
+	// const with %s replaced by THAT template's slot.
+	for _, tc := range []struct {
+		name, slot string
+	}{
+		{"extract_concepts.txt", "{{.Summaries}}"},
+		{"write_article.txt", "{{.SourceContext}}"},
+	} {
+		block := extractTemplateBlock(t, tc.name, tc.slot)
+		want := strings.Replace(UntrustedBlock, "%s", tc.slot, 1)
+		if block != want {
+			t.Errorf("%s block drifted from UntrustedBlock:\n got: %q\nwant: %q", tc.name, block, want)
+		}
+	}
+}
+
+func TestRenderExtractConcepts_WrapsSummaries(t *testing.T) {
+	out, err := Render("extract_concepts", ExtractData{
+		ExistingConcepts: "none",
+		Summaries:        "### Source: raw/x.md\nMARKER_SUMMARY",
+	}, "")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(out, "<untrusted_source>\n### Source: raw/x.md\nMARKER_SUMMARY\n</untrusted_source>") {
+		t.Errorf("summaries not wrapped: %q", out)
+	}
+}
+
+func TestRenderWriteArticle_WrapsSourceContext(t *testing.T) {
+	out, err := Render("write_article", WriteArticleData{
+		ConceptName:   "test",
+		SourceContext: "MARKER_CONTEXT",
+	}, "")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(out, "<untrusted_source>\nMARKER_CONTEXT\n</untrusted_source>") {
+		t.Errorf("source context not wrapped: %q", out)
+	}
+}
+
+func TestWriteArticle_NoFollowTheseAmplifier(t *testing.T) {
+	data, err := templateFS.ReadFile("templates/write_article.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "follow these") {
+		t.Error(`write_article.txt still contains the "(follow these)" instruction amplifier`)
+	}
+}
