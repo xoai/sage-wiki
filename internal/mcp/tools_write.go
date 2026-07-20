@@ -477,7 +477,7 @@ func extractKnowledgeItems(cfg *config.Config, content, captureCtx, tags string)
 
 	resp, err := client.ChatCompletion([]llm.Message{
 		{Role: "system", Content: "You are a knowledge extraction assistant. Return only valid JSON."},
-		{Role: "user", Content: prompt + "\n\n" + content},
+		{Role: "user", Content: prompt + "\n\n" + prompts.WrapUntrusted(content)},
 	}, llm.CallOpts{Model: model, MaxTokens: 4096})
 	if err != nil {
 		return nil, fmt.Errorf("LLM call: %w", err)
