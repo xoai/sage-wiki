@@ -46,10 +46,25 @@ func TestOpenSqliteDispatch(t *testing.T) {
 }
 
 func TestOpenPostgresNotAvailable(t *testing.T) {
-	_, err := Open(config.StorageConfig{Backend: "postgres", DSN: "postgres://x", VectorDimension: 768},
+	// Without a reachable DSN, postgres dispatch fails at parse/connect —
+	// NOT with "unknown backend" (dispatch is wired since T13).
+	_, err := Open(config.StorageConfig{Backend: "postgres", DSN: "invalid-dsn", VectorDimension: 768},
 		store.OpenOptions{Mode: store.ModeWriter, ProjectDir: t.TempDir()})
-	if err == nil || !strings.Contains(err.Error(), "not available") {
-		t.Fatalf("postgres dispatch err = %v, want 'not available'", err)
+	if err == nil || !strings.Contains(err.Error(), "parse dsn") {
+		t.Fatalf("postgres dispatch err = %v, want parse failure", err)
+	}
+}
+
+func TestOpenProjectPostgresConfig(t *testing.T) {
+	dir := writeProject(t, `
+storage:
+  backend: postgres
+  dsn: invalid-dsn
+  vector_dimension: 768
+`)
+	_, err := OpenProject(dir, store.ModeWriter)
+	if err == nil || !strings.Contains(err.Error(), "parse dsn") {
+		t.Fatalf("err = %v, want parse failure", err)
 	}
 }
 
@@ -83,15 +98,3 @@ func TestOpenProjectReaderOnFreshProjectFails(t *testing.T) {
 	}
 }
 
-func TestOpenProjectPostgresConfig(t *testing.T) {
-	dir := writeProject(t, `
-storage:
-  backend: postgres
-  dsn: postgres://u:p@host/db
-  vector_dimension: 768
-`)
-	_, err := OpenProject(dir, store.ModeWriter)
-	if err == nil || !strings.Contains(err.Error(), "not available") {
-		t.Fatalf("err = %v, want 'not available'", err)
-	}
-}

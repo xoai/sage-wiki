@@ -11,6 +11,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/sqlitestore"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/storage/postgres"
 	"github.com/xoai/sage-wiki/internal/store"
 )
 
@@ -30,7 +31,7 @@ func Open(cfg config.StorageConfig, opts store.OpenOptions) (store.Backend, erro
 			ValidEntityTypes: opts.ValidEntityTypes,
 		})
 	case "postgres":
-		return nil, fmt.Errorf("storage: postgres backend not available in this build")
+		return postgres.Open(cfg.DSN, opts)
 	default:
 		return nil, fmt.Errorf("storage: unknown storage backend %q (valid: sqlite, postgres)", backend)
 	}
