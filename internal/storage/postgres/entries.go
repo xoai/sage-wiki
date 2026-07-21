@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/store"
 )
 
@@ -60,19 +61,24 @@ func (s *entryStore) Get(id string) (*store.Entry, error) {
 }
 
 func (s *entryStore) Search(query string, tags []string, limit int) ([]store.SearchResult, error) {
+	if limit <= 0 {
+		limit = 10 // memory/entries.go:84-86 parity
+	}
 	terms := queryTerms(query)
 	if len(terms) == 0 {
 		return nil, nil
 	}
-	where, args, next := s.b.ftsQuery("tsv", terms, 1)
-	tagFrag, tagArgs, next := tagFilter("tags", tags, next)
-	args = append(args, tagArgs...)
-	rank, rankArgs, next := s.b.ftsRank("tsv", terms, next)
-	args = append(args, rankArgs...)
+	plan := s.b.planFTS("tsv", "content", terms, 1)
+	tagFrag, tagArgs, next := tagFilter("tags", tags, plan.next)
+	args := append(plan.args, tagArgs...)
 
+	rankSel := "0.0"
+	if strings.HasPrefix(plan.rank, "ts_rank(") {
+		rankSel = strings.TrimSuffix(plan.rank, " DESC")
+	}
 	sqlText := fmt.Sprintf(
-		"SELECT id, content, tags, article_path FROM entries WHERE %s%s ORDER BY %s LIMIT $%d",
-		where, tagFrag, rank, next)
+		"SELECT id, content, tags, article_path, %s FROM entries WHERE %s%s ORDER BY %s LIMIT $%d",
+		rankSel, plan.where, tagFrag, plan.rank, next)
 	args = append(args, limit)
 
 	rows, err := s.b.pool.Query(sqlText, args...)
@@ -83,14 +89,19 @@ func (s *entryStore) Search(query string, tags []string, limit int) ([]store.Sea
 
 	var out []store.SearchResult
 	for rows.Next() {
-		e, err := scanEntry(rows)
-		if err != nil {
+		var id, tags, content, ap sql.NullString
+		var score float64
+		if err := rows.Scan(&id, &content, &tags, &ap, &score); err != nil {
 			return nil, err
 		}
-		out = append(out, store.SearchResult{
-			ID: e.ID, Content: e.Content, Tags: e.Tags, ArticlePath: e.ArticlePath,
-			Rank: len(out) + 1,
-		})
+		r := store.SearchResult{
+			ID: id.String, Content: content.String, ArticlePath: ap.String,
+			BM25Score: score, Rank: len(out) + 1,
+		}
+		if tags.String != "" {
+			r.Tags = strings.Split(tags.String, ",")
+		}
+		out = append(out, r)
 	}
 	return out, rows.Err()
 }
@@ -119,13 +130,16 @@ func (s *entryStore) ListAll() ([]store.Entry, error) {
 }
 
 // CountUncompiled mirrors the sqlite cross-store join (mcp:301 semantics):
-// RIGHT(id, length(id)-4) == SUBSTR(id, 5); error→0 tolerance preserved.
+// the RAW SanitizeFTS output is one concatenated token (no stopword
+// filtering, no OR-join) matched as a prefix term; error→0 tolerance.
 func (s *entryStore) CountUncompiled(query string) (int, error) {
-	terms := queryTerms(query)
-	if len(terms) == 0 {
+	sanitized := memory.SanitizeFTS(query)
+	if sanitized == "" {
 		return 0, nil
 	}
-	where, args, _ := s.b.ftsQuery("e.tsv", terms, 1)
+	plan := s.b.planFTS("e.tsv", "e.content", []string{sanitized}, 1)
+	args := plan.args
+	where := plan.where
 	var count int
 	err := s.b.pool.QueryRow(fmt.Sprintf(`
 		SELECT COUNT(*) FROM entries e

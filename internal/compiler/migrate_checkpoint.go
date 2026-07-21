@@ -25,7 +25,7 @@ import (
 // on the next run.
 //
 // Returns true if migration was performed, false if skipped or not needed.
-func MigrateCheckpoint(projectDir string, db store.DBHandle, mf *manifest.Manifest, cfg *config.Config) (bool, error) {
+func MigrateCheckpoint(projectDir string, items store.CompileItemStore, mf *manifest.Manifest, cfg *config.Config) (bool, error) {
 	statePath := legacyCheckpointPath(projectDir)
 	state, err := loadCompileState(statePath)
 	if err != nil {
@@ -43,7 +43,6 @@ func MigrateCheckpoint(projectDir string, db store.DBHandle, mf *manifest.Manife
 		}
 	}
 
-	items := NewCompileItemStore(db)
 
 	completedSet := make(map[string]bool)
 	for _, p := range state.Completed {
@@ -157,8 +156,7 @@ func resolveTierDefault(sourcePath string, cfg *config.Config) int {
 // PopulateFromManifest creates compile_items entries for all manifest sources
 // that don't already exist in compile_items. Used on first run after migration V5
 // when there is no compile-state.json to migrate.
-func PopulateFromManifest(db store.DBHandle, mf *manifest.Manifest, cfg *config.Config) (int, error) {
-	items := NewCompileItemStore(db)
+func PopulateFromManifest(items store.CompileItemStore, mf *manifest.Manifest, cfg *config.Config) (int, error) {
 	populated := 0
 
 	for path, src := range mf.Sources {

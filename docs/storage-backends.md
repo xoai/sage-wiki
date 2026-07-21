@@ -67,7 +67,9 @@ is comparably limited on both backends.
   `lock_timeout` matching SQLite's 5s `busy_timeout` behavior.
 - **Reader** (hub federated search): no lock, no migrations, MVCC reads.
   Reader pools are sized 4/2 per project so hub fan-out across many projects
-  can't exhaust `max_connections`.
+  can't exhaust `max_connections`. Note: config validation requires
+  `vector_dimension` for postgres; a reader opened without it (bypassing
+  config) gets empty vector-search results by design (dimension guard).
 
 ### Pool sizing
 

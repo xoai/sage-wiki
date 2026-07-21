@@ -1,11 +1,11 @@
 package postgres
 
 import (
-	"database/sql"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/memory"
 )
 
@@ -61,77 +61,131 @@ var pgStopwords = map[string]bool{
 
 // queryTerms splits a user query into sanitized terms, stopword-filtered,
 // falling back to stopword terms when all are stopwords (buildFTSQuery
-// parity, including the all-stopwords fallback).
+// parity, including the all-stopwords fallback). Hyphenated words split
+// into their parts (FTS5/unicode61 tokenizes on hyphens — pg snowball
+// treats them as operators, so parts are the parity-preserving form).
 func queryTerms(query string) []string {
 	words := strings.Fields(strings.ToLower(query))
 	var terms []string
-	for _, w := range words {
+	add := func(w string) {
 		w = memory.SanitizeFTS(w)
 		if w == "" || pgStopwords[w] {
-			continue
+			return
+		}
+		if strings.Contains(w, "-") {
+			for _, part := range strings.Split(w, "-") {
+				if part != "" && !pgStopwords[part] {
+					terms = append(terms, part)
+				}
+			}
+			return
 		}
 		terms = append(terms, w)
+	}
+	for _, w := range words {
+		add(w)
 	}
 	if len(terms) == 0 {
 		for _, w := range words {
 			w = memory.SanitizeFTS(w)
-			if w != "" {
-				terms = append(terms, w)
+			if w == "" {
+				continue
 			}
+			// All-stopwords fallback uses the terms anyway — with the same
+			// hyphen splitting as the main path.
+			if strings.Contains(w, "-") {
+				for _, part := range strings.Split(w, "-") {
+					if part != "" {
+						terms = append(terms, part)
+					}
+				}
+				continue
+			}
+			terms = append(terms, w)
 		}
 	}
 	return terms
 }
 
+// ftsPlan is a single-probe FTS plan for one search call: the WHERE
+// fragment, the ORDER BY rank expression, and their args. The tsquery is
+// evaluated ONCE (no double round trip); on empty evaporation (stopword
+// storm) or probe error, the pinned fallback is per-term ILIKE on textExpr
+// with the text expression as deterministic rank.
+type ftsPlan struct {
+	where string
+	rank  string
+	args  []any
+	next  int
+}
+
+func (b *backend) planFTS(tsvCol, textExpr string, terms []string, nextArg int) ftsPlan {
+	if len(terms) == 0 {
+		return ftsPlan{where: "TRUE", rank: textExpr, next: nextArg}
+	}
+	q := tsqueryText(terms)
+	var empty bool
+	// One probe round trip per search call - the price of detecting
+	// stopword evaporation server-side; accepted latency tradeoff.
+	err := b.pool.QueryRow("SELECT coalesce(to_tsquery('sage_fts', $1)::text = '', true)", q).Scan(&empty)
+	if err != nil {
+		// Persistent probe failure (e.g. sage_fts dropped) degrades to ILIKE —
+		// observable, not silent.
+		log.Warn("fts tsquery probe failed — falling back to ILIKE", "error", err)
+	}
+	if err != nil || empty {
+		p := ftsPlan{rank: textExpr, next: nextArg}
+		var likes []string
+		for _, t := range terms {
+			likes = append(likes, fmt.Sprintf("%s ILIKE $%d", textExpr, p.next))
+			p.args = append(p.args, "%"+escapeLike(t)+"%")
+			p.next++
+		}
+		p.where = "(" + strings.Join(likes, " OR ") + ")"
+		return p
+	}
+	return ftsPlan{
+		where: fmt.Sprintf("%s @@ to_tsquery('sage_fts', $%d)", tsvCol, nextArg),
+		rank:  fmt.Sprintf("ts_rank(%s, to_tsquery('sage_fts', $%d)) DESC", tsvCol, nextArg),
+		args:  []any{q},
+		next:  nextArg + 1,
+	}
+}
+
 // tsqueryText builds the to_tsquery input: OR-joined prefix terms ("term:*"
 // mirrors FTS5's `"term"*` under prefix='2 3').
 func tsqueryText(terms []string) string {
-	parts := make([]string, len(terms))
-	for i, t := range terms {
-		parts[i] = t + ":*"
+	parts := make([]string, 0, len(terms))
+	for _, t := range terms {
+		parts = append(parts, t+":*")
 	}
 	return strings.Join(parts, " | ")
 }
 
-// ftsQuery returns the WHERE fragment and args for a tsvector match over the
-// given column expression, with the pinned stopword-evaporation fallback
-// (spec §5): if to_tsquery yields empty for a non-empty term set, per-term
-// ILIKE on the same expression, OR-combined, LIKE metacharacters escaped.
-// nextArg is the next $N index; returns the fragment and the new next index.
-func (b *backend) ftsQuery(colExpr string, terms []string, nextArg int) (string, []any, int) {
-	if len(terms) == 0 {
-		return "TRUE", nil, nextArg
+// tagFilter mirrors the sqlite LIKE tag filter: AND pre-filter — ALL tags
+// must be present (memory/entries.go:96-105 parity; LIKE wildcards in tags
+// are unescaped exactly as on sqlite).
+func tagFilter(col string, tags []string, nextArg int) (string, []any, int) {
+	if len(tags) == 0 {
+		return "", nil, nextArg
 	}
-	q := tsqueryText(terms)
-	var empty bool
-	// Evaluate the tsquery once: snowball evaporates stopword-only queries.
-	err := b.pool.QueryRow("SELECT coalesce(to_tsquery('sage_fts', $1)::text = '', true)", q).Scan(&empty)
-	if err == nil && empty {
-		var likes []string
-		var args []any
-		for _, t := range terms {
-			likes = append(likes, fmt.Sprintf("%s ILIKE $%d", colExpr, nextArg))
-			args = append(args, "%"+escapeLike(t)+"%")
-			nextArg++
-		}
-		return "(" + strings.Join(likes, " OR ") + ")", args, nextArg
+	var conds []string
+	var args []any
+	for _, t := range tags {
+		conds = append(conds, fmt.Sprintf("%s LIKE $%d", col, nextArg))
+		args = append(args, "%"+t+"%")
+		nextArg++
 	}
-	return fmt.Sprintf("%s @@ to_tsquery('sage_fts', $%d)", colExpr, nextArg), []any{q}, nextArg + 1
+	return " AND " + strings.Join(conds, " AND "), args, nextArg
 }
 
-// ftsRank returns the ORDER BY rank expression (ts_rank; ILIKE fallback has
-// no rank — order by the column for determinism).
-func (b *backend) ftsRank(colExpr string, terms []string, nextArg int) (string, []any, int) {
-	if len(terms) == 0 {
-		return colExpr, nil, nextArg
+// normLimit applies a sqlite default: entries/vector search 10, chunk
+// search 20 (memory/chunks.go:71, vectors/store.go:223,259,281).
+func normLimit(limit, def int) int {
+	if limit <= 0 {
+		return def
 	}
-	q := tsqueryText(terms)
-	var empty bool
-	err := b.pool.QueryRow("SELECT coalesce(to_tsquery('sage_fts', $1)::text = '', true)", q).Scan(&empty)
-	if err == nil && empty {
-		return colExpr, nil, nextArg
-	}
-	return fmt.Sprintf("ts_rank(%s, to_tsquery('sage_fts', $%d)) DESC", colExpr, nextArg), []any{q}, nextArg + 1
+	return limit
 }
 
 func escapeLike(s string) string {
@@ -141,20 +195,3 @@ func escapeLike(s string) string {
 	return s
 }
 
-// tagFilter mirrors the sqlite LIKE tag filter (entries.go: tags LIKE
-// '%t1,t2%' semantics — any tag match).
-func tagFilter(col string, tags []string, nextArg int) (string, []any, int) {
-	if len(tags) == 0 {
-		return "", nil, nextArg
-	}
-	var ors []string
-	var args []any
-	for _, t := range tags {
-		ors = append(ors, fmt.Sprintf("%s LIKE $%d", col, nextArg))
-		args = append(args, "%"+t+"%")
-		nextArg++
-	}
-	return " AND (" + strings.Join(ors, " OR ") + ")", args, nextArg
-}
-
-var _ = sql.ErrNoRows

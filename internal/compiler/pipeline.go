@@ -516,7 +516,7 @@ func setupStores(projectDir string, run *compileRun) error {
 
 	// Populate compile_items from manifest on first run (if empty)
 	if count, _ := run.itemStore.Count(); count == 0 && run.mf.SourceCount() > 0 {
-		populated, err := PopulateFromManifest(db, run.mf, cfg)
+		populated, err := PopulateFromManifest(run.itemStore, run.mf, cfg)
 		if err != nil {
 			log.Warn("populate compile_items from manifest failed", "error", err)
 		} else if populated > 0 {
@@ -526,7 +526,7 @@ func setupStores(projectDir string, run *compileRun) error {
 
 	// Migrate legacy checkpoint if present
 	if !run.opts.Fresh {
-		if migrated, err := MigrateCheckpoint(projectDir, db, run.mf, cfg); err != nil {
+		if migrated, err := MigrateCheckpoint(projectDir, run.itemStore, run.mf, cfg); err != nil {
 			log.Warn("checkpoint migration failed", "error", err)
 		} else if migrated {
 			log.Info("legacy checkpoint migrated to compile_items")

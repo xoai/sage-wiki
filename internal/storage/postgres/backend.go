@@ -14,7 +14,6 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"hash/fnv"
 	"strings"
@@ -85,10 +84,16 @@ func Open(dsn string, opts store.OpenOptions) (store.Backend, error) {
 	}
 	opts.LockTimeout = lt
 
+	// Key scope: database + schema (search_path) — vaults sharing one
+	// database as schemas must not serialize against each other.
+	keyScope := cfg.Database
+	if sp := cfg.RuntimeParams["search_path"]; sp != "" {
+		keyScope += "." + sp
+	}
 	b := &backend{
 		pool: pool, mode: opts.Mode, opts: opts,
-		session: advisoryKey("session", cfg.Database),
-		txKey:   advisoryKey("tx", cfg.Database),
+		session: advisoryKey("session", keyScope),
+		txKey:   advisoryKey("tx", keyScope),
 		host:    cfg.Host, dbName: cfg.Database,
 	}
 
@@ -115,13 +120,13 @@ func Open(dsn string, opts store.OpenOptions) (store.Backend, error) {
 		pool.Close()
 		return nil, err
 	}
-	if err := b.migrate(ctx); err != nil {
-		b.Close()
-		return nil, fmt.Errorf("storage: migrate: %w", err)
-	}
 	if opts.VectorDimension <= 0 {
 		b.Close()
 		return nil, fmt.Errorf("storage: vector_dimension required when backend=postgres")
+	}
+	if err := b.migrate(ctx); err != nil {
+		b.Close()
+		return nil, fmt.Errorf("storage: migrate: %w", err)
 	}
 	if err := b.verifyDimension(ctx, opts.VectorDimension); err != nil {
 		b.Close()
@@ -179,20 +184,22 @@ func (b *backend) verifySchemaVersion(ctx context.Context) error {
 	return nil
 }
 
-// verifyDimension checks the existing vector columns agree with config.
+// verifyDimension checks all three vector columns agree with config.
 func (b *backend) verifyDimension(ctx context.Context, dim int) error {
-	var typ string
-	err := b.pool.QueryRowContext(ctx,
-		`SELECT format_type(atttypid, atttypmod) FROM pg_attribute
-		 WHERE attrelid = 'vec_entries'::regclass AND attname = 'embedding'`).Scan(&typ)
-	if err != nil {
-		return fmt.Errorf("storage: inspect vector column: %w", err)
-	}
 	want := fmt.Sprintf("vector(%d)", dim)
-	if typ != want {
-		return fmt.Errorf("%w: column is %s, config wants %s — remedy: drop and recreate the "+
-			"vector tables, invalidate output_index (forces reconcile), re-embed (docs/storage-backends.md)",
-			store.ErrDimensionMismatch, typ, want)
+	for _, table := range []string{"vec_entries", "vec_chunks", "pending_questions_vec"} {
+		var typ string
+		err := b.pool.QueryRowContext(ctx,
+			`SELECT format_type(atttypid, atttypmod) FROM pg_attribute
+			 WHERE attrelid = $1::regclass AND attname = 'embedding'`, table).Scan(&typ)
+		if err != nil {
+			return fmt.Errorf("storage: inspect %s.embedding: %w", table, err)
+		}
+		if typ != want {
+			return fmt.Errorf("%w: %s.embedding is %s, config wants %s — remedy: drop and recreate the "+
+				"vector tables, invalidate output_index (forces reconcile), re-embed (docs/storage-backends.md)",
+				store.ErrDimensionMismatch, table, typ, want)
+		}
 	}
 	return nil
 }
@@ -311,6 +318,3 @@ func (b *backend) CompileItems() store.CompileItemStore { return &itemStore{b: b
 func (b *backend) OutputIndex() store.OutputIndexStore  { return &outputIndexStore{b: b} }
 func (b *backend) Learnings() store.LearningStore       { return &learningStore{b: b} }
 
-var errReader = store.ErrReadOnly
-
-var _ = errors.Is

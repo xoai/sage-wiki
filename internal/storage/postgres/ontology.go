@@ -9,19 +9,30 @@ import (
 	"github.com/xoai/sage-wiki/internal/store"
 )
 
-type ontologyStore struct{ b *backend }
+type ontologyStore struct {
+	b *backend
+}
 
 var _ store.OntologyStore = (*ontologyStore)(nil)
 
-func (s *ontologyStore) IsValidType(t string) bool {
-	switch t {
-	case "concept", "technique", "source", "claim", "artifact":
-		return true
+func (s *ontologyStore) validSets() (rels, types map[string]bool) {
+	rels = map[string]bool{}
+	for _, r := range s.b.opts.ValidRelations {
+		rels[r] = true
 	}
-	// Custom types are allowed (V4 dropped the CHECK constraint) — the
-	// sqlite store consults its constructor lists; postgres accepts all
-	// non-empty types (validation stays a construction-time concern, spec §3).
-	return t != ""
+	types = map[string]bool{}
+	for _, t := range s.b.opts.ValidEntityTypes {
+		types[t] = true
+	}
+	return rels, types
+}
+
+func (s *ontologyStore) IsValidType(t string) bool {
+	_, types := s.validSets()
+	if len(types) == 0 {
+		return t != ""
+	}
+	return types[t]
 }
 
 func (s *ontologyStore) AddEntity(e store.Entity) error {
@@ -103,6 +114,9 @@ func (s *ontologyStore) AddRelation(r store.Relation) error {
 	if r.SourceID == r.TargetID {
 		return fmt.Errorf("ontology: self-loops not allowed (entity %q)", r.SourceID)
 	}
+	if rels, _ := s.validSets(); len(rels) > 0 && !rels[r.Relation] {
+		return fmt.Errorf("ontology: unknown relation type %q", r.Relation)
+	}
 	if r.CreatedAt == "" {
 		r.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
@@ -116,7 +130,7 @@ func (s *ontologyStore) AddRelation(r store.Relation) error {
 	})
 }
 
-const relationCols = "COALESCE(id,''), source_id, target_id, relation, created_at"
+const relationCols = "id, source_id, target_id, relation, created_at"
 
 func scanRelations(rows *sql.Rows) ([]store.Relation, error) {
 	var out []store.Relation
@@ -133,15 +147,26 @@ func scanRelations(rows *sql.Rows) ([]store.Relation, error) {
 }
 
 func (s *ontologyStore) ListRelations(relationType string, limit int) ([]store.Relation, error) {
+	// Negative limit = unlimited (sqlite LIMIT -1 parity; postgres errors
+	// on negative LIMIT, so the clause is omitted instead).
+	limitFrag := ""
+	args := []any{}
+	if relationType != "" {
+		args = append(args, relationType)
+	}
+	if limit >= 0 {
+		limitFrag = fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		args = append(args, limit)
+	}
 	var rows *sql.Rows
 	var err error
 	if relationType != "" {
 		rows, err = s.b.pool.Query(
-			"SELECT "+relationCols+" FROM relations WHERE relation=$1 ORDER BY created_at DESC LIMIT $2",
-			relationType, limit)
+			"SELECT "+relationCols+" FROM relations WHERE relation=$1 ORDER BY created_at DESC"+limitFrag,
+			args...)
 	} else {
 		rows, err = s.b.pool.Query(
-			"SELECT "+relationCols+" FROM relations ORDER BY created_at DESC LIMIT $1", limit)
+			"SELECT "+relationCols+" FROM relations ORDER BY created_at DESC"+limitFrag, args...)
 	}
 	if err != nil {
 		return nil, err

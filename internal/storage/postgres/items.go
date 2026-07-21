@@ -67,29 +67,54 @@ func boolInt(b bool) int {
 	return 0
 }
 
-// Upsert: sticky pass-flag CASE logic parity (items.go:70 — flags are
-// preserved across upserts via CASE WHEN excluded.hash <> hash THEN 0 ELSE
-// compile_items.pass_X END semantics; hash change resets passes).
+// Upsert: full-column parity with compiler/items.go:40-69 — sticky pass
+// flags preserved only when the hash is unchanged AND the stored flag is 1;
+// hash change takes excluded flags (zeroed by the caller = re-process).
 func (s *itemStore) Upsert(item store.CompileItem) error {
+	var tierOverride any
+	if item.TierOverride != nil {
+		tierOverride = *item.TierOverride
+	}
+	var qualityScore any
+	if item.QualityScore != nil {
+		qualityScore = *item.QualityScore
+	}
 	return s.b.WriteTx(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`
-		INSERT INTO compile_items (source_path, hash, file_type, size_bytes, tier, tier_default,
-			pass_indexed, pass_embedded, pass_parsed, pass_summarized, pass_extracted, pass_written,
-			source_type, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now(), now())
+		INSERT INTO compile_items (
+			source_path, hash, file_type, size_bytes,
+			tier, tier_default, tier_override,
+			pass_indexed, pass_embedded, pass_parsed,
+			pass_summarized, pass_extracted, pass_written,
+			compile_id, error, error_count, summary_path,
+			query_hit_count, last_queried_at, promoted_at, demoted_at,
+			source_type, quality_score, created_at, updated_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23, now(), now())
 		ON CONFLICT (source_path) DO UPDATE SET
 			hash=excluded.hash, file_type=excluded.file_type, size_bytes=excluded.size_bytes,
-			updated_at=now(),
-			pass_indexed    = CASE WHEN compile_items.hash <> excluded.hash THEN 0 ELSE compile_items.pass_indexed END,
-			pass_embedded   = CASE WHEN compile_items.hash <> excluded.hash THEN 0 ELSE compile_items.pass_embedded END,
-			pass_parsed     = CASE WHEN compile_items.hash <> excluded.hash THEN 0 ELSE compile_items.pass_parsed END,
-			pass_summarized = CASE WHEN compile_items.hash <> excluded.hash THEN 0 ELSE compile_items.pass_summarized END,
-			pass_extracted  = CASE WHEN compile_items.hash <> excluded.hash THEN 0 ELSE compile_items.pass_extracted END,
-			pass_written    = CASE WHEN compile_items.hash <> excluded.hash THEN 0 ELSE compile_items.pass_written END`,
-			item.SourcePath, item.Hash, item.FileType, item.SizeBytes, item.Tier, item.TierDefault,
+			tier=excluded.tier, tier_default=excluded.tier_default, tier_override=excluded.tier_override,
+			pass_indexed=CASE WHEN compile_items.hash = excluded.hash AND compile_items.pass_indexed = 1
+				THEN 1 ELSE excluded.pass_indexed END,
+			pass_embedded=CASE WHEN compile_items.hash = excluded.hash AND compile_items.pass_embedded = 1
+				THEN 1 ELSE excluded.pass_embedded END,
+			pass_parsed=CASE WHEN compile_items.hash = excluded.hash AND compile_items.pass_parsed = 1
+				THEN 1 ELSE excluded.pass_parsed END,
+			pass_summarized=CASE WHEN compile_items.hash = excluded.hash AND compile_items.pass_summarized = 1
+				THEN 1 ELSE excluded.pass_summarized END,
+			pass_extracted=CASE WHEN compile_items.hash = excluded.hash AND compile_items.pass_extracted = 1
+				THEN 1 ELSE excluded.pass_extracted END,
+			pass_written=CASE WHEN compile_items.hash = excluded.hash AND compile_items.pass_written = 1
+				THEN 1 ELSE excluded.pass_written END,
+			compile_id=excluded.compile_id, error=excluded.error, error_count=excluded.error_count,
+			summary_path=excluded.summary_path, source_type=excluded.source_type,
+			quality_score=excluded.quality_score, updated_at=now()`,
+			item.SourcePath, item.Hash, item.FileType, item.SizeBytes,
+			item.Tier, item.TierDefault, tierOverride,
 			boolInt(item.PassIndexed), boolInt(item.PassEmbedded), boolInt(item.PassParsed),
 			boolInt(item.PassSummarized), boolInt(item.PassExtracted), boolInt(item.PassWritten),
-			"compiler")
+			nullStr(item.CompileID), nullStr(item.Error), item.ErrorCount, nullStr(item.SummaryPath),
+			item.QueryHitCount, nullRFC(item.LastQueriedAt), nullRFC(item.PromotedAt), nullRFC(item.DemotedAt),
+			nullStr(item.SourceType), qualityScore)
 		return err
 	})
 }
@@ -107,22 +132,24 @@ func (s *itemStore) ListByTier(tier int) ([]store.CompileItem, error) {
 	return scanItems(rows)
 }
 
-// ListPending: the queue read — tier >= N AND pass_X = 0 per tier's pass
-// (items.go:163 parity: tier 0/1 use pass_indexed, tier 2 pass_parsed,
-// tier 3 pass_written).
+// ListPending: the queue read (compiler/items.go:122-135 parity — exact
+// per-tier predicate, no upper bound, invalid tier errors).
 func (s *itemStore) ListPending(tier int) ([]store.CompileItem, error) {
-	var passCol string
+	var where string
 	switch tier {
-	case 0, 1:
-		passCol = "pass_indexed"
+	case 0:
+		where = "tier >= 0 AND pass_indexed = 0"
+	case 1:
+		where = "tier >= 1 AND pass_embedded = 0"
 	case 2:
-		passCol = "pass_parsed"
+		where = "tier >= 2 AND pass_parsed = 0"
+	case 3:
+		where = "tier >= 3 AND (pass_summarized = 0 OR pass_extracted = 0 OR pass_written = 0)"
 	default:
-		passCol = "pass_written"
+		return nil, fmt.Errorf("invalid tier: %d", tier)
 	}
-	rows, err := s.b.pool.Query(fmt.Sprintf(
-		"SELECT "+itemCols+" FROM compile_items WHERE tier >= $1 AND %s = 0 AND tier <= $2 ORDER BY source_path",
-		passCol), tier, tier)
+	rows, err := s.b.pool.Query(
+		"SELECT "+itemCols+" FROM compile_items WHERE "+where+" ORDER BY source_path")
 	if err != nil {
 		return nil, err
 	}
@@ -159,11 +186,25 @@ func (s *itemStore) MarkPass(path string, pass string) error {
 	})
 }
 
+// SetTier: idempotent, retains pass flags; promoted_at/demoted_at COALESCE
+// per direction; errors on missing source (compiler/items.go:166-195 parity).
 func (s *itemStore) SetTier(path string, tier int, reason string) error {
+	now := time.Now().UTC()
 	return s.b.WriteTx(func(tx *sql.Tx) error {
-		_, err := tx.Exec(
-			"UPDATE compile_items SET tier=$2, tier_override=$2, updated_at=now() WHERE source_path=$1",
-			path, tier)
+		var currentTier int
+		if err := tx.QueryRow("SELECT tier FROM compile_items WHERE source_path=$1", path).Scan(&currentTier); err != nil {
+			return fmt.Errorf("SetTier: source not found: %s", path)
+		}
+		var promotedAt, demotedAt any
+		if tier > currentTier {
+			promotedAt = now
+		} else if tier < currentTier {
+			demotedAt = now
+		}
+		_, err := tx.Exec(`
+			UPDATE compile_items SET tier=$1, promoted_at=COALESCE($2, promoted_at),
+				demoted_at=COALESCE($3, demoted_at), updated_at=now()
+			WHERE source_path=$4`, tier, promotedAt, demotedAt, path)
 		return err
 	})
 }
@@ -202,7 +243,7 @@ func (s *itemStore) IncrementQueryHits(paths []string) error {
 				args = append(args, p)
 			}
 			if _, err := tx.Exec(fmt.Sprintf(
-				"UPDATE compile_items SET query_hit_count=query_hit_count+1, last_queried_at=$1 WHERE source_path IN (%s)",
+				"UPDATE compile_items SET query_hit_count=query_hit_count+1, last_queried_at=$1, updated_at=now() WHERE source_path IN (%s)",
 				strings.Join(placeholders, ",")), args...); err != nil {
 				return err
 			}
@@ -303,7 +344,7 @@ func (s *itemStore) Count() (int, error) {
 
 func (s *itemStore) ListPromotionCandidates(hitThreshold int) ([]string, error) {
 	rows, err := s.b.pool.Query(
-		"SELECT source_path FROM compile_items WHERE tier < 3 AND query_hit_count >= $1 ORDER BY query_hit_count DESC",
+		"SELECT source_path FROM compile_items WHERE tier IN (0, 1) AND query_hit_count >= $1",
 		hitThreshold)
 	if err != nil {
 		return nil, err

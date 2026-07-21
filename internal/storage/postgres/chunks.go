@@ -3,6 +3,8 @@ package postgres
 import (
 	"database/sql"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/xoai/sage-wiki/internal/store"
 )
@@ -39,30 +41,42 @@ func (s *chunkStore) DeleteDocChunks(tx *sql.Tx, docID string) error {
 }
 
 func (s *chunkStore) SearchChunks(query string, limit int) ([]store.ChunkResult, error) {
+	limit = normLimit(limit, 20)
 	terms := queryTerms(query)
 	if len(terms) == 0 {
 		return nil, nil
 	}
-	where, args, next := s.b.ftsQuery("tsv", terms, 1)
-	rank, rankArgs, next := s.b.ftsRank("tsv", terms, next)
-	args = append(args, rankArgs...)
+	plan := s.b.planFTS("tsv", "coalesce(heading,'') || ' ' || content", terms, 1)
+	args := append(plan.args, limit)
+	rankSel := "0.0"
+	if strings.HasPrefix(plan.rank, "ts_rank(") {
+		rankSel = strings.TrimSuffix(plan.rank, " DESC")
+	}
 	sqlText := fmt.Sprintf(
-		"SELECT chunk_id, doc_id, heading, content FROM chunks_meta WHERE %s ORDER BY %s LIMIT $%d",
-		where, rank, next)
-	args = append(args, limit)
+		"SELECT chunk_id, doc_id, heading, content, %s FROM chunks_meta WHERE %s ORDER BY %s LIMIT $%d",
+		rankSel, plan.where, plan.rank, plan.next)
 	return s.scanChunkResults(sqlText, args...)
 }
 
 func (s *chunkStore) SearchChunksMultiQuery(queries []string, limit int) ([]store.ChunkResult, error) {
+	if len(queries) == 0 {
+		return nil, nil // memory/chunks.go:131-133 parity
+	}
+	limit = normLimit(limit, 20)
+	// Single variant returns raw BM25 scores (memory/chunks.go:134 parity —
+	// no RRF rescaling for the common single-query case).
+	if len(queries) == 1 {
+		return s.SearchChunks(queries[0], limit)
+	}
 	// RRF merge parity with sqlite (chunks.go:138): run each query, fuse by
 	// reciprocal rank in Go — the DB-side queries are independent.
 	const rrfK = 60.0
 	scores := map[string]float64{}
 	var byID map[string]store.ChunkResult = map[string]store.ChunkResult{}
 	for _, q := range queries {
-		res, err := s.SearchChunks(q, limit*2)
+		res, err := s.SearchChunks(q, limit)
 		if err != nil {
-			continue
+			return nil, err
 		}
 		for i, r := range res {
 			scores[r.ChunkID] += 1.0 / (rrfK + float64(i+1))
@@ -75,14 +89,7 @@ func (s *chunkStore) SearchChunksMultiQuery(queries []string, limit int) ([]stor
 		r.BM25Score = scores[id]
 		out = append(out, r)
 	}
-	// Sort desc by fused score.
-	for i := 0; i < len(out); i++ {
-		for j := i + 1; j < len(out); j++ {
-			if out[j].BM25Score > out[i].BM25Score {
-				out[i], out[j] = out[j], out[i]
-			}
-		}
-	}
+	sort.Slice(out, func(i, j int) bool { return out[i].BM25Score > out[j].BM25Score })
 	if len(out) > limit {
 		out = out[:limit]
 	}
@@ -102,7 +109,7 @@ func (s *chunkStore) scanChunkResults(sqlText string, args ...any) ([]store.Chun
 	for rows.Next() {
 		var r store.ChunkResult
 		var heading, content sql.NullString
-		if err := rows.Scan(&r.ChunkID, &r.DocID, &heading, &content); err != nil {
+		if err := rows.Scan(&r.ChunkID, &r.DocID, &heading, &content, &r.BM25Score); err != nil {
 			return nil, err
 		}
 		r.Heading, r.Content = heading.String, content.String

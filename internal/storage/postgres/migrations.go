@@ -21,8 +21,18 @@ var schemaMigrations = [][]string{
 	{
 		`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`,
 
-		`CREATE TEXT SEARCH DICTIONARY sage_stem (TEMPLATE = snowball, LANGUAGE = 'english')`,
-		`CREATE TEXT SEARCH CONFIGURATION sage_fts (COPY = simple)`,
+		// Idempotent by DO-block guards: PG has no IF NOT EXISTS for text-search
+		// objects, and a partial V1 (e.g. pgvector missing) must be retryable.
+		`DO $$ BEGIN
+			IF NOT EXISTS (SELECT 1 FROM pg_ts_dict WHERE dictname = 'sage_stem') THEN
+				CREATE TEXT SEARCH DICTIONARY sage_stem (TEMPLATE = snowball, LANGUAGE = 'english');
+			END IF;
+		END $$`,
+		`DO $$ BEGIN
+			IF NOT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = 'sage_fts') THEN
+				CREATE TEXT SEARCH CONFIGURATION sage_fts (COPY = simple);
+			END IF;
+		END $$`,
 		`ALTER TEXT SEARCH CONFIGURATION sage_fts ALTER MAPPING FOR asciiword, word WITH sage_stem`,
 
 		// entries — FTS5 parity: no PK/unique (design D7), tsv generated.
@@ -31,7 +41,7 @@ var schemaMigrations = [][]string{
 			content TEXT,
 			tags TEXT,
 			article_path TEXT,
-			tsv TSVECTOR GENERATED ALWAYS AS (to_tsvector('sage_fts', content)) STORED
+			tsv TSVECTOR GENERATED ALWAYS AS (to_tsvector('sage_fts', coalesce(id,'') || ' ' || coalesce(content,'') || ' ' || coalesce(tags,'') || ' ' || coalesce(article_path,''))) STORED
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_entries_tsv ON entries USING GIN (tsv)`,
 
@@ -76,7 +86,7 @@ var schemaMigrations = [][]string{
 			name TEXT NOT NULL,
 			definition TEXT,
 			article_path TEXT,
-			metadata JSONB,
+			metadata JSONB, -- column parity with sqlite V1 (unused by Go paths on both backends)
 			created_at TIMESTAMPTZ,
 			updated_at TIMESTAMPTZ
 		)`,
@@ -86,7 +96,7 @@ var schemaMigrations = [][]string{
 			source_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
 			target_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
 			relation TEXT NOT NULL,
-			metadata JSONB,
+			metadata JSONB, -- column parity with sqlite V1 (unused by Go paths on both backends)
 			created_at TIMESTAMPTZ,
 			UNIQUE(source_id, target_id, relation)
 		)`,
@@ -170,7 +180,7 @@ var schemaMigrations = [][]string{
 			indexed_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
 
-		`INSERT INTO schema_version (version) VALUES (1)`,
+		`INSERT INTO schema_version (version) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = 1)`,
 	},
 }
 

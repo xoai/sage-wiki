@@ -16,8 +16,8 @@ import (
 )
 
 // Open dispatches on cfg.Backend. sqlite → sqlitestore (identical behavior to
-// today's direct storage.Open). postgres → unavailable until the backend
-// lands (plan T12); validation of DSN/dimension happens in config.Load.
+// today's direct storage.Open). postgres → internal/storage/postgres;
+// validation of DSN/dimension happens in config.Load.
 func Open(cfg config.StorageConfig, opts store.OpenOptions) (store.Backend, error) {
 	backend := cfg.Backend
 	if backend == "" {

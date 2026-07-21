@@ -23,7 +23,9 @@ func (s *learningStore) Store(l store.Learning) error {
 	id := store.LearningID(l.Content)
 	return s.b.WriteTx(func(tx *sql.Tx) error {
 		var exists int
-		tx.QueryRow("SELECT COUNT(*) FROM learnings WHERE id=$1", id).Scan(&exists)
+		if err := tx.QueryRow("SELECT COUNT(*) FROM learnings WHERE id=$1", id).Scan(&exists); err != nil {
+			return fmt.Errorf("learnings dedup probe: %w", err)
+		}
 		if exists > 0 {
 			return nil // duplicate
 		}
@@ -63,6 +65,7 @@ func (s *learningStore) List() ([]store.Learning, error) {
 
 // Recall: sqlite LIKE is case-insensitive for ASCII → ILIKE (spec parity).
 func (s *learningStore) Recall(query string, limit int) ([]store.Learning, error) {
+	limit = normLimit(limit, 10)
 	rows, err := s.b.pool.Query(
 		"SELECT "+learningCols+" FROM learnings WHERE content ILIKE $1 OR tags ILIKE $1 ORDER BY created_at DESC LIMIT $2",
 		"%"+query+"%", limit)

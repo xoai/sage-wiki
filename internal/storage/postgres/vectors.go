@@ -48,9 +48,18 @@ func (s *vectorStore) Delete(id string) error {
 }
 
 func (s *vectorStore) Search(query []float32, limit int) ([]store.VectorResult, error) {
+	limit = normLimit(limit, 10)
+	// Dimension guard, GO-SIDE (vectors/store.go:229-234 parity): a nil or
+	// mismatched query matches nothing. Must not rely on the SQL predicate
+	// alone — an HNSW KNN scan computes distances inside the index BEFORE
+	// the filter is applied and would error on mismatched dims.
+	if len(query) == 0 || len(query) != s.b.opts.VectorDimension {
+		return nil, nil
+	}
 	rows, err := s.b.pool.Query(`
 		SELECT id, 1 - (embedding <=> $1) AS score FROM vec_entries
-		ORDER BY embedding <=> $1 LIMIT $2`, pgvector.NewVector(query), limit)
+		WHERE dimensions = $2
+		ORDER BY embedding <=> $1 LIMIT $3`, pgvector.NewVector(query), len(query), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -72,16 +81,20 @@ func (s *vectorStore) Search(query []float32, limit int) ([]store.VectorResult, 
 func (s *vectorStore) UpsertChunk(tx *sql.Tx, chunkID string, docID string, embedding []float32) error {
 	_, err := tx.Exec(`
 		INSERT INTO vec_chunks (chunk_id, doc_id, embedding, dimensions) VALUES ($1, $2, $3, $4)
-		ON CONFLICT (chunk_id) DO UPDATE SET
-			doc_id=excluded.doc_id, embedding=excluded.embedding, dimensions=excluded.dimensions`,
+		ON CONFLICT (chunk_id) DO UPDATE SET embedding=excluded.embedding, dimensions=excluded.dimensions`,
 		chunkID, docID, pgvector.NewVector(embedding), len(embedding))
 	return err
 }
 
 func (s *vectorStore) SearchChunks(query []float32, limit int) ([]store.ChunkVectorResult, error) {
+	limit = normLimit(limit, 20)
+	if len(query) == 0 || len(query) != s.b.opts.VectorDimension {
+		return nil, nil
+	}
 	rows, err := s.b.pool.Query(`
 		SELECT chunk_id, doc_id, 1 - (embedding <=> $1) AS score FROM vec_chunks
-		ORDER BY embedding <=> $1 LIMIT $2`, pgvector.NewVector(query), limit)
+		WHERE dimensions = $2
+		ORDER BY embedding <=> $1 LIMIT $3`, pgvector.NewVector(query), len(query), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -92,16 +105,20 @@ func (s *vectorStore) SearchChunks(query []float32, limit int) ([]store.ChunkVec
 // SearchChunksFiltered: DB-side docID filter; the 100-docID cap from the
 // sqlite cache path is interface contract (spec §4) and applied here too.
 func (s *vectorStore) SearchChunksFiltered(query []float32, docIDs []string, limit int) ([]store.ChunkVectorResult, error) {
+	limit = normLimit(limit, 20)
 	if len(docIDs) == 0 {
 		return nil, nil
 	}
 	if len(docIDs) > 100 {
 		docIDs = docIDs[:100]
 	}
+	if len(query) == 0 || len(query) != s.b.opts.VectorDimension {
+		return nil, nil
+	}
 	rows, err := s.b.pool.Query(`
 		SELECT chunk_id, doc_id, 1 - (embedding <=> $1) AS score FROM vec_chunks
-		WHERE doc_id = ANY($2)
-		ORDER BY embedding <=> $1 LIMIT $3`, pgvector.NewVector(query), docIDs, limit)
+		WHERE doc_id = ANY($2) AND dimensions = $3
+		ORDER BY embedding <=> $1 LIMIT $4`, pgvector.NewVector(query), docIDs, len(query), limit)
 	if err != nil {
 		return nil, err
 	}

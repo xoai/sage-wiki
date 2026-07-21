@@ -70,16 +70,42 @@ func EntriesConformance(new BackendFactory) func(*testing.T) {
 			t.Errorf("Search missing docs: %v", hitIDs)
 		}
 
-		// Tag filter applied.
+		// Tag filter applied (AND semantics: ALL tags must be present).
 		filtered, err := es.Search("zebra", []string{"t1"}, 10)
 		if err != nil || len(filtered) != 1 || filtered[0].ID != "src:a.md" {
 			t.Errorf("tag filter: %+v %v", filtered, err)
+		}
+		if filtered, err := es.Search("zebra", []string{"t1", "t2"}, 10); err != nil || len(filtered) != 0 {
+			t.Errorf("AND tag filter: %+v %v — both tags required", filtered, err)
 		}
 
 		// ListAll full population.
 		all, err := es.ListAll()
 		if err != nil || len(all) != 2 {
 			t.Fatalf("ListAll: %v %v", all, err)
+		}
+
+
+		// Stopword fallback (spec §5 pinned mitigation): stopword-only
+		// queries must not error and must return docs containing the words.
+		es.Add(store.Entry{ID: "src:stop.md", Content: "the and of"})
+		stopHits, err := es.Search("the and", nil, 10)
+		if err != nil {
+			t.Fatalf("stopword query errored: %v", err)
+		}
+		foundStop := false
+		for _, h := range stopHits {
+			if h.ID == "src:stop.md" {
+				foundStop = true
+			}
+		}
+		if !foundStop {
+			t.Errorf("stopword fallback missing doc: %+v", stopHits)
+		}
+
+		// Hyphenated query must not error (tsquery operator-char guard).
+		if _, err := es.Search("well-known", nil, 10); err != nil {
+			t.Errorf("hyphenated query errored: %v", err)
 		}
 
 		// Update + Delete + Count.
@@ -92,6 +118,9 @@ func EntriesConformance(new BackendFactory) func(*testing.T) {
 			t.Errorf("after Update: %q", got.Content)
 		}
 		if err := es.Delete("src:b.md"); err != nil {
+			t.Fatal(err)
+		}
+		if err := es.Delete("src:stop.md"); err != nil {
 			t.Fatal(err)
 		}
 		n, _ := es.Count()
@@ -319,9 +348,23 @@ func TrustConformance(new BackendFactory) func(*testing.T) {
 		if err != nil || got == nil || got.Question != "Q?" {
 			t.Fatalf("Get: %v %v", got, err)
 		}
-		if !ts.IsConfirmed("t1.md") == ts.IsConfirmed("t1.md") && ts.IsConfirmed("t1.md") {
-			t.Error("IsConfirmed true for pending")
+		if ts.IsConfirmed("t1.md") {
+			t.Error("IsConfirmed true for pending output")
 		}
+		// Id-only semantics: a confirmed output whose file_path merely
+		// CONTAINS the doc id must not confirm a different id.
+		conf := &store.PendingOutput{
+			ID: "other.md", Question: "Q2?", QuestionHash: "h2",
+			Answer: "A2.", AnswerHash: "ah2", State: store.StateConfirmed,
+			Confirmations: 1, FilePath: "outputs/t1.md", CreatedAt: time.Now(),
+		}
+		if err := ts.InsertPending(conf); err != nil {
+			t.Fatal(err)
+		}
+		if ts.IsConfirmed("t1.md") {
+			t.Error("IsConfirmed matched by file_path substring — must be id-only")
+		}
+		ts.Delete("other.md")
 
 		// Consensus tx methods: store a question vector, find it similar.
 		err = b.WriteTx(func(tx *sql.Tx) error {
@@ -399,7 +442,8 @@ func CompileItemsConformance(new BackendFactory) func(*testing.T) {
 			t.Fatalf("GetByPath: %v %v", got, err)
 		}
 
-		// Sticky pass flags: MarkPass persists, later Upsert does not clear.
+		// Sticky pass flags: MarkPass persists, later Upsert does not clear
+		// (same hash); hash CHANGE resets flags (re-process).
 		if err := is.MarkPass("a.md", "indexed"); err != nil {
 			t.Fatal(err)
 		}
@@ -407,13 +451,51 @@ func CompileItemsConformance(new BackendFactory) func(*testing.T) {
 		if !got.PassIndexed {
 			t.Error("PassIndexed false after MarkPass")
 		}
-		if err := is.Upsert(store.CompileItem{SourcePath: "a.md", Hash: "h2", FileType: "md", Tier: 3}); err != nil {
+		if err := is.Upsert(store.CompileItem{SourcePath: "a.md", Hash: "h1", FileType: "md", Tier: 3, CompileID: "c-1"}); err != nil {
+			t.Fatal(err)
+		}
+		got, _ = is.GetByPath("a.md")
+		if !got.PassIndexed {
+			t.Error("same-hash Upsert cleared sticky flag")
+		}
+		if got.CompileID != "c-1" {
+			t.Errorf("CompileID not round-tripped: %q", got.CompileID)
+		}
+		if err := is.Upsert(store.CompileItem{SourcePath: "a.md", Hash: "h2", FileType: "md", Tier: 2}); err != nil {
 			t.Fatal(err)
 		}
 		got, _ = is.GetByPath("a.md")
 		if got.Hash != "h2" {
 			t.Error("Upsert did not update hash")
 		}
+		if got.PassIndexed {
+			t.Error("hash-change Upsert kept pass flag — must reset")
+		}
+		if got.Tier != 2 {
+			t.Errorf("re-Upsert did not update tier: %d", got.Tier)
+		}
+
+		// SetTier: promoted_at on promotion, demoted_at on demotion,
+		// error on missing source.
+		if err := is.SetTier("a.md", 3, "promote"); err != nil {
+			t.Fatal(err)
+		}
+		got, _ = is.GetByPath("a.md")
+		if got.Tier != 3 || got.PromotedAt == "" {
+			t.Errorf("promotion: tier=%d promoted_at=%q", got.Tier, got.PromotedAt)
+		}
+		if err := is.SetTier("a.md", 1, "demote"); err != nil {
+			t.Fatal(err)
+		}
+		got, _ = is.GetByPath("a.md")
+		if got.DemotedAt == "" {
+			t.Error("demotion left demoted_at empty")
+		}
+		if err := is.SetTier("ghost.md", 1, "x"); err == nil {
+			t.Error("SetTier on missing source: expected error")
+		}
+		// Restore tier 3 state for downstream fixtures.
+		is.SetTier("a.md", 3, "restore")
 
 		// ListPending by tier + pass flag.
 		is.Upsert(store.CompileItem{SourcePath: "b.md", Tier: 3})
@@ -466,12 +548,20 @@ func CompileItemsConformance(new BackendFactory) func(*testing.T) {
 			}
 		}
 
-		// Promotion candidates by hit threshold.
-		promo, err := is.ListPromotionCandidates(0)
+		// Promotion candidates: only tiers 0/1 with hits qualify
+		// (compiler/items.go:368-377 parity).
+		is.Upsert(store.CompileItem{SourcePath: "t2.md", Tier: 2})
+		is.IncrementQueryHits([]string{"t2.md"})
+		promo, err := is.ListPromotionCandidates(1)
 		if err != nil {
 			t.Fatal(err)
 		}
-		_ = promo
+		for _, p := range promo {
+			if p == "t2.md" {
+				t.Error("tier-2 item listed as promotion candidate — only tiers 0/1 qualify")
+			}
+		}
+		is.DeleteByPaths([]string{"t2.md"})
 
 		// DeleteByPaths.
 		if err := is.DeleteByPaths([]string{"a.md", "b.md"}); err != nil {

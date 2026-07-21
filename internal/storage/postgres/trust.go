@@ -146,14 +146,11 @@ func (s *trustStore) Delete(id string) error {
 	})
 }
 
-// IsConfirmed mirrors the sqlite docID probe: a confirmed output whose
-// file_path matches the docID suffix (store.go:125 semantics).
+// IsConfirmed: id-only state probe (trust/store.go:125-129 parity).
 func (s *trustStore) IsConfirmed(docID string) bool {
-	var n int
-	err := s.b.pool.QueryRow(
-		"SELECT COUNT(*) FROM pending_outputs WHERE state='confirmed' AND (id=$1 OR file_path LIKE $2)",
-		docID, "%"+docID+"%").Scan(&n)
-	return err == nil && n > 0
+	var state string
+	err := s.b.pool.QueryRow("SELECT state FROM pending_outputs WHERE id=$1", docID).Scan(&state)
+	return err == nil && state == string(store.StateConfirmed)
 }
 
 func (s *trustStore) RecordConfirmation(outputID string, chunkIDs string, answerHash string) error {
@@ -200,6 +197,9 @@ func (s *trustStore) EmbedAndStoreQuestion(tx *sql.Tx, questionHash string, embe
 // predicate (the sqlite per-row dim-skip is vacuous on a fixed-dim column
 // but preserved as a guard, spec D6) and threshold in SQL.
 func (s *trustStore) FindSimilarQuestion(tx *sql.Tx, questionVec []float32, threshold float64) (*store.SimilarQuestion, error) {
+	if len(questionVec) == 0 || len(questionVec) != s.b.opts.VectorDimension {
+		return nil, nil // dim guard, Go-side (see vectors.go)
+	}
 	row := tx.QueryRow(`
 		SELECT pqv.question_hash, 1 - (pqv.embedding <=> $1) AS score
 		FROM pending_questions_vec pqv
