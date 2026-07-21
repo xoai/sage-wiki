@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Storage backend seam + optional Postgres/pgvector backend (STRAT-01,
+  PERF-01, P2-1).** All persistence now flows through store interfaces
+  (`internal/store`) with two backends: the existing SQLite file (default,
+  byte-identical behavior) and PostgreSQL with pgvector for server-grade
+  multi-user deployments — pure Go via pgx/v5 stdlib, `CGO_ENABLED=0`
+  preserved. Configure with `storage: {backend, dsn, vector_dimension,
+  lock_timeout, pool}`. Postgres gets its own append-only migration set
+  (snowball `sage_fts` text search, HNSW cosine indexes), session+transaction
+  advisory locks reproducing the single-writer world, and reader/writer open
+  modes (hub federated search is now read-only, no migrations). A backend
+  conformance suite (`internal/storetest`) pins identical store semantics
+  across both backends (Postgres leg runs under `TEST_DATABASE_URL`). Raw-SQL
+  escape hatches across web/mcp/linter/status/reembed moved behind store
+  methods; hub read pools are sized to not exhaust `max_connections`.
+  See `docs/storage-backends.md` for setup, switching, and pool sizing.
+  Note: multi-writer concurrency remains P2-3 scope — the single-writer
+  process model is unchanged.
+
 ### Security
 
 - **Prompt-injection defenses for compile and query prompts (SEC-04, P1-6).**

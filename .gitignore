@@ -1,8 +1,10 @@
 # Claude
 .claude/
+.opencode/
 CLAUDE.md
+AGENT.md
 .mcp.json
-
+opencode.json
 # Sage
 .sage/
 .sage-memory/
