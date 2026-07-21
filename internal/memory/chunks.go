@@ -25,6 +25,17 @@ type ChunkEntry struct {
 	EndOffset   int
 }
 
+// ChunkEntryWithDoc is a ChunkEntry plus its owning doc ID (ListAll rows).
+type ChunkEntryWithDoc struct {
+	ChunkID     string
+	DocID       string
+	ChunkIndex  int
+	Heading     string
+	Content     string
+	StartOffset int
+	EndOffset   int
+}
+
 // ChunkResult represents a chunk search hit.
 type ChunkResult struct {
 	ChunkID   string
@@ -206,3 +217,24 @@ func (s *ChunkStore) NeedsBackfill(memStore Countable) bool {
 	return err == nil && entryCount > 0
 }
 
+
+// ListAll returns every chunk, fully populated, ordered for determinism
+// (P2-1: absorbs reembed's raw chunks_meta scan). Unbounded by design.
+func (s *ChunkStore) ListAll() ([]ChunkEntryWithDoc, error) {
+	rows, err := s.db.ReadDB().Query(
+		"SELECT chunk_id, doc_id, chunk_index, heading, content, start_offset, end_offset FROM chunks_meta ORDER BY doc_id, chunk_index")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []ChunkEntryWithDoc
+	for rows.Next() {
+		var c ChunkEntryWithDoc
+		if err := rows.Scan(&c.ChunkID, &c.DocID, &c.ChunkIndex, &c.Heading, &c.Content, &c.StartOffset, &c.EndOffset); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}

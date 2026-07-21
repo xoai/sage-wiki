@@ -581,3 +581,31 @@ func scanCompileItems(rows *sql.Rows) ([]CompileItem, error) {
 	}
 	return items, rows.Err()
 }
+
+// QualityScoreRow is a (source_path, quality_score) pair.
+type QualityScoreRow struct {
+	SourcePath string
+	Score      float64
+}
+
+// ListBelowQualityScore returns items with a non-NULL quality_score below
+// threshold (P2-1: absorbs linter's low-quality scan, passes.go:432).
+func (s *CompileItemStore) ListBelowQualityScore(threshold float64) ([]QualityScoreRow, error) {
+	rows, err := s.db.ReadDB().Query(
+		"SELECT source_path, quality_score FROM compile_items WHERE quality_score IS NOT NULL AND quality_score < ?",
+		threshold)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []QualityScoreRow
+	for rows.Next() {
+		var r QualityScoreRow
+		if err := rows.Scan(&r.SourcePath, &r.Score); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}

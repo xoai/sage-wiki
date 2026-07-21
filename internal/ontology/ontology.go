@@ -458,3 +458,71 @@ func (s *Store) CitedBy(entityID string) ([]Entity, error) {
 	}
 	return entities, rows.Err()
 }
+
+// AllRelations returns every relation, fully populated (P2-1: absorbs the web
+// graph view's unbounded relations dump — spec §3: full rows, not the
+// 3-column handler shape).
+func (s *Store) AllRelations() ([]Relation, error) {
+	rows, err := s.db.ReadDB().Query(
+		`SELECT COALESCE(id,''), source_id, target_id, relation, COALESCE(created_at,'') FROM relations`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRelations(rows)
+}
+
+// RelationsByType returns all relations of one type, fully populated
+// (P2-1: absorbs linter's contradicts-edge scan).
+func (s *Store) RelationsByType(relationType string) ([]Relation, error) {
+	rows, err := s.db.ReadDB().Query(
+		`SELECT COALESCE(id,''), source_id, target_id, relation, COALESCE(created_at,'') FROM relations WHERE relation=?`,
+		relationType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRelations(rows)
+}
+
+// EntityConnectionCounts returns per-entity relation counts, summing both the
+// source and target side (P2-1: absorbs web/server.go's UNION ALL query —
+// one pass, no N+1). PARITY NOTE: the absorbed query's outer GROUP BY id has
+// no SUM aggregate, so dual-side entities report one side's count, not the
+// total (latent bug, reproduced byte-for-byte; fix deferred, decisions.md
+// 2026-07-21).
+func (s *Store) EntityConnectionCounts() (map[string]int, error) {
+	rows, err := s.db.ReadDB().Query(`
+		SELECT id, cnt FROM (
+			SELECT source_id AS id, COUNT(*) AS cnt FROM relations GROUP BY source_id
+			UNION ALL
+			SELECT target_id AS id, COUNT(*) AS cnt FROM relations GROUP BY target_id
+		) GROUP BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var id string
+		var cnt int
+		if err := rows.Scan(&id, &cnt); err != nil {
+			return nil, err
+		}
+		counts[id] += cnt
+	}
+	return counts, rows.Err()
+}
+
+func scanRelations(rows *sql.Rows) ([]Relation, error) {
+	var rels []Relation
+	for rows.Next() {
+		var r Relation
+		if err := rows.Scan(&r.ID, &r.SourceID, &r.TargetID, &r.Relation, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		rels = append(rels, r)
+	}
+	return rels, rows.Err()
+}

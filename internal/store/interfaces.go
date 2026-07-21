@@ -22,6 +22,9 @@ type EntryStore interface {
 	Get(id string) (*memory.Entry, error)
 	Search(query string, tags []string, limit int) ([]memory.SearchResult, error)
 	Count() (int, error)
+	// T8 additions (D3 moves).
+	ListAll() ([]memory.Entry, error)
+	CountUncompiled(query string) (int, error)
 }
 
 type ChunkStore interface {
@@ -31,6 +34,8 @@ type ChunkStore interface {
 	SearchChunksMultiQuery(queries []string, limit int) ([]memory.ChunkResult, error)
 	Count() (int, error)
 	NeedsBackfill(memStore memory.Countable) bool
+	// T8 additions.
+	ListAll() ([]memory.ChunkEntryWithDoc, error)
 }
 
 type VectorStore interface {
@@ -65,6 +70,10 @@ type OntologyStore interface {
 	EntityDegree(id string) (int, error)
 	EntitiesCiting(targetID string) ([]ontology.Entity, error)
 	CitedBy(entityID string) ([]ontology.Entity, error)
+	// T8 additions.
+	AllRelations() ([]ontology.Relation, error)
+	RelationsByType(relationType string) ([]ontology.Relation, error)
+	EntityConnectionCounts() (map[string]int, error)
 }
 
 type TrustStore interface {
@@ -104,6 +113,8 @@ type CompileItemStore interface {
 	Count() (int, error)
 	ListPromotionCandidates(hitThreshold int) ([]string, error)
 	ListDemotionCandidates(staleThreshold string) ([]string, error)
+	// T8 additions.
+	ListBelowQualityScore(threshold float64) ([]compiler.QualityScoreRow, error)
 }
 
 type OutputIndexStore interface {
