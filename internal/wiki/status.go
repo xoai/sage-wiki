@@ -90,6 +90,9 @@ func GetStatus(projectDir string, stores *Stores) (*StatusInfo, error) {
 		vecStore = stores.Vec
 		ontStore = stores.Ont
 	} else {
+		// P2-1 skip-list: wiki is imported (incl. in tests) by compiler and
+		// linter, which sqlitestore imports — routing via storedial closes an
+		// import cycle. Backend selection deferred to T9a caller-injection.
 		dbPath := filepath.Join(projectDir, ".sage", "wiki.db")
 		db, err := storage.Open(dbPath)
 		if err != nil {

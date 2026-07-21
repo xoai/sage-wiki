@@ -9,7 +9,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/ontology"
-	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/storedial"
 )
 
 var listCmd = &cobra.Command{
@@ -58,7 +58,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		return cli.CLIError(outputFormat, err)
 	}
 
-	db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	db, err := storedial.OpenConcrete(dir, cfg.Storage)
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}

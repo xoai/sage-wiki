@@ -25,6 +25,8 @@ func ReEmbed(projectDir string) (int, error) {
 		return 0, fmt.Errorf("re-embed: no embedding provider available")
 	}
 
+	// P2-1 skip-list: import cycle (sqlitestore imports compiler) — backend
+	// selection arrives in T9a via caller-injected interface.
 	db, err := storage.Open(filepath.Join(projectDir, ".sage", "wiki.db"))
 	if err != nil {
 		return 0, fmt.Errorf("re-embed: open db: %w", err)

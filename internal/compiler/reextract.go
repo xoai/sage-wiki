@@ -12,9 +12,9 @@ import (
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
+	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/prompts"
-	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -77,6 +77,8 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	}
 
 	// Open DB
+	// P2-1 skip-list: import cycle (sqlitestore imports compiler) — backend
+	// selection arrives in T9a via caller-injected interface.
 	db, err := storage.Open(filepath.Join(projectDir, ".sage", "wiki.db"))
 	if err != nil {
 		return nil, fmt.Errorf("re-extract: open db: %w", err)

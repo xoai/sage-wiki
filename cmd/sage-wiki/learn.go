@@ -8,7 +8,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/xoai/sage-wiki/internal/cli"
 	"github.com/xoai/sage-wiki/internal/linter"
-	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/storedial"
 )
 
 var learnCmd = &cobra.Command{
@@ -29,7 +30,9 @@ func runLearn(cmd *cobra.Command, args []string) error {
 	learnType, _ := cmd.Flags().GetString("type")
 	tagsStr, _ := cmd.Flags().GetString("tags")
 
-	db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	// P2-1 skip-list: no config in scope here; backend selection falls back
+	// to the sqlite default (decisions.md 2026-07-21).
+	db, err := storedial.OpenConcrete(dir, config.StorageConfig{})
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}

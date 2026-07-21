@@ -9,6 +9,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/storedial"
 )
 
 var ontologyCmd = &cobra.Command{
@@ -61,7 +62,7 @@ func openOntStore(dir string) (*storage.DB, *ontology.Store, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	db, err := storedial.OpenConcrete(dir, cfg.Storage)
 	if err != nil {
 		return nil, nil, err
 	}

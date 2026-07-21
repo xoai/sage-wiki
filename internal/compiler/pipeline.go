@@ -456,6 +456,9 @@ func setupStores(projectDir string, run *compileRun) error {
 	cfg := run.cfg
 
 	// Open DB
+	// P2-1 skip-list: compiler is imported by sqlitestore (CompileItemStore),
+	// so it cannot import storedial — backend selection arrives in T9a via a
+	// caller-injected narrow interface (decisions.md 2026-07-21).
 	dbPath := filepath.Join(projectDir, ".sage", "wiki.db")
 	db, err := storage.Open(dbPath)
 	if err != nil {
@@ -871,6 +874,7 @@ func resumeBatch(
 	}
 
 	// Open DB for indexing
+	// P2-1 skip-list: import cycle (sqlitestore imports compiler) — see above.
 	dbPath := filepath.Join(projectDir, ".sage", "wiki.db")
 	db, err := storage.Open(dbPath)
 	if err != nil {

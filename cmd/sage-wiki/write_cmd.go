@@ -14,7 +14,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
-	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/storedial"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -72,7 +72,7 @@ func runWriteSummary(cmd *cobra.Command, args []string) error {
 	}
 
 	// Index in FTS5 + embed
-	db, dbErr := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	db, dbErr := storedial.OpenConcrete(dir, cfg.Storage)
 	if dbErr == nil {
 		defer db.Close()
 		memory.NewStore(db).Add(memory.Entry{ID: source, Content: content, ArticlePath: summaryPath})
@@ -132,7 +132,7 @@ func runWriteArticle(cmd *cobra.Command, args []string) error {
 	}
 
 	// Update ontology + FTS5 + embed
-	db, dbErr := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	db, dbErr := storedial.OpenConcrete(dir, cfg.Storage)
 	if dbErr == nil {
 		defer db.Close()
 		merged := ontology.MergedRelations(cfg.Ontology.Relations)

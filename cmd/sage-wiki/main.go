@@ -34,7 +34,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/query"
 	"github.com/xoai/sage-wiki/internal/scribe"
 	"github.com/xoai/sage-wiki/internal/skill"
-	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/storedial"
 	"github.com/xoai/sage-wiki/internal/vectors"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
@@ -398,7 +398,9 @@ func reconcileStartup(ctx context.Context, dir string) {
 	if _, err := os.Stat(dbPath); err != nil {
 		return // no database yet
 	}
-	db, err := storage.Open(dbPath)
+	// P2-1 skip-list: no config in scope here; backend selection falls back
+	// to the sqlite default (decisions.md 2026-07-21).
+	db, err := storedial.OpenConcrete(dir, config.StorageConfig{})
 	if err != nil {
 		log.Warn("startup reconcile: open db failed", "error", err)
 		return
@@ -651,7 +653,9 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	tags, _ := cmd.Flags().GetStringSlice("tags")
 	limit, _ := cmd.Flags().GetInt("limit")
 
-	db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	// P2-1 skip-list: runSearch must tolerate config-load failure (P1-8
+	// documented BM25 degrade); backend selection falls back to sqlite.
+	db, err := storedial.OpenConcrete(dir, config.StorageConfig{})
 	if err != nil {
 		return err
 	}
@@ -953,8 +957,7 @@ func runScribe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Open DB
-	dbPath := filepath.Join(dir, ".sage", "wiki.db")
-	db, err := storage.Open(dbPath)
+	db, err := storedial.OpenConcrete(dir, cfg.Storage)
 	if err != nil {
 		return fmt.Errorf("scribe: open db: %w", err)
 	}

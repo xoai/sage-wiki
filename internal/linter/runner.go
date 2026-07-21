@@ -83,6 +83,9 @@ func (ctx *LintContext) EnsureDB() (func(), error) {
 	if ctx.DBPath == "" {
 		return func() {}, nil
 	}
+	// P2-1 skip-list: LintContext carries a bare DB path (no project dir,
+	// no config) — backend selection deferred; T9 rewires linter to the
+	// Backend seam (decisions.md 2026-07-21).
 	db, err := storage.Open(ctx.DBPath)
 	if err != nil {
 		return func() {}, err

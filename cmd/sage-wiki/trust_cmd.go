@@ -13,6 +13,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/storedial"
 	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
@@ -90,7 +91,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		return cli.CLIError(outputFormat, err)
 	}
 
-	db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	db, err := storedial.OpenConcrete(dir, cfg.Storage)
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
@@ -172,7 +173,9 @@ func runVerify(cmd *cobra.Command, args []string) error {
 func runOutputsList(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
 
-	db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	// P2-1 skip-list: no config in scope here; backend selection falls back
+	// to the sqlite default (decisions.md 2026-07-21).
+	db, err := storedial.OpenConcrete(dir, config.StorageConfig{})
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
@@ -220,7 +223,9 @@ func runOutputsList(cmd *cobra.Command, args []string) error {
 func runOutputsPromote(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
 
-	db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	// P2-1 skip-list: no config in scope here; backend selection falls back
+	// to the sqlite default (decisions.md 2026-07-21).
+	db, err := storedial.OpenConcrete(dir, config.StorageConfig{})
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
@@ -246,7 +251,9 @@ func runOutputsPromote(cmd *cobra.Command, args []string) error {
 func runOutputsReject(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
 
-	db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	// P2-1 skip-list: no config in scope here; backend selection falls back
+	// to the sqlite default (decisions.md 2026-07-21).
+	db, err := storedial.OpenConcrete(dir, config.StorageConfig{})
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
@@ -287,7 +294,7 @@ func runOutputsMigrate(cmd *cobra.Command, args []string) error {
 		return cli.CLIError(outputFormat, err)
 	}
 
-	db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	db, err := storedial.OpenConcrete(dir, cfg.Storage)
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
@@ -358,7 +365,9 @@ func parseDuration(s string) (time.Duration, error) {
 func runOutputsResolve(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
 
-	db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	// P2-1 skip-list: no config in scope here; backend selection falls back
+	// to the sqlite default (decisions.md 2026-07-21).
+	db, err := storedial.OpenConcrete(dir, config.StorageConfig{})
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
@@ -401,7 +410,9 @@ func runOutputsResolve(cmd *cobra.Command, args []string) error {
 func runOutputsClean(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
 
-	db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	// P2-1 skip-list: no config in scope here; backend selection falls back
+	// to the sqlite default (decisions.md 2026-07-21).
+	db, err := storedial.OpenConcrete(dir, config.StorageConfig{})
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/sqlitestore"
+	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/store"
 )
 
@@ -33,6 +34,26 @@ func Open(cfg config.StorageConfig, opts store.OpenOptions) (store.Backend, erro
 	default:
 		return nil, fmt.Errorf("storage: unknown storage backend %q (valid: sqlite, postgres)", backend)
 	}
+}
+
+// OpenConcrete opens the project's vault DB via backend selection and returns
+// the concrete *storage.DB — TRANSITIONAL (plan T6): for direct-open sites
+// that still construct concrete stores; they unwrap and close the DB as
+// before (backend.Close and db.Close share the underlying handle). A
+// zero-value cfg selects the sqlite default (skip-list sites without config
+// in scope — see decisions.md 2026-07-21); postgres returns the
+// not-available error until the backend lands (T12).
+func OpenConcrete(projectDir string, cfg config.StorageConfig) (*storage.DB, error) {
+	backend, err := Open(cfg, store.OpenOptions{Mode: store.ModeWriter, ProjectDir: projectDir})
+	if err != nil {
+		return nil, err
+	}
+	db := sqlitestore.Unwrap(backend)
+	if db == nil {
+		backend.Close()
+		return nil, fmt.Errorf("storage: unexpected backend type")
+	}
+	return db, nil
 }
 
 // OpenProject loads <projectDir>/config.yaml and opens its storage backend.
