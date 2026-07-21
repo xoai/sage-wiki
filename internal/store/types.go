@@ -58,6 +58,26 @@ type LearningStore interface {
 	Prune() (int, error)
 }
 
+// Tx is a write transaction from BeginWrite. Commit/Rollback release the
+// write mutex exactly once (delegate functions provided by the backend).
+// Tx-scoped work must not call WriteTx (the mutex is not reentrant).
+type Tx struct {
+	*sql.Tx
+	commit   func() error
+	rollback func() error
+}
+
+// NewTx wraps a raw tx with releasing Commit/Rollback delegates.
+func NewTx(tx *sql.Tx, commit, rollback func() error) *Tx {
+	return &Tx{Tx: tx, commit: commit, rollback: rollback}
+}
+
+// Commit commits and releases the write mutex.
+func (t *Tx) Commit() error { return t.commit() }
+
+// Rollback rolls back and releases the write mutex.
+func (t *Tx) Rollback() error { return t.rollback() }
+
 // Backend is the aggregate storage seam. sqlite and postgres implementations
 // live in their own packages; consumers see only this.
 type Backend interface {
@@ -75,7 +95,7 @@ type Backend interface {
 	// BeginWrite acquires the write mutex and begins a long-lived write tx
 	// (reembed). Commit/Rollback releases the mutex; tx-scoped work must not
 	// call WriteTx (non-reentrant).
-	BeginWrite() (*sql.Tx, error)
+	BeginWrite() (*Tx, error)
 
 	// Transitional escape hatches (spec §6) — no consumer outside store
 	// packages may call them after the D3 moves; WriteDB returns nil in
