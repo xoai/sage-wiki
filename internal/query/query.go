@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/auth"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
@@ -55,16 +56,24 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 		return nil, fmt.Errorf("query: load config: %w", err)
 	}
 
-	// Use shared DB or open one
+	// Use shared DB or open one via the app container (P1-8). The
+	// shared-handle path (opts[0].DB set, e.g. the web server) is untouched;
+	// only the open-when-nil path adopts the container. The unconditional
+	// config.Load above stays for error-text consistency; on the nil path
+	// cfg is replaced by app.Config (same file, identical content).
+	var a *app.App
 	var db *storage.DB
 	var closeDB bool
 	if len(opts) > 0 && opts[0].DB != nil {
 		db = opts[0].DB
 	} else {
-		db, err = storage.Open(filepath.Join(projectDir, ".sage", "wiki.db"))
+		var err error
+		a, err = app.Open(projectDir)
 		if err != nil {
-			return nil, fmt.Errorf("query: open db: %w", err)
+			return nil, fmt.Errorf("query: %w", err)
 		}
+		cfg = a.Config
+		db = a.DB
 		closeDB = true
 	}
 	if closeDB {
@@ -122,13 +131,23 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 		Format:     format,
 	}
 
-	// Auto-file to outputs/
-	memStore := memory.NewStore(db)
-	vecStore := vectors.NewStore(db)
-	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
-	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
-	embedder := embed.NewFromConfig(cfg)
+	// Auto-file to outputs/. Store locals come from the App on the
+	// container path and are built inline exactly as before on the
+	// shared-handle path; both feed autoFile identically (P1-8).
+	var memStore *memory.Store
+	var vecStore *vectors.Store
+	var ontStore *ontology.Store
+	var embedder embed.Embedder
+	if a != nil {
+		memStore, vecStore, ontStore, embedder = a.Mem, a.Vec, a.Ont, a.Embedder()
+	} else {
+		memStore = memory.NewStore(db)
+		vecStore = vectors.NewStore(db)
+		mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
+		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+		ontStore = ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
+		embedder = embed.NewFromConfig(cfg)
+	}
 	chunkStore := memory.NewChunkStore(db)
 	trustCfg := cfg.Trust
 	outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode(), TrustCfg: &trustCfg, Client: client, Model: model, ChunksUsed: chunkIDs})
@@ -511,6 +530,8 @@ func docIDToArticlePath(docID string, outputDir string) string {
 	return ""
 }
 
+// P1-8: SaveAnswer stays explicit (caller-supplied db — shared-handle
+// pattern); there is no Open duplication for internal/app to remove.
 // SaveAnswer saves a Q&A answer to the outputs/ directory with frontmatter,
 // FTS5 indexing, embeddings, and ontology edges.
 func SaveAnswer(projectDir string, question string, answer string, sources []string, db *storage.DB) (string, error) {
@@ -722,12 +743,19 @@ func StreamQuery(ctx context.Context, projectDir string, question string, topK i
 		return nil, fmt.Errorf("query: load config: %w", err)
 	}
 
+	// Shared-handle path (db param set) untouched; open-when-nil adopts
+	// the app container (P1-8). cfg is replaced by app.Config on that path
+	// (same file, identical content).
+	var a *app.App
 	var closeDB bool
 	if db == nil {
-		db, err = storage.Open(filepath.Join(projectDir, ".sage", "wiki.db"))
+		var err error
+		a, err = app.Open(projectDir)
 		if err != nil {
-			return nil, fmt.Errorf("query: open db: %w", err)
+			return nil, fmt.Errorf("query: %w", err)
 		}
+		cfg = a.Config
+		db = a.DB
 		closeDB = true
 	}
 	if closeDB {
@@ -772,12 +800,22 @@ func StreamQuery(ctx context.Context, projectDir string, question string, topK i
 			Sources:  sources,
 			Format:   "markdown",
 		}
-		memStore := memory.NewStore(db)
-		vecStore := vectors.NewStore(db)
-		mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
-		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-		ontStore := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
-		embedder := embed.NewFromConfig(cfg)
+		// Store locals from the App on the container path, inline as
+		// before on the shared-handle path (P1-8).
+		var memStore *memory.Store
+		var vecStore *vectors.Store
+		var ontStore *ontology.Store
+		var embedder embed.Embedder
+		if a != nil {
+			memStore, vecStore, ontStore, embedder = a.Mem, a.Vec, a.Ont, a.Embedder()
+		} else {
+			memStore = memory.NewStore(db)
+			vecStore = vectors.NewStore(db)
+			mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
+			mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+			ontStore = ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
+			embedder = embed.NewFromConfig(cfg)
+		}
 		chunkStore := memory.NewChunkStore(db)
 		streamTrustCfg := cfg.Trust
 		if outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode(), TrustCfg: &streamTrustCfg, Client: client, Model: model, ChunksUsed: streamChunkIDs}); err != nil {

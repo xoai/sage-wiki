@@ -10,6 +10,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
@@ -39,28 +40,18 @@ type Server struct {
 	coordinator *compiler.CompileCoordinator // serializes compiles
 }
 
-// NewServer creates an MCP server with read tools registered.
-// If coordinator is provided, it's used to serialize compile-on-demand
-// with background compiles. If nil, a new coordinator is created.
+// NewServer creates an MCP server with read tools registered, via the
+// shared app container (P1-8). If coordinator is provided, it's used to
+// serialize compile-on-demand with background compiles.
+// All fields are aliased from it (s.db = a.DB, closeOnce-idempotent), and
+// the embedder is built at exactly this point — the same construction
+// moment as before (app.Embedder() is lazy; calling it here preserves the
+// previous eager timing for the MCP server specifically).
 func NewServer(projectDir string, coordinator ...*compiler.CompileCoordinator) (*Server, error) {
-	cfgPath := filepath.Join(projectDir, "config.yaml")
-	cfg, err := config.Load(cfgPath)
+	a, err := app.Open(projectDir)
 	if err != nil {
-		return nil, fmt.Errorf("mcp: load config: %w", err)
+		return nil, fmt.Errorf("mcp: %w", err)
 	}
-
-	dbPath := filepath.Join(projectDir, ".sage", "wiki.db")
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("mcp: open db: %w", err)
-	}
-
-	mem := memory.NewStore(db)
-	vec := vectors.NewStore(db)
-	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
-	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-	ont := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
-	searcher := hybrid.NewSearcher(mem, vec)
 
 	var cc *compiler.CompileCoordinator
 	if len(coordinator) > 0 && coordinator[0] != nil {
@@ -71,14 +62,14 @@ func NewServer(projectDir string, coordinator ...*compiler.CompileCoordinator) (
 
 	s := &Server{
 		projectDir:  projectDir,
-		db:          db,
-		mem:         mem,
-		vec:         vec,
-		ont:         ont,
-		searcher:    searcher,
-		cfg:         cfg,
-		embedder:    embed.NewFromConfig(cfg),
-		language:    cfg.Language,
+		db:          a.DB,
+		mem:         a.Mem,
+		vec:         a.Vec,
+		ont:         a.Ont,
+		searcher:    a.Searcher,
+		cfg:         a.Config,
+		embedder:    a.Embedder(),
+		language:    a.Config.Language,
 		coordinator: cc,
 	}
 

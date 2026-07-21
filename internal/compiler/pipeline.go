@@ -130,15 +130,202 @@ func newTrackedClient(cfg *config.Config, opts *CompileOpts) (*llm.Client, *llm.
 }
 
 // Compile runs Pass 0 (diff) and Pass 1 (summarize) of the compiler pipeline.
-func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
-	result := &CompileResult{}
+// compileRun carries the shared state of a single Compile execution across
+// its decomposed steps (P1-8). Field set enumerated in the P1-8 spec D3;
+// statements were MOVED here verbatim from the former ~450-line Compile().
+type compileRun struct {
+	cfg                *config.Config
+	opts               CompileOpts
+	result             *CompileResult
+	mf                 *manifest.Manifest
+	mfPath             string
+	base               *manifest.Manifest
+	diff               *DiffResult
+	client             *llm.Client
+	tracker            *llm.CostTracker
+	progress           *Progress
+	db                 *storage.DB
+	memStore           *memory.Store
+	vecStore           *vectors.Store
+	chunkStore         *memory.ChunkStore
+	embedder           embed.Embedder
+	pipelineOntStore   *ontology.Store
+	itemStore          *CompileItemStore
+	tierMgr            *TierManager
+	bp                 *BackpressureController
+	exOpts             []extract.ExtractOpts
+	toProcess          []SourceInfo
+	pipelineIncomplete bool
+	compileID          string
+}
 
+// Compile runs the compiler pipeline (Pass 0 diff → tiered passes). It is a thin orchestrator over four
+// extracted steps (P1-8, behavior-preserving): loadInputs → [inline Pass-0
+// diff + dry-run + lazy client] → resolveMode → setupStores → runTiers →
+// the unchanged tail (images, removed sources, strip, manifest save,
+// changelog, trust, git, cost).
+func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
+	run := &compileRun{opts: opts, result: &CompileResult{}}
+
+	// Step 1: loadInputs — config, prompts (package registry), manifest,
+	// merge-base snapshot, fresh-clearing, batch checkpoint check.
+	done, result, err := loadInputs(projectDir, &run.opts, run)
+	if done {
+		return result, err
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Pass 0: Diff
+	log.Info("Pass 0: computing diff")
+	diff, err := Diff(projectDir, run.cfg, run.mf)
+	if err != nil {
+		return nil, fmt.Errorf("compile: diff: %w", err)
+	}
+	run.diff = diff
+
+	run.result.Added = len(diff.Added)
+	run.result.Modified = len(diff.Modified)
+	run.result.Removed = len(diff.Removed)
+
+	run.progress = NewProgress()
+
+	if run.result.Added == 0 && run.result.Modified == 0 && run.result.Removed == 0 {
+		fmt.Fprintln(os.Stderr, "✓ Nothing to compile — wiki is up to date.")
+		return run.result, nil
+	}
+
+	if run.opts.DryRun {
+		fmt.Fprintln(os.Stderr, "Dry run — changes that would be applied:")
+		for _, s := range diff.Added {
+			fmt.Fprintf(os.Stderr, "  + %s (%s)\n", s.Path, s.Type)
+		}
+		for _, s := range diff.Modified {
+			fmt.Fprintf(os.Stderr, "  ~ %s (%s)\n", s.Path, s.Type)
+		}
+		for _, p := range diff.Removed {
+			fmt.Fprintf(os.Stderr, "  - %s\n", p)
+		}
+		return run.result, nil
+	}
+
+	// Create LLM client (lazy — skipped entirely when a batch resume above
+	// already returned).
+	run.client, run.tracker, err = newTrackedClient(run.cfg, &run.opts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 2: resolveMode — standard vs batch (subscription rule, mode
+	// resolution, submitBatch handoff).
+	done, result, err = resolveMode(projectDir, run)
+	if done {
+		return result, err
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 3: setupStores — DB, store stack, backfill, compile_items,
+	// checkpoint migration. The success-path db.Close() stays at Compile
+	// scope (defer hazard pinned in the plan): it must NOT move into the
+	// helper, or the DB would close before runTiers and the tail execute.
+	if err := setupStores(projectDir, run); err != nil {
+		return nil, err
+	}
+	defer run.db.Close()
+
+	// Step 4: runTiers — tiers 0/1/3 orchestration, promotions/demotions.
+	runTiers(projectDir, run)
+
+	// Pass 4: Image extraction (placeholder)
+	ExtractImages(projectDir, run.cfg.Output, run.toProcess)
+
+	// Handle removed sources — detect orphans BEFORE removing from manifest
+	handleRemovedSources(projectDir, run.diff.Removed, run.mf, run.memStore, run.vecStore, run.pipelineOntStore, run.opts.Prune)
+
+	// Post-compile sweep: strip [[wikilinks]] pointing at concepts that don't
+	// exist on disk after this compile finished. Pass 3's writer prompts the
+	// LLM to use generous cross-references, but Pass 2 extracts concepts
+	// conservatively, so a wiki of a non-ML corpus can end up with the
+	// majority of links being phantom. Issue #90.
+	MaybeStripBrokenWikilinks(projectDir, run.cfg.Output, run.cfg.Compiler.StripBrokenLinksEnabled(), run.memStore)
+
+	// Save manifest — unless a tiered pipeline run was interrupted before Pass 2/3
+	// completed. Saving then would persist this run's half-done manifest mutations
+	// (AddSource/MarkCompiled/AddConcept); skipping the Save discards them so the
+	// next compile reprocesses the sources from a clean state (pre-P1-1 hard-kill
+	// behavior). Any handleRemovedSources manifest edits are discarded too, but they
+	// re-run next compile since the removed sources are still absent from the corpus.
+	// P1-1 / C1.
+	if run.pipelineIncomplete {
+		log.Info("compile interrupted before Pass 2/3 completed — manifest not saved; sources will reprocess on next compile")
+	} else if err := manifest.MergeSave(orBackground(run.opts.Ctx), run.mfPath, run.base, run.mf); err != nil {
+		return nil, fmt.Errorf("compile: save manifest: %w", err)
+	}
+
+	// Write CHANGELOG entry
+	if err := writeChangelog(projectDir, run.cfg.Output, run.result, run.cfg.Compiler.UserTimeLocation()); err != nil {
+		log.Warn("failed to write CHANGELOG", "error", err)
+	}
+
+	// FTS/vector consistency check
+	if run.result.EmbedErrors > 0 {
+		ftsCount, _ := run.memStore.Count()
+		vecCount, _ := run.vecStore.Count()
+		if ftsCount != vecCount {
+			log.Warn("FTS/vector mismatch after compile", "fts", ftsCount, "vec", vecCount, "embed_errors", run.result.EmbedErrors)
+		}
+	}
+
+	// Check for source changes that invalidate confirmed outputs
+	if run.cfg.Trust.IncludeOutputsMode() == "verified" {
+		trustStore := trust.NewStore(run.db)
+		stores := trust.IndexStores{
+			MemStore: run.memStore, VecStore: run.vecStore, OntStore: run.pipelineOntStore,
+			ChunkStore: run.chunkStore, DB: run.db,
+		}
+		demoted, err := trust.CheckSourceChanges(trustStore, projectDir, &stores)
+		if err != nil {
+			log.Warn("trust source check failed", "error", err)
+		} else if demoted > 0 {
+			log.Info("demoted stale outputs", "count", demoted)
+		}
+	}
+
+	// Git auto-commit
+	if run.cfg.Compiler.AutoCommit {
+		commitMsg := fmt.Sprintf("compile: +%d sources, %d concepts, %d articles",
+			run.result.Added, run.result.ConceptsExtracted, run.result.ArticlesWritten)
+		gitpkg.AutoCommit(projectDir, commitMsg)
+	}
+
+	run.progress.Summary(run.result)
+
+	// Print cost report
+	costReport := run.tracker.Report()
+	if costReport.TotalTokens > 0 {
+		fmt.Fprint(os.Stderr, llm.FormatReport(costReport))
+		run.result.CostReport = costReport
+	}
+
+	return run.result, nil
+}
+
+// loadInputs performs Compile's input phase: config load, prompt overrides
+// (into the package-level registry — no field, by design), manifest load +
+// merge-base snapshot, --fresh checkpoint clearing, and the pending-batch
+// check. It returns done=true when Compile must return early (dry-run batch
+// report or a batch resume), with the result/error to return verbatim.
+func loadInputs(projectDir string, opts *CompileOpts, run *compileRun) (done bool, result *CompileResult, err error) {
 	// Load config
 	cfgPath := filepath.Join(projectDir, "config.yaml")
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		return nil, fmt.Errorf("compile: load config: %w", err)
+		return false, nil, fmt.Errorf("compile: load config: %w", err)
 	}
+	run.cfg = cfg
 
 	// Load user prompt overrides if prompts/ directory exists
 	promptsDir := filepath.Join(projectDir, "prompts")
@@ -147,18 +334,19 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	}
 
 	// Load manifest
-	mfPath := filepath.Join(projectDir, ".manifest.json")
-	mf, err := manifest.Load(mfPath)
+	run.mfPath = filepath.Join(projectDir, ".manifest.json")
+	mf, err := manifest.Load(run.mfPath)
 	if err != nil {
-		return nil, fmt.Errorf("compile: load manifest: %w", err)
+		return false, nil, fmt.Errorf("compile: load manifest: %w", err)
 	}
+	run.mf = mf
 
 	// Snapshot the manifest at Load as the merge base (D3). At Save time the
 	// compile reloads fresh under the lock and applies its delta (ours-base) so a
 	// short writer (MCP/CLI/ingest) that landed mid-compile is preserved rather
 	// than clobbered. Taken before any mutation, so ours-base is exactly this
 	// run's mutations.
-	base := mf.Clone()
+	run.base = mf.Clone()
 
 	// P1-3: --fresh clears ALL checkpoint state (batch + legacy), not just
 	// skips it — the provider-mismatch error below tells users to "clear
@@ -179,7 +367,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	if !opts.Fresh {
 		bcp, err := loadOrMigrateBatchCheckpoint(projectDir)
 		if err != nil {
-			return nil, fmt.Errorf("compile: load batch checkpoint: %w", err)
+			return false, nil, fmt.Errorf("compile: load batch checkpoint: %w", err)
 		}
 		if bcp != nil && bcp.Batch == nil {
 			// Dead checkpoint (parseable but batch-less) — no writer produces
@@ -199,57 +387,29 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 				// above MAY have run (idempotent metadata migration) — only
 				// polling, summaries, and checkpoint deletion are deferred.
 				fmt.Fprintf(os.Stderr, "Batch %s pending resume (dry run — provider not polled, no summaries written).\n", bcp.Batch.BatchID)
-				return result, nil
+				return true, run.result, nil
 			}
-			client, tracker, err := newTrackedClient(cfg, &opts)
+			client, tracker, err := newTrackedClient(run.cfg, opts)
 			if err != nil {
-				return nil, err
+				return false, nil, err
 			}
+			run.client, run.tracker = client, tracker
 			if client.ProviderName() != bcp.Batch.Provider {
-				return nil, fmt.Errorf("compile: provider changed from %s to %s since batch was submitted — clear checkpoint with --fresh or switch back", bcp.Batch.Provider, client.ProviderName())
+				return false, nil, fmt.Errorf("compile: provider changed from %s to %s since batch was submitted — clear checkpoint with --fresh or switch back", bcp.Batch.Provider, client.ProviderName())
 			}
-			return resumeBatch(projectDir, client, cfg, mf, base, bcp, tracker, opts)
+			res, rerr := resumeBatch(projectDir, client, run.cfg, run.mf, run.base, bcp, tracker, *opts)
+			return true, res, rerr
 		}
 	}
+	return false, nil, nil
+}
 
-	// Pass 0: Diff
-	log.Info("Pass 0: computing diff")
-	diff, err := Diff(projectDir, cfg, mf)
-	if err != nil {
-		return nil, fmt.Errorf("compile: diff: %w", err)
-	}
-
-	result.Added = len(diff.Added)
-	result.Modified = len(diff.Modified)
-	result.Removed = len(diff.Removed)
-
-	progress := NewProgress()
-
-	if result.Added == 0 && result.Modified == 0 && result.Removed == 0 {
-		fmt.Fprintln(os.Stderr, "✓ Nothing to compile — wiki is up to date.")
-		return result, nil
-	}
-
-	if opts.DryRun {
-		fmt.Fprintln(os.Stderr, "Dry run — changes that would be applied:")
-		for _, s := range diff.Added {
-			fmt.Fprintf(os.Stderr, "  + %s (%s)\n", s.Path, s.Type)
-		}
-		for _, s := range diff.Modified {
-			fmt.Fprintf(os.Stderr, "  ~ %s (%s)\n", s.Path, s.Type)
-		}
-		for _, p := range diff.Removed {
-			fmt.Fprintf(os.Stderr, "  - %s\n", p)
-		}
-		return result, nil
-	}
-
-	// Create LLM client (lazy — skipped entirely when a batch resume above
-	// already returned).
-	client, tracker, err := newTrackedClient(cfg, &opts)
-	if err != nil {
-		return nil, err
-	}
+// resolveMode picks standard vs batch compilation (subscription-auth rule,
+// CLI > config > auto threshold) and hands off to submitBatch on the batch
+// path. done=true means Compile returns its result verbatim.
+func resolveMode(projectDir string, run *compileRun) (done bool, result *CompileResult, err error) {
+	cfg := run.cfg
+	opts := &run.opts
 
 	// Subscription auth: disable batch mode (subscription tokens lack batch API access)
 	if cfg.API.Auth == "subscription" && (opts.Batch || cfg.Compiler.Mode == "batch" || cfg.Compiler.Mode == "auto") {
@@ -266,8 +426,8 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	if !useBatch && cfg.Compiler.Mode == "batch" {
 		useBatch = true
 	}
-	if !useBatch && cfg.Compiler.Mode == "auto" && client.SupportsBatch() {
-		sourceCount := len(diff.Added) + len(diff.Modified)
+	if !useBatch && cfg.Compiler.Mode == "auto" && run.client.SupportsBatch() {
+		sourceCount := len(run.diff.Added) + len(run.diff.Modified)
 		threshold := cfg.Compiler.BatchThreshold
 		if threshold <= 0 {
 			threshold = 10 // default: auto-batch when 10+ sources
@@ -278,45 +438,56 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		}
 	}
 	if useBatch {
-		if !client.SupportsBatch() {
-			return nil, fmt.Errorf("compile: provider %s does not support batch API", cfg.API.Provider)
+		if !run.client.SupportsBatch() {
+			return false, nil, fmt.Errorf("compile: provider %s does not support batch API", cfg.API.Provider)
 		}
-		return submitBatch(projectDir, client, cfg, mf, diff, tracker)
+		res, rerr := submitBatch(projectDir, run.client, cfg, run.mf, run.diff, run.tracker)
+		return true, res, rerr
 	}
+	return false, nil, nil
+}
+
+// setupStores opens the project DB and builds the per-compile store stack,
+// then runs the post-migration backfills: chunk index backfill,
+// compile_items population from the manifest, and legacy checkpoint
+// migration. On success the DB is OPEN and ownership is Compile's (the
+// deferred close stays at Compile scope — plan T5's pinned hazard).
+func setupStores(projectDir string, run *compileRun) error {
+	cfg := run.cfg
 
 	// Open DB
 	dbPath := filepath.Join(projectDir, ".sage", "wiki.db")
 	db, err := storage.Open(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("compile: open db: %w", err)
+		return fmt.Errorf("compile: open db: %w", err)
 	}
-	defer db.Close()
+	run.db = db
 
-	memStore := memory.NewStore(db)
-	vecStore := vectors.NewStore(db)
-	embedder := embed.NewFromConfig(cfg)
-	chunkStore := memory.NewChunkStore(db)
+	run.memStore = memory.NewStore(db)
+	run.vecStore = vectors.NewStore(db)
+	run.embedder = embed.NewFromConfig(cfg)
+	run.chunkStore = memory.NewChunkStore(db)
 
 	merged := ontology.MergedRelations(cfg.Ontology.Relations)
 	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-	pipelineOntStore := ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
+	run.pipelineOntStore = ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
 
 	// Backfill chunk index if needed (after migration, before first compile)
-	if chunkStore.NeedsBackfill(memStore) {
+	if run.chunkStore.NeedsBackfill(run.memStore) {
 		log.Info("chunk index empty with existing articles — running backfill")
-		if err := BackfillChunks(projectDir, cfg.Output, cfg.Search.ChunkSizeOrDefault(), chunkStore, vecStore, embedder, db); err != nil {
+		if err := BackfillChunks(projectDir, cfg.Output, cfg.Search.ChunkSizeOrDefault(), run.chunkStore, run.vecStore, run.embedder, db); err != nil {
 			log.Warn("chunk backfill failed", "error", err)
 		}
 	}
 
 	// Initialize compile_items store and tier manager
-	itemStore := NewCompileItemStore(db)
-	tierMgr := NewTierManager(&cfg.Compiler, itemStore)
-	bp := NewBackpressureController(cfg.Compiler.MaxParallel)
+	run.itemStore = NewCompileItemStore(db)
+	run.tierMgr = NewTierManager(&cfg.Compiler, run.itemStore)
+	run.bp = NewBackpressureController(cfg.Compiler.MaxParallel)
 
 	// Populate compile_items from manifest on first run (if empty)
-	if count, _ := itemStore.Count(); count == 0 && mf.SourceCount() > 0 {
-		populated, err := PopulateFromManifest(db, mf, cfg)
+	if count, _ := run.itemStore.Count(); count == 0 && run.mf.SourceCount() > 0 {
+		populated, err := PopulateFromManifest(db, run.mf, cfg)
 		if err != nil {
 			log.Warn("populate compile_items from manifest failed", "error", err)
 		} else if populated > 0 {
@@ -325,33 +496,43 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	}
 
 	// Migrate legacy checkpoint if present
-	if !opts.Fresh {
-		if migrated, err := MigrateCheckpoint(projectDir, db, mf, cfg); err != nil {
+	if !run.opts.Fresh {
+		if migrated, err := MigrateCheckpoint(projectDir, db, run.mf, cfg); err != nil {
 			log.Warn("checkpoint migration failed", "error", err)
 		} else if migrated {
 			log.Info("legacy checkpoint migrated to compile_items")
 		}
 	}
 
+	return nil
+}
+
+// runTiers executes the tiered compilation passes (Tier 0 FTS index, Tier 1
+// index+embed, Tier 3 full LLM pipeline) plus promotion/demotion checks,
+// mutating run.result and run.pipelineIncomplete exactly as the inline code
+// did before P1-8.
+func runTiers(projectDir string, run *compileRun) {
+	cfg := run.cfg
+	opts := &run.opts
+
 	// Resolve tiers and upsert compile_items for new/modified sources
-	allSources := append(diff.Added, diff.Modified...)
-	compileID := time.Now().Format("20060102-150405")
+	allSources := append(run.diff.Added, run.diff.Modified...)
+	run.compileID = time.Now().Format("20060102-150405")
 	for _, src := range allSources {
-		tier := tierMgr.ResolveTier(src.Path, projectDir, nil)
-		itemStore.Upsert(CompileItem{
+		tier := run.tierMgr.ResolveTier(src.Path, projectDir, nil)
+		run.itemStore.Upsert(CompileItem{
 			SourcePath:  src.Path,
 			Hash:        src.Hash,
 			FileType:    src.Type,
 			SizeBytes:   src.Size,
 			Tier:        tier,
-			TierDefault: tierMgr.ConfigDefault(src.Path),
+			TierDefault: run.tierMgr.ConfigDefault(src.Path),
 			SourceType:  "compiler",
-			CompileID:   compileID,
+			CompileID:   run.compileID,
 		})
 	}
 
 	// Load external parsers if enabled and trusted
-	var exOpts []extract.ExtractOpts
 	if cfg.Parsers.External {
 		if !cfg.Parsers.TrustExternal {
 			fmt.Fprintln(os.Stderr, "Warning: parsers.external is true but parsers.trust_external is false.")
@@ -364,42 +545,41 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 			} else if exReg.HasParsers() {
 				exReg.Trusted = true
 				fmt.Fprintln(os.Stderr, "External parsers enabled (trusted mode). Running parser code from this project.")
-				exOpts = []extract.ExtractOpts{{ExternalParsers: exReg, ParsersEnabled: true}}
+				run.exOpts = []extract.ExtractOpts{{ExternalParsers: exReg, ParsersEnabled: true}}
 			}
 		}
 	}
 
 	// Tier 0: FTS5 index only (no LLM, ~5ms/doc)
-	tier0Pending, _ := itemStore.ListPending(0)
+	tier0Pending, _ := run.itemStore.ListPending(0)
 	if len(tier0Pending) > 0 {
-		progress.StartPhase("Tier 0: Index sources", len(tier0Pending))
-		indexed := indexRawSources(projectDir, tier0Pending, memStore, itemStore, exOpts...)
-		result.TierIndexed = indexed
+		run.progress.StartPhase("Tier 0: Index sources", len(tier0Pending))
+		indexed := indexRawSources(projectDir, tier0Pending, run.memStore, run.itemStore, run.exOpts...)
+		run.result.TierIndexed = indexed
 		log.Info("tier 0 indexing complete", "indexed", indexed)
-		progress.EndPhase()
+		run.progress.EndPhase()
 	}
 
 	// Tier 1: FTS5 + vector embed (~200ms/doc)
-	tier1Pending, _ := itemStore.ListPending(1)
+	tier1Pending, _ := run.itemStore.ListPending(1)
 	if len(tier1Pending) > 0 {
-		progress.StartPhase("Tier 1: Index + embed sources", len(tier1Pending))
-		indexed, embedded := indexAndEmbedSources(projectDir, tier1Pending, memStore, vecStore, embedder, itemStore, bp, chunkStore, cfg.Search.ChunkSizeOrDefault(), db, exOpts...)
-		result.TierIndexed += indexed
-		result.TierEmbedded = embedded
+		run.progress.StartPhase("Tier 1: Index + embed sources", len(tier1Pending))
+		indexed, embedded := indexAndEmbedSources(projectDir, tier1Pending, run.memStore, run.vecStore, run.embedder, run.itemStore, run.bp, run.chunkStore, cfg.Search.ChunkSizeOrDefault(), run.db, run.exOpts...)
+		run.result.TierIndexed += indexed
+		run.result.TierEmbedded = embedded
 		log.Info("tier 1 indexing complete", "indexed", indexed, "embedded", embedded)
-		progress.EndPhase()
+		run.progress.EndPhase()
 	}
 
 	// Tier 3: Full LLM pipeline (Pass 1 → 2 → 3) — only for Tier 3 sources
-	tier3Pending, _ := itemStore.ListPending(3)
-	var toProcess []SourceInfo
+	tier3Pending, _ := run.itemStore.ListPending(3)
 	tier3Set := make(map[string]bool)
 	for _, item := range tier3Pending {
 		tier3Set[item.SourcePath] = true
 	}
 	for _, s := range allSources {
 		if tier3Set[s.Path] {
-			toProcess = append(toProcess, s)
+			run.toProcess = append(run.toProcess, s)
 		}
 	}
 
@@ -409,37 +589,36 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	// manifest Save at the end of Compile is skipped, discarding this run's
 	// in-memory manifest mutations (AddSource / MarkCompiled / AddConcept). The next
 	// compile's Diff then re-includes these sources and reprocesses them cleanly.
-	pipelineIncomplete := false
-	if len(toProcess) > 0 {
+	if len(run.toProcess) > 0 {
 		cacheEnabled := cfg.Compiler.PromptCacheEnabled() && !opts.NoCache
 		if cacheEnabled && cfg.API.Auth == "subscription" && cfg.API.Provider == "gemini" {
 			cacheEnabled = false
 			log.Info("prompt caching unavailable with Gemini subscription auth")
 			fmt.Fprintln(os.Stderr, "Prompt caching unavailable with Gemini subscription auth.")
 		}
-		pipelineResult := runFullPipeline(toProcess, FullPipelineOpts{
+		pipelineResult := runFullPipeline(run.toProcess, FullPipelineOpts{
 			Ctx:          opts.Ctx,
 			ProjectDir:   projectDir,
 			Config:       cfg,
-			Client:       client,
-			Manifest:     mf,
-			DB:           db,
-			MemStore:     memStore,
-			VecStore:     vecStore,
-			ChunkStore:   chunkStore,
-			OntStore:     pipelineOntStore,
-			Embedder:     embedder,
-			Backpressure: bp,
-			ItemStore:    itemStore,
+			Client:       run.client,
+			Manifest:     run.mf,
+			DB:           run.db,
+			MemStore:     run.memStore,
+			VecStore:     run.vecStore,
+			ChunkStore:   run.chunkStore,
+			OntStore:     run.pipelineOntStore,
+			Embedder:     run.embedder,
+			Backpressure: run.bp,
+			ItemStore:    run.itemStore,
 			CacheEnabled: cacheEnabled,
-			Progress:     progress,
+			Progress:     run.progress,
 		})
-		result.Summarized = pipelineResult.Summarized
-		result.ConceptsExtracted = pipelineResult.ConceptsExtracted
-		result.ArticlesWritten = pipelineResult.ArticlesWritten
-		result.Errors += pipelineResult.Errors
-		result.EmbedErrors = pipelineResult.EmbedErrors
-		result.TierCompiled = len(toProcess)
+		run.result.Summarized = pipelineResult.Summarized
+		run.result.ConceptsExtracted = pipelineResult.ConceptsExtracted
+		run.result.ArticlesWritten = pipelineResult.ArticlesWritten
+		run.result.Errors += pipelineResult.Errors
+		run.result.EmbedErrors = pipelineResult.EmbedErrors
+		run.result.TierCompiled = len(run.toProcess)
 
 		// When Pass 2/3 did not complete (cancel or total-extraction failure), this
 		// run is incomplete: mark nothing and (below) skip the manifest Save, so no
@@ -447,18 +626,18 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		// saving the manifest would record half-done work — the earlier surgical
 		// rollback (RemoveSource on just the sources) left the run's concepts
 		// orphaned, since RemoveSource deletes Sources only. P1-1 / C1.
-		pipelineIncomplete = !pipelineResult.Pass23Completed
-		if !pipelineIncomplete {
+		run.pipelineIncomplete = !pipelineResult.Pass23Completed
+		if !run.pipelineIncomplete {
 			// Pass 2/3 completed — advance all three pass flags for the sources that
 			// summarized successfully so ListPending treats them as fully compiled.
 			succeeded := make(map[string]bool)
 			for _, p := range pipelineResult.SucceededSources {
 				succeeded[p] = true
 			}
-			for _, s := range toProcess {
+			for _, s := range run.toProcess {
 				if succeeded[s.Path] {
 					for _, pass := range []string{"summarized", "extracted", "written"} {
-						if err := itemStore.MarkPass(s.Path, pass); err != nil {
+						if err := run.itemStore.MarkPass(s.Path, pass); err != nil {
 							log.Warn("mark pass failed", "path", s.Path, "pass", pass, "error", err)
 						}
 					}
@@ -469,98 +648,25 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 
 	// Check promotions/demotions
 	if cfg.Compiler.AutoPromoteEnabled() {
-		if promoted, err := tierMgr.CheckPromotions(); err == nil && len(promoted) > 0 {
+		if promoted, err := run.tierMgr.CheckPromotions(); err == nil && len(promoted) > 0 {
 			log.Info("sources eligible for promotion", "count", len(promoted))
 			for _, p := range promoted {
-				if err := itemStore.SetTier(p, 3, "auto-promote"); err != nil {
+				if err := run.itemStore.SetTier(p, 3, "auto-promote"); err != nil {
 					log.Warn("set tier failed", "path", p, "tier", 3, "error", err)
 				}
 			}
 		}
 	}
 	if cfg.Compiler.AutoDemoteEnabled() {
-		if demoted, err := tierMgr.CheckDemotions(); err == nil && len(demoted) > 0 {
+		if demoted, err := run.tierMgr.CheckDemotions(); err == nil && len(demoted) > 0 {
 			log.Info("demoting stale sources", "count", len(demoted))
 			for _, p := range demoted {
-				if err := itemStore.SetTier(p, 1, "stale"); err != nil {
+				if err := run.itemStore.SetTier(p, 1, "stale"); err != nil {
 					log.Warn("set tier failed", "path", p, "tier", 1, "error", err)
 				}
 			}
 		}
 	}
-
-	// Pass 4: Image extraction (placeholder)
-	ExtractImages(projectDir, cfg.Output, toProcess)
-
-	// Handle removed sources — detect orphans BEFORE removing from manifest
-	handleRemovedSources(projectDir, diff.Removed, mf, memStore, vecStore, pipelineOntStore, opts.Prune)
-
-	// Post-compile sweep: strip [[wikilinks]] pointing at concepts that don't
-	// exist on disk after this compile finished. Pass 3's writer prompts the
-	// LLM to use generous cross-references, but Pass 2 extracts concepts
-	// conservatively, so a wiki of a non-ML corpus can end up with the
-	// majority of links being phantom. Issue #90.
-	MaybeStripBrokenWikilinks(projectDir, cfg.Output, cfg.Compiler.StripBrokenLinksEnabled(), memStore)
-
-	// Save manifest — unless a tiered pipeline run was interrupted before Pass 2/3
-	// completed. Saving then would persist this run's half-done manifest mutations
-	// (AddSource/MarkCompiled/AddConcept); skipping the Save discards them so the
-	// next compile reprocesses the sources from a clean state (pre-P1-1 hard-kill
-	// behavior). Any handleRemovedSources manifest edits are discarded too, but they
-	// re-run next compile since the removed sources are still absent from the corpus.
-	// P1-1 / C1.
-	if pipelineIncomplete {
-		log.Info("compile interrupted before Pass 2/3 completed — manifest not saved; sources will reprocess on next compile")
-	} else if err := manifest.MergeSave(orBackground(opts.Ctx), mfPath, base, mf); err != nil {
-		return nil, fmt.Errorf("compile: save manifest: %w", err)
-	}
-
-	// Write CHANGELOG entry
-	if err := writeChangelog(projectDir, cfg.Output, result, cfg.Compiler.UserTimeLocation()); err != nil {
-		log.Warn("failed to write CHANGELOG", "error", err)
-	}
-
-	// FTS/vector consistency check
-	if result.EmbedErrors > 0 {
-		ftsCount, _ := memStore.Count()
-		vecCount, _ := vecStore.Count()
-		if ftsCount != vecCount {
-			log.Warn("FTS/vector mismatch after compile", "fts", ftsCount, "vec", vecCount, "embed_errors", result.EmbedErrors)
-		}
-	}
-
-	// Check for source changes that invalidate confirmed outputs
-	if cfg.Trust.IncludeOutputsMode() == "verified" {
-		trustStore := trust.NewStore(db)
-		stores := trust.IndexStores{
-			MemStore: memStore, VecStore: vecStore, OntStore: pipelineOntStore,
-			ChunkStore: chunkStore, DB: db,
-		}
-		demoted, err := trust.CheckSourceChanges(trustStore, projectDir, &stores)
-		if err != nil {
-			log.Warn("trust source check failed", "error", err)
-		} else if demoted > 0 {
-			log.Info("demoted stale outputs", "count", demoted)
-		}
-	}
-
-	// Git auto-commit
-	if cfg.Compiler.AutoCommit {
-		commitMsg := fmt.Sprintf("compile: +%d sources, %d concepts, %d articles",
-			result.Added, result.ConceptsExtracted, result.ArticlesWritten)
-		gitpkg.AutoCommit(projectDir, commitMsg)
-	}
-
-	progress.Summary(result)
-
-	// Print cost report
-	costReport := tracker.Report()
-	if costReport.TotalTokens > 0 {
-		fmt.Fprint(os.Stderr, llm.FormatReport(costReport))
-		result.CostReport = costReport
-	}
-
-	return result, nil
 }
 
 // submitBatch builds batch requests from the diff and submits them.
@@ -706,6 +812,9 @@ func submitBatch(
 	return result, nil
 }
 
+// P1-8: deliberately NOT refactored onto setupStores — resumeBatch's
+// construction lacks itemStore/tierMgr/backpressure, and verbatim reuse
+// would add the chunk backfill to the batch-resume path (a behavior change).
 // resumeBatch polls and retrieves a previously submitted batch, then continues the pipeline.
 // The batch checkpoint (bcp) is the only resume state (P1-3); every terminal
 // path retires it via retireBatchCheckpoint (strip-then-conditional-delete).

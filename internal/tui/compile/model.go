@@ -325,6 +325,8 @@ func (m Model) runCompile() tea.Cmd {
 	}
 }
 
+// P1-8: intentionally not adopted onto internal/app — a 3-line probe,
+// not a store stack.
 // queryTierLine returns a compact tier distribution string like "T0:5 T1:90 T3:3".
 func queryTierLine(projectDir string) string {
 	dbPath := filepath.Join(projectDir, ".sage", "wiki.db")

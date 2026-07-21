@@ -58,6 +58,17 @@
 
 ### Changed
 
+- **Internal refactor: shared `app` container + decomposed compiler (REL-07/MAINT-01, P1-8 — no behavior change).**
+  Config→database→store wiring that was duplicated across the web server, MCP
+  server, query paths, TUI dashboard, and compiler now lives in one
+  `internal/app` container (with a lazily-built embedder so startup behavior
+  is unchanged for paths that never used one), and `Compile()`'s ~450-line
+  body is decomposed into `loadInputs` / `resolveMode` / `setupStores` /
+  `runTiers` over a `compileRun` state struct. Behavior is pinned identical
+  by a characterization test that snapshots every user-visible output of a
+  compile (result counts, manifest, file contents, checkpoint rows, index
+  counts) and requires byte-identical results across runs.
+
 - **Search performance: in-memory vector cache, FTS prefix indexes, event-driven reload (PERF-01/02/03, P1-5).**
   Vector search no longer re-reads and re-decodes every embedding from
   SQLite on each query: doc- and chunk-level searches now run dot-product
