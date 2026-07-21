@@ -1,13 +1,14 @@
 # Design: P2-1 — Storage abstraction + optional Postgres/pgvector backend
 
-**Status:** draft, review iteration 4
+**Status:** draft, review iteration 5
 
 > Iteration log: i1 found 2C/6M/5S/2cos (pgvector registration,
 > pending_questions_vec, inventories, FTS semantics, mutex parity, test scoping).
 > i2 found 0C/2M/4S/1cos (cross-process claim, reembed inversion, open mechanism,
-> timestamp comparison). i3 found 2C/1M/3S/1cos — advisory lock on a pooled
-> connection is unsound and breaks read-only consumers; mechanism redesigned in
-> D9.2 below. See cycle decisions.md.
+> timestamp comparison). i3 found 2C/1M/3S/1cos (pooled advisory lock unsound,
+> readers broken). i4 found 0C/1M/6S — reader-mode migrations, tx lock timeouts,
+> reader write-path fail-fast, close ordering, pool accounting; all folded into
+> D7/D8/D9.2 below. See cycle decisions.md.
 
 ## 1. Problem
 
@@ -255,14 +256,37 @@ effective semantics are identical:
    - **Reader opens** (hub multi-project search, any future read-only
      consumer) take **no advisory lock** — an exclusive session lock at open
      would serialize readers against each other and against the writer for no
-     correctness benefit; MVCC gives readers consistent snapshots.
+     correctness benefit; MVCC gives readers consistent snapshots. Reader mode
+     additionally: **skips migrations at open** (writer open runs them, as
+     today on SQLite) and instead verifies `schema_version` read-only, failing
+     with "vault schema is ahead of/behind this binary — run any writer
+     command once" if the version mismatches; and **fails fast with a
+     sentinel error on any `WriteTx`/`BeginWrite` call** — a reader that
+     reaches a write path has a wiring bug, and silently taking the xact lock
+     would turn it into a writer.
    - **Lock key derivation:** `key = int64(FNV-1a-64("sage-wiki:" + current_database()))`
      — distinct vaults live in distinct databases on a shared cluster, so
      their keys never collide; two writers for the *same* vault (same
-     database) contend exactly as intended.
-   - Config addition (D8): `storage.lock_timeout` (default `5s`); writer vs
-     reader mode is an **open option in code**, not user config — hub passes
-     the reader option explicitly.
+     database) contend exactly as intended. Vaults separated by schema
+     (`search_path`) within one database share a key — harmless false
+     serialization, documented.
+   - **Lock timeouts:** the open try-lock honors `storage.lock_timeout`
+     (default `5s`); every write tx issues `SET LOCAL lock_timeout` to the
+     same value before `pg_advisory_xact_lock`, matching SQLite's
+     `busy_timeout=5000` behavior (a queued `WriteTx` errors after ~5s instead
+     of hanging indefinitely behind a long reembed tx).
+   - **Fail-fast error text** names both causes: a live second writer
+     (stop it or point this process at another vault) and a crashed writer
+     whose session Postgres has not yet reaped (remedy: inspect `pg_locks`,
+     `pg_terminate_backend` the stale session — TCP keepalive can delay
+     reaping).
+   - **Close ordering:** `Backend.Close()` releases the pinned lock
+     connection **before** closing the pool — deterministic, so a racing
+     opener never sees a stale-lock error from a closing peer.
+   - **Pool accounting:** the pinned lock `db.Conn` permanently consumes one
+     of `pool.max_open` (database/sql counts held conns), so the effective
+     pool is `max_open−1`, and `max_open−2` during a reembed tx. Stated in
+     `docs/storage-backends.md` next to the pool config.
 3. **Single write connection** — today `reembed.go:108`'s raw
    `WriteDB().Begin()` is *de facto serialized* against every `WriteTx` because
    there is one write connection; its long tx across network embedding calls
