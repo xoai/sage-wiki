@@ -292,23 +292,10 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 
 // countUncompiledMatches counts FTS5 entries with "src:" prefix matching
 // the query that are below Tier 3 in compile_items.
+// (P2-1: moved behind the EntryStore seam — same query, same error→0
+// tolerance, via the concrete sqlite store.)
 func (s *Server) countUncompiledMatches(query string) int {
-	// Sanitize query for FTS5 (reuse existing sanitization)
-	sanitized := memory.SanitizeFTS(query)
-	if sanitized == "" {
-		return 0
-	}
-
-	var count int
-	err := s.db.ReadDB().QueryRow(`
-		SELECT COUNT(*) FROM entries
-		JOIN compile_items ON compile_items.source_path = SUBSTR(entries.id, 5)
-		WHERE entries MATCH ? AND entries.id LIKE 'src:%'
-		AND compile_items.tier < 3
-	`, sanitized).Scan(&count)
-	if err != nil {
-		return 0 // table may not exist yet
-	}
+	count, _ := s.mem.CountUncompiled(query)
 	return count
 }
 

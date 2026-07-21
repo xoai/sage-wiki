@@ -708,21 +708,9 @@ func (s *WebServer) handleGraph(w http.ResponseWriter, r *http.Request) {
 		allEntities, _ := s.ont.ListEntities("")
 
 		// Pre-compute connection counts in a single query (avoids N+1)
-		connCounts := make(map[string]int)
-		countRows, err := s.db.ReadDB().Query(`
-			SELECT id, cnt FROM (
-				SELECT source_id AS id, COUNT(*) AS cnt FROM relations GROUP BY source_id
-				UNION ALL
-				SELECT target_id AS id, COUNT(*) AS cnt FROM relations GROUP BY target_id
-			) GROUP BY id`)
-		if err == nil {
-			defer countRows.Close()
-			for countRows.Next() {
-				var id string
-				var cnt int
-				countRows.Scan(&id, &cnt)
-				connCounts[id] += cnt
-			}
+		connCounts, err := s.ont.EntityConnectionCounts()
+		if err != nil {
+			connCounts = map[string]int{}
 		}
 
 		entitySet := make(map[string]bool)
@@ -735,14 +723,10 @@ func (s *WebServer) handleGraph(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// All relations (only between non-source entities)
-		rows, err := s.db.ReadDB().Query("SELECT source_id, target_id, relation FROM relations")
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var e edge
-				rows.Scan(&e.Source, &e.Target, &e.Relation)
-				if entitySet[e.Source] && entitySet[e.Target] {
-					edges = append(edges, e)
+		if rels, err := s.ont.AllRelations(); err == nil {
+			for _, rel := range rels {
+				if entitySet[rel.SourceID] && entitySet[rel.TargetID] {
+					edges = append(edges, edge{Source: rel.SourceID, Target: rel.TargetID, Relation: rel.Relation})
 				}
 			}
 		}

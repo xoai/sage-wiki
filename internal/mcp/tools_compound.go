@@ -3,7 +3,6 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/xoai/sage-wiki/internal/compiler"
@@ -65,7 +64,8 @@ func (s *Server) handleLint(ctx context.Context, req mcplib.CallToolRequest) (*m
 	lintCtx := &linter.LintContext{
 		ProjectDir:       s.projectDir,
 		OutputDir:        s.cfg.Output,
-		DBPath:           filepath.Join(s.projectDir, ".sage", "wiki.db"),
+		// DBPath omitted: DB is always set here, so EnsureDB never opens a
+		// fallback (P2-1: a bare path has no meaning for the postgres backend).
 		DB:               s.db,
 		ValidRelations:   ontology.ValidRelationNames(mergedRels),
 		ValidEntityTypes: ontology.ValidEntityTypeNames(mergedTypes),

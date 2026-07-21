@@ -2,6 +2,7 @@ package linter
 
 import (
 	"fmt"
+	"sort"
 	"math"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
@@ -190,22 +192,18 @@ func (p *ConsistencyPass) Run(ctx *LintContext) ([]Finding, error) {
 		return nil, nil
 	}
 
-	// Find contradicts edges
-	rows, err := ctx.DB.ReadDB().Query(
-		"SELECT source_id, target_id FROM relations WHERE relation='contradicts'",
-	)
+	// Find contradicts edges (P2-1: via the OntologyStore seam)
+	ontStore := ontology.NewStore(ctx.DB, ctx.ValidRelations, ctx.ValidEntityTypes)
+	contradicts, err := ontStore.RelationsByType("contradicts")
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var src, tgt string
-		rows.Scan(&src, &tgt)
+	for _, rel := range contradicts {
 		findings = append(findings, Finding{
 			Pass:     "consistency",
 			Severity: SevWarning,
-			Message:  fmt.Sprintf("contradiction: %s contradicts %s", src, tgt),
+			Message:  fmt.Sprintf("contradiction: %s contradicts %s", rel.SourceID, rel.TargetID),
 		})
 	}
 
@@ -243,16 +241,12 @@ func (p *ConnectionsPass) Run(ctx *LintContext) ([]Finding, error) {
 		aID := "concept:" + a.ID
 		aResults, err := vecStore.Search(nil, 0)
 		_ = aResults
-		// We need the raw vector — read from DB directly
-		var aVec []byte
-		var aDims int
-		err = ctx.DB.ReadDB().QueryRow("SELECT embedding, dimensions FROM vec_entries WHERE id=?", aID).Scan(&aVec, &aDims)
-		if err != nil {
+		// P2-1: via the VectorStore seam — Get returns (nil, nil) when
+		// the concept has no vector (continue-on-absent preserved).
+		aFloat, err := vecStore.Get(aID)
+		if err != nil || aFloat == nil {
 			continue // no vector for this concept
 		}
-
-		// Search for similar vectors
-		aFloat := decodeFloat32s(aVec)
 		results, err := vecStore.Search(aFloat, 10)
 		if err != nil {
 			continue
@@ -428,42 +422,35 @@ func (p *QualityPass) Run(ctx *LintContext) ([]Finding, error) {
 		return findings, nil
 	}
 
-	// Check for low quality articles
-	rows, err := ctx.DB.ReadDB().Query(
-		"SELECT source_path, quality_score FROM compile_items WHERE quality_score IS NOT NULL AND quality_score < ?",
-		threshold,
-	)
+	// Check for low quality articles (P2-1: via the CompileItemStore seam)
+	items := compiler.NewCompileItemStore(ctx.DB)
+	lowQ, err := items.ListBelowQualityScore(threshold)
 	if err != nil {
 		return findings, nil // table may not exist
 	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var path string
-		var score float64
-		if rows.Scan(&path, &score) == nil {
-			findings = append(findings, Finding{
-				Pass:     "quality",
-				Severity: SevWarning,
-				Path:     path,
-				Message:  fmt.Sprintf("low quality score: %.2f (threshold: %.2f)", score, threshold),
-			})
-		}
+	for _, r := range lowQ {
+		findings = append(findings, Finding{
+			Pass:     "quality",
+			Severity: SevWarning,
+			Path:     r.SourcePath,
+			Message:  fmt.Sprintf("low quality score: %.2f (threshold: %.2f)", r.Score, threshold),
+		})
 	}
 
-	// Tier distribution summary
-	tierRows, err := ctx.DB.ReadDB().Query("SELECT tier, COUNT(*) FROM compile_items GROUP BY tier ORDER BY tier")
+	// Tier distribution summary + error count (one Stats() call; tier keys
+	// sorted to reproduce the original ORDER BY tier message).
+	stats, err := items.Stats()
 	if err != nil {
 		return findings, nil
 	}
-	defer tierRows.Close()
-
+	tiers := make([]int, 0, len(stats.ByTier))
+	for t := range stats.ByTier {
+		tiers = append(tiers, t)
+	}
+	sort.Ints(tiers)
 	var tierInfo []string
-	for tierRows.Next() {
-		var tier, count int
-		if tierRows.Scan(&tier, &count) == nil {
-			tierInfo = append(tierInfo, fmt.Sprintf("T%d=%d", tier, count))
-		}
+	for _, t := range tiers {
+		tierInfo = append(tierInfo, fmt.Sprintf("T%d=%d", t, stats.ByTier[t]))
 	}
 	if len(tierInfo) > 0 {
 		findings = append(findings, Finding{
@@ -474,15 +461,12 @@ func (p *QualityPass) Run(ctx *LintContext) ([]Finding, error) {
 		})
 	}
 
-	// Error count
-	var errCount int
-	ctx.DB.ReadDB().QueryRow("SELECT COUNT(*) FROM compile_items WHERE error IS NOT NULL AND error != ''").Scan(&errCount)
-	if errCount > 0 {
+	if stats.WithErrors > 0 {
 		findings = append(findings, Finding{
 			Pass:     "quality",
 			Severity: SevWarning,
 			Path:     "",
-			Message:  fmt.Sprintf("%d sources have compilation errors", errCount),
+			Message:  fmt.Sprintf("%d sources have compilation errors", stats.WithErrors),
 		})
 	}
 
