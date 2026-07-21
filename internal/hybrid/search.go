@@ -6,8 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xoai/sage-wiki/internal/memory"
-	"github.com/xoai/sage-wiki/internal/vectors"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 const rrfK = 60 // Standard RRF constant (Cormack et al. 2009)
@@ -36,12 +35,12 @@ type SearchResult struct {
 
 // Searcher performs hybrid search combining BM25 and vector results.
 type Searcher struct {
-	memory  *memory.Store
-	vectors *vectors.Store
+	memory  store.EntryStore
+	vectors store.VectorStore
 }
 
 // NewSearcher creates a hybrid searcher.
-func NewSearcher(mem *memory.Store, vec *vectors.Store) *Searcher {
+func NewSearcher(mem store.EntryStore, vec store.VectorStore) *Searcher {
 	return &Searcher{memory: mem, vectors: vec}
 }
 
@@ -62,7 +61,7 @@ func (s *Searcher) Search(opts SearchOpts, queryVec []float32) ([]SearchResult, 
 	}
 
 	// Vector search (if embedding available)
-	var vecResults []vectors.VectorResult
+	var vecResults []store.VectorResult
 	if queryVec != nil {
 		vecResults, err = s.vectors.Search(queryVec, candidateLimit)
 		if err != nil {
