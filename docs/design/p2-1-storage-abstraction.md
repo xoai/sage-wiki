@@ -1,14 +1,11 @@
 # Design: P2-1 — Storage abstraction + optional Postgres/pgvector backend
 
-**Status:** draft, review iteration 5
+**Status:** draft, review iteration 6
 
-> Iteration log: i1 found 2C/6M/5S/2cos (pgvector registration,
-> pending_questions_vec, inventories, FTS semantics, mutex parity, test scoping).
-> i2 found 0C/2M/4S/1cos (cross-process claim, reembed inversion, open mechanism,
-> timestamp comparison). i3 found 2C/1M/3S/1cos (pooled advisory lock unsound,
-> readers broken). i4 found 0C/1M/6S — reader-mode migrations, tx lock timeouts,
-> reader write-path fail-fast, close ordering, pool accounting; all folded into
-> D7/D8/D9.2 below. See cycle decisions.md.
+> Iteration log: i1 2C/6M/5S/2cos · i2 0C/2M/4S/1cos · i3 2C/1M/3S/1cos ·
+> i4 0C/1M/6S · i5 1C/0M/1S/1cos — shared advisory key made a writer's own
+> WriteTx self-conflict with its session lock (dead on arrival); two distinct
+> keys derived in D9.2. See cycle decisions.md.
 
 ## 1. Problem
 
@@ -234,25 +231,35 @@ effective semantics are identical:
    sequences that were effectively serialized by `writeMu`; dropping it under
    Postgres READ COMMITTED would let them interleave — a behavior change
    disguised as infrastructure.
-2. **Cross-process: SQLite's DB file lock** (plus `manifest.WithLock` on
+2. **Cross-process (D9.2): SQLite's DB file lock** (plus `manifest.WithLock` on
    reconcile paths) — reproduced on Postgres with a **writer-lock pair**, and
    readers are explicitly out of scope of the lock:
 
    - **Writer opens** (default; `app.Open` and all compile/write paths) acquire
-     a session-level `pg_advisory_lock(key)` on a **dedicated `db.Conn(ctx)`
-     pinned for the process lifetime** — never on the pool, where the lock
-     would land on an arbitrary connection the pool can silently reap. Open
-     uses try-lock with `storage.lock_timeout` (default `5s`): on timeout,
-     open fails with an error naming that another sage-wiki writer process
-     holds this vault's lock (the Postgres analog of SQLite's busy/locked
-     error). This is the fail-fast deployment guard: P2-1 assumes a
-     **single-writer-process** world and says so at startup, not at first
-     write conflict.
+     a session-level `pg_advisory_lock(sessionKey)` on a **dedicated
+     `db.Conn(ctx)` pinned for the process lifetime** — never on the pool,
+     where the lock would land on an arbitrary connection the pool can
+     silently reap. Open uses try-lock with `storage.lock_timeout` (default
+     `5s`): on timeout, open fails with an error naming that another
+     sage-wiki writer process holds this vault's lock (the Postgres analog of
+     SQLite's busy/locked error). This is the fail-fast deployment guard:
+     P2-1 assumes a **single-writer-process** world and says so at startup,
+     not at first write conflict.
    - **Every `WriteTx` and `BeginWrite` tx** additionally takes
-     `pg_advisory_xact_lock(key)` as its first statement — the only variant
+     `pg_advisory_xact_lock(txKey)` as its first statement — the only variant
      scoped to the transaction itself, hence the only one that actually
      serializes writers regardless of which pooled connection executes. This
      defends correctness even if the pinned session connection dies silently.
+   - **Two distinct keys — never one.** Advisory locks conflict across
+     sessions regardless of scope: a shared key would make the writer's own
+     first `WriteTx` block against its own pinned session lock and error
+     after `lock_timeout` on *every* write. Derived as
+     `sessionKey = int64(FNV-1a-64("sage-wiki:session:" + current_database()))`
+     and `txKey = int64(FNV-1a-64("sage-wiki:tx:" + current_database()))`.
+     Distinct vaults live in distinct databases on a shared cluster, so their
+     keys never collide; two writers for the *same* vault contend exactly as
+     intended. Vaults separated by schema (`search_path`) within one database
+     share keys — harmless false serialization, documented.
    - **Reader opens** (hub multi-project search, any future read-only
      consumer) take **no advisory lock** — an exclusive session lock at open
      would serialize readers against each other and against the writer for no
@@ -263,13 +270,10 @@ effective semantics are identical:
      command once" if the version mismatches; and **fails fast with a
      sentinel error on any `WriteTx`/`BeginWrite` call** — a reader that
      reaches a write path has a wiring bug, and silently taking the xact lock
-     would turn it into a writer.
-   - **Lock key derivation:** `key = int64(FNV-1a-64("sage-wiki:" + current_database()))`
-     — distinct vaults live in distinct databases on a shared cluster, so
-     their keys never collide; two writers for the *same* vault (same
-     database) contend exactly as intended. Vaults separated by schema
-     (`search_path`) within one database share a key — harmless false
-     serialization, documented.
+      would turn it into a writer. **SQLite reader mode pins identical
+      semantics** — skips migrations, verifies `schema_version`, and returns
+      the same write-path sentinel — so the conformance suite asserts
+      reader/writer behavior uniformly on both backends.
    - **Lock timeouts:** the open try-lock honors `storage.lock_timeout`
      (default `5s`); every write tx issues `SET LOCAL lock_timeout` to the
      same value before `pg_advisory_xact_lock`, matching SQLite's
