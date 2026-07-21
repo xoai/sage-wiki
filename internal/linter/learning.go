@@ -1,13 +1,12 @@
 package linter
 
 import (
-	"crypto/sha256"
 	"database/sql"
-	"fmt"
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 const (
@@ -17,9 +16,10 @@ const (
 
 // StoreLearning saves a learning entry with deduplication.
 // LearningID generates a deterministic ID for a learning entry.
+// The algorithm lives in internal/store (P2-1: single home shared by both
+// storage backends); this delegates for backward compatibility.
 func LearningID(content string) string {
-	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
-	return "learn-" + hash[:16]
+	return store.LearningID(content)
 }
 
 func StoreLearning(db *storage.DB, learnType string, content string, tags string, lintPass string) error {

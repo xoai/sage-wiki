@@ -8,6 +8,13 @@ import (
 	"github.com/xoai/sage-wiki/internal/storage"
 )
 
+// Countable is the narrow interface NeedsBackfill depends on (P2-1 seam:
+// owned by the concrete package so store.ChunkStore can reference it without
+// an import cycle; *Store satisfies it).
+type Countable interface {
+	Count() (int, error)
+}
+
 // ChunkEntry represents a chunk to be indexed.
 type ChunkEntry struct {
 	ChunkID     string
