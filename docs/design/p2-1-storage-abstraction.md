@@ -1,13 +1,13 @@
 # Design: P2-1 — Storage abstraction + optional Postgres/pgvector backend
 
-**Status:** draft, review iteration 3
+**Status:** draft, review iteration 4
 
-> Iteration log: i1 review found 2 CRITICAL / 6 MAJOR / 5 substantive / 2 cosmetic —
-> all addressed below (pgvector type registration, pending_questions_vec coverage,
-> audited write-path and path-site inventories, FTS prefix/CJK semantics, Postgres
-> write-mutex parity, conformance-suite scoping). i2 found 0C/2M/4S/1cos — D9's
-> cross-process and reembed claims corrected (D9), open mechanism pinned (D1),
-> timestamp comparison pinned (D7). See cycle decisions.md.
+> Iteration log: i1 found 2C/6M/5S/2cos (pgvector registration,
+> pending_questions_vec, inventories, FTS semantics, mutex parity, test scoping).
+> i2 found 0C/2M/4S/1cos (cross-process claim, reembed inversion, open mechanism,
+> timestamp comparison). i3 found 2C/1M/3S/1cos — advisory lock on a pooled
+> connection is unsound and breaks read-only consumers; mechanism redesigned in
+> D9.2 below. See cycle decisions.md.
 
 ## 1. Problem
 
@@ -204,6 +204,7 @@ storage:
   backend: sqlite            # sqlite | postgres (default sqlite)
   dsn: ${SAGE_WIKI_PG_DSN}   # env expansion; secrets never literal in file
   vector_dimension: 768      # required for postgres
+  lock_timeout: 5s           # writer advisory-lock acquisition timeout (D9.2)
   pool: { max_open: 10, max_idle: 2 }
 ```
 
@@ -213,7 +214,11 @@ Postgres analog get capability methods instead of rejecting postgres:
 `doctor` → `Backend.Health()`; `status` schema probe → `Backend.SchemaReady()`;
 compound-tool `DBPath` → `Backend.Location()`. `hub/search.go` opens each
 project's DB by convention — it reads each project's config and dials its DSN
-(postgres projects) or opens the file (sqlite projects); hub stays read-mostly.
+(postgres projects) or opens the file (sqlite projects); hub opens in **reader
+mode** (no advisory lock, D9.2) with a **smaller read pool** (`max_open: 4`
+per project, hard-coded for hub opens) — N projects × writer-sized pools would
+exhaust Postgres `max_connections`; the budget note lives in
+`docs/storage-backends.md`.
 
 ### D9 — Concurrency: identical write serialization on both backends (this task)
 
@@ -229,25 +234,51 @@ effective semantics are identical:
    Postgres READ COMMITTED would let them interleave — a behavior change
    disguised as infrastructure.
 2. **Cross-process: SQLite's DB file lock** (plus `manifest.WithLock` on
-   reconcile paths) — on Postgres, a **session-level advisory lock**
-   (`pg_advisory_lock`) acquired at backend open and held until close reproduces
-   the single-writer-process world; a second writer process blocks (or fails
-   fast, per config) exactly as it would against a locked SQLite file. P2-1
-   assumes a **single-writer-process deployment**; this is stated explicitly
-   because it is also the deployment P2-3's worker model must relax deliberately.
+   reconcile paths) — reproduced on Postgres with a **writer-lock pair**, and
+   readers are explicitly out of scope of the lock:
+
+   - **Writer opens** (default; `app.Open` and all compile/write paths) acquire
+     a session-level `pg_advisory_lock(key)` on a **dedicated `db.Conn(ctx)`
+     pinned for the process lifetime** — never on the pool, where the lock
+     would land on an arbitrary connection the pool can silently reap. Open
+     uses try-lock with `storage.lock_timeout` (default `5s`): on timeout,
+     open fails with an error naming that another sage-wiki writer process
+     holds this vault's lock (the Postgres analog of SQLite's busy/locked
+     error). This is the fail-fast deployment guard: P2-1 assumes a
+     **single-writer-process** world and says so at startup, not at first
+     write conflict.
+   - **Every `WriteTx` and `BeginWrite` tx** additionally takes
+     `pg_advisory_xact_lock(key)` as its first statement — the only variant
+     scoped to the transaction itself, hence the only one that actually
+     serializes writers regardless of which pooled connection executes. This
+     defends correctness even if the pinned session connection dies silently.
+   - **Reader opens** (hub multi-project search, any future read-only
+     consumer) take **no advisory lock** — an exclusive session lock at open
+     would serialize readers against each other and against the writer for no
+     correctness benefit; MVCC gives readers consistent snapshots.
+   - **Lock key derivation:** `key = int64(FNV-1a-64("sage-wiki:" + current_database()))`
+     — distinct vaults live in distinct databases on a shared cluster, so
+     their keys never collide; two writers for the *same* vault (same
+     database) contend exactly as intended.
+   - Config addition (D8): `storage.lock_timeout` (default `5s`); writer vs
+     reader mode is an **open option in code**, not user config — hub passes
+     the reader option explicitly.
 3. **Single write connection** — today `reembed.go:108`'s raw
    `WriteDB().Begin()` is *de facto serialized* against every `WriteTx` because
    there is one write connection; its long tx across network embedding calls
    blocks all other writers. Parity on Postgres therefore means reembed's tx
    **holds `writeMu` for its whole duration** — `Backend.BeginWrite() (*sql.Tx,
-   error)` acquires the mutex (released on Commit/Rollback). SQLite impl wraps
-   today's `WriteDB().Begin()` (mutex acquisition is a no-op change in
-   observable ordering — single connection already serialized); Postgres impl
-   begins a pool tx under the mutex. Reframed from i2: this is the
-   parity-preserving choice, not an exception rationalizing a divergence.
-   Documented cost: the reembed tx pins one pool connection and an MVCC
-   snapshot across network I/O — with default `pool.max_open: 10` this is
-   noted in `docs/storage-backends.md` as the pool-sizing consideration.
+   error)` acquires the mutex (released on Commit/Rollback). On SQLite this
+   newly *blocks* behind an in-flight `WriteTx` where the raw `Begin()`
+   previously queued on the connection — same serialization semantics, stated
+   once plainly. **Contract:** tx-scoped work inside a `BeginWrite` tx must not
+   call `WriteTx` (the mutex is non-reentrant — self-deadlock), and
+   Commit/Rollback is the only release path (callers use the deferred-rollback
+   idiom). The conformance suite gains a BeginWrite-serialization test
+   alongside the WriteTx one. Documented cost: the reembed tx pins one pool
+   connection and an MVCC snapshot across network I/O — with default
+   `pool.max_open: 10` this is noted in `docs/storage-backends.md` as the
+   pool-sizing consideration.
 
 Exploiting Postgres concurrency (relaxing the mutex, dropping the advisory lock
 for multi-writer, isolation-level choices, `SELECT … FOR UPDATE` hardening) is
