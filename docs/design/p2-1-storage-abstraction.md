@@ -1,13 +1,13 @@
 # Design: P2-1 — Storage abstraction + optional Postgres/pgvector backend
 
-**Status:** draft, review iteration 2
-**Spec:** `.sage/docs/sage-wiki-upgrade/06-spec-phase2-strategic.md` §P2-1
-**Cycle:** `.sage/work/20260721-p2-1-storage-abstraction/`
+**Status:** draft, review iteration 3
 
 > Iteration log: i1 review found 2 CRITICAL / 6 MAJOR / 5 substantive / 2 cosmetic —
 > all addressed below (pgvector type registration, pending_questions_vec coverage,
 > audited write-path and path-site inventories, FTS prefix/CJK semantics, Postgres
-> write-mutex parity, conformance-suite scoping). See cycle decisions.md.
+> write-mutex parity, conformance-suite scoping). i2 found 0C/2M/4S/1cos — D9's
+> cross-process and reembed claims corrected (D9), open mechanism pinned (D1),
+> timestamp comparison pinned (D7). See cycle decisions.md.
 
 ## 1. Problem
 
@@ -54,8 +54,12 @@ Postgres backend uses `pgx/v5` **stdlib driver** (pure Go, `CGO_ENABLED=0`
 preserved) **plus `github.com/pgvector/pgvector-go`**: vector columns are
 read/written as `pgvector.Vector` (a `[]float32` wrapper with sql
 Scanner/Valuer), registered via `pgxvector.RegisterTypes` in the stdlib driver's
-`AfterConnect` hook. Without this, the stdlib driver does not know the `vector`
-OID and every vector read/write fails at runtime. This is the one new runtime
+`AfterConnect` hook. **The open mechanism is pinned:** the pool must be created
+via `stdlib.OpenDB(*pgx.ConnConfig)` with `ConnConfig.AfterConnect` calling
+`pgxvector.RegisterTypes` — a plain `sql.Open("pgx", dsn)` silently never fires
+the hook and fails at first vector I/O (the classic pgx stdlib trap). Without
+registration the stdlib driver does not know the `vector` OID and every vector
+read/write fails at runtime. This is the one new runtime
 dependency; it is justified: there is no CGO-free alternative for typed pgvector
 I/O, and a text-format fallback (`'[1,2,3]'::vector` casts + manual parse) was
 rejected as slower and more error-prone. Interface signatures may reference
@@ -136,6 +140,11 @@ keeps FTS5 exactly as-is. Postgres:
   recall is comparably poor on both backends. Conformance suite includes a CJK
   fixture asserting **parity of behavior** (same doc set returned), not recall
   quality. Improving CJK search is out of scope for both backends here.
+- Implementation checklist: verify `:*` prefix queries actually use the
+  tsvector GIN index (`EXPLAIN` on a populated table); if they seq-scan,
+  large-vault search latency diverges from FTS5's `prefix='2 3'` index even
+  when result sets match — mitigation (trigram index or query rewrite) would
+  be decided then, not speculated here.
 
 *Alternative rejected:* placeholder-rebind + query-builder layer (sqlx/squirrel) —
 adds a dependency and obscures dialect differences that are semantic (FTS), not
@@ -171,12 +180,16 @@ pattern, append-only, **one statement per Exec** (pgx stdlib rejects
 multi-statement prepared calls — known gotcha). SQLite's V1–V8 series untouched.
 The Postgres set is written fresh at current schema shape and starts at V1.
 
-**Time representation:** SQLite stores `datetime('now')` TEXT; Postgres uses
+**Time representation:** SQLite stores `datetime('now')` TEXT
+(`'YYYY-MM-DD HH:MM:SS'`, UTC, tz-naive); Postgres uses
 `TIMESTAMPTZ DEFAULT now()`. The store layer owns the conversion: every
-time-typed field is scanned into `time.Time` on both backends (SQLite TEXT parsed
-at the scan boundary), so nothing above the store sees a representation
-difference. This touches scan helpers (`scanCompileItem`, trust scans) and is
-covered by conformance tests round-tripping timestamps.
+time-typed field is scanned into `time.Time` on both backends — SQLite TEXT is
+parsed **as UTC** at the scan boundary, Postgres scans arrive tz-aware and are
+normalized with `.UTC()`. Conformance round-trips compare via
+`.Equal`/`.UTC()`, never `==` (monotonic clock and location pointers would
+flake). Nothing above the store sees a representation difference. This touches
+scan helpers (`scanCompileItem`, trust scans) and is covered by conformance
+tests round-tripping timestamps.
 
 **Uniqueness parity:** Postgres schema deliberately does **not** add PK/unique
 constraints beyond what SQLite enforces today (FTS5 `entries` has none; the
@@ -204,24 +217,42 @@ project's DB by convention — it reads each project's config and dials its DSN
 
 ### D9 — Concurrency: identical write serialization on both backends (this task)
 
-The Postgres `WriteTx` **keeps a process-local write mutex** — identical
-semantics to SQLite today. Rationale: flows like `trust/promote.go` and
-`trust/hooks.go` do read-then-write sequences that were effectively serialized
-by `writeMu`; dropping it under Postgres READ COMMITTED would let them
-interleave — a behavior change disguised as infrastructure. Exploiting Postgres
-concurrency (relaxing the mutex, isolation-level choices, `SELECT … FOR UPDATE`
-hardening) is **explicitly deferred to P2-3** and recorded as such in
-`docs/storage-backends.md`. The compile-parallelism documentation bullet from
-spec §P2-1 is satisfied by this statement: *it does not change in P2-1; P2-3
-owns it.*
+Spec §P2-1 says: *"Concurrency model: Postgres removes the single-writer
+constraint — document how compile parallelism changes; keep SQLite path exactly
+as-is."* The answer for P2-1: **it does not change.** The write-serialization
+guarantees today come from three layers, and each gets a Postgres analog so the
+effective semantics are identical:
 
-`reembed.go:108`'s raw `WriteDB().Begin()` is a documented **skip-list
-exception** (per P1-8 skip-list discipline, with in-code rationale): it holds a
-long-lived write tx across network embedding calls and must not be routed
-through the mutex-held `WriteTx` in this task (that would change lock timing
-during network I/O — exactly the trap D3 promises to avoid). The `Backend`
-exposes `BeginWrite() (*sql.Tx, error)` for this single site: SQLite → today's
-`WriteDB().Begin()`; Postgres → pool `Begin()`. Retiring the exception is P2-3.
+1. **Process-local `writeMu` around `WriteTx`** — kept on the Postgres backend.
+   Flows like `trust/promote.go` and `trust/hooks.go` do read-then-write
+   sequences that were effectively serialized by `writeMu`; dropping it under
+   Postgres READ COMMITTED would let them interleave — a behavior change
+   disguised as infrastructure.
+2. **Cross-process: SQLite's DB file lock** (plus `manifest.WithLock` on
+   reconcile paths) — on Postgres, a **session-level advisory lock**
+   (`pg_advisory_lock`) acquired at backend open and held until close reproduces
+   the single-writer-process world; a second writer process blocks (or fails
+   fast, per config) exactly as it would against a locked SQLite file. P2-1
+   assumes a **single-writer-process deployment**; this is stated explicitly
+   because it is also the deployment P2-3's worker model must relax deliberately.
+3. **Single write connection** — today `reembed.go:108`'s raw
+   `WriteDB().Begin()` is *de facto serialized* against every `WriteTx` because
+   there is one write connection; its long tx across network embedding calls
+   blocks all other writers. Parity on Postgres therefore means reembed's tx
+   **holds `writeMu` for its whole duration** — `Backend.BeginWrite() (*sql.Tx,
+   error)` acquires the mutex (released on Commit/Rollback). SQLite impl wraps
+   today's `WriteDB().Begin()` (mutex acquisition is a no-op change in
+   observable ordering — single connection already serialized); Postgres impl
+   begins a pool tx under the mutex. Reframed from i2: this is the
+   parity-preserving choice, not an exception rationalizing a divergence.
+   Documented cost: the reembed tx pins one pool connection and an MVCC
+   snapshot across network I/O — with default `pool.max_open: 10` this is
+   noted in `docs/storage-backends.md` as the pool-sizing consideration.
+
+Exploiting Postgres concurrency (relaxing the mutex, dropping the advisory lock
+for multi-writer, isolation-level choices, `SELECT … FOR UPDATE` hardening) is
+**explicitly deferred to P2-3** and recorded as such in
+`docs/storage-backends.md`.
 
 ### D10 — Files-as-truth invariant preserved
 
