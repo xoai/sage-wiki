@@ -30,7 +30,7 @@ type ChunkStore interface {
 	SearchChunks(query string, limit int) ([]memory.ChunkResult, error)
 	SearchChunksMultiQuery(queries []string, limit int) ([]memory.ChunkResult, error)
 	Count() (int, error)
-	NeedsBackfill(memStore *memory.Store) bool // pre-T7 concrete signature
+	NeedsBackfill(memStore memory.Countable) bool
 }
 
 type VectorStore interface {
@@ -84,6 +84,9 @@ type TrustStore interface {
 	ListConfirmed() ([]*trust.PendingOutput, error)
 	ListByQuestionHash(qHash string) ([]*trust.PendingOutput, error)
 	ListOlderThan(cutoff time.Time) ([]*trust.PendingOutput, error)
+	// Consensus (moved from package functions, same names/types — spec §3).
+	EmbedAndStoreQuestion(tx *sql.Tx, questionHash string, embedding []float32) error
+	FindSimilarQuestion(tx *sql.Tx, questionVec []float32, threshold float64) (*trust.SimilarQuestion, error)
 }
 
 type CompileItemStore interface {
@@ -109,4 +112,7 @@ type OutputIndexStore interface {
 	Delete(outputPath string) error
 	All() (map[string]string, error)
 	Backfill(outputs map[string][]byte) error
+	// Tx variants for atomic writes with the index rows they certify.
+	SetTx(tx *sql.Tx, outputPath, hash string) error
+	DeleteTx(tx *sql.Tx, outputPath string) error
 }

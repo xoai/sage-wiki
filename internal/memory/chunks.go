@@ -197,7 +197,7 @@ func (s *ChunkStore) SearchChunksMultiQuery(queries []string, limit int) ([]Chun
 }
 
 // NeedsBackfill returns true if chunk index is empty but entries exist.
-func (s *ChunkStore) NeedsBackfill(memStore *Store) bool {
+func (s *ChunkStore) NeedsBackfill(memStore Countable) bool {
 	chunkCount, err := s.Count()
 	if err != nil || chunkCount > 0 {
 		return false

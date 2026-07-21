@@ -20,13 +20,13 @@ func TestEmbedAndFindSimilarQuestion(t *testing.T) {
 	vec := []float32{0.1, 0.2, 0.3, 0.4}
 
 	db.WriteTx(func(tx *sql.Tx) error {
-		return EmbedAndStoreQuestion(tx, HashQuestion("What is Go?"), vec)
+		return store.EmbedAndStoreQuestion(tx, HashQuestion("What is Go?"), vec)
 	})
 
 	var found *SimilarQuestion
 	db.WriteTx(func(tx *sql.Tx) error {
 		var err error
-		found, err = FindSimilarQuestion(tx, vec, 0.9)
+		found, err = store.FindSimilarQuestion(tx, vec, 0.9)
 		return err
 	})
 
@@ -53,14 +53,14 @@ func TestFindSimilarQuestionDissimilar(t *testing.T) {
 	})
 
 	db.WriteTx(func(tx *sql.Tx) error {
-		return EmbedAndStoreQuestion(tx, HashQuestion("What is Go?"), []float32{1, 0, 0, 0})
+		return store.EmbedAndStoreQuestion(tx, HashQuestion("What is Go?"), []float32{1, 0, 0, 0})
 	})
 
 	dissimilar := []float32{0, 0, 0, 1}
 	var found *SimilarQuestion
 	db.WriteTx(func(tx *sql.Tx) error {
 		var err error
-		found, err = FindSimilarQuestion(tx, dissimilar, 0.8)
+		found, err = store.FindSimilarQuestion(tx, dissimilar, 0.8)
 		return err
 	})
 

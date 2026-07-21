@@ -93,7 +93,7 @@ func ProcessOutput(opts ProcessOutputOpts) (*ProcessOutputResult, error) {
 		var match *SimilarQuestion
 		if questionVec != nil {
 			var err error
-			match, err = FindSimilarQuestion(tx, questionVec, opts.Cfg.SimilarityThresholdOrDefault())
+			match, err = NewStore(opts.DB).FindSimilarQuestion(tx, questionVec, opts.Cfg.SimilarityThresholdOrDefault())
 			if err != nil {
 				log.Warn("question similarity search failed", "error", err)
 			}
@@ -210,7 +210,7 @@ func processMatch(tx *sql.Tx, match *SimilarQuestion, opts ProcessOutputOpts,
 		return err
 	}
 	if questionVec != nil {
-		if err := EmbedAndStoreQuestion(tx, qHash, questionVec); err != nil {
+		if err := NewStore(opts.DB).EmbedAndStoreQuestion(tx, qHash, questionVec); err != nil {
 			return fmt.Errorf("store question embedding: %w", err)
 		}
 	}
@@ -233,7 +233,7 @@ func insertNewPending(tx *sql.Tx, questionVec []float32,
 		return err
 	}
 	if questionVec != nil {
-		if err := EmbedAndStoreQuestion(tx, qHash, questionVec); err != nil {
+		if err := NewStore(opts.DB).EmbedAndStoreQuestion(tx, qHash, questionVec); err != nil {
 			return fmt.Errorf("store question embedding: %w", err)
 		}
 	}
