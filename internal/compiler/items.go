@@ -6,55 +6,15 @@ import (
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 // CompileItem represents a source file's compilation state.
-type CompileItem struct {
-	SourcePath  string
-	Hash        string
-	FileType    string
-	SizeBytes   int64
-	Tier        int
-	TierDefault int
-	TierOverride *int // nil = no override
-
-	// Per-pass completion
-	PassIndexed    bool
-	PassEmbedded   bool
-	PassParsed     bool
-	PassSummarized bool
-	PassExtracted  bool
-	PassWritten    bool
-
-	// Compilation metadata
-	CompileID   string
-	Error       string
-	ErrorCount  int
-	SummaryPath string
-
-	// Promotion/demotion signals
-	QueryHitCount int
-	LastQueriedAt string
-	PromotedAt    string
-	DemotedAt     string
-
-	// Quality tracking
-	SourceType   string
-	QualityScore *float64
-
-	CreatedAt string
-	UpdatedAt string
-}
+// CompileItem is aliased to store.CompileItem (P2-1 D2-prime relocation).
+type CompileItem = store.CompileItem
 
 // CompileStats holds tier distribution and progress statistics.
-type CompileStats struct {
-	TotalSources  int
-	ByTier        map[int]int // tier -> count
-	BySourceType  map[string]int
-	FullyCompiled int // pass_written=1
-	WithErrors    int
-	AvgQuality    float64
-}
+type CompileStats = store.CompileStats
 
 // CompileItemStore provides CRUD operations for the compile_items table.
 type CompileItemStore struct {
@@ -583,10 +543,7 @@ func scanCompileItems(rows *sql.Rows) ([]CompileItem, error) {
 }
 
 // QualityScoreRow is a (source_path, quality_score) pair.
-type QualityScoreRow struct {
-	SourcePath string
-	Score      float64
-}
+type QualityScoreRow = store.QualityScoreRow
 
 // ListBelowQualityScore returns items with a non-NULL quality_score below
 // threshold (P2-1: absorbs linter's low-quality scan, passes.go:432).

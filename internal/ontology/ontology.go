@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 // Entity types
@@ -30,40 +31,22 @@ const (
 )
 
 // Entity represents an ontology entity.
-type Entity struct {
-	ID          string `json:"id"`
-	Type        string `json:"type"`
-	Name        string `json:"name"`
-	Definition  string `json:"definition,omitempty"`
-	ArticlePath string `json:"article_path,omitempty"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
-}
+type Entity = store.Entity
 
 // Relation represents a typed, directed edge between entities.
-type Relation struct {
-	ID        string `json:"id"`
-	SourceID  string `json:"source_id"`
-	TargetID  string `json:"target_id"`
-	Relation  string `json:"relation"`
-	CreatedAt string `json:"created_at"`
-}
+type Relation = store.Relation
 
 // Direction for graph traversal.
-type Direction int
+type Direction = store.Direction
 
 const (
-	Outbound Direction = iota
-	Inbound
-	Both
+	Outbound = store.Outbound
+	Inbound  = store.Inbound
+	Both     = store.Both
 )
 
 // TraverseOpts configures graph traversal.
-type TraverseOpts struct {
-	Direction    Direction
-	RelationType string // optional filter
-	MaxDepth     int    // 1-5, default 1
-}
+type TraverseOpts = store.TraverseOpts
 
 // Store manages ontology entities and relations.
 type Store struct {

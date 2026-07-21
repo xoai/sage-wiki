@@ -9,6 +9,7 @@ import (
 
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 // Store manages vector embeddings as BLOBs in SQLite.
@@ -213,11 +214,7 @@ func (s *Store) Delete(id string) error {
 }
 
 // VectorResult represents a cosine similarity search result.
-type VectorResult struct {
-	ID    string
-	Score float64
-	Rank  int
-}
+type VectorResult = store.VectorResult
 
 // Search performs cosine similarity search over the in-memory matrix cache
 // (PERF-01): one lazy load from SQLite, then dot-product passes with no
@@ -343,12 +340,7 @@ func (s *Store) HasChunkVectors(docID string) (bool, error) {
 }
 
 // ChunkVectorResult represents a chunk cosine similarity search result.
-type ChunkVectorResult struct {
-	ChunkID string
-	DocID   string
-	Score   float64
-	Rank    int
-}
+type ChunkVectorResult = store.ChunkVectorResult
 
 // insertChunkSorted maintains a sorted slice of top-k chunk results (descending by score).
 func insertChunkSorted(results []ChunkVectorResult, item ChunkVectorResult, limit int) []ChunkVectorResult {

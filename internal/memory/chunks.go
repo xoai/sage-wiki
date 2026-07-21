@@ -6,45 +6,20 @@ import (
 	"sort"
 
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
-// Countable is the narrow interface NeedsBackfill depends on (P2-1 seam:
-// owned by the concrete package so store.ChunkStore can reference it without
-// an import cycle; *Store satisfies it).
-type Countable interface {
-	Count() (int, error)
-}
+// Countable is aliased to store.Countable (P2-1 D2-prime relocation).
+type Countable = store.Countable
 
 // ChunkEntry represents a chunk to be indexed.
-type ChunkEntry struct {
-	ChunkID     string
-	ChunkIndex  int
-	Heading     string
-	Content     string
-	StartOffset int
-	EndOffset   int
-}
+type ChunkEntry = store.ChunkEntry
 
 // ChunkEntryWithDoc is a ChunkEntry plus its owning doc ID (ListAll rows).
-type ChunkEntryWithDoc struct {
-	ChunkID     string
-	DocID       string
-	ChunkIndex  int
-	Heading     string
-	Content     string
-	StartOffset int
-	EndOffset   int
-}
+type ChunkEntryWithDoc = store.ChunkEntryWithDoc
 
 // ChunkResult represents a chunk search hit.
-type ChunkResult struct {
-	ChunkID   string
-	DocID     string
-	Heading   string
-	Content   string
-	BM25Score float64
-	Rank      int
-}
+type ChunkResult = store.ChunkResult
 
 // ChunkStore manages chunk-level FTS5 entries.
 type ChunkStore struct {

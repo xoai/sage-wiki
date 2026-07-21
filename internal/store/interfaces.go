@@ -3,49 +3,44 @@ package store
 import (
 	"database/sql"
 	"time"
-
-	"github.com/xoai/sage-wiki/internal/compiler"
-	"github.com/xoai/sage-wiki/internal/memory"
-	"github.com/xoai/sage-wiki/internal/ontology"
-	"github.com/xoai/sage-wiki/internal/trust"
-	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
-// Interfaces declared here match TODAY's concrete method sets exactly
-// (interface-growth rule: additions enter in the same task as their
-// implementations — spec §3, plan T4/T7/T8).
+// Interfaces declared here reference the domain types in domain.go (relocated
+// per the D2-prime amendment — this package imports no concrete store
+// packages). Interface growth rule: methods enter in the same task as their
+// implementations.
 
 type EntryStore interface {
-	Add(e memory.Entry) error
-	Update(e memory.Entry) error
+	Add(e Entry) error
+	Update(e Entry) error
 	Delete(id string) error
-	Get(id string) (*memory.Entry, error)
-	Search(query string, tags []string, limit int) ([]memory.SearchResult, error)
+	Get(id string) (*Entry, error)
+	Search(query string, tags []string, limit int) ([]SearchResult, error)
 	Count() (int, error)
 	// T8 additions (D3 moves).
-	ListAll() ([]memory.Entry, error)
+	ListAll() ([]Entry, error)
 	CountUncompiled(query string) (int, error)
 }
 
 type ChunkStore interface {
-	IndexChunks(tx *sql.Tx, docID string, chunks []memory.ChunkEntry) error
+	IndexChunks(tx *sql.Tx, docID string, chunks []ChunkEntry) error
 	DeleteDocChunks(tx *sql.Tx, docID string) error
-	SearchChunks(query string, limit int) ([]memory.ChunkResult, error)
-	SearchChunksMultiQuery(queries []string, limit int) ([]memory.ChunkResult, error)
+	SearchChunks(query string, limit int) ([]ChunkResult, error)
+	SearchChunksMultiQuery(queries []string, limit int) ([]ChunkResult, error)
 	Count() (int, error)
-	NeedsBackfill(memStore memory.Countable) bool
+	NeedsBackfill(memStore Countable) bool
 	// T8 additions.
-	ListAll() ([]memory.ChunkEntryWithDoc, error)
+	ListAll() ([]ChunkEntryWithDoc, error)
 }
 
 type VectorStore interface {
 	Upsert(id string, embedding []float32) error
 	Get(id string) ([]float32, error) // (nil, nil) when absent — legacy contract
 	Delete(id string) error
-	Search(query []float32, limit int) ([]vectors.VectorResult, error)
+	Search(query []float32, limit int) ([]VectorResult, error)
 	UpsertChunk(tx *sql.Tx, chunkID string, docID string, embedding []float32) error
-	SearchChunks(query []float32, limit int) ([]vectors.ChunkVectorResult, error)
-	SearchChunksFiltered(query []float32, docIDs []string, limit int) ([]vectors.ChunkVectorResult, error)
+	SearchChunks(query []float32, limit int) ([]ChunkVectorResult, error)
+	SearchChunksFiltered(query []float32, docIDs []string, limit int) ([]ChunkVectorResult, error)
 	DeleteDocChunkVectors(docID string) error
 	HasChunkVectors(docID string) (bool, error)
 	InvalidateChunkCache()
@@ -55,66 +50,66 @@ type VectorStore interface {
 
 type OntologyStore interface {
 	IsValidType(t string) bool
-	AddEntity(e ontology.Entity) error
-	UpdateEntity(e ontology.Entity) error
-	GetEntity(id string) (*ontology.Entity, error)
-	ListEntities(entityType string) ([]ontology.Entity, error)
-	ListRelations(relationType string, limit int) ([]ontology.Relation, error)
+	AddEntity(e Entity) error
+	UpdateEntity(e Entity) error
+	GetEntity(id string) (*Entity, error)
+	ListEntities(entityType string) ([]Entity, error)
+	ListRelations(relationType string, limit int) ([]Relation, error)
 	DeleteEntity(id string) error
-	AddRelation(r ontology.Relation) error
-	GetRelations(entityID string, direction ontology.Direction, relationType string) ([]ontology.Relation, error)
-	Traverse(entityID string, opts ontology.TraverseOpts) ([]ontology.Entity, error)
+	AddRelation(r Relation) error
+	GetRelations(entityID string, direction Direction, relationType string) ([]Relation, error)
+	Traverse(entityID string, opts TraverseOpts) ([]Entity, error)
 	DetectCycles(entityID string) ([][]string, error)
 	EntityCount(entityType string) (int, error)
 	RelationCount() (int, error)
 	EntityDegree(id string) (int, error)
-	EntitiesCiting(targetID string) ([]ontology.Entity, error)
-	CitedBy(entityID string) ([]ontology.Entity, error)
+	EntitiesCiting(targetID string) ([]Entity, error)
+	CitedBy(entityID string) ([]Entity, error)
 	// T8 additions.
-	AllRelations() ([]ontology.Relation, error)
-	RelationsByType(relationType string) ([]ontology.Relation, error)
+	AllRelations() ([]Relation, error)
+	RelationsByType(relationType string) ([]Relation, error)
 	EntityConnectionCounts() (map[string]int, error)
 }
 
 type TrustStore interface {
-	InsertPending(o *trust.PendingOutput) error
-	Get(id string) (*trust.PendingOutput, error)
-	ListByState(state trust.OutputState) ([]*trust.PendingOutput, error)
+	InsertPending(o *PendingOutput) error
+	Get(id string) (*PendingOutput, error)
+	ListByState(state OutputState) ([]*PendingOutput, error)
 	UpdateGroundingScore(id string, score float64) error
 	IncrementConfirmations(id string) error
-	SetState(id string, state trust.OutputState) error
+	SetState(id string, state OutputState) error
 	Promote(id string) error
 	Demote(id string) error
 	UpdateFilePath(id string, filePath string) error
 	Delete(id string) error
 	IsConfirmed(docID string) bool
 	RecordConfirmation(outputID string, chunkIDs string, answerHash string) error
-	GetConfirmations(outputID string) ([]*trust.Confirmation, error)
-	ListConfirmed() ([]*trust.PendingOutput, error)
-	ListByQuestionHash(qHash string) ([]*trust.PendingOutput, error)
-	ListOlderThan(cutoff time.Time) ([]*trust.PendingOutput, error)
-	// Consensus (moved from package functions, same names/types — spec §3).
+	GetConfirmations(outputID string) ([]*Confirmation, error)
+	ListConfirmed() ([]*PendingOutput, error)
+	ListByQuestionHash(qHash string) ([]*PendingOutput, error)
+	ListOlderThan(cutoff time.Time) ([]*PendingOutput, error)
+	// Consensus (methods since T7, same names/types — spec §3).
 	EmbedAndStoreQuestion(tx *sql.Tx, questionHash string, embedding []float32) error
-	FindSimilarQuestion(tx *sql.Tx, questionVec []float32, threshold float64) (*trust.SimilarQuestion, error)
+	FindSimilarQuestion(tx *sql.Tx, questionVec []float32, threshold float64) (*SimilarQuestion, error)
 }
 
 type CompileItemStore interface {
-	Upsert(item compiler.CompileItem) error
-	GetByPath(path string) (*compiler.CompileItem, error)
-	ListByTier(tier int) ([]compiler.CompileItem, error)
-	ListPending(tier int) ([]compiler.CompileItem, error)
+	Upsert(item CompileItem) error
+	GetByPath(path string) (*CompileItem, error)
+	ListByTier(tier int) ([]CompileItem, error)
+	ListPending(tier int) ([]CompileItem, error)
 	MarkPass(path string, pass string) error
 	SetTier(path string, tier int, reason string) error
 	MarkError(path string, compileErr error) error
 	IncrementQueryHits(paths []string) error
-	Stats() (*compiler.CompileStats, error)
+	Stats() (*CompileStats, error)
 	DeleteByPaths(paths []string) error
 	SetQualityScore(path string, score float64) error
 	Count() (int, error)
 	ListPromotionCandidates(hitThreshold int) ([]string, error)
 	ListDemotionCandidates(staleThreshold string) ([]string, error)
 	// T8 additions.
-	ListBelowQualityScore(threshold float64) ([]compiler.QualityScoreRow, error)
+	ListBelowQualityScore(threshold float64) ([]QualityScoreRow, error)
 }
 
 type OutputIndexStore interface {

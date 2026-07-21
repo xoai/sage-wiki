@@ -5,20 +5,15 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 // Entry represents a searchable wiki entry in FTS5.
-type Entry struct {
-	ID          string
-	Content     string
-	Tags        []string
-	ArticlePath string
-	CreatedAt   time.Time
-}
+// Entry is aliased to store.Entry (P2-1 D2-prime relocation).
+type Entry = store.Entry
 
 // Store manages FTS5 entries.
 type Store struct {
@@ -83,14 +78,7 @@ func (s *Store) Get(id string) (*Entry, error) {
 }
 
 // SearchResult represents a BM25 search hit.
-type SearchResult struct {
-	ID          string
-	Content     string
-	Tags        []string
-	ArticlePath string
-	BM25Score   float64
-	Rank        int
-}
+type SearchResult = store.SearchResult
 
 // Search performs BM25 search with optional tag filtering.
 func (s *Store) Search(query string, tags []string, limit int) ([]SearchResult, error) {
