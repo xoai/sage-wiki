@@ -1,0 +1,62 @@
+// Package storedial is the storage backend factory (P2-1): the only package
+// that imports all backend implementations. Consumers use Open (explicit
+// config) or OpenProject (loads the project's config.yaml).
+package storedial
+
+import (
+	"fmt"
+	"path/filepath"
+
+	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/sqlitestore"
+	"github.com/xoai/sage-wiki/internal/store"
+)
+
+// Open dispatches on cfg.Backend. sqlite → sqlitestore (identical behavior to
+// today's direct storage.Open). postgres → unavailable until the backend
+// lands (plan T12); validation of DSN/dimension happens in config.Load.
+func Open(cfg config.StorageConfig, opts store.OpenOptions) (store.Backend, error) {
+	backend := cfg.Backend
+	if backend == "" {
+		backend = "sqlite"
+	}
+	switch backend {
+	case "sqlite":
+		path := filepath.Join(opts.ProjectDir, ".sage", "wiki.db")
+		return sqlitestore.OpenPath(path, opts.Mode, sqlitestore.Options{
+			ValidRelations:   opts.ValidRelations,
+			ValidEntityTypes: opts.ValidEntityTypes,
+		})
+	case "postgres":
+		return nil, fmt.Errorf("storage: postgres backend not available in this build")
+	default:
+		return nil, fmt.Errorf("storage: unknown storage backend %q (valid: sqlite, postgres)", backend)
+	}
+}
+
+// OpenProject loads <projectDir>/config.yaml and opens its storage backend.
+// Under backend=sqlite (default) the open is byte-identical to storage.Open
+// of <projectDir>/.sage/wiki.db — same file, WAL, pragmas, read pool,
+// migrations.
+func OpenProject(projectDir string, mode store.Mode) (store.Backend, error) {
+	cfg, err := config.Load(filepath.Join(projectDir, "config.yaml"))
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
+	}
+	lt, err := cfg.Storage.LockTimeoutDuration()
+	if err != nil {
+		return nil, err
+	}
+	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
+	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+	return Open(cfg.Storage, store.OpenOptions{
+		Mode:             mode,
+		ProjectDir:       projectDir,
+		LockTimeout:      lt,
+		Pool:             store.PoolConfig{MaxOpen: cfg.Storage.Pool.MaxOpen, MaxIdle: cfg.Storage.Pool.MaxIdle},
+		VectorDimension:  cfg.Storage.VectorDimension,
+		ValidRelations:   ontology.ValidRelationNames(mergedRels),
+		ValidEntityTypes: ontology.ValidEntityTypeNames(mergedTypes),
+	})
+}

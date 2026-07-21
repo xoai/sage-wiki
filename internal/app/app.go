@@ -15,7 +15,10 @@ import (
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/sqlitestore"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/storedial"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -51,16 +54,29 @@ func Open(projectDir string) (*App, error) {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 
-	dbPath := filepath.Join(projectDir, ".sage", "wiki.db")
-	db, err := storage.Open(dbPath)
+	// Routed through the storedial seam (P2-1 T5); under backend=sqlite the
+	// open is byte-identical to storage.Open of .sage/wiki.db. The Backend is
+	// unwrapped to the concrete *storage.DB because App's fields are the
+	// concrete store types — rewiring those is D3-move scope (plan T9).
+	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
+	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+	backend, err := storedial.Open(cfg.Storage, store.OpenOptions{
+		Mode:             store.ModeWriter,
+		ProjectDir:       projectDir,
+		ValidRelations:   ontology.ValidRelationNames(mergedRels),
+		ValidEntityTypes: ontology.ValidEntityTypeNames(mergedTypes),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
+	}
+	db := sqlitestore.Unwrap(backend)
+	if db == nil {
+		backend.Close()
+		return nil, fmt.Errorf("open db: unexpected backend type")
 	}
 
 	mem := memory.NewStore(db)
 	vec := vectors.NewStore(db)
-	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
-	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 	ont := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
 	searcher := hybrid.NewSearcher(mem, vec)
 
