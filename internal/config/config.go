@@ -36,6 +36,33 @@ type Config struct {
 	Trust       TrustConfig    `yaml:"trust,omitempty"`
 	Parsers     ParsersConfig  `yaml:"parsers,omitempty"`
 	TypeSignals []TypeSignal   `yaml:"type_signals,omitempty"`
+	Storage     StorageConfig  `yaml:"storage,omitempty"`
+}
+
+// StorageConfig selects the storage backend. SQLite is the zero-config default;
+// Postgres (with pgvector) is an optional server-grade backend (P2-1).
+type StorageConfig struct {
+	Backend         string `yaml:"backend"`          // "sqlite" (default) | "postgres"
+	DSN             string `yaml:"dsn"`              // postgres only; ${ENV} expansion at Load
+	VectorDimension int    `yaml:"vector_dimension"` // required when backend=postgres
+	LockTimeout     string `yaml:"lock_timeout"`     // default "5s"; parsed via time.ParseDuration
+	Pool            struct {
+		MaxOpen int `yaml:"max_open"` // default 10
+		MaxIdle int `yaml:"max_idle"` // default 2
+	} `yaml:"pool"`
+}
+
+// LockTimeoutDuration parses LockTimeout (default "5s").
+func (s StorageConfig) LockTimeoutDuration() (time.Duration, error) {
+	lt := s.LockTimeout
+	if lt == "" {
+		lt = "5s"
+	}
+	d, err := time.ParseDuration(lt)
+	if err != nil {
+		return 0, fmt.Errorf("config: invalid storage.lock_timeout %q: %w", s.LockTimeout, err)
+	}
+	return d, nil
 }
 
 type VaultConfig struct {
@@ -538,6 +565,14 @@ func Defaults() Config {
 		Trust: TrustConfig{
 			IncludeOutputs: "false",
 		},
+		Storage: StorageConfig{
+			Backend:     "sqlite",
+			LockTimeout: "5s",
+			Pool: struct {
+				MaxOpen int `yaml:"max_open"`
+				MaxIdle int `yaml:"max_idle"`
+			}{MaxOpen: 10, MaxIdle: 2},
+		},
 	}
 }
 
@@ -643,6 +678,29 @@ func (c *Config) Save(path string) error {
 	return os.WriteFile(path, data, 0644)
 }
 
+// validateStorage checks the storage backend selection (P2-1).
+func (c *Config) validateStorage() error {
+	b := c.Storage.Backend
+	if b == "" {
+		b = "sqlite"
+	}
+	if b != "sqlite" && b != "postgres" {
+		return fmt.Errorf("config: invalid storage.backend %q (valid: sqlite, postgres)", c.Storage.Backend)
+	}
+	if _, err := c.Storage.LockTimeoutDuration(); err != nil {
+		return err
+	}
+	if b == "postgres" {
+		if c.Storage.DSN == "" {
+			return fmt.Errorf("config: storage.dsn required when backend=postgres")
+		}
+		if c.Storage.VectorDimension <= 0 {
+			return fmt.Errorf("config: storage.vector_dimension required when backend=postgres")
+		}
+	}
+	return nil
+}
+
 // Validate checks required fields and values.
 func (c *Config) Validate() error {
 	if c.Project == "" {
@@ -679,6 +737,9 @@ func (c *Config) Validate() error {
 		if !validModes[mode] {
 			return fmt.Errorf("config: invalid trust.include_outputs %q (valid: \"false\", \"verified\", \"true\")", mode)
 		}
+	}
+	if err := c.validateStorage(); err != nil {
+		return err
 	}
 	if c.Serve.Transport != "" {
 		if c.Serve.Transport != "stdio" && c.Serve.Transport != "sse" {
