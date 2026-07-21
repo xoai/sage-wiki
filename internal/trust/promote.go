@@ -12,17 +12,16 @@ import (
 	"github.com/xoai/sage-wiki/internal/extract"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
-	"github.com/xoai/sage-wiki/internal/storage"
-	"github.com/xoai/sage-wiki/internal/vectors"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 type IndexStores struct {
-	MemStore   *memory.Store
-	VecStore   *vectors.Store
-	OntStore   *ontology.Store
-	ChunkStore *memory.ChunkStore
+	MemStore   store.EntryStore
+	VecStore   store.VectorStore
+	OntStore   store.OntologyStore
+	ChunkStore store.ChunkStore
 	Embedder   embed.Embedder
-	DB         *storage.DB
+	DB         store.DBHandle
 	ChunkSize  int
 }
 

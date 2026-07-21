@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/store"
 )
 
@@ -23,11 +22,11 @@ type ChunkResult = store.ChunkResult
 
 // ChunkStore manages chunk-level FTS5 entries.
 type ChunkStore struct {
-	db *storage.DB
+	db store.DBHandle
 }
 
 // NewChunkStore creates a new chunk store.
-func NewChunkStore(db *storage.DB) *ChunkStore {
+func NewChunkStore(db store.DBHandle) *ChunkStore {
 	return &ChunkStore{db: db}
 }
 

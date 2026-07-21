@@ -81,6 +81,21 @@ func (t *Tx) Commit() error { return t.commit() }
 // Rollback rolls back and releases the write mutex.
 func (t *Tx) Rollback() error { return t.rollback() }
 
+// DBHandle is the minimal database handle the concrete (sqlite) store
+// implementations need — satisfied by *storage.DB, by Backend, and by the
+// postgres backend. ReadDB/WriteDB are database/sql handles (the D1
+// portability substrate); WriteDB may be nil in reader mode.
+type DBHandle interface {
+	WriteTx(fn func(tx *sql.Tx) error) error
+	ReadDB() *sql.DB
+	WriteDB() *sql.DB
+}
+
+// WriteTxer is the tx-only half of DBHandle, for consumers that never query.
+type WriteTxer interface {
+	WriteTx(fn func(tx *sql.Tx) error) error
+}
+
 // Backend is the aggregate storage seam. sqlite and postgres implementations
 // live in their own packages; consumers see only this.
 type Backend interface {

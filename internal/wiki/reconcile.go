@@ -16,6 +16,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -39,7 +40,7 @@ type ReconcileResult struct {
 // output-hash completion signal LAST — so a crash mid-repair leaves the output
 // out of FTS and is simply re-detected next run. With no embedder (offline
 // launch) it reconciles FTS/chunks/ontology and defers vectors.
-func Reconcile(ctx context.Context, projectDir string, cfg *config.Config, db *storage.DB, embedder embed.Embedder) (*ReconcileResult, error) {
+func Reconcile(ctx context.Context, projectDir string, cfg *config.Config, db store.DBHandle, embedder embed.Embedder) (*ReconcileResult, error) {
 	merged := ontology.MergedRelations(cfg.Ontology.Relations)
 	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 	rc := &reconciler{
@@ -64,7 +65,7 @@ type reconciler struct {
 	manifestPath string
 	outputRel    string
 	chunkSize    int
-	db           *storage.DB
+	db           store.DBHandle
 	mem          *memory.Store
 	vec          *vectors.Store
 	chunks       *memory.ChunkStore

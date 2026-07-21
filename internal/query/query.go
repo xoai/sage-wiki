@@ -22,6 +22,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/search"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
@@ -38,7 +39,7 @@ type QueryResult struct {
 
 // QueryOpts allows callers to pass shared resources.
 type QueryOpts struct {
-	DB *storage.DB // optional — opened from project dir if nil
+	DB store.DBHandle // optional — opened from project dir if nil
 }
 
 // Query performs a Q&A operation: search → read articles → LLM synthesis.
@@ -62,10 +63,11 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 	// config.Load above stays for error-text consistency; on the nil path
 	// cfg is replaced by app.Config (same file, identical content).
 	var a *app.App
-	var db *storage.DB
-	var closeDB bool
+	var db store.DBHandle
+	var closeDB func()
 	if len(opts) > 0 && opts[0].DB != nil {
 		db = opts[0].DB
+		closeDB = func() {}
 	} else {
 		var err error
 		a, err = app.Open(projectDir)
@@ -74,11 +76,9 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 		}
 		cfg = a.Config
 		db = a.DB
-		closeDB = true
+		closeDB = func() { a.Close() }
 	}
-	if closeDB {
-		defer db.Close()
-	}
+	defer closeDB()
 
 	contextStr, sources, chunkIDs, err := buildQueryContext(projectDir, question, topK, cfg, db)
 	if err != nil {
@@ -178,7 +178,7 @@ func withContextPreamble(ctx string) string {
 
 // buildQueryContext runs hybrid search + ontology traversal and assembles
 // the article context string. Returns ("", nil, nil, nil) if no results found.
-func buildQueryContext(projectDir string, question string, topK int, cfg *config.Config, db *storage.DB) (string, []string, []string, error) {
+func buildQueryContext(projectDir string, question string, topK int, cfg *config.Config, db store.DBHandle) (string, []string, []string, error) {
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
 	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
@@ -534,7 +534,7 @@ func docIDToArticlePath(docID string, outputDir string) string {
 // pattern); there is no Open duplication for internal/app to remove.
 // SaveAnswer saves a Q&A answer to the outputs/ directory with frontmatter,
 // FTS5 indexing, embeddings, and ontology edges.
-func SaveAnswer(projectDir string, question string, answer string, sources []string, db *storage.DB) (string, error) {
+func SaveAnswer(projectDir string, question string, answer string, sources []string, db store.DBHandle) (string, error) {
 	cfg, err := config.Load(filepath.Join(projectDir, "config.yaml"))
 	if err != nil {
 		return "", err
@@ -565,7 +565,7 @@ func SaveAnswer(projectDir string, question string, answer string, sources []str
 type autoFileOpts struct {
 	TrustMode  string // "false", "verified", "true" — when not "true", skip indexing
 	ChunkStore *memory.ChunkStore
-	DB         *storage.DB
+	DB         store.DBHandle
 	ChunkSize  int // tokens per chunk (0 = default 800)
 	TrustCfg   *config.TrustConfig
 	Client     *llm.Client

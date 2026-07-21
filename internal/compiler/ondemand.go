@@ -14,7 +14,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
-	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -24,7 +24,7 @@ type OnDemandOpts struct {
 	MaxSources  int // default 20
 	ProjectDir  string
 	Config      *config.Config
-	DB          *storage.DB
+	DB          store.DBHandle
 	Searcher    *hybrid.Searcher
 	Embedder    embed.Embedder
 	Client      *llm.Client

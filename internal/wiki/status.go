@@ -11,6 +11,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -47,7 +48,7 @@ type Stores struct {
 	Mem *memory.Store
 	Vec *vectors.Store
 	Ont *ontology.Store
-	DB  *storage.DB // optional — used for compile_items tier stats
+	DB  store.DBHandle // optional — used for compile_items tier stats
 }
 
 // GetStatus collects wiki stats from the project.

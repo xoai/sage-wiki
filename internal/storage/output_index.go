@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"github.com/xoai/sage-wiki/internal/store"
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
@@ -19,11 +20,11 @@ func HashBytes(b []byte) string {
 // (D5), and treats a missing row (with the file present but unindexed) as the
 // "file-no-DB" case.
 type OutputIndex struct {
-	db *DB
+	db store.DBHandle
 }
 
 // NewOutputIndex returns an OutputIndex over db.
-func NewOutputIndex(db *DB) *OutputIndex {
+func NewOutputIndex(db store.DBHandle) *OutputIndex {
 	return &OutputIndex{db: db}
 }
 

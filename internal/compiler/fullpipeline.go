@@ -14,7 +14,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
-	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -66,7 +66,7 @@ type FullPipelineOpts struct {
 	Config       *config.Config
 	Client       *llm.Client
 	Manifest     *manifest.Manifest
-	DB           *storage.DB
+	DB           store.DBHandle
 	MemStore     *memory.Store
 	VecStore     *vectors.Store
 	ChunkStore   *memory.ChunkStore

@@ -22,7 +22,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/prompts"
-	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -50,7 +50,7 @@ type ArticleWriteOpts struct {
 	VecStore           *vectors.Store
 	OntStore           *ontology.Store
 	ChunkStore         *memory.ChunkStore
-	DB                 *storage.DB
+	DB                 store.DBHandle
 	Embedder           embed.Embedder
 	UserTZ             *time.Location
 	ArticleFields      []string

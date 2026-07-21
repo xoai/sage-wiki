@@ -7,7 +7,6 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/store"
 )
 
@@ -17,11 +16,11 @@ type Entry = store.Entry
 
 // Store manages FTS5 entries.
 type Store struct {
-	db *storage.DB
+	db store.DBHandle
 }
 
 // NewStore creates a new memory store.
-func NewStore(db *storage.DB) *Store {
+func NewStore(db store.DBHandle) *Store {
 	return &Store{db: db}
 }
 

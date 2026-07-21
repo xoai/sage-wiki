@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/store"
 )
 
@@ -18,11 +17,11 @@ type CompileStats = store.CompileStats
 
 // CompileItemStore provides CRUD operations for the compile_items table.
 type CompileItemStore struct {
-	db *storage.DB
+	db store.DBHandle
 }
 
 // NewCompileItemStore creates a new CompileItemStore.
-func NewCompileItemStore(db *storage.DB) *CompileItemStore {
+func NewCompileItemStore(db store.DBHandle) *CompileItemStore {
 	return &CompileItemStore{db: db}
 }
 

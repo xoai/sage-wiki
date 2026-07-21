@@ -8,13 +8,12 @@ import (
 	"math"
 
 	"github.com/xoai/sage-wiki/internal/log"
-	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/store"
 )
 
 // Store manages vector embeddings as BLOBs in SQLite.
 type Store struct {
-	db         *storage.DB
+	db         store.DBHandle
 	docCache   *vectorCache
 	chunkCache *vectorCache
 }
@@ -169,7 +168,7 @@ func (s *Store) Upsert(id string, embedding []float32) error {
 }
 
 // NewStore creates a new vector store.
-func NewStore(db *storage.DB) *Store {
+func NewStore(db store.DBHandle) *Store {
 	return &Store{
 		db:         db,
 		docCache:   &vectorCache{},

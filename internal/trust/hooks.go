@@ -13,7 +13,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
-	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 type ProcessOutputOpts struct {
@@ -27,7 +27,7 @@ type ProcessOutputOpts struct {
 	Client     *llm.Client
 	Model      string
 	Cfg        config.TrustConfig
-	DB         *storage.DB
+	DB         store.DBHandle
 	Stores     IndexStores
 	UserNow    string
 }

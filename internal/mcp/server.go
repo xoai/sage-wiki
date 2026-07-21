@@ -20,7 +20,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/pathsafe"
-	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/vectors"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
@@ -29,7 +29,8 @@ import (
 type Server struct {
 	mcp         *server.MCPServer
 	projectDir  string
-	db          *storage.DB
+	db          store.DBHandle
+	closeDB     func() error
 	mem         *memory.Store
 	vec         *vectors.Store
 	ont         *ontology.Store
@@ -63,6 +64,7 @@ func NewServer(projectDir string, coordinator ...*compiler.CompileCoordinator) (
 	s := &Server{
 		projectDir:  projectDir,
 		db:          a.DB,
+		closeDB:     a.Close,
 		mem:         a.Mem,
 		vec:         a.Vec,
 		ont:         a.Ont,
@@ -89,13 +91,13 @@ func NewServer(projectDir string, coordinator ...*compiler.CompileCoordinator) (
 
 // ServeStdio starts the MCP server on stdio transport.
 func (s *Server) ServeStdio() error {
-	defer s.db.Close()
+	defer s.closeDB()
 	return server.ServeStdio(s.mcp)
 }
 
 // ServeSSE starts the MCP server on SSE transport (localhost only).
 func (s *Server) ServeSSE(port int) error {
-	defer s.db.Close()
+	defer s.closeDB()
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	sseServer := server.NewSSEServer(s.mcp, server.WithBaseURL("http://"+addr))
 	return sseServer.Start(addr)
@@ -103,7 +105,7 @@ func (s *Server) ServeSSE(port int) error {
 
 // Close cleans up resources.
 func (s *Server) Close() error {
-	return s.db.Close()
+	return s.closeDB()
 }
 
 // MCPServer returns the underlying MCP server for testing.

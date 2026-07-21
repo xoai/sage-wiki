@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/store"
 )
 
@@ -50,7 +49,7 @@ type TraverseOpts = store.TraverseOpts
 
 // Store manages ontology entities and relations.
 type Store struct {
-	db               *storage.DB
+	db               store.DBHandle
 	validRelations   map[string]bool
 	validEntityTypes map[string]bool
 }
@@ -58,7 +57,7 @@ type Store struct {
 // NewStore creates an ontology store with application-layer type validation.
 // validRelations lists the allowed relation type names. If nil, all types are accepted.
 // validEntityTypes lists the allowed entity type names. If nil, all types are accepted.
-func NewStore(db *storage.DB, validRelations []string, validEntityTypes []string) *Store {
+func NewStore(db store.DBHandle, validRelations []string, validEntityTypes []string) *Store {
 	s := &Store{db: db}
 	if validRelations != nil {
 		s.validRelations = make(map[string]bool, len(validRelations))
