@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+		"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/log"
 	"gopkg.in/yaml.v3"
@@ -15,11 +16,11 @@ import (
 // promotion/demotion based on usage signals.
 type TierManager struct {
 	cfg   *config.CompilerConfig
-	items *CompileItemStore
+	items store.CompileItemStore
 }
 
 // NewTierManager creates a new TierManager.
-func NewTierManager(cfg *config.CompilerConfig, items *CompileItemStore) *TierManager {
+func NewTierManager(cfg *config.CompilerConfig, items store.CompileItemStore) *TierManager {
 	return &TierManager{cfg: cfg, items: items}
 }
 

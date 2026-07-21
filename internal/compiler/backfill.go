@@ -11,16 +11,15 @@ import (
 	"github.com/xoai/sage-wiki/internal/extract"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/memory"
-	"github.com/xoai/sage-wiki/internal/storage"
-	"github.com/xoai/sage-wiki/internal/vectors"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 // BackfillChunks scans existing articles and indexes them at chunk level.
 // This is called once after migration to populate the chunk index without
 // requiring a full recompile.
 func BackfillChunks(projectDir string, outputDir string, chunkSize int,
-	chunkStore *memory.ChunkStore, vecStore *vectors.Store,
-	embedder embed.Embedder, db *storage.DB) error {
+	chunkStore store.ChunkStore, vecStore store.VectorStore,
+	embedder embed.Embedder, db store.DBHandle) error {
 
 	if chunkSize <= 0 {
 		chunkSize = 800

@@ -25,6 +25,7 @@ import (
 // App bundles a project's shared dependencies.
 type App struct {
 	Config   *config.Config
+	Backend  store.Backend
 	DB       *storage.DB
 	Mem      *memory.Store
 	Vec      *vectors.Store
@@ -82,6 +83,7 @@ func Open(projectDir string) (*App, error) {
 
 	return &App{
 		Config:   cfg,
+		Backend:  backend,
 		DB:       db,
 		Mem:      mem,
 		Vec:      vec,
@@ -100,7 +102,7 @@ func (a *App) Embedder() embed.Embedder {
 	return a.embedder
 }
 
-// Close closes the database. Idempotent (storage.DB.Close is closeOnce).
+// Close closes the backend. Idempotent (storage.DB.Close is closeOnce).
 func (a *App) Close() error {
-	return a.DB.Close()
+	return a.Backend.Close()
 }

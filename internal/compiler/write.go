@@ -23,7 +23,6 @@ import (
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/store"
-	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
 var (
@@ -46,10 +45,10 @@ type ArticleWriteOpts struct {
 	Model              string
 	MaxTokens          int
 	MaxParallel        int
-	MemStore           *memory.Store
-	VecStore           *vectors.Store
-	OntStore           *ontology.Store
-	ChunkStore         *memory.ChunkStore
+	MemStore           store.EntryStore
+	VecStore           store.VectorStore
+	OntStore           store.OntologyStore
+	ChunkStore         store.ChunkStore
 	DB                 store.DBHandle
 	Embedder           embed.Embedder
 	UserTZ             *time.Location
@@ -744,7 +743,7 @@ func buildRelatedConceptsIndex(all []ExtractedConcept, limit int) map[string][]s
 // extractRelations parses article text for relationship patterns and creates ontology edges.
 // Splits article into semantic blocks (paragraph breaks and headings) and only creates
 // relations when a keyword co-occurs with a [[wikilink]] in the same block.
-func extractRelations(conceptID string, content string, ontStore *ontology.Store, patterns []ontology.RelationPattern) {
+func extractRelations(conceptID string, content string, ontStore store.OntologyStore, patterns []ontology.RelationPattern) {
 	blocks := blockSplitRe.Split(content, -1)
 
 	sourceEntity, err := ontStore.GetEntity(conceptID)
@@ -835,7 +834,7 @@ type StripBrokenWikilinkStats struct {
 //
 // The helper is a wrapper around StripBrokenWikilinks; callers that want
 // custom logging or to act on the stats can call that directly.
-func MaybeStripBrokenWikilinks(projectDir, outputDir string, enabled bool, memStore *memory.Store) {
+func MaybeStripBrokenWikilinks(projectDir, outputDir string, enabled bool, memStore store.EntryStore) {
 	if !enabled {
 		return
 	}
@@ -866,7 +865,7 @@ func MaybeStripBrokenWikilinks(projectDir, outputDir string, enabled bool, memSt
 // "concept:"+<filename>. Chunk vectors are intentionally left as-is: removing a
 // dead [[wikilink]] barely changes the article's semantics, so a re-embed is not
 // worth its cost.
-func StripBrokenWikilinks(projectDir, outputDir string, memStore *memory.Store) (StripBrokenWikilinkStats, error) {
+func StripBrokenWikilinks(projectDir, outputDir string, memStore store.EntryStore) (StripBrokenWikilinkStats, error) {
 	var stats StripBrokenWikilinkStats
 	conceptsDir := filepath.Join(projectDir, outputDir, "concepts")
 

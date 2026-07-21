@@ -8,7 +8,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
-	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 // MigrateCheckpoint migrates compile-state.json into compile_items table.
@@ -25,7 +25,7 @@ import (
 // on the next run.
 //
 // Returns true if migration was performed, false if skipped or not needed.
-func MigrateCheckpoint(projectDir string, db *storage.DB, mf *manifest.Manifest, cfg *config.Config) (bool, error) {
+func MigrateCheckpoint(projectDir string, db store.DBHandle, mf *manifest.Manifest, cfg *config.Config) (bool, error) {
 	statePath := legacyCheckpointPath(projectDir)
 	state, err := loadCompileState(statePath)
 	if err != nil {
@@ -157,7 +157,7 @@ func resolveTierDefault(sourcePath string, cfg *config.Config) int {
 // PopulateFromManifest creates compile_items entries for all manifest sources
 // that don't already exist in compile_items. Used on first run after migration V5
 // when there is no compile-state.json to migrate.
-func PopulateFromManifest(db *storage.DB, mf *manifest.Manifest, cfg *config.Config) (int, error) {
+func PopulateFromManifest(db store.DBHandle, mf *manifest.Manifest, cfg *config.Config) (int, error) {
 	items := NewCompileItemStore(db)
 	populated := 0
 

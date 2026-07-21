@@ -15,7 +15,6 @@ import (
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/store"
-	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
 // sourceRootPaths extracts the configured source root paths (sources[].path),
@@ -67,13 +66,13 @@ type FullPipelineOpts struct {
 	Client       *llm.Client
 	Manifest     *manifest.Manifest
 	DB           store.DBHandle
-	MemStore     *memory.Store
-	VecStore     *vectors.Store
-	ChunkStore   *memory.ChunkStore
-	OntStore     *ontology.Store
+	MemStore     store.EntryStore
+	VecStore     store.VectorStore
+	ChunkStore   store.ChunkStore
+	OntStore     store.OntologyStore
 	Embedder     embed.Embedder
 	Backpressure *BackpressureController
-	ItemStore    *CompileItemStore // optional — for per-article quality scoring
+	ItemStore    store.CompileItemStore // optional — for per-article quality scoring
 	CacheEnabled bool
 	Progress     *Progress
 }

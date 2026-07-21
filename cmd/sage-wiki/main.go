@@ -35,6 +35,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/scribe"
 	"github.com/xoai/sage-wiki/internal/skill"
 	"github.com/xoai/sage-wiki/internal/storedial"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/vectors"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
@@ -500,6 +501,18 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// P2-1 T9a-2: inject the Backend so compile honors storage.backend.
+	// Error text matches Compile's own config-load failure byte-for-byte.
+	cfg, err := config.Load(resolveConfigPath(dir))
+	if err != nil {
+		return fmt.Errorf("compile: load config: %w", err)
+	}
+	backend, err := storedial.Open(cfg.Storage, store.OpenOptions{Mode: store.ModeWriter, ProjectDir: dir})
+	if err != nil {
+		return fmt.Errorf("compile: open db: %w", err)
+	}
+	defer backend.Close()
+
 	result, err := compiler.Compile(dir, compiler.CompileOpts{
 		Ctx:     ctx,
 		DryRun:  dryRun,
@@ -507,6 +520,7 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		Batch:   batch,
 		NoCache: noCache,
 		Prune:   prune,
+		Backend: backend,
 	})
 	if err != nil {
 		return err

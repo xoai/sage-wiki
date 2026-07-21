@@ -38,10 +38,11 @@ func (s *Server) handleCompile(ctx context.Context, req mcplib.CallToolRequest) 
 	prune, _ := args["prune"].(bool)
 
 	result, err := compiler.Compile(s.projectDir, compiler.CompileOpts{
-		Ctx:    ctx,
-		DryRun: dryRun,
-		Fresh:  fresh,
-		Prune:  prune,
+		Ctx:     ctx,
+		DryRun:  dryRun,
+		Fresh:   fresh,
+		Prune:   prune,
+		Backend: s.backend,
 	})
 	if err != nil {
 		return errorResult(fmt.Sprintf("compile failed: %v", err)), nil

@@ -25,12 +25,17 @@ import (
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
 // CompileOpts configures a compilation run.
 type CompileOpts struct {
+	// Backend, when set, supplies the storage stack (P2-1 T9a-2); nil uses
+	// the legacy sqlite open. Caller retains Backend ownership.
+	Backend store.Backend
+
 	// Ctx carries cancellation (Ctrl-C / MCP deadline) into the LLM calls and
 	// compile passes; nil is treated as context.Background().
 	Ctx     context.Context
@@ -144,13 +149,14 @@ type compileRun struct {
 	client             *llm.Client
 	tracker            *llm.CostTracker
 	progress           *Progress
-	db                 *storage.DB
-	memStore           *memory.Store
-	vecStore           *vectors.Store
-	chunkStore         *memory.ChunkStore
+	db                 store.DBHandle
+	closeDB            func() // nil-safe; no-op when the Backend is caller-owned
+	memStore           store.EntryStore
+	vecStore           store.VectorStore
+	chunkStore         store.ChunkStore
 	embedder           embed.Embedder
-	pipelineOntStore   *ontology.Store
-	itemStore          *CompileItemStore
+	pipelineOntStore   store.OntologyStore
+	itemStore          store.CompileItemStore
 	tierMgr            *TierManager
 	bp                 *BackpressureController
 	exOpts             []extract.ExtractOpts
@@ -234,7 +240,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	if err := setupStores(projectDir, run); err != nil {
 		return nil, err
 	}
-	defer run.db.Close()
+	defer run.closeDB()
 
 	// Step 4: runTiers — tiers 0/1/3 orchestration, promotions/demotions.
 	runTiers(projectDir, run)
@@ -455,25 +461,43 @@ func resolveMode(projectDir string, run *compileRun) (done bool, result *Compile
 func setupStores(projectDir string, run *compileRun) error {
 	cfg := run.cfg
 
-	// Open DB
-	// P2-1 skip-list: compiler is imported by sqlitestore (CompileItemStore),
-	// so it cannot import storedial — backend selection arrives in T9a via a
-	// caller-injected narrow interface (decisions.md 2026-07-21).
-	dbPath := filepath.Join(projectDir, ".sage", "wiki.db")
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		return fmt.Errorf("compile: open db: %w", err)
+	// P2-1 T9a-2: when the caller injects a Backend, the store stack comes
+	// from its accessors (postgres-ready) and the caller retains ownership;
+	// otherwise the legacy sqlite open builds the concrete stack (compiler
+	// cannot import storedial — import cycle).
+	var db store.DBHandle
+	if b := run.opts.Backend; b != nil {
+		db = b
+		run.closeDB = func() {}
+		run.memStore = b.Entries()
+		run.vecStore = b.Vectors()
+		run.chunkStore = b.Chunks()
+		run.pipelineOntStore = b.Ontology()
+		run.itemStore = b.CompileItems()
+	} else {
+		dbPath := filepath.Join(projectDir, ".sage", "wiki.db")
+		sdb, err := storage.Open(dbPath)
+		if err != nil {
+			return fmt.Errorf("compile: open db: %w", err)
+		}
+		db = sdb
+		run.closeDB = func() { sdb.Close() }
+		run.memStore = memory.NewStore(sdb)
+		run.vecStore = vectors.NewStore(sdb)
+		run.chunkStore = memory.NewChunkStore(sdb)
+		merged := ontology.MergedRelations(cfg.Ontology.Relations)
+		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+		run.pipelineOntStore = ontology.NewStore(sdb, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
 	}
 	run.db = db
 
-	run.memStore = memory.NewStore(db)
-	run.vecStore = vectors.NewStore(db)
 	run.embedder = embed.NewFromConfig(cfg)
-	run.chunkStore = memory.NewChunkStore(db)
 
 	merged := ontology.MergedRelations(cfg.Ontology.Relations)
 	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-	run.pipelineOntStore = ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
+	if run.pipelineOntStore == nil {
+		run.pipelineOntStore = ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
+	}
 
 	// Backfill chunk index if needed (after migration, before first compile)
 	if run.chunkStore.NeedsBackfill(run.memStore) {
@@ -484,7 +508,9 @@ func setupStores(projectDir string, run *compileRun) error {
 	}
 
 	// Initialize compile_items store and tier manager
-	run.itemStore = NewCompileItemStore(db)
+	if run.itemStore == nil {
+		run.itemStore = NewCompileItemStore(db)
+	}
 	run.tierMgr = NewTierManager(&cfg.Compiler, run.itemStore)
 	run.bp = NewBackpressureController(cfg.Compiler.MaxParallel)
 
@@ -1227,7 +1253,7 @@ func hasSoleSourceOrphan(mf *manifest.Manifest, removedPath string) bool {
 // and optionally pruning them. When prune=false and an orphan would result, ALL
 // state mutations for that source are deferred to preserve recovery via later --prune.
 func handleRemovedSources(projectDir string, removed []string, mf *manifest.Manifest,
-	memStore *memory.Store, vecStore *vectors.Store, ontStore *ontology.Store, prune bool) {
+	memStore store.EntryStore, vecStore store.VectorStore, ontStore store.OntologyStore, prune bool) {
 
 	for _, removedPath := range removed {
 		if !prune && hasSoleSourceOrphan(mf, removedPath) {

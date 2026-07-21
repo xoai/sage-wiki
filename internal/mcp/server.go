@@ -30,6 +30,7 @@ type Server struct {
 	mcp         *server.MCPServer
 	projectDir  string
 	db          store.DBHandle
+	backend     store.Backend
 	closeDB     func() error
 	mem         *memory.Store
 	vec         *vectors.Store
@@ -64,6 +65,7 @@ func NewServer(projectDir string, coordinator ...*compiler.CompileCoordinator) (
 	s := &Server{
 		projectDir:  projectDir,
 		db:          a.DB,
+		backend:     a.Backend,
 		closeDB:     a.Close,
 		mem:         a.Mem,
 		vec:         a.Vec,
