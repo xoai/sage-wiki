@@ -94,7 +94,7 @@ func escapeLabel(s string) string {
 }
 
 func getSeries(name, typ string, labels []string, mk func() any) *series {
-	key := labelsKey(name, labels)
+	key := typ + "|" + labelsKey(name, labels) // type is part of identity: a counter/gauge name collision must not no-op
 	registry.Lock()
 	defer registry.Unlock()
 	if s, ok := registry.handles[key]; ok {
@@ -166,19 +166,21 @@ type Histogram struct {
 	self    *series
 }
 
-// Observe records a duration in seconds. Nil-safe.
+// Observe records a duration in seconds. Nil-safe. count/sum are bumped
+// BEFORE the bucket so a concurrent exposition never emits a non-monotonic
+// histogram (+Inf below a finite bucket — Prometheus drops those).
 func (h *Histogram) Observe(seconds float64) {
 	if h == nil {
 		return
 	}
+	h.count.Add(1)
+	h.sum.Add(int64(seconds * 1e9))
 	for i, b := range h.buckets {
 		if seconds <= b {
 			h.counts[i].Add(1)
 			break
 		}
 	}
-	h.count.Add(1)
-	h.sum.Add(int64(seconds * 1e9))
 	register(h.self)
 }
 
@@ -257,6 +259,10 @@ func f64(v float64) string { return strconv.FormatFloat(v, 'g', -1, 64) }
 // empty registry: 200 with no series lines).
 func Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 		var b strings.Builder
 		seenHelp := map[string]bool{}
@@ -324,4 +330,48 @@ func helpText(name string) string {
 		return h
 	}
 	return "auto-generated"
+}
+
+// allowedLabelKV is the D3 cardinality inventory — the ONLY permitted
+// label keys and their permitted values.
+var allowedLabelKV = map[string]map[string]bool{
+	"pass":      {"summarize": true, "extract": true, "write": true},
+	"stage":     {"bm25": true, "vector": true, "rrf": true},
+	"direction": {"input": true, "output": true, "cached": true},
+	"cache":     {"doc": true, "chunk": true},
+	// provider values come from the config enum and are validated by key only.
+	"provider": nil,
+}
+
+// ValidateLabels returns an error for every registered series whose labels
+// fall outside the D3 inventory. Runtime counterpart to the static
+// convention (spec §7.2) — called from hook packages' tests.
+func ValidateLabels() error {
+	var errs []string
+	for _, s := range sortedFamilies() {
+		if s.labels == "" {
+			continue
+		}
+		inner := strings.Trim(s.labels, "{}")
+		for _, pair := range strings.Split(inner, ",") {
+			kv := strings.SplitN(pair, "=", 2)
+			if len(kv) != 2 {
+				errs = append(errs, fmt.Sprintf("%s: malformed label %q", s.name, pair))
+				continue
+			}
+			vals, ok := allowedLabelKV[kv[0]]
+			if !ok {
+				errs = append(errs, fmt.Sprintf("%s: label key %q outside inventory", s.name, kv[0]))
+				continue
+			}
+			v := strings.Trim(kv[1], `"`)
+			if vals != nil && !vals[v] {
+				errs = append(errs, fmt.Sprintf("%s: label value %q for %q outside inventory", s.name, v, kv[0]))
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("metrics: label inventory violations:\n%s", strings.Join(errs, "\n"))
+	}
+	return nil
 }

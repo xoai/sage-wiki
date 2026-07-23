@@ -616,6 +616,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer srv.Close() // also fires the P2-2 shutdown snapshot (D8)
 
 	transport, _ := cmd.Flags().GetString("transport")
 	if transport == "sse" {

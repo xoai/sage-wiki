@@ -80,6 +80,9 @@ func (bc *BackpressureController) Acquire() func() {
 		limit := bc.currentLimit.Load()
 		if current < limit {
 			if bc.inFlight.CompareAndSwap(current, current+1) {
+				// NOTE (P2-2): a release interleaving with this CAS can leave
+				// the gauge stale by one (release writes, then this overwrites);
+				// it self-corrects on the next transition — accepted over a lock.
 				metrics.GaugeNamed("compile_backpressure_in_flight").Set(int64(current + 1))
 				bc.mu.Unlock()
 				break

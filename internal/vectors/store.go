@@ -27,6 +27,7 @@ func (s *Store) loadDocCache() error {
 	loaded := s.docCache.loaded
 	s.docCache.mu.RUnlock()
 	if loaded {
+		metrics.CounterNamed("vector_cache_hits_total", "cache", "doc").Inc() // served-from-loaded, race-free inside the loader (P2-2)
 		return nil
 	}
 
@@ -86,6 +87,7 @@ func (s *Store) loadChunkCache() error {
 	loaded := s.chunkCache.loaded
 	s.chunkCache.mu.RUnlock()
 	if loaded {
+		metrics.CounterNamed("vector_cache_hits_total", "cache", "chunk").Inc() // served-from-loaded (P2-2)
 		return nil
 	}
 
@@ -226,9 +228,6 @@ func (s *Store) Search(query []float32, limit int) ([]VectorResult, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	if s.docCache.isLoaded() {
-		metrics.CounterNamed("vector_cache_hits_total", "cache", "doc").Inc() // served-from-loaded (P2-2)
-	}
 	if err := s.loadDocCache(); err != nil {
 		return nil, err
 	}
@@ -265,9 +264,6 @@ func (s *Store) SearchChunks(query []float32, limit int) ([]ChunkVectorResult, e
 	if limit <= 0 {
 		limit = 20
 	}
-	if s.chunkCache.isLoaded() {
-		metrics.CounterNamed("vector_cache_hits_total", "cache", "chunk").Inc()
-	}
 	if err := s.loadChunkCache(); err != nil {
 		return nil, err
 	}
@@ -299,9 +295,6 @@ func (s *Store) SearchChunksFiltered(query []float32, docIDs []string, limit int
 		docIDs = docIDs[:100]
 	}
 
-	if s.chunkCache.isLoaded() {
-		metrics.CounterNamed("vector_cache_hits_total", "cache", "chunk").Inc()
-	}
 	if err := s.loadChunkCache(); err != nil {
 		return nil, err
 	}

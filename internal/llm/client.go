@@ -240,7 +240,9 @@ func (c *Client) chatCompletionDirect(ctx context.Context, messages []Message, o
 			if resp.StatusCode == 429 {
 				metrics.CounterNamed("llm_rate_limited_total").Inc() // first discrimination (P2-2; typed error at :256 not re-counted)
 			}
-			metrics.CounterNamed("llm_retries_total").Inc()
+			if attempt+1 < 4 {
+				metrics.CounterNamed("llm_retries_total").Inc() // a retry actually follows (P2-2; final attempt is not a retry)
+			}
 			log.Warn("retryable error, retrying", "status", resp.StatusCode, "attempt", attempt+1, "delay", delay)
 			// Cancellable backoff: a cancel during the sleep returns promptly.
 			select {
