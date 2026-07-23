@@ -13,23 +13,19 @@ import (
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/hybrid"
-	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
-	"github.com/xoai/sage-wiki/internal/sqlitestore"
-	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/storedial"
 	"github.com/xoai/sage-wiki/internal/store"
-	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
 // App bundles a project's shared dependencies.
 type App struct {
 	Config   *config.Config
 	Backend  store.Backend
-	DB       *storage.DB
-	Mem      *memory.Store
-	Vec      *vectors.Store
-	Ont      *ontology.Store
+	DB       store.DBHandle // the Backend itself (ReadDB/WriteDB/WriteTx)
+	Mem      store.EntryStore
+	Vec      store.VectorStore
+	Ont      store.OntologyStore
 	Searcher *hybrid.Searcher
 
 	embedderOnce sync.Once
@@ -70,25 +66,14 @@ func Open(projectDir string) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
-	db := sqlitestore.Unwrap(backend)
-	if db == nil {
-		backend.Close()
-		return nil, fmt.Errorf("open db: unexpected backend type")
-	}
-
-	mem := memory.NewStore(db)
-	vec := vectors.NewStore(db)
-	ont := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
-	searcher := hybrid.NewSearcher(mem, vec)
-
 	return &App{
 		Config:   cfg,
 		Backend:  backend,
-		DB:       db,
-		Mem:      mem,
-		Vec:      vec,
-		Ont:      ont,
-		Searcher: searcher,
+		DB:       backend,
+		Mem:      backend.Entries(),
+		Vec:      backend.Vectors(),
+		Ont:      backend.Ontology(),
+		Searcher: hybrid.NewSearcher(backend.Entries(), backend.Vectors()),
 	}, nil
 }
 

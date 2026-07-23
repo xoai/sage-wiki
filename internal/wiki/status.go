@@ -45,9 +45,9 @@ type StatusInfo struct {
 
 // Stores holds shared store references to avoid re-opening the DB.
 type Stores struct {
-	Mem *memory.Store
-	Vec *vectors.Store
-	Ont *ontology.Store
+	Mem store.EntryStore
+	Vec store.VectorStore
+	Ont store.OntologyStore
 	DB  store.DBHandle // optional — used for compile_items tier stats
 }
 
@@ -82,9 +82,9 @@ func GetStatus(projectDir string, stores *Stores) (*StatusInfo, error) {
 	info.PendingCount = len(mf.PendingSources())
 
 	// Use provided stores or open DB
-	var memStore *memory.Store
-	var vecStore *vectors.Store
-	var ontStore *ontology.Store
+	var memStore store.EntryStore
+	var vecStore store.VectorStore
+	var ontStore store.OntologyStore
 
 	if stores != nil {
 		memStore = stores.Mem

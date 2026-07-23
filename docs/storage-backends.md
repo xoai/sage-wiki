@@ -8,8 +8,11 @@ sage-wiki stores all persistent state through a backend seam
 | `sqlite` (default) | Zero-config single-file vault (`.sage/wiki.db`) | none |
 | `postgres` | Multi-user server mode, pgvector ANN search | none |
 
-Everything above the seam — CLI, MCP, TUI, web, compile, query, reconcile —
-works against either backend through the same store interfaces.
+Everything above the seam — CLI, MCP, TUI, web, compile, re-embed, query,
+reconcile — opens storage through the same factory and store interfaces, so
+all of them honor `storage.backend`. (The `status` command's no-shared-stores
+fallback and `wiki init`'s bootstrap remain sqlite-only; see notes in
+`decisions.md` for those two residual paths.)
 
 ## Choosing a backend
 

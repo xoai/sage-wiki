@@ -87,6 +87,7 @@ func (t *Tx) Rollback() error { return t.rollback() }
 // portability substrate); WriteDB may be nil in reader mode.
 type DBHandle interface {
 	WriteTx(fn func(tx *sql.Tx) error) error
+	BeginWrite() (*Tx, error)
 	ReadDB() *sql.DB
 	WriteDB() *sql.DB
 }

@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 // OpenOptions controls DB open behavior (P2-1 reader/writer modes).
@@ -16,9 +17,9 @@ type OpenOptions struct {
 	ReadOnly bool
 }
 
-// ErrSchemaVersionMismatch reports a reader open against a DB whose
-// schema_version differs from this binary's expected version.
-var ErrSchemaVersionMismatch = errors.New("storage: schema version mismatch — run any writer command once")
+// ErrSchemaVersionMismatch is the backend-neutral schema sentinel (aliased
+// to store.ErrSchemaVersion so errors.Is works across backends).
+var ErrSchemaVersionMismatch = store.ErrSchemaVersion
 
 // OpenWithOptions is Open with explicit options; Open(path) is
 // OpenWithOptions(path, OpenOptions{}) with identical behavior.
@@ -65,33 +66,11 @@ func CurrentSchemaVersion() int {
 	return len(schemaMigrations)
 }
 
-// WriteTx wraps *sql.Tx and releases the write mutex on Commit or Rollback
-// (exactly once, whichever happens first). Obtained from BeginWrite.
-type WriteTx struct {
-	*sql.Tx
-	mu   *sync.Mutex
-	once sync.Once
-}
-
-// Commit commits the transaction and releases the write mutex.
-func (w *WriteTx) Commit() error {
-	err := w.Tx.Commit()
-	w.once.Do(func() { w.mu.Unlock() })
-	return err
-}
-
-// Rollback rolls back the transaction and releases the write mutex.
-func (w *WriteTx) Rollback() error {
-	err := w.Tx.Rollback()
-	w.once.Do(func() { w.mu.Unlock() })
-	return err
-}
-
 // BeginWrite acquires the write mutex and begins a long-lived write
-// transaction (reembed). The mutex is held until the returned WriteTx's
-// Commit or Rollback. Tx-scoped work must not call WriteTx (the mutex is
-// not reentrant). Errors on a read-only DB.
-func (db *DB) BeginWrite() (*WriteTx, error) {
+// transaction (reembed). The mutex is held until the returned tx's Commit
+// or Rollback (store.Tx handles the release, exactly once). Tx-scoped work
+// must not call WriteTx (the mutex is not reentrant). Errors on read-only.
+func (db *DB) BeginWrite() (*store.Tx, error) {
 	if db.write == nil {
 		return nil, errors.New("storage.BeginWrite: read-only database")
 	}
@@ -101,5 +80,9 @@ func (db *DB) BeginWrite() (*WriteTx, error) {
 		db.writeMu.Unlock()
 		return nil, fmt.Errorf("storage.BeginWrite: %w", err)
 	}
-	return &WriteTx{Tx: tx, mu: &db.writeMu}, nil
+	var once sync.Once
+	release := func() { once.Do(func() { db.writeMu.Unlock() }) }
+	return store.NewTx(tx,
+		func() error { err := tx.Commit(); release(); return err },
+		func() error { err := tx.Rollback(); release(); return err }), nil
 }

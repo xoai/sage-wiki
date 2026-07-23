@@ -115,11 +115,7 @@ func (b *backend) BeginWrite() (*store.Tx, error) {
 	if b.mode == store.ModeReader {
 		return nil, store.ErrReadOnly
 	}
-	wt, err := b.db.BeginWrite()
-	if err != nil {
-		return nil, err
-	}
-	return store.NewTx(wt.Tx, wt.Commit, wt.Rollback), nil
+	return b.db.BeginWrite()
 }
 
 func (b *backend) ReadDB() *sql.DB  { return b.db.ReadDB() }

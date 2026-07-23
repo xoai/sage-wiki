@@ -21,7 +21,6 @@ import (
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/search"
-	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/vectors"
@@ -134,9 +133,9 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 	// Auto-file to outputs/. Store locals come from the App on the
 	// container path and are built inline exactly as before on the
 	// shared-handle path; both feed autoFile identically (P1-8).
-	var memStore *memory.Store
-	var vecStore *vectors.Store
-	var ontStore *ontology.Store
+	var memStore store.EntryStore
+	var vecStore store.VectorStore
+	var ontStore store.OntologyStore
 	var embedder embed.Embedder
 	if a != nil {
 		memStore, vecStore, ontStore, embedder = a.Mem, a.Vec, a.Ont, a.Embedder()
@@ -575,7 +574,7 @@ type autoFileOpts struct {
 
 // autoFile saves the query result to wiki/outputs/ with frontmatter.
 func autoFile(projectDir string, outputDir string, result *QueryResult,
-	memStore *memory.Store, vecStore *vectors.Store, ontStore *ontology.Store,
+	memStore store.EntryStore, vecStore store.VectorStore, ontStore store.OntologyStore,
 	embedder embed.Embedder, userNow string, opts ...autoFileOpts) (string, error) {
 
 	// Check trust mode BEFORE writing any file — trust modes delegate to
@@ -733,7 +732,7 @@ format: %s
 
 // StreamQuery performs Q&A with streaming token output and auto-files to outputs/.
 // The context is used to cancel the LLM call on client disconnect.
-func StreamQuery(ctx context.Context, projectDir string, question string, topK int, tokenCB func(string), db *storage.DB) ([]string, error) {
+func StreamQuery(ctx context.Context, projectDir string, question string, topK int, tokenCB func(string), db store.DBHandle) ([]string, error) {
 	if topK <= 0 {
 		topK = 5
 	}
@@ -747,7 +746,6 @@ func StreamQuery(ctx context.Context, projectDir string, question string, topK i
 	// the app container (P1-8). cfg is replaced by app.Config on that path
 	// (same file, identical content).
 	var a *app.App
-	var closeDB bool
 	if db == nil {
 		var err error
 		a, err = app.Open(projectDir)
@@ -756,10 +754,7 @@ func StreamQuery(ctx context.Context, projectDir string, question string, topK i
 		}
 		cfg = a.Config
 		db = a.DB
-		closeDB = true
-	}
-	if closeDB {
-		defer db.Close()
+		defer a.Close()
 	}
 
 	contextStr, sources, streamChunkIDs, err := buildQueryContext(projectDir, question, topK, cfg, db)
@@ -802,9 +797,9 @@ func StreamQuery(ctx context.Context, projectDir string, question string, topK i
 		}
 		// Store locals from the App on the container path, inline as
 		// before on the shared-handle path (P1-8).
-		var memStore *memory.Store
-		var vecStore *vectors.Store
-		var ontStore *ontology.Store
+		var memStore store.EntryStore
+		var vecStore store.VectorStore
+		var ontStore store.OntologyStore
 		var embedder embed.Embedder
 		if a != nil {
 			memStore, vecStore, ontStore, embedder = a.Mem, a.Vec, a.Ont, a.Embedder()

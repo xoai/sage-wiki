@@ -9,12 +9,14 @@ import (
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
 // ReEmbed regenerates vector embeddings for all FTS5 entries
-// without re-summarizing or recompiling.
-func ReEmbed(projectDir string) (int, error) {
+// without re-summarizing or recompiling. backend may be nil (legacy sqlite
+// open); when set, the caller retains ownership (P2-1 T16).
+func ReEmbed(projectDir string, backend store.Backend) (int, error) {
 	cfg, err := config.Load(filepath.Join(projectDir, "config.yaml"))
 	if err != nil {
 		return 0, fmt.Errorf("re-embed: load config: %w", err)
@@ -25,17 +27,33 @@ func ReEmbed(projectDir string) (int, error) {
 		return 0, fmt.Errorf("re-embed: no embedding provider available")
 	}
 
-	// P2-1 skip-list: import cycle (sqlitestore imports compiler) — backend
-	// selection arrives in T9a via caller-injected interface.
-	db, err := storage.Open(filepath.Join(projectDir, ".sage", "wiki.db"))
-	if err != nil {
-		return 0, fmt.Errorf("re-embed: open db: %w", err)
+	// compiler cannot import storedial (cycle) — the Backend is injected by
+	// leaf callers; nil keeps the legacy sqlite open byte-identical.
+	var db store.DBHandle
+	if backend != nil {
+		db = backend
+		defer func() {}() // caller owns the Backend
+	} else {
+		sdb, err := storage.Open(filepath.Join(projectDir, ".sage", "wiki.db"))
+		if err != nil {
+			return 0, fmt.Errorf("re-embed: open db: %w", err)
+		}
+		defer sdb.Close()
+		db = sdb
 	}
-	defer db.Close()
 
-	memStore := memory.NewStore(db)
-	vecStore := vectors.NewStore(db)
-	chunkStore := memory.NewChunkStore(db)
+	var memStore store.EntryStore
+	var vecStore store.VectorStore
+	var chunkStore store.ChunkStore
+	if backend != nil {
+		memStore = backend.Entries()
+		vecStore = backend.Vectors()
+		chunkStore = backend.Chunks()
+	} else {
+		memStore = memory.NewStore(db)
+		vecStore = vectors.NewStore(db)
+		chunkStore = memory.NewChunkStore(db)
+	}
 
 	// Get all FTS5 entries (P2-1: via the EntryStore seam)
 	storeEntries, err := memStore.ListAll()

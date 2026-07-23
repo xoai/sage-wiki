@@ -430,7 +430,17 @@ func runCompile(cmd *cobra.Command, args []string) error {
 
 	reEmbed, _ := cmd.Flags().GetBool("re-embed")
 	if reEmbed {
-		count, err := compiler.ReEmbed(dir)
+		// P2-1: inject the Backend so re-embed honors storage.backend.
+		cfg, err := config.Load(resolveConfigPath(dir))
+		if err != nil {
+			return fmt.Errorf("re-embed: load config: %w", err)
+		}
+		backend, err := storedial.Open(cfg.Storage, store.OpenOptions{Mode: store.ModeWriter, ProjectDir: dir})
+		if err != nil {
+			return fmt.Errorf("re-embed: open db: %w", err)
+		}
+		defer backend.Close()
+		count, err := compiler.ReEmbed(dir, backend)
 		if err != nil {
 			return err
 		}

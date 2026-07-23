@@ -16,8 +16,8 @@
   modes (hub federated search is now read-only, no migrations). A backend
   conformance suite (`internal/storetest`) pins identical store semantics
   across both backends (Postgres leg runs under `TEST_DATABASE_URL`). Raw-SQL
-  escape hatches across web/mcp/linter/status/reembed moved behind store
-  methods; hub read pools are sized to not exhaust `max_connections`.
+  escape hatches across web/mcp/linter/reembed moved behind store methods;
+  hub read pools are sized to not exhaust `max_connections`.
   See `docs/storage-backends.md` for setup, switching, and pool sizing.
   Note: multi-writer concurrency remains P2-3 scope — the single-writer
   process model is unchanged.

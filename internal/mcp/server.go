@@ -17,11 +17,9 @@ import (
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
-	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/pathsafe"
 	"github.com/xoai/sage-wiki/internal/store"
-	"github.com/xoai/sage-wiki/internal/vectors"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
 
@@ -32,9 +30,9 @@ type Server struct {
 	db          store.DBHandle
 	backend     store.Backend
 	closeDB     func() error
-	mem         *memory.Store
-	vec         *vectors.Store
-	ont         *ontology.Store
+	mem         store.EntryStore
+	vec         store.VectorStore
+	ont         store.OntologyStore
 	searcher    *hybrid.Searcher
 	cfg         *config.Config
 	embedder    embed.Embedder
@@ -116,13 +114,13 @@ func (s *Server) MCPServer() *server.MCPServer {
 }
 
 // MemStore returns the memory store for testing.
-func (s *Server) MemStore() *memory.Store { return s.mem }
+func (s *Server) MemStore() store.EntryStore { return s.mem }
 
 // VecStore returns the vector store for testing.
-func (s *Server) VecStore() *vectors.Store { return s.vec }
+func (s *Server) VecStore() store.VectorStore { return s.vec }
 
 // OntStore returns the ontology store for testing.
-func (s *Server) OntStore() *ontology.Store { return s.ont }
+func (s *Server) OntStore() store.OntologyStore { return s.ont }
 
 // CallTool invokes a tool handler by name. Used for testing.
 func (s *Server) CallTool(ctx context.Context, name string, req mcp.CallToolRequest) *mcp.CallToolResult {
@@ -356,10 +354,10 @@ func (s *Server) handleRead(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 
 func (s *Server) handleStatus(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	info, err := wiki.GetStatus(s.projectDir, &wiki.Stores{
-		Mem: s.mem,
-		Vec: s.vec,
-		Ont: s.ont,
-		DB:  s.db,
+		Mem:   s.mem,
+		Vec:   s.vec,
+		Ont:   s.ont,
+		DB:    s.db,
 	})
 	if err != nil {
 		return errorResult(err.Error()), nil

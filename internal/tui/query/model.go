@@ -12,7 +12,7 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	queryPkg "github.com/xoai/sage-wiki/internal/query"
-	"github.com/xoai/sage-wiki/internal/storage"
+		"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/tui"
 	"github.com/xoai/sage-wiki/internal/tui/components"
 )
@@ -55,11 +55,11 @@ type Model struct {
 	height     int
 
 	projectDir string
-	db         *storage.DB
+	db         store.DBHandle
 }
 
 // New creates a conversational query model.
-func New(projectDir string, db *storage.DB) Model {
+func New(projectDir string, db store.DBHandle) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Ask a question..."
 	ti.Focus()

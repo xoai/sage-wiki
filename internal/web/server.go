@@ -18,26 +18,25 @@ import (
 	"sync/atomic"
 	"time"
 
+		"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
-	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/pathsafe"
 	"github.com/xoai/sage-wiki/internal/query"
-	"github.com/xoai/sage-wiki/internal/storage"
-	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
 // WebServer serves the web UI and REST API.
 type WebServer struct {
 	projectDir   string
-	db           *storage.DB
-	mem          *memory.Store
-	vec          *vectors.Store
-	ont          *ontology.Store
+	db           store.DBHandle
+	backend      store.Backend
+	mem          store.EntryStore
+	vec          store.VectorStore
+	ont          store.OntologyStore
 	searcher     *hybrid.Searcher
 	cfg          *config.Config
 	wsClients    map[chan string]bool
@@ -70,6 +69,7 @@ func NewWebServer(projectDir string) (*WebServer, error) {
 	s := &WebServer{
 		projectDir: projectDir,
 		db:         a.DB,
+		backend:    a.Backend,
 		mem:        a.Mem,
 		vec:        a.Vec,
 		ont:        a.Ont,
@@ -179,7 +179,7 @@ func (s *WebServer) Start(addr string) error {
 
 // Close cleans up resources.
 func (s *WebServer) Close() error {
-	return s.db.Close()
+	return s.backend.Close()
 }
 
 // watchOutputDir watches the output directory for changes and broadcasts

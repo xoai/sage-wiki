@@ -108,6 +108,21 @@ func EntriesConformance(new BackendFactory) func(*testing.T) {
 			t.Errorf("hyphenated query errored: %v", err)
 		}
 
+		// CountUncompiled: entries join compile_items tier<3 (seeded via
+		// WriteTx raw SQL to avoid an import cycle).
+		if err := b.WriteTx(func(tx *sql.Tx) error {
+			_, err := tx.Exec("INSERT INTO compile_items (source_path, tier) VALUES ('a.md', 1)")
+			return err
+		}); err != nil {
+			t.Fatalf("seed compile_items: %v", err)
+		}
+		if n, err := es.CountUncompiled("zebra"); err != nil || n != 1 {
+			t.Errorf("CountUncompiled = %d, %v; want 1 (only a.md is tier<3)", n, err)
+		}
+		if n, _ := es.CountUncompiled(""); n != 0 {
+			t.Errorf("CountUncompiled(empty) = %d, want 0", n)
+		}
+
 		// Update + Delete + Count.
 		e.Content = "zebra revised"
 		if err := es.Update(e); err != nil {

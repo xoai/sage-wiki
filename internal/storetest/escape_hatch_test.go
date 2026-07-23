@@ -95,9 +95,6 @@ func repoRoot(t *testing.T) string {
 }
 
 func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
 	var buf [8]byte
 	i := len(buf)
 	for n > 0 {
