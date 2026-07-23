@@ -11,14 +11,6 @@ import (
 // ok == false UNCONDITIONALLY — even wrapping a raw openai provider
 // (design D2: byte-identical fallback for openai-compatible).
 
-func (p *geminiProvider) FormatStructuredRequest(messages []Message, schema JSONSchema, opts CallOpts) (func() (*http.Request, error), bool, error) {
-	return nil, false, nil // real impl in T5
-}
-
-func (p *geminiProvider) ParseStructuredResponse(body []byte) (json.RawMessage, error) {
-	return nil, ErrStructuredUnsupported
-}
-
 func (p *nonBatchProvider) FormatStructuredRequest(messages []Message, schema JSONSchema, opts CallOpts) (func() (*http.Request, error), bool, error) {
 	return nil, false, nil // pinned: wrappers always fall back (design D2)
 }
