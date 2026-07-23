@@ -41,8 +41,18 @@ remove the failure class; openai-compatible keeps the fallback.
 type JSONSchema struct {
     Name        string
     Description string
-    Schema      map[string]any // JSON Schema draft-07 subset
+    Schema      map[string]any // the site's CANONICAL schema (draft-07 subset; array-shaped sites author the array)
+    IsArray     bool           // true when Schema is array-shaped → native path wraps in an envelope
 }
+
+// Envelope returns the object-rooted wrapper the native mechanisms
+// require: {type: object, properties: {items: Schema}, required: [items],
+// additionalProperties: false}. Object-shaped sites get Schema unchanged.
+func (s JSONSchema) Envelope() map[string]any
+
+// ValidationTargets pins (i3): native path validates the PARSED ENVELOPE
+// against Envelope(), then unwraps; fallback path validates the bare
+// array/object against Schema. Both return the bare payload.
 
 func (c *Client) StructuredCompletion(ctx context.Context, messages []Message, schema JSONSchema, opts CallOpts) (json.RawMessage, error)
 ```
@@ -131,13 +141,19 @@ false` presence-only, `enum`, **`minItems`/`maxItems`** (added i1 —
 rerank's silent-empty-entries failure mode is undetectable without it).
 Anything beyond the subset is ignored. A validation failure is a CONTENT
 error returned to the caller (mapped to each site's existing graceful
-degrade, D5). **OpenAI strict-mode compliance (i1+i2):** every object sets
-`additionalProperties: false` AND lists ALL properties in `required`.
-Optionality (concepts.aliases) is expressed as a **nullable union**
-(`type: ["array", "null"]`) — strict mode rejects non-required
-properties outright. The validator accepts null for nullable-union
-fields; anthropic/gemini formatters use the same schema minus the union
-wrinkle (their mechanisms tolerate non-required).
+degrade, D5). **One canonical schema per site, three derived forms (i3 reconciled):**
+the canonical schema uses draft-07 optional fields (optionals simply
+absent from `required` — e.g. concepts.aliases). Per provider:
+- **openai**: formatter DERIVES strict form — all properties moved into
+  `required`, optionals become nullable unions (`type: ["array","null"]`),
+  `additionalProperties: false` everywhere.
+- **anthropic**: canonical schema passed as-is (input_schema tolerates
+  optional properties).
+- **gemini**: formatter maps draft-07 → OpenAPI subset (optional fields
+  → `nullable: true`; additionalProperties dropped).
+The validator treats missing-optional and null-optional identically, so
+per-provider output-shape divergence (omitted vs null aliases) is
+absorbed.
 
 ### D5 — Fallback semantics (mechanism vs content errors, exactly)
 
@@ -163,14 +179,12 @@ wrinkle (their mechanisms tolerate non-required).
   StructuredCompletion error maps to the SAME degrade path as today's
   parse error — no behavior change on failure, only on success quality.
 
-### D6 — Schema representation per provider family
+### D6 — Schema representation: canonical + derived (i1/i3 reconciled)
 
-One canonical JSON Schema per call site (authored in each call site's
-package as the single source of truth). The gemini formatter maps
-draft-07 subset → OpenAPI subset (nullable unions → `nullable: true`,
-`additionalProperties` dropped, `required` kept, no `$ref` in our
-schemas). The anthropic/openai formatters pass the schema through
-unchanged (both accept draft-07 subset).
+One canonical JSON Schema per call site (authored in the site's package,
+draft-07 subset, optional fields optional). Per-provider DERIVED forms
+as pinned in D4: openai strict-form derivation, anthropic as-is, gemini
+OpenAPI mapping. No `$ref` in any authored schema.
 
 ### D7 — Structured path is deliberately NON-cached (i1 correction)
 
