@@ -1,18 +1,14 @@
 # Design: P2-4 — Provider-native structured outputs
 
-**Status:** draft, review iteration 3 (first commit of PR per Phase-2 spec preamble)
+**Status:** draft, review iteration 4 (first commit of PR per Phase-2 spec preamble)
 
 > Iteration log: i1 3C/5M/5S/1cos (interface redesign, tool_use extraction,
 > envelope, shapes, strict mode, wrapper decision, StatusError, non-cached).
-> i2 1C/3M/3S/2cos — no execution model (providers Format/Parse, Client owns
-> transport), unwrap ownership ambiguous, optional-field nullable unions,
-> grounding minItems contradicts its prompt contract. All folded in below.
+> i2 1C/3M/3S/2cos (execution model, unwrap ownership, nullable unions,
+> grounding minItems). i3 0C/2M/2S (derived forms, two-view JSONSchema).
+> i4 0C/0M/4S/1cos (envelope degrade for arrays, derivation source artifact,
+> tool-name rule, grounding required, log dedupe). All folded in below.
 
-> Iteration log: i1 found 3C/6M/5S/1cos — interface doesn't compose with the
-> provider split (no body-map seam), anthropic ParseResponse discards
-> tool_use blocks, root-array schemas incompatible with both mechanisms,
-> wrong pinned shapes, OpenAI strict-mode rules, wrapper contradiction,
-> untyped degrade trigger, cache-prefix breakage. All redesigned below.
 **Spec:** `.sage/docs/sage-wiki-upgrade/06-spec-phase2-strategic.md` §P2-4
 **Cycle:** `.sage/work/20260723-p2-4-structured-outputs/`
 
@@ -103,6 +99,8 @@ used.
 
 - **anthropic**: `tools: [{name, description, input_schema}]` +
   `tool_choice: {type: "tool", name}` in its own formatBody variant.
+  Tool name rule (design, not just tests): `schema.Name` sanitized to
+  `^[a-zA-Z0-9_-]{1,64}$`, default `json_response`.
   Extraction REQUIRES extending anthropic's ParseResponse to also collect
   `tool_use` blocks into `Response.ToolCalls` (new field — today it keeps
   only text/thinking and discards tool_use entirely, i1-CRITICAL-2).
@@ -144,8 +142,10 @@ error returned to the caller (mapped to each site's existing graceful
 degrade, D5). **One canonical schema per site, three derived forms (i3 reconciled):**
 the canonical schema uses draft-07 optional fields (optionals simply
 absent from `required` — e.g. concepts.aliases). Per provider:
-- **openai**: formatter DERIVES strict form — all properties moved into
-  `required`, optionals become nullable unions (`type: ["array","null"]`),
+- **openai**: formatter DERIVES strict form from the **envelope** for
+  array sites (wrapper + strict-form inner items) and from the canonical
+  schema for object sites — all properties moved into `required`,
+  optionals become nullable unions (`type: ["array","null"]`),
   `additionalProperties: false` everywhere.
 - **anthropic**: canonical schema passed as-is (input_schema tolerates
   optional properties).
@@ -167,7 +167,9 @@ absorbed.
   RateLimitError's pattern) so the structured path degrades json_schema →
   json_object ONCE, only when Code==400 AND Body mentions
   "response_format"/"json_schema" (a context-length 400 never degrades).
-  If the json_object retry also 400s, plain-completion + fence-strip.
+  For ARRAY-shaped sites the json_object retry uses the ENVELOPE schema
+  (object root stays valid; validated as envelope, unwrapped) — not a
+  wasted hop. If the json_object retry also 400s, plain-completion + fence-strip.
   StatusError.Error() matches the current "llm: API returned %d: %s"
   format byte-for-byte (stream.go:53 keeps the old format — the
   structured path is non-streaming).
@@ -205,8 +207,8 @@ server-side cache in this codebase — unaffected.
 
 Authored per site (source of truth in the site's package); array shapes
 use the D2 envelope:
-- grounding.go (claims): `items: [{text}]` — Claim is a single-field
-  object (grounding.go:12). minItems: 0 — the prompt contract says
+- grounding.go (claims): `items: [{text}]` — required: text. Claim is
+  a single-field object (grounding.go:12). minItems: 0 — the prompt contract says
   "return an empty array when there are no factual claims"
   (grounding.go:24); empty is legitimate data, NOT a failure (i2 — a
   minItems:1 here would pressure the model to invent claims in a trust
