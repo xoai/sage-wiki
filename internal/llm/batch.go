@@ -146,6 +146,7 @@ func (p *anthropicProvider) SubmitBatch(requests []BatchRequest) (string, error)
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		recordRateLimited(resp.StatusCode)
 		return "", fmt.Errorf("anthropic batch: submit returned %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -180,6 +181,7 @@ func (p *anthropicProvider) PollBatch(batchID string) (*BatchStatusResponse, err
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		recordRateLimited(resp.StatusCode)
 		return nil, fmt.Errorf("anthropic batch: poll returned %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -227,6 +229,7 @@ func (p *anthropicProvider) RetrieveBatch(resultsURL string) ([]BatchResult, err
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		recordRateLimited(resp.StatusCode)
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("anthropic batch: retrieve returned %d: %s", resp.StatusCode, string(body))
 	}
@@ -370,6 +373,7 @@ func (p *openaiProvider) SubmitBatch(requests []BatchRequest) (string, error) {
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		recordRateLimited(resp.StatusCode)
 		return "", fmt.Errorf("openai batch: create returned %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -417,6 +421,7 @@ func (p *openaiProvider) uploadBatchFile(content []byte) (string, error) {
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		recordRateLimited(resp.StatusCode)
 		return "", fmt.Errorf("openai batch: upload returned %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -448,6 +453,7 @@ func (p *openaiProvider) PollBatch(batchID string) (*BatchStatusResponse, error)
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		recordRateLimited(resp.StatusCode)
 		return nil, fmt.Errorf("openai batch: poll returned %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -485,6 +491,7 @@ func (p *openaiProvider) RetrieveBatch(outputFileID string) ([]BatchResult, erro
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		recordRateLimited(resp.StatusCode)
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("openai batch: retrieve returned %d: %s", resp.StatusCode, string(body))
 	}

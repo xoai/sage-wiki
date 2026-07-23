@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/log"
 )
 
@@ -236,6 +237,10 @@ func (c *Client) chatCompletionDirect(ctx context.Context, messages []Message, o
 
 		if isRetryable(resp.StatusCode) {
 			delay := backoffDelay(attempt)
+			if resp.StatusCode == 429 {
+				metrics.CounterNamed("llm_rate_limited_total").Inc() // first discrimination (P2-2; typed error at :256 not re-counted)
+			}
+			metrics.CounterNamed("llm_retries_total").Inc()
 			log.Warn("retryable error, retrying", "status", resp.StatusCode, "attempt", attempt+1, "delay", delay)
 			// Cancellable backoff: a cancel during the sleep returns promptly.
 			select {
@@ -373,6 +378,15 @@ func defaultRateLimit(provider string) int {
 		return 0 // self-hosted: no client-side RPM cap
 	default:
 		return 30
+	}
+}
+
+// recordRateLimited is the 429 metrics hook for transport paths without a
+// typed branch (batch submit/poll/retrieve, provider variants) — one-line,
+// first-discrimination-per-response (P2-2).
+func recordRateLimited(statusCode int) {
+	if statusCode == 429 {
+		metrics.CounterNamed("llm_rate_limited_total").Inc()
 	}
 }
 

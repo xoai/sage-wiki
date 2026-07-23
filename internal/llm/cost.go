@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/log"
 )
 
@@ -86,7 +87,14 @@ func NewCostTracker(provider string, priceOverride float64) *CostTracker {
 }
 
 // Track records a single LLM call's usage.
+// Also THE single token-metrics hook (P2-2): fires for sync (client.go) and
+// batch (pipeline.go) paths — no second recording site exists.
 func (ct *CostTracker) Track(pass string, model string, usage Usage, batch bool) {
+	metrics.CounterNamed("llm_tokens_total", "provider", ct.provider, "pass", pass, "direction", "input").Add(int64(usage.InputTokens))
+	metrics.CounterNamed("llm_tokens_total", "provider", ct.provider, "pass", pass, "direction", "output").Add(int64(usage.OutputTokens))
+	if usage.CachedTokens > 0 {
+		metrics.CounterNamed("llm_tokens_total", "provider", ct.provider, "pass", pass, "direction", "cached").Add(int64(usage.CachedTokens))
+	}
 	ct.mu.Lock()
 	defer ct.mu.Unlock()
 	ct.entries = append(ct.entries, CostEntry{

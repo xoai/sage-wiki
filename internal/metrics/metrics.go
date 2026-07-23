@@ -50,6 +50,11 @@ var registry = struct {
 	order   map[string]bool    // registered (≥1 record) series
 }{handles: map[string]*series{}, order: map[string]bool{}}
 
+// ResetForTest clears the registry (tests only, any package).
+func ResetForTest() {
+	resetRegistry()
+}
+
 // resetRegistry clears the registry (tests only).
 func resetRegistry() {
 	registry.Lock()

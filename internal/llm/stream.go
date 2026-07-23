@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/log"
 )
 
@@ -45,6 +46,9 @@ func (c *Client) ChatCompletionStream(ctx context.Context, messages []Message, o
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusTooManyRequests {
+			metrics.CounterNamed("llm_rate_limited_total").Inc() // stream-path discrimination (P2-2)
+		}
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("llm: API returned %d: %s", resp.StatusCode, string(body))
 	}
