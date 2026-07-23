@@ -1,0 +1,44 @@
+package llm
+
+import (
+	"encoding/json"
+	"net/http"
+)
+
+// Structured-output stubs (P2-4 T2): keep the interface total while the
+// real implementations land (T3 anthropic, T4 openai, T5 gemini).
+// Wrappers (openai-compatible/qwen/ollama via nonBatchProvider) return
+// ok == false UNCONDITIONALLY — even wrapping a raw openai provider
+// (design D2: byte-identical fallback for openai-compatible).
+
+func (p *anthropicProvider) FormatStructuredRequest(messages []Message, schema JSONSchema, opts CallOpts) (func() (*http.Request, error), bool, error) {
+	return nil, false, nil // real impl in T3
+}
+
+func (p *anthropicProvider) ParseStructuredResponse(body []byte) (json.RawMessage, error) {
+	return nil, ErrStructuredUnsupported
+}
+
+func (p *openaiProvider) FormatStructuredRequest(messages []Message, schema JSONSchema, opts CallOpts) (func() (*http.Request, error), bool, error) {
+	return nil, false, nil // real impl in T4
+}
+
+func (p *openaiProvider) ParseStructuredResponse(body []byte) (json.RawMessage, error) {
+	return nil, ErrStructuredUnsupported
+}
+
+func (p *geminiProvider) FormatStructuredRequest(messages []Message, schema JSONSchema, opts CallOpts) (func() (*http.Request, error), bool, error) {
+	return nil, false, nil // real impl in T5
+}
+
+func (p *geminiProvider) ParseStructuredResponse(body []byte) (json.RawMessage, error) {
+	return nil, ErrStructuredUnsupported
+}
+
+func (p *nonBatchProvider) FormatStructuredRequest(messages []Message, schema JSONSchema, opts CallOpts) (func() (*http.Request, error), bool, error) {
+	return nil, false, nil // pinned: wrappers always fall back (design D2)
+}
+
+func (p *nonBatchProvider) ParseStructuredResponse(body []byte) (json.RawMessage, error) {
+	return nil, ErrStructuredUnsupported
+}

@@ -16,6 +16,9 @@ type JSONSchema struct {
 	Description string
 	Schema      map[string]any
 	IsArray     bool
+	// Degraded is set by the client for the single json_object degrade
+	// retry (OpenAI only) — the formatter emits the degraded mechanism.
+	Degraded bool
 }
 
 // Envelope returns the object-rooted wrapper the native mechanisms
@@ -192,6 +195,11 @@ func ParseJSONFromText(text string) (json.RawMessage, error) {
 	}
 	return json.RawMessage(text[start : end+1]), nil
 }
+
+// ErrStructuredUnsupported is returned by ParseStructuredResponse on
+// providers without a mechanism (stub implementations — the fallback
+// path covers them in practice).
+var ErrStructuredUnsupported = fmt.Errorf("structured outputs not supported by this provider")
 
 // StatusError carries the HTTP status for the degrade trigger (spec §3).
 // Error() matches the pre-existing plain-error format byte-for-byte.

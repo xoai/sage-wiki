@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,13 @@ import (
 // blockingProvider builds requests to a given URL and (optionally) implements
 // CachingProvider so both the direct and cached dispatch paths can be exercised.
 type blockingProvider struct{ url string }
+
+func (b blockingProvider) FormatStructuredRequest(_ []Message, _ JSONSchema, _ CallOpts) (func() (*http.Request, error), bool, error) {
+	return nil, false, nil
+}
+func (b blockingProvider) ParseStructuredResponse([]byte) (json.RawMessage, error) {
+	return nil, ErrStructuredUnsupported
+}
 
 func (b blockingProvider) Name() string         { return "blocking" }
 func (b blockingProvider) SupportsVision() bool { return false }

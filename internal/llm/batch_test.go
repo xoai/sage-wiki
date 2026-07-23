@@ -256,6 +256,12 @@ type noBatchProvider struct{}
 func (noBatchProvider) Name() string                                                    { return "nobatch" }
 func (noBatchProvider) SupportsVision() bool                                            { return false }
 func (noBatchProvider) FormatRequest([]Message, CallOpts) (*http.Request, error)        { return nil, nil }
+func (noBatchProvider) FormatStructuredRequest([]Message, JSONSchema, CallOpts) (func() (*http.Request, error), bool, error) {
+	return nil, false, nil
+}
+func (noBatchProvider) ParseStructuredResponse([]byte) (json.RawMessage, error) {
+	return nil, ErrStructuredUnsupported
+}
 func (noBatchProvider) ParseResponse([]byte) (*Response, error)                         { return nil, nil }
 
 func TestClientBatchNotSupported(t *testing.T) {
