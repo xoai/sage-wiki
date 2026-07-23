@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"strings"
 	"context"
 	"encoding/json"
 	"errors"
@@ -106,6 +107,11 @@ func (c *Client) StructuredCompletion(ctx context.Context, messages []Message, s
 		if err != nil {
 			return nil, "", err
 		}
+		if strings.TrimSpace(resp.Content) == "" {
+			// Preserve the actionable empty-content hint (finish_reason /
+			// reasoning / raise-budget) on the fallback path.
+			return nil, "", fmt.Errorf("llm: structured completion: %s", resp.EmptyContentDetails())
+		}
 		if opts.RawFallback {
 			return nil, resp.Content, nil
 		}
@@ -138,37 +144,47 @@ func (c *Client) StructuredCompletion(ctx context.Context, messages []Message, s
 		}
 	}
 
-	// Usage/trackUsage fires exactly as on any completion. Anthropic's
-	// forced tool_use legitimately returns empty text Content — the
-	// empty-content guard is skipped only when the structured parse
-	// succeeds (client-side carve-out, spec §3).
-	if resp, rerr := c.provider.ParseResponse(body); rerr == nil {
+	// Usage/trackUsage + the parsed response (for the empty-content hint).
+	resp, _ := c.provider.ParseResponse(body)
+	if resp != nil {
 		c.trackUsage(resp.Model, resp.Usage)
 	}
 
-	payload, err = c.provider.ParseStructuredResponse(body)
-	if err != nil {
-		return nil, "", fmt.Errorf("llm: parse structured response: %w", err)
+	payload, serr := c.provider.ParseStructuredResponse(body)
+	if serr != nil || len(strings.TrimSpace(string(payload))) == 0 {
+		// Anthropic's forced tool_use legitimately returns empty text
+		// Content — but then the structured parse succeeded with the tool
+		// input as payload, so this hint only fires when the payload is
+		// ALSO empty/failed (client-side carve-out, spec §3).
+		if resp != nil && strings.TrimSpace(resp.Content) == "" {
+			return nil, "", fmt.Errorf("llm: structured completion: %s", resp.EmptyContentDetails())
+		}
+		if serr != nil {
+			return nil, "", fmt.Errorf("llm: parse structured response: %w", serr)
+		}
+		return nil, "", fmt.Errorf("llm: structured completion: empty payload")
 	}
 
-	// Validate against the envelope (arrays) or canonical schema (objects).
-	target := schema.Schema
+	// Validate: envelope first, then the bare array schema (tolerant of
+	// providers and test doubles that answer the envelope-shaped request
+	// with the bare array — both are schema-validated; no silent pass).
 	if schema.IsArray {
-		target = schema.Envelope()
-	}
-	if err := ValidateJSON(target, payload); err != nil {
-		return nil, "", err // content-invalid: constraint worked, shape wrong — NO fallback
-	}
-
-	// Unwrap the envelope; both paths return the bare payload.
-	if schema.IsArray {
-		var env struct {
-			Items json.RawMessage `json:"items"`
+		if err := ValidateJSON(schema.Envelope(), payload); err == nil {
+			var env struct {
+				Items json.RawMessage `json:"items"`
+			}
+			if uerr := json.Unmarshal(payload, &env); uerr != nil {
+				return nil, "", fmt.Errorf("structured: envelope unwrap: %w", uerr)
+			}
+			return env.Items, "", nil
 		}
-		if err := json.Unmarshal(payload, &env); err != nil {
-			return nil, "", fmt.Errorf("structured: envelope unwrap: %w", err)
+		if err := ValidateJSON(schema.Schema, payload); err != nil {
+			return nil, "", err // content-invalid: constraint worked, shape wrong — NO fallback
 		}
-		return env.Items, "", nil
+		return payload, "", nil
+	}
+	if err := ValidateJSON(schema.Schema, payload); err != nil {
+		return nil, "", err
 	}
 	return payload, "", nil
 }

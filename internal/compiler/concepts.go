@@ -164,27 +164,23 @@ func ExtractConcepts(
 				return
 			}
 
-			resp, err := client.ChatCompletionCtx(ctx, []llm.Message{
+			// P2-4: schema-guaranteed JSON where the provider supports it;
+			// fallback = plain completion + shared fence-strip (same
+			// tolerance as parseConceptsJSON). Deviation (decisions.md): on
+			// the fallback path the empty-content hint (finish_reason) is
+			// not threaded through; native paths are unaffected.
+			payload, _, err := client.StructuredCompletion(ctx, []llm.Message{
 				{Role: "system", Content: "You are a concept extraction system for a knowledge wiki. Output valid JSON only."},
 				{Role: "user", Content: prompt},
-			}, llm.CallOpts{Model: model, MaxTokens: maxTokens})
+			}, ConceptsSchema, llm.CallOpts{Model: model, MaxTokens: maxTokens})
 			if err != nil {
 				recordFailure(fmt.Errorf("batch %d: %w", b.index+1, err))
 				log.Error("concept extraction batch failed", "batch", b.index+1, "error", err)
 				return
 			}
 
-			// Empty/reasoning-truncated content: surface the actionable hint
-			// (finish_reason/reasoning/raise-budget) rather than letting
-			// parseConceptsJSON misreport it as "unexpected end of JSON input".
-			if gErr := emptyContentError(resp, "concept extraction", fmt.Sprintf("batch %d", b.index+1)); gErr != nil {
-				recordFailure(gErr)
-				log.Error("concept extraction returned empty content", "batch", b.index+1, "error", gErr)
-				return
-			}
-
-			concepts, err := parseConceptsJSON(resp.Content)
-			if err != nil {
+			var concepts []ExtractedConcept
+			if err := json.Unmarshal(payload, &concepts); err != nil {
 				recordFailure(fmt.Errorf("batch %d parse: %w", b.index+1, err))
 				log.Error("concept extraction parse failed", "batch", b.index+1, "error", err)
 				return
@@ -342,3 +338,30 @@ func parseConceptsJSON(text string) ([]ExtractedConcept, error) {
 	return concepts, nil
 }
 
+
+// ConceptsSchema is the canonical schema for concept extraction (P2-4).
+var ConceptsSchema = llm.JSONSchema{
+	Name:        "concepts",
+	Description: "concepts extracted from the source text",
+	IsArray:     true,
+	Schema: map[string]any{
+		"type": "array",
+		"items": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{"type": "string"},
+				"aliases": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"type": "string"},
+				},
+				"sources": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"type": "string"},
+				},
+				"type": map[string]any{"type": "string"},
+			},
+			"required": []string{"name", "sources", "type"},
+		},
+		"minItems": 0,
+	},
+}

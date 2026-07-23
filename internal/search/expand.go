@@ -2,6 +2,7 @@ package search
 
 import (
 	"encoding/json"
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -39,19 +40,42 @@ Generate search variants to improve retrieval:
 Respond ONLY with JSON, no explanation:
 {"lex":["...","..."],"vec":["..."],"hyde":"..."}`, question)
 
-	resp, err := client.ChatCompletion([]llm.Message{
+	// P2-4: schema-guaranteed JSON where supported; graceful degrade to
+	// fallbackExpansion on any error — exactly today's failure contract.
+	payload, _, err := client.StructuredCompletion(context.Background(), []llm.Message{
 		{Role: "user", Content: prompt},
-	}, llm.CallOpts{Model: model, MaxTokens: 300})
-	if err != nil {
-		return fallbackExpansion(question), err
-	}
-
-	expanded, err := parseExpansionJSON(resp.Content)
+	}, ExpansionSchema, llm.CallOpts{Model: model, MaxTokens: 300})
 	if err != nil {
 		return fallbackExpansion(question), nil // degrade gracefully, don't return error
 	}
+
+	var resp expansionResponse
+	if err := json.Unmarshal(payload, &resp); err != nil {
+		return fallbackExpansion(question), nil
+	}
+	expanded := &ExpandedQuery{
+		Lex:  resp.Lex,
+		Vec:  resp.Vec,
+		Hyde: resp.Hyde,
+	}
 	expanded.Original = question
 	return expanded, nil
+}
+
+// ExpansionSchema is the canonical schema for query expansion (P2-4) —
+// object-rooted (no envelope).
+var ExpansionSchema = llm.JSONSchema{
+	Name:        "expansion",
+	Description: "search query variants",
+	Schema: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"lex": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"vec": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"hyde": map[string]any{"type": "string"},
+		},
+		"required": []string{"lex", "vec", "hyde"},
+	},
 }
 
 // StrongSignal checks if the top BM25 result is confident enough to skip expansion.

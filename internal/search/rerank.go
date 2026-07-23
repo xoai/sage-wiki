@@ -2,6 +2,7 @@ package search
 
 import (
 	"encoding/json"
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -69,14 +70,16 @@ Query: "%s"
 Respond ONLY with a JSON array, no explanation:
 [{"id":1,"score":7},{"id":2,"score":2},...]`, query, strings.Join(passages, "\n\n"))
 
-	resp, err := client.ChatCompletion([]llm.Message{
+	// P2-4: schema-guaranteed JSON where supported; graceful degrade to
+	// fallbackRerank on any error — today's failure contract.
+	payload, _, err := client.StructuredCompletion(context.Background(), []llm.Message{
 		{Role: "user", Content: prompt},
-	}, llm.CallOpts{Model: model, MaxTokens: 500})
+	}, RerankSchema, llm.CallOpts{Model: model, MaxTokens: 500})
 	if err != nil {
-		return fallbackRerank(candidates), err
+		return fallbackRerank(candidates), nil
 	}
 
-	scores, err := parseRerankJSON(resp.Content, len(candidates))
+	scores, err := parseRerankJSON(string(payload), len(candidates))
 	if err != nil {
 		return fallbackRerank(candidates), nil
 	}
@@ -114,6 +117,27 @@ func fallbackRerank(candidates []RerankCandidate) []RerankResult {
 		}
 	}
 	return results
+}
+
+// RerankSchema is the canonical schema for rerank (P2-4). minItems: 1 —
+// an empty entries list is the model's silent-failure mode (today it
+// zeroes every score unnoticed).
+var RerankSchema = llm.JSONSchema{
+	Name:        "rerank",
+	Description: "relevance scores for candidate passages",
+	IsArray:     true,
+	Schema: map[string]any{
+		"type": "array",
+		"items": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":    map[string]any{"type": "integer"},
+				"score": map[string]any{"type": "number"},
+			},
+			"required": []string{"id", "score"},
+		},
+		"minItems": 1,
+	},
 }
 
 // rerankEntry matches the JSON schema from the LLM.

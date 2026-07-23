@@ -686,3 +686,22 @@ func (s *Server) handleCompileTopic(ctx context.Context, req mcplib.CallToolRequ
 	data, _ := json.MarshalIndent(result, "", "  ")
 	return textResult(string(data)), nil
 }
+
+// CaptureSchema is the canonical schema for wiki_capture parsing (P2-4).
+var CaptureSchema = llm.JSONSchema{
+	Name:        "capture",
+	Description: "knowledge items captured from raw text",
+	IsArray:     true,
+	Schema: map[string]any{
+		"type": "array",
+		"items": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"title":   map[string]any{"type": "string"},
+				"content": map[string]any{"type": "string"},
+			},
+			"required": []string{"title", "content"},
+		},
+		"minItems": 0,
+	},
+}

@@ -2,6 +2,7 @@ package trust
 
 import (
 	"encoding/json"
+	"context"
 	"fmt"
 	"strings"
 
@@ -28,24 +29,48 @@ Answer:
 
 Respond with ONLY valid JSON, no markdown fencing.`
 
-	resp, err := client.ChatCompletion([]llm.Message{
+	// P2-4: schema-guaranteed JSON where the provider supports it;
+	// RawFallback keeps this site's exact no-bracket-hunt parse tolerance.
+	payload, rawText, err := client.StructuredCompletion(context.Background(), []llm.Message{
 		{Role: "user", Content: prompt},
-	}, llm.CallOpts{Model: model, MaxTokens: 1024, Temperature: 0.01})
+	}, ClaimsSchema, llm.CallOpts{Model: model, MaxTokens: 1024, Temperature: 0.01, RawFallback: true})
 	if err != nil {
 		return nil, fmt.Errorf("trust: extract claims: %w", err)
 	}
 
-	content := strings.TrimSpace(resp.Content)
-	content = strings.TrimPrefix(content, "```json")
-	content = strings.TrimPrefix(content, "```")
-	content = strings.TrimSuffix(content, "```")
-	content = strings.TrimSpace(content)
+	content := string(payload)
+	if rawText != "" {
+		content = strings.TrimSpace(rawText)
+		content = strings.TrimPrefix(content, "```json")
+		content = strings.TrimPrefix(content, "```")
+		content = strings.TrimSuffix(content, "```")
+		content = strings.TrimSpace(content)
+	}
 
 	var claims []Claim
 	if err := json.Unmarshal([]byte(content), &claims); err != nil {
 		return nil, fmt.Errorf("trust: parse claims JSON: %w (raw: %s)", err, content)
 	}
 	return claims, nil
+}
+
+// ClaimsSchema is the canonical schema for claim extraction (P2-4).
+// minItems: 0 — "no factual claims" is a legitimate answer, not a failure.
+var ClaimsSchema = llm.JSONSchema{
+	Name:        "claims",
+	Description: "factual claims extracted from the answer",
+	IsArray:     true,
+	Schema: map[string]any{
+		"type": "array",
+		"items": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"text": map[string]any{"type": "string"},
+			},
+			"required": []string{"text"},
+		},
+		"minItems": 0,
+	},
 }
 
 func CheckEntailment(claim string, passage string, client *llm.Client, model string) (EntailmentScore, error) {
