@@ -120,7 +120,7 @@ func getSeries(name, typ string, labels []string, mk func() any) *series {
 // register marks a series as having ≥1 recording (lazy registration).
 func register(s *series) {
 	registry.Lock()
-	registry.order[s.name+s.labels] = true
+	registry.order[s.typ+"|"+s.name+s.labels] = true
 	registry.Unlock()
 }
 
@@ -223,7 +223,7 @@ func Snapshot() []any {
 		if !registered(s) {
 			continue
 		}
-		key := s.name + s.labels
+		key := s.name + s.labels // snapshot key: labels in the key, never in values
 		switch s.typ {
 		case "counter":
 			out = append(out, key, s.counter.v.Load())
@@ -308,7 +308,7 @@ func leLabel(labels, le string) string {
 func registered(s *series) bool {
 	registry.Lock()
 	defer registry.Unlock()
-	return registry.order[s.name+s.labels]
+	return registry.order[s.typ+"|"+s.name+s.labels]
 }
 
 // helpText derives a HELP line; families without an entry get a

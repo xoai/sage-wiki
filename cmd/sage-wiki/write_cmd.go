@@ -116,6 +116,7 @@ func runWriteSummary(cmd *cobra.Command, args []string) error {
 }
 
 func runWriteArticle(cmd *cobra.Command, args []string) error {
+	defer metrics.LogSnapshot() // P2-2: one-shot CLI metrics are never lost
 	dir, _ := filepath.Abs(projectDir)
 	conceptID, _ := cmd.Flags().GetString("concept")
 	content, _ := cmd.Flags().GetString("content")

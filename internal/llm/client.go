@@ -242,15 +242,15 @@ func (c *Client) chatCompletionDirect(ctx context.Context, messages []Message, o
 				metrics.CounterNamed("llm_rate_limited_total").Inc() // first discrimination (P2-2; typed error at :256 not re-counted)
 			}
 			log.Warn("retryable error, retrying", "status", resp.StatusCode, "attempt", attempt+1, "delay", delay)
-			// Cancellable backoff: a cancel during the sleep returns promptly.
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(delay):
-			}
 			if attempt+1 < maxAttempts {
-				metrics.CounterNamed("llm_retries_total").Inc() // a retry actually ran (P2-2; after the backoff select so cancels don't count)
-			}
+				// Cancellable backoff: a cancel during the sleep returns promptly.
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(delay):
+				}
+				metrics.CounterNamed("llm_retries_total").Inc() // a retry actually ran (P2-2)
+			} // final attempt: no sleep, no counter (no retry follows)
 			lastStatusCode = resp.StatusCode
 			lastErr = fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 			continue
