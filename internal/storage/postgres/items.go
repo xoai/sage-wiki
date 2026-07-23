@@ -114,7 +114,7 @@ func (s *itemStore) Upsert(item store.CompileItem) error {
 			boolInt(item.PassSummarized), boolInt(item.PassExtracted), boolInt(item.PassWritten),
 			nullStr(item.CompileID), nullStr(item.Error), item.ErrorCount, nullStr(item.SummaryPath),
 			item.QueryHitCount, nullRFC(item.LastQueriedAt), nullRFC(item.PromotedAt), nullRFC(item.DemotedAt),
-			nullStr(item.SourceType), qualityScore)
+			item.SourceType, qualityScore)
 		return err
 	})
 }
