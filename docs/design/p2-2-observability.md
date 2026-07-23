@@ -1,6 +1,10 @@
 # Design: P2-2 — Observability
 
-**Status:** draft (first commit of PR per Phase-2 spec preamble)
+**Status:** draft, review iteration 2 (first commit of PR per Phase-2 spec preamble)
+
+> Iteration log: i1 found 0C/4M/6S/2cos — batch token invisibility, 429
+> counting semantics, pass-label enum mismatch, brief/design "disabled"
+> contradiction, exposition format rules, naming. All folded in below.
 **Spec:** `.sage/docs/sage-wiki-upgrade/06-spec-phase2-strategic.md` §P2-2
 **Cycle:** `.sage/work/20260721-p2-2-observability/`
 
@@ -14,20 +18,20 @@ dependency-light, off by default, no CGO.
 
 ## 2. Design decisions
 
-### D1 — Zero-dependency registry in `internal/metrics`
+### D1 — Zero-dependency registry in `internal/metrics`, always live
 
 One package: `Counter` (atomic.Int64), `Gauge` (atomic.Int64),
 `Histogram` (fixed bucket boundaries, per-bucket atomic counts + sum +
-count). A package-level default `Registry` plus per-domain named instances
-if isolation is needed (decision: ONE default registry — metric names carry
-the domain prefix, no multi-registry complexity).
+count). ONE package-level default registry — metric names carry the domain
+prefix, no multi-registry complexity.
 
-**Disabled fast path:** one package-level `atomic.Bool enabled`. Every
-recording method starts with `if !enabled.Load() { return }`. Nil-safety:
-the zero `*Counter`/`*Gauge`/`*Histogram` (nil pointer) is valid — recording
-on nil returns immediately, so hook sites captured before registry init
-never panic. Overhead-when-disabled = one atomic load; proven by a
-benchmark in the package.
+**The registry is always live** (i1 correction — the `enabled` fast-path
+flag is dropped): log snapshots need the data, and "off by default" refers
+to the HTTP endpoint only (D5). Overhead-when-endpoint-disabled = per-hook
+atomic adds (~ns each), proven by `BenchmarkHook` in the package. Nil
+safety: the zero `*Counter`/`*Gauge`/`*Histogram` (nil pointer) is valid —
+recording on nil returns immediately, so hook sites captured before
+registry init never panic.
 
 ### D2 — No new dependencies; hand-rolled text exposition
 
@@ -38,7 +42,10 @@ format) and OTel/OTLP (memory: otelhttp `url.full` leaks query-string
 secrets; OTLP SDK inherits `OTEL_EXPORTER_OTLP_INSECURE` from env as a
 shared baseline — both documented gotchas; also heavier than the task
 needs). The exposition handler is a `http.Handler` returning `text/plain;
-version=0.0.4`.
+version=0.0.4`. Format rules pinned (the two classic hand-rolled bugs):
+every histogram emits `le="+Inf"` exactly equal to `_count`; floats via
+`strconv.FormatFloat(v, 'g', -1, 64)`; label values escaped for `\`, `"`,
+`\n`; HELP/TYPE lines per series family.
 
 ### D3 — Cardinality discipline (security + cost)
 
@@ -56,34 +63,52 @@ series count stays bounded.
 | Name | Type | Hook |
 |---|---|---|
 | `compile_pass_duration_seconds{pass}` | histogram | compiler pass ends (pipeline.go/fullpipeline.go) |
-| `llm_tokens_total{pass,direction}` | counter | CostTracker.Track (surfaced, not re-instrumented) |
-| `llm_retries_total{result}` | counter | retry loop + 429 path in internal/llm |
-| `backpressure_limit` | gauge | BackpressureController limit changes |
-| `backpressure_in_flight` | gauge | BackpressureController acquire/release |
-| `search_duration_seconds{stage}` | histogram | hybrid.Searcher stage boundaries |
+| `llm_tokens_total{pass,direction}` | counter | CostTracker.Track (sync path) + batch usage at result retrieval |
+| `llm_retries_total` | counter | retry loop, attempt-level, ONE site |
+| `llm_rate_limited_total` | counter | 429 responses, response-level, ONE site (client.go status handling) |
+| `compile_backpressure_limit` | gauge | BackpressureController limit changes |
+| `compile_backpressure_in_flight` | gauge | BackpressureController acquire/release |
+| `search_duration_seconds{stage}` | histogram | hybrid.Searcher stage boundaries (bm25/vector/rrf) |
 | `query_duration_seconds` | histogram | query.Query end |
 | `embed_calls_total` | counter | embed.Embedder call sites (one wrapper, not per-caller) |
-| `vector_cache_hits_total` / `vector_cache_misses_total` | counter | vectors cache load paths (doc + chunk) |
+| `vector_cache_hits_total{cache}` / `vector_cache_misses_total{cache}` | counter | vectors cache load paths |
 
-CostTracker surfacing: `Track` already records per-call usage; the counter
-is incremented inside `Track` (one place) — no double accounting, no API
-change.
+Pinned semantics (i1):
+- **pass enum** = `summarize|extract|write|query|lint` — verified against
+  `CostEntry.Pass` and every `SetPass` call site; a label-sync test asserts
+  the registered values stay in this set.
+- **direction** = `input|output|cached` — `CachedTokens` is first-class
+  (cache savings are a headline 100K-doc lever; the brief's omission was a
+  defect).
+- **Batch tokens:** `batch.go` parses usage at result retrieval
+  (batch.go:262/521) but never calls `Track` — batch usage is counted ONCE
+  at result-retrieval time via the same `Track` path (also fixes the
+  CostTracker blind spot: today batch spend is invisible to cost reports).
+- **429/retries are distinct events at distinct single sites:** every 429
+  HTTP response increments `llm_rate_limited_total` exactly once
+  (response-level, in the client's status handling); every retry ATTEMPT
+  increments `llm_retries_total` once (attempt-level, in the retry loop).
+  No label on either — a retries counter needs no `result` (retries are
+  failures by definition; final outcomes live in token/error series).
+- **Cache hit/miss** (`{cache=doc|chunk}`): hit = search served from the
+  loaded in-memory matrix without a reload; miss = a lazy load/reload
+  triggered. Invalidation does not count (it's not a miss, it's a flush).
+- **trackUsage pass-context constraint:** `Client.SetPass` is unsynchronized
+  and correct only because passes are sequential today; P2-3's worker model
+  must make pass context explicit per worker (documented constraint on hook
+  placement, not a new sync primitive).
 
 ### D5 — Delivery: logs always, endpoint optional
 
 - **Logs:** a `Snapshot()` → map dump emitted via `log.Info("metrics", ...)`
   at compile phase ends and compile completion (2-3 lines per compile, not
-  per pass). Uses internal/log's existing slog plumbing. Emitted even when
-  `serve.metrics` is false (the registry is always-on for logging; the
-  `enabled` flag only gates the ENDPOINT. **Correction to brief:** the
-  registry is always live — overhead is tiny and the log snapshot needs the
-  data; `serve.metrics` gates only the HTTP handler. The disabled-overhead
-  benchmark therefore measures per-hook cost (~ns), which is the real
-  acceptance criterion.)
+  per pass). Uses internal/log's existing slog plumbing. Always emitted
+  (registry is always live; "off by default" means the ENDPOINT).
 - **Endpoint:** web server registers `GET /metrics` ONLY when
-  `serve.metrics: true` (new `Metrics bool` field on ServeConfig). Localhost
-  binding unchanged. Handler is also exposed for non-web embedding
-  (TUI/CLI never serve it).
+  `serve.metrics: true` (new `Metrics bool` field on ServeConfig). The
+  handler is NOT build-tagged — `/metrics` ships in the default (no-webui)
+  binary and inherits the web server's localhost binding and any auth
+  middleware it applies to non-loopback binds (both pinned by tests).
 
 ### D6 — Hook placement discipline
 
@@ -112,12 +137,14 @@ background exporters.
 ## 4. Test strategy
 
 - Registry unit tests: counter/gauge/histogram math, exposition format
-  validity (parse against the text format spec: bucket lines, sum, count,
-  escaping), nil-safety, disabled fast path.
-- Hook tests: CostTracker.Track increments the counter exactly once per
-  call; backpressure gauges track limit changes; snapshot emits at compile
-  phase end (log capture).
-- Endpoint test: `serve.metrics: true` → GET /metrics 200 + expected series
-  names; false → 404.
-- Overhead benchmark: `BenchmarkDisabledHook` shows atomic-load cost.
+  validity (bucket lines, +Inf==count, sum, count, escaping, float format),
+  nil-safety, `-race` concurrent recording.
+- Hook tests: CostTracker.Track increments once per call (sync); batch
+  usage reaches the counter at result retrieval; backpressure gauges track
+  limit changes; snapshot emits at compile phase end (log capture);
+  pass-label values stay within the pinned enum (label-sync test).
+- Endpoint tests: `serve.metrics: true` → GET /metrics 200 + expected
+  series; false → 404; handler present in the DEFAULT (no-webui) binary;
+  localhost posture inherited.
+- Overhead benchmark: `BenchmarkHook` shows per-hook atomic cost.
 - Full suite + `CGO_ENABLED=0 go build ./...` green.
