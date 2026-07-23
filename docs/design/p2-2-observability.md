@@ -2,15 +2,12 @@
 
 **Status:** draft, review iteration 4 (first commit of PR per Phase-2 spec preamble)
 
-> Iteration log: i1 0C/4M/6S/2cos · i2 0C/4M/3S/1cos · i3 0C/5M/2S/1cos —
-> web server never compiles (compile-on-demand lives in the MCP process),
-> MCP SSE topology unenumerated, D3 still listed dropped labels, brief
-> stale in three places, /metrics auth gate is path-based (unauthenticated
-> on non-loopback binds). All folded in below.
+> Iteration log: i1 0C/4M/6S/2cos · i2 0C/4M/3S/1cos · i3 0C/5M/2S/1cos ·
+> i4 0C/1M/5S/2cos — D3's stale enum paragraph survived two edits (replaced
+> below with the full label inventory); shutdown-snapshot machinery
+> unplaced; exposition registration timing unspecified; brief Risks stale
+> on the auth gate.
 
-> Iteration log: i1 found 0C/4M/6S/2cos — batch token invisibility, 429
-> counting semantics, pass-label enum mismatch, brief/design "disabled"
-> contradiction, exposition format rules, naming. All folded in below.
 **Spec:** `.sage/docs/sage-wiki-upgrade/06-spec-phase2-strategic.md` §P2-2
 **Cycle:** `.sage/work/20260721-p2-2-observability/`
 
@@ -55,14 +52,15 @@ every histogram emits `le="+Inf"` exactly equal to `_count`; floats via
 
 ### D3 — Cardinality discipline (security + cost)
 
-No user-controlled label values, ever. Labels limited to fixed enums:
-`pass` (summarize|extract|write|index|embed), `stage` (bm25|vector|rrf),
-`provider` (config enum), `result` (ok|error|429). Query text, source
-paths, IDs, and doc names are NEVER label values (they would be both a
-cardinality explosion and an information leak). A compile-time-enforced
-convention: label values are declared as package constants, and the
-registry API takes a small fixed `Labels map` — tests assert the registered
-series count stays bounded.
+No user-controlled label values, ever. The COMPLETE label inventory
+(every label used in D4, nothing else): `pass` = summarize|extract|write;
+`stage` = bm25|vector|rrf; `direction` = input|output|cached; `provider`
+= the config provider enum; `cache` = doc|chunk. There is no `result`
+label and no other pass value. Query text, source paths, IDs, and doc
+names are NEVER label values (cardinality explosion + information leak).
+Convention: label values are declared as package constants, the registry
+API takes a small fixed Labels map, and the label-sync test asserts the
+registered series stay within this inventory.
 
 ### D4 — The metric set (spec-mandated, no more)
 
@@ -97,7 +95,7 @@ Pinned semantics (i1+i2):
   isRetryable branch. `llm_rate_limited_total` increments once per 429
   response at each enumerated transport site: client.go direct loop,
   cache.go cached fallback, stream.go, batch poll/retrieve. Sites are
-  enumerated exhaustively in the spec; the label-sync test greps them.
+  enumerated exhaustively in THIS document (D4 hook table); the label-sync test greps them.
 - **Retries:** `llm_retries_total` per retry attempt, retry loop only.
 - **Cache hit/miss** (`{cache=doc|chunk}`): hit = search served from the
   loaded in-memory matrix without a reload; miss = a lazy load/reload
@@ -144,7 +142,13 @@ The registry is per-process, and the compile topology is verified:
 - **Web server** (`serve [--ui]`): the ONLY `/metrics` host. It never
   compiles (verified: zero compile references in internal/web;
   `serve --ui` builds web only), so the endpoint exposes search/query/
-  embed/cache series only.
+  embed/cache series — plus `llm_retries_total`/`llm_rate_limited_total`
+  when non-zero (query-time embedding retries happen in-process; i4).
+  Compile-specific series (`compile_pass_duration_seconds`,
+  `llm_tokens_total`, `compile_backpressure_*`) are absent here.
+  **Registration timing:** histograms/counters register lazily on first
+  recording — zero-activity series do NOT appear on the endpoint (no
+  misleading flat-zero compile series in the serve process).
 - **Search metrics in serve-less deployments** (MCP-only): silently
   accumulate with no endpoint — accepted and documented; a snapshot fires
   at process shutdown in addition to compile phase ends (D5), so the data
@@ -155,9 +159,12 @@ The registry is per-process, and the compile topology is verified:
 
 One-line calls at natural boundaries: `defer m.ObserveDuration(hist, start)`
 pattern where a defer reads cleanly, direct `c.Inc()` at counters. No
-middleware, no goroutines, no background flushers. Backpressure gauges set
-at the points limit/inFlight already change (inside the controller — no
-external polling).
+middleware, no background flushers. Backpressure gauges set at the points
+limit/inFlight already change (inside the controller — no external
+polling). The D5 shutdown snapshot needs no signal machinery of its own:
+it hooks the EXISTING graceful-shutdown paths (web server shutdown, MCP
+server Close, CLI command return via one deferred call at the command's
+top level) — placement enumerated in the spec, no new goroutines.
 
 ### D7 — Config
 
@@ -186,6 +193,7 @@ background exporters.
   pass-label values stay within the pinned enum (label-sync test).
 - Endpoint tests: `serve.metrics: true` → GET /metrics 200 + expected
   series; false → 404; handler present in the DEFAULT (no-webui) binary;
-  localhost posture inherited.
+  auth gate — loopback open, non-loopback auth-required (D5);
+  zero-activity series absent (lazy registration, D8).
 - Overhead benchmark: `BenchmarkHook` shows per-hook atomic cost.
 - Full suite + `CGO_ENABLED=0 go build ./...` green.
