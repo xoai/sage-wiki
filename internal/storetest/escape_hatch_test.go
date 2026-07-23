@@ -76,6 +76,30 @@ func TestNoRawHandleEscapes(t *testing.T) {
 	}
 }
 
+// TestMcpSseHasNoMetricsEndpoint pins the D8 topology decision: the MCP
+// transport (stdio or SSE) is not an ops surface and must never register
+// the metrics handler.
+func TestMcpSseHasNoMetricsEndpoint(t *testing.T) {
+	root := repoRoot(t)
+	dir := filepath.Join(root, "internal", "mcp")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), `"/metrics"`) {
+			t.Errorf("internal/mcp/%s registers a /metrics route — MCP is not an ops surface (design D8)", e.Name())
+		}
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()

@@ -116,6 +116,13 @@ func (s *WebServer) Handler() http.Handler {
 	mux.HandleFunc("/api/provenance", s.handleProvenance)
 	mux.HandleFunc("/ws", s.handleWebSocket)
 
+	// Optional observability endpoint (P2-2). NOT build-tagged — ships in
+	// the default (no-webui) binary. MCP SSE deliberately does not register
+	// this (design D8: the MCP transport is not an ops surface).
+	if s.cfg.Serve.Metrics {
+		mux.Handle("/metrics", metrics.Handler())
+	}
+
 	// Static files + SPA fallback
 	handler := defaultStaticHandler(s.projectDir)
 	if staticHandler != nil {
@@ -398,8 +405,9 @@ func (s *WebServer) securityMiddleware(next http.Handler) http.Handler {
 }
 
 // requiresAuth reports whether a path is gated by the bearer token.
+// /metrics is gated exactly like /api/* (P2-2: operational data).
 func requiresAuth(path string) bool {
-	return strings.HasPrefix(path, "/api/") || path == "/ws"
+	return strings.HasPrefix(path, "/api/") || path == "/ws" || path == "/metrics"
 }
 
 // hostAllowed reports whether the request Host is loopback or explicitly allowed
