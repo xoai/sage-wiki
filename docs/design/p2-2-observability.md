@@ -1,6 +1,6 @@
 # Design: P2-2 — Observability
 
-**Status:** draft, review iteration 4 (first commit of PR per Phase-2 spec preamble)
+**Status:** draft, review iteration 5 (first commit of PR per Phase-2 spec preamble)
 
 > Iteration log: i1 0C/4M/6S/2cos · i2 0C/4M/3S/1cos · i3 0C/5M/2S/1cos ·
 > i4 0C/1M/5S/2cos — D3's stale enum paragraph survived two edits (replaced
@@ -27,6 +27,14 @@ One package: `Counter` (atomic.Int64), `Gauge` (atomic.Int64),
 `Histogram` (fixed bucket boundaries, per-bucket atomic counts + sum +
 count). ONE package-level default registry — metric names carry the domain
 prefix, no multi-registry complexity.
+
+**Handle acquisition (i5):** hook sites capture handles ONCE at
+construction (package-level vars or struct fields set at startup) via
+`metrics.Counter("name")`-style lookup-or-create. Capture-once is safe
+under lazy registration: the series registers at the FIRST RECORD on the
+handle, not at capture. Handles captured before registry init are nil and
+drop recordings silently — acceptable only pre-startup; the label-sync
+test exercises capture-after-init.
 
 **The registry is always live** (i1 correction — the `enabled` fast-path
 flag is dropped): log snapshots need the data, and "off by default" refers
