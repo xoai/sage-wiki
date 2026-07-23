@@ -1,6 +1,12 @@
 # Design: P2-2 — Observability
 
-**Status:** draft, review iteration 2 (first commit of PR per Phase-2 spec preamble)
+**Status:** draft, review iteration 3 (first commit of PR per Phase-2 spec preamble)
+
+> Iteration log: i1 0C/4M/6S/2cos (batch tokens, 429 semantics, pass enum,
+> disabled contradiction, format rules, naming). i2 0C/4M/3S/1cos — false
+> blind-spot premise, 429 multi-site reality, D3/D4 enum contradiction,
+> PROCESS-SPLIT miss (compile runs in a separate process from serve).
+> All folded in below.
 
 > Iteration log: i1 found 0C/4M/6S/2cos — batch token invisibility, 429
 > counting semantics, pass-label enum mismatch, brief/design "disabled"
@@ -63,9 +69,9 @@ series count stays bounded.
 | Name | Type | Hook |
 |---|---|---|
 | `compile_pass_duration_seconds{pass}` | histogram | compiler pass ends (pipeline.go/fullpipeline.go) |
-| `llm_tokens_total{pass,direction}` | counter | CostTracker.Track (sync path) + batch usage at result retrieval |
-| `llm_retries_total` | counter | retry loop, attempt-level, ONE site |
-| `llm_rate_limited_total` | counter | 429 responses, response-level, ONE site (client.go status handling) |
+| `llm_tokens_total{provider,pass,direction}` | counter | `CostTracker.Track` — the ONLY hook site (covers sync client.go:308 AND batch pipeline.go:963; batch is already tracked, no second site) |
+| `llm_retries_total` | counter | retry ATTEMPTS, attempt-level, retry loop only |
+| `llm_rate_limited_total` | counter | 429 responses, response-level, at each transport path (enumerated below) |
 | `compile_backpressure_limit` | gauge | BackpressureController limit changes |
 | `compile_backpressure_in_flight` | gauge | BackpressureController acquire/release |
 | `search_duration_seconds{stage}` | histogram | hybrid.Searcher stage boundaries (bm25/vector/rrf) |
@@ -73,26 +79,33 @@ series count stays bounded.
 | `embed_calls_total` | counter | embed.Embedder call sites (one wrapper, not per-caller) |
 | `vector_cache_hits_total{cache}` / `vector_cache_misses_total{cache}` | counter | vectors cache load paths |
 
-Pinned semantics (i1):
-- **pass enum** = `summarize|extract|write|query|lint` — verified against
-  `CostEntry.Pass` and every `SetPass` call site; a label-sync test asserts
-  the registered values stay in this set.
-- **direction** = `input|output|cached` — `CachedTokens` is first-class
-  (cache savings are a headline 100K-doc lever; the brief's omission was a
-  defect).
-- **Batch tokens:** `batch.go` parses usage at result retrieval
-  (batch.go:262/521) but never calls `Track` — batch usage is counted ONCE
-  at result-retrieval time via the same `Track` path (also fixes the
-  CostTracker blind spot: today batch spend is invisible to cost reports).
-- **429/retries are distinct events at distinct single sites:** every 429
-  HTTP response increments `llm_rate_limited_total` exactly once
-  (response-level, in the client's status handling); every retry ATTEMPT
-  increments `llm_retries_total` once (attempt-level, in the retry loop).
-  No label on either — a retries counter needs no `result` (retries are
-  failures by definition; final outcomes live in token/error series).
+Pinned semantics (i1+i2):
+- **Token hooking:** ONE site — `CostTracker.Track`. It already fires for
+  sync calls (client.go:308) AND batch results (pipeline.go:963), so no
+  second recording site exists anywhere (the i1 batch finding was a
+  recording-site question, not a tracking gap). Re-resume caveat: a crash
+  between RetrieveBatch and checkpoint retirement re-retrieves and
+  re-counts — a pre-existing cost quirk the metric inherits, documented.
+- **pass enum** = `summarize|extract|write` — the only values with
+  `SetPass` sites. `query`/`lint` appear in cost.go's comment but no
+  tracker is attached on those paths (query.go attaches none) — deferred,
+  not in the label-sync test.
+- **direction** = `input|output|cached` — `CachedTokens` is first-class.
+- **429 counting is multi-site BY NECESSITY (i2):** the cached path
+  (cache.go:90-93 — the DEFAULT for anthropic/gemini compiles) handles 429
+  with a direct fallback that never passes through the direct loop's
+  isRetryable branch. `llm_rate_limited_total` increments once per 429
+  response at each enumerated transport site: client.go direct loop,
+  cache.go cached fallback, stream.go, batch poll/retrieve. Sites are
+  enumerated exhaustively in the spec; the label-sync test greps them.
+- **Retries:** `llm_retries_total` per retry attempt, retry loop only.
 - **Cache hit/miss** (`{cache=doc|chunk}`): hit = search served from the
   loaded in-memory matrix without a reload; miss = a lazy load/reload
   triggered. Invalidation does not count (it's not a miss, it's a flush).
+- **Stage boundaries (i2-pinned):** `stage=bm25` = BM25 candidate fetch;
+  `stage=vector` = vector candidate fetch EXCLUDING query embedding (done
+  before Search); `stage=rrf` = fusion + hydration incl. the s.memory.Get
+  lookups for vector-only hits.
 - **trackUsage pass-context constraint:** `Client.SetPass` is unsynchronized
   and correct only because passes are sequential today; P2-3's worker model
   must make pass context explicit per worker (documented constraint on hook
@@ -109,6 +122,24 @@ Pinned semantics (i1):
   handler is NOT build-tagged — `/metrics` ships in the default (no-webui)
   binary and inherits the web server's localhost binding and any auth
   middleware it applies to non-loopback binds (both pinned by tests).
+
+### D8 — Process split (i2): which process serves which series
+
+The registry is per-process. Compile runs as a CLI invocation; `serve` is
+a separate long-lived process. Therefore:
+
+- **`/metrics` (serve process)** exposes only serve-process series:
+  `search_duration_seconds`, `query_duration_seconds`, `embed_calls_total`,
+  `vector_cache_*`, and any in-process compile work the web server itself
+  triggers (compile-on-demand runs in-process).
+- **Compile-process series** (`compile_pass_duration_seconds`, `llm_*`,
+  `compile_backpressure_*`) exist only in the compile process and are
+  delivered via the log snapshots (D5) — they NEVER appear on the endpoint
+  unless the web server compiles in-process.
+- Acceptance scenario corrected accordingly: after a CLI compile + a
+  search, GET /metrics shows search/query/cache series; compile/token
+  series are asserted in the compile process's LOG output, not the
+  endpoint. A shared metrics file/daemon is rejected as over-engineering.
 
 ### D6 — Hook placement discipline
 
