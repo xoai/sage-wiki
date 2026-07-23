@@ -1,6 +1,7 @@
 package query
 
 import (
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -308,5 +309,37 @@ func TestQuery_SharedHandlePathDoesNotOpenDB(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".sage", "wiki.db")); !os.IsNotExist(err) {
 		t.Error("project DB was opened/created on the shared-handle path — adoption must be nil-path only")
+	}
+}
+
+// TestQueryDurationRecorded pins the query_duration_seconds hook (spec §2).
+func TestQueryDurationRecorded(t *testing.T) {
+	metrics.ResetForTest()
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(cfgPath, []byte("version: 1\nproject: test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	otherDB, err := storage.Open(filepath.Join(t.TempDir(), "elsewhere.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer otherDB.Close()
+
+	if _, err := Query(dir, "anything", "markdown", 5, QueryOpts{DB: otherDB}); err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	snap := metrics.Snapshot()
+	found := false
+	for i := 0; i+1 < len(snap); i += 2 {
+		if k, ok := snap[i].(string); ok && k == "query_duration_seconds_count" {
+			found = true
+			if snap[i+1].(int64) != 1 {
+				t.Errorf("query_duration count = %v, want 1", snap[i+1])
+			}
+		}
+	}
+	if !found {
+		t.Error("query_duration_seconds not recorded")
 	}
 }

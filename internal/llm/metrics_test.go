@@ -1,6 +1,10 @@
 package llm
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/xoai/sage-wiki/internal/metrics"
@@ -47,5 +51,45 @@ func TestTrackAccumulatesAcrossCalls(t *testing.T) {
 	got, ok := snapshotValue(`llm_tokens_total{provider="openai",pass="write",direction="input"}`)
 	if !ok || got.(int64) != 30 {
 		t.Errorf("input tokens = %v %v, want 30", got, ok)
+	}
+}
+
+// TestRetryAnd429Counting pins the counting contract (spec §2): each 429
+// RESPONSE increments llm_rate_limited_total exactly once; each retry that
+// actually runs increments llm_retries_total exactly once.
+func TestRetryAnd429Counting(t *testing.T) {
+	metrics.ResetForTest()
+	var callCount int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := atomic.AddInt32(&callCount, 1)
+		if count <= 2 {
+			w.WriteHeader(429)
+			w.Write([]byte("rate limited"))
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]string{"content": "success after retry"}},
+			},
+			"model": "gpt-4o",
+			"usage": map[string]int{"total_tokens": 10},
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewClient("openai", "sk-test", server.URL, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ChatCompletion([]Message{{Role: "user", Content: "test"}}, CallOpts{Model: "gpt-4o"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, ok := snapshotValue("llm_rate_limited_total"); !ok || got.(int64) != 2 {
+		t.Errorf("rate_limited_total = %v %v, want 2 (two 429 responses)", got, ok)
+	}
+	if got, ok := snapshotValue("llm_retries_total"); !ok || got.(int64) != 2 {
+		t.Errorf("retries_total = %v %v, want 2 (two retries ran)", got, ok)
 	}
 }

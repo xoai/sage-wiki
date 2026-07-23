@@ -35,7 +35,8 @@
   optional Prometheus `/metrics` endpoint on the web server behind
   `serve.metrics: true` (off by default; bearer-gated like `/api/*`;
   hand-rolled exposition, no new dependencies). Cardinality is pinned to
-  fixed label enums (enforced by a static sync test). MCP transports
+  fixed label enums (enforced by a runtime registry-enumeration
+  validator plus static site pins). MCP transports
   deliberately do not serve `/metrics`; compile-process series are
   log-snapshot-only (per-process registries).
 
