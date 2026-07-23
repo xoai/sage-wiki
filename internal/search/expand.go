@@ -2,8 +2,8 @@ package search
 
 import (
 	"context"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 

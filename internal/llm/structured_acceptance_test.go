@@ -142,7 +142,7 @@ func chattySchema() JSONSchema {
 				"properties": map[string]any{
 					"name":    map[string]any{"type": "string"},
 					"sources": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-					"type":   map[string]any{"type": "string"},
+					"type":    map[string]any{"type": "string"},
 				},
 				"required": []string{"name", "sources", "type"},
 			},
