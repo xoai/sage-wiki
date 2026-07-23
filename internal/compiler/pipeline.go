@@ -22,6 +22,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/storage"
@@ -241,6 +242,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		return nil, err
 	}
 	defer run.closeDB()
+	defer metrics.LogSnapshot() // compile-completion snapshot (P2-2)
 
 	// Step 4: runTiers — tiers 0/1/3 orchestration, promotions/demotions.
 	runTiers(projectDir, run)
@@ -541,6 +543,7 @@ func setupStores(projectDir string, run *compileRun) error {
 // mutating run.result and run.pipelineIncomplete exactly as the inline code
 // did before P1-8.
 func runTiers(projectDir string, run *compileRun) {
+	defer metrics.LogSnapshot() // phase-end snapshot (P2-2)
 	cfg := run.cfg
 	opts := &run.opts
 

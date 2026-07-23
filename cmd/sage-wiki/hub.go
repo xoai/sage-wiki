@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/cli"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
@@ -212,6 +213,7 @@ func runHubList(cmd *cobra.Command, args []string) error {
 }
 
 func runHubSearch(cmd *cobra.Command, args []string) error {
+	defer metrics.LogSnapshot() // P2-2: one-shot CLI metrics are never lost
 	query := args[0]
 	limit, _ := cmd.Flags().GetInt("limit")
 	projectFilter, _ := cmd.Flags().GetString("project")

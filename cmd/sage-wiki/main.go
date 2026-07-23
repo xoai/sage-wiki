@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/log"
 	"strings"
 
@@ -423,6 +424,7 @@ func reconcileStartup(ctx context.Context, dir string) {
 }
 
 func runCompile(cmd *cobra.Command, args []string) error {
+	defer metrics.LogSnapshot() // P2-2: one-shot CLI metrics are never lost
 	dir, _ := filepath.Abs(projectDir)
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	fresh, _ := cmd.Flags().GetBool("fresh")

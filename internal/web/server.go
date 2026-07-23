@@ -18,7 +18,8 @@ import (
 	"sync/atomic"
 	"time"
 
-		"github.com/xoai/sage-wiki/internal/store"
+			"github.com/xoai/sage-wiki/internal/metrics"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/hybrid"
@@ -130,6 +131,7 @@ func (s *WebServer) Handler() http.Handler {
 // down gracefully when ctx is cancelled (SIGINT/SIGTERM from the caller). It
 // blocks until the server stops or errors.
 func (s *WebServer) Serve(ctx context.Context, addr string) error {
+	defer metrics.LogSnapshot() // P2-2 shutdown snapshot
 	s.httpSrv = &http.Server{
 		Addr:              addr,
 		Handler:           s.Handler(),
