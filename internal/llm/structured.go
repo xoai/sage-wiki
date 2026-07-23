@@ -1,13 +1,13 @@
 package llm
 
 import (
-	"strings"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/log"
@@ -145,7 +145,10 @@ func (c *Client) StructuredCompletion(ctx context.Context, messages []Message, s
 	}
 
 	// Usage/trackUsage + the parsed response (for the empty-content hint).
-	resp, _ := c.provider.ParseResponse(body)
+	resp, rerr := c.provider.ParseResponse(body)
+	if rerr != nil {
+		log.Warn("structured: usage parse failed — tokens untracked", "error", rerr)
+	}
 	if resp != nil {
 		c.trackUsage(resp.Model, resp.Usage)
 	}
@@ -156,7 +159,11 @@ func (c *Client) StructuredCompletion(ctx context.Context, messages []Message, s
 		// Content — but then the structured parse succeeded with the tool
 		// input as payload, so this hint only fires when the payload is
 		// ALSO empty/failed (client-side carve-out, spec §3).
-		if resp != nil && strings.TrimSpace(resp.Content) == "" {
+		if resp != nil && strings.TrimSpace(resp.Content) == "" && serr == nil {
+			// Anthropic carve-out: forced tool_use has empty text Content
+			// but a VALID tool-input payload — handled above, so reaching
+			// here with empty payload + empty content is a real failure.
+			// When serr != nil, the real parse error wins over the hint.
 			return nil, "", fmt.Errorf("llm: structured completion: %s", resp.EmptyContentDetails())
 		}
 		if serr != nil {
@@ -190,14 +197,5 @@ func (c *Client) StructuredCompletion(ctx context.Context, messages []Message, s
 }
 
 func mentionsConstraintField(body string) bool {
-	return contains(body, "response_format") || contains(body, "json_schema")
-}
-
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(body, "response_format") || strings.Contains(body, "json_schema")
 }

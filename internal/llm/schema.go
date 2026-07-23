@@ -63,7 +63,7 @@ func (s JSONSchema) ToolName() string {
 
 // ValidateJSON validates payload against a draft-07 subset schema:
 // type, required, properties (recursive), items, additionalProperties
-// (presence only), enum, minItems/maxItems. Missing-optional and
+// (wire-level only, not validated), enum, minItems/maxItems. Missing-optional and
 // null-optional are treated identically (design D4: per-provider
 // output-shape divergence absorbed).
 func ValidateJSON(schema map[string]any, payload json.RawMessage) error {
@@ -90,12 +90,28 @@ func validateValue(schema map[string]any, v any, path string) error {
 			}
 		}
 		props, _ := schema["properties"].(map[string]any)
+		canonicalReq := map[string]bool{}
+		if req, ok := schema["required"].([]string); ok {
+			for _, k := range req {
+				canonicalReq[k] = true
+			}
+		}
 		for k, sub := range props {
 			subSchema, _ := sub.(map[string]any)
-			if val, present := obj[k]; present && val != nil {
-				if err := validateValue(subSchema, val, path+"."+k); err != nil {
-					return err
+			val, present := obj[k]
+			if !present {
+				continue
+			}
+			// Required-null hole (Gate 3 i1): a required field present as
+			// null fails unless the property is a nullable union.
+			if val == nil {
+				if canonicalReq[k] && !isNullableUnion(subSchema) {
+					return fmt.Errorf("structured: %s: required field %q is null", path, k)
 				}
+				continue
+			}
+			if err := validateValue(subSchema, val, path+"."+k); err != nil {
+				return err
 			}
 		}
 	case "array":
@@ -111,6 +127,9 @@ func validateValue(schema map[string]any, v any, path string) error {
 		}
 		if max, ok := schema["maxItems"].(int); ok && len(arr) > max {
 			return fmt.Errorf("structured: %s: %d items > maxItems %d", path, len(arr), max)
+		}
+		if maxF, ok := schema["maxItems"].(float64); ok && len(arr) > int(maxF) {
+			return fmt.Errorf("structured: %s: %d items > maxItems %d", path, len(arr), int(maxF))
 		}
 		items, _ := schema["items"].(map[string]any)
 		for i, el := range arr {
@@ -139,7 +158,7 @@ func validateValue(schema map[string]any, v any, path string) error {
 	if enumVals, ok := schema["enum"].([]any); ok {
 		found := false
 		for _, e := range enumVals {
-			if e == v {
+			if e == v || numericEqual(e, v) {
 				found = true
 				break
 			}
@@ -149,6 +168,48 @@ func validateValue(schema map[string]any, v any, path string) error {
 		}
 	}
 	return nil
+}
+
+// numericEqual compares numeric enum values across int/float64 domains
+// (Go-authored ints vs JSON-decoded float64s).
+func numericEqual(a, b any) bool {
+	af, aok := toFloat(a)
+	bf, bok := toFloat(b)
+	return aok && bok && af == bf
+}
+
+func toFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case float64:
+		return n, true
+	}
+	return 0, false
+}
+
+// isNullableUnion reports whether a strict-derived property allows null
+// (["<type>", "null"]).
+func isNullableUnion(schema map[string]any) bool {
+	types, ok := schema["type"].([]string)
+	if !ok {
+		if tAny, isArr := schema["type"].([]any); isArr {
+			for _, t := range tAny {
+				if t == "null" {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for _, t := range types {
+		if t == "null" {
+			return true
+		}
+	}
+	return false
 }
 
 // ParseJSONFromText is the shared fence-strip+bracket-hunt parser

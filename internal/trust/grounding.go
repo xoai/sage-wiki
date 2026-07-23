@@ -1,8 +1,8 @@
 package trust
 
 import (
-	"encoding/json"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 

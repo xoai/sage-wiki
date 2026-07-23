@@ -2,16 +2,16 @@ package compiler
 
 import (
 	"context"
-	"time"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
-		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/prompts"
 )
 
@@ -166,9 +166,9 @@ func ExtractConcepts(
 
 			// P2-4: schema-guaranteed JSON where the provider supports it;
 			// fallback = plain completion + shared fence-strip (same
-			// tolerance as parseConceptsJSON). Deviation (decisions.md): on
-			// the fallback path the empty-content hint (finish_reason) is
-			// not threaded through; native paths are unaffected.
+			// tolerance as the old parser; the empty-content hint
+			// (finish_reason) is threaded through StructuredCompletion on
+			// both paths (decisions.md 2026-07-23).
 			payload, _, err := client.StructuredCompletion(ctx, []llm.Message{
 				{Role: "system", Content: "You are a concept extraction system for a knowledge wiki. Output valid JSON only."},
 				{Role: "user", Content: prompt},

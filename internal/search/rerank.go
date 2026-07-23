@@ -1,8 +1,9 @@
 package search
 
 import (
-	"encoding/json"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -26,9 +27,9 @@ type RerankResult struct {
 }
 
 const (
-	maxChunkTokens    = 400
-	maxPromptTokens   = 8000
-	maxCandidates     = 15
+	maxChunkTokens  = 400
+	maxPromptTokens = 8000
+	maxCandidates   = 15
 )
 
 // Rerank calls the LLM to re-score candidates by relevance to the query.
@@ -76,6 +77,9 @@ Respond ONLY with a JSON array, no explanation:
 		{Role: "user", Content: prompt},
 	}, RerankSchema, llm.CallOpts{Model: model, MaxTokens: 500})
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		return fallbackRerank(candidates), nil
 	}
 

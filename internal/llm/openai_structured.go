@@ -2,7 +2,9 @@ package llm
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"sort"
 )
 
 // OpenAI structured outputs (P2-4): response_format json_schema strict
@@ -78,18 +80,27 @@ func strictForm(schema map[string]any) map[string]any {
 		out["additionalProperties"] = false
 		props, _ := out["properties"].(map[string]any)
 		canonicalReq := toStringSet(schema["required"])
-		var reqAll []string
+		reqAll := []string{}
 		for name := range props {
 			reqAll = append(reqAll, name)
 			// Optional in the canonical schema → nullable union.
 			if !canonicalReq[name] {
 				sub, _ := props[name].(map[string]any)
+				if sub == nil {
+					continue // malformed schema property — skip, don't panic
+				}
 				subType, _ := sub["type"].(string)
 				if subType != "" {
 					sub["type"] = []string{subType, "null"}
+					// Nullable-union enum members get null appended (OpenAI
+					// strict rejects a null value absent from enum).
+					if enumVals, hasEnum := sub["enum"].([]any); hasEnum {
+						sub["enum"] = append(enumVals, nil)
+					}
 				}
 			}
 		}
+		sort.Strings(reqAll) // deterministic wire output
 		out["required"] = reqAll
 	}
 	return out
@@ -124,7 +135,7 @@ func (p *openaiProvider) ParseStructuredResponse(body []byte) (json.RawMessage, 
 		return nil, err
 	}
 	if len(result.Choices) == 0 {
-		return nil, ErrStructuredUnsupported
+		return nil, fmt.Errorf("openai structured: no choices in response")
 	}
 	return json.RawMessage(result.Choices[0].Message.Content), nil
 }

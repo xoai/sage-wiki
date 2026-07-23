@@ -57,7 +57,7 @@ func newAnthropicProvider(apiKey string, baseURL string) *anthropicProvider {
 	return &anthropicProvider{apiKey: apiKey, baseURL: baseURL}
 }
 
-func (p *anthropicProvider) Name() string        { return "anthropic" }
+func (p *anthropicProvider) Name() string         { return "anthropic" }
 func (p *anthropicProvider) SupportsVision() bool { return true }
 
 func (p *anthropicProvider) formatBody(messages []Message, opts CallOpts, stream bool) (map[string]any, string) {

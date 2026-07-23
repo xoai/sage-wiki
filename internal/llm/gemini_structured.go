@@ -14,7 +14,7 @@ import (
 
 func (p *geminiProvider) FormatStructuredRequest(messages []Message, schema JSONSchema, opts CallOpts) (func() (*http.Request, error), bool, error) {
 	return func() (*http.Request, error) {
-		body, _ := p.formatBody(messages, opts)
+		body, model := p.formatBody(messages, opts) // model is defaulted inside formatBody
 		wire := schema.Schema
 		if schema.IsArray {
 			wire = schema.Envelope()
@@ -29,7 +29,7 @@ func (p *geminiProvider) FormatStructuredRequest(messages []Message, schema JSON
 			}
 		}
 		body["generationConfig"] = config
-		url := fmt.Sprintf("%s/models/%s:generateContent?key=%s", p.baseURL, opts.Model, p.apiKey)
+		url := fmt.Sprintf("%s/models/%s:generateContent?key=%s", p.baseURL, model, p.apiKey)
 		req, err := http.NewRequest("POST", url, jsonBody(body))
 		if err != nil {
 			return nil, err
@@ -71,6 +71,9 @@ func openAPIForm(schema map[string]any) map[string]any {
 		for name := range props {
 			if !canonicalReq[name] {
 				sub, _ := props[name].(map[string]any)
+				if sub == nil {
+					continue // malformed schema property — skip, don't panic
+				}
 				sub["nullable"] = true
 			}
 		}
@@ -98,5 +101,5 @@ func (p *geminiProvider) ParseStructuredResponse(body []byte) (json.RawMessage, 
 			}
 		}
 	}
-	return nil, ErrStructuredUnsupported
+	return nil, fmt.Errorf("gemini structured: no text part in response")
 }

@@ -72,7 +72,7 @@ I hope this helps! Let me know if you need more detail.`
 				"properties": map[string]any{
 					"name":    map[string]any{"type": "string"},
 					"sources": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-					"type":   map[string]any{"type": "string"},
+					"type":    map[string]any{"type": "string"},
 				},
 				"required": []string{"name", "sources", "type"},
 			},
@@ -112,8 +112,8 @@ func TestFallbackParity(t *testing.T) {
 		server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{{"message": map[string]string{"content": fx}}},
-				"model": "m",
-				"usage": map[string]int{"total_tokens": 10},
+				"model":   "m",
+				"usage":   map[string]int{"total_tokens": 10},
 			})
 		}))
 		client, err := NewClient("openai-compatible", "fake-key", server2.URL, -1)
@@ -125,7 +125,7 @@ func TestFallbackParity(t *testing.T) {
 				"items": map[string]any{"type": "object", "properties": map[string]any{
 					"name":    map[string]any{"type": "string"},
 					"sources": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-					"type":   map[string]any{"type": "string"},
+					"type":    map[string]any{"type": "string"},
 				}, "required": []string{"name", "sources", "type"}}}},
 			CallOpts{Model: "m"})
 		server2.Close()

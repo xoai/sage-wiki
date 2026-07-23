@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/internal/metrics"
 )
 
 // Message represents a chat message.
@@ -28,8 +28,8 @@ type Message struct {
 
 // CallOpts configures an LLM call.
 type CallOpts struct {
-	Model      string
-	MaxTokens  int
+	Model       string
+	MaxTokens   int
 	Temperature float64
 	// RawFallback (P2-4, spec §4 amendment): StructuredCompletion's fallback
 	// returns raw completion text for the site's own parser instead of the
@@ -318,7 +318,7 @@ func newProvider(name string, apiKey string, baseURL string) (Provider, error) {
 //   - Public paid APIs get conservative defaults matching their published limits.
 //   - Self-hosted backends (openai-compatible = vLLM/LocalAI/etc., ollama) return
 //     0, meaning "no client-side rate limiting": the compiler's BackpressureController
-//     + server-side capacity are the real governors, and a 1/sec (or 1/2sec) cap
+//   - server-side capacity are the real governors, and a 1/sec (or 1/2sec) cap
 //     was the hidden reason sage-wiki could not saturate a local GPU endpoint
 //     despite cfg.Compiler.MaxParallel >= 8 (PER-116 / per-112-concurrency-fix).
 //   - Unknown providers keep the previous conservative 30 RPM default — do not

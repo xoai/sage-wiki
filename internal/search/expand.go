@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"strings"
 
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/memory"
@@ -119,43 +118,3 @@ type expansionResponse struct {
 	Hyde string   `json:"hyde"`
 }
 
-// parseExpansionJSON extracts expansion variants from LLM response.
-// Handles: raw JSON, code-fenced JSON, preamble text before JSON.
-func parseExpansionJSON(text string) (*ExpandedQuery, error) {
-	text = strings.TrimSpace(text)
-
-	// Strip markdown code fences if present
-	if strings.HasPrefix(text, "```") {
-		lines := strings.Split(text, "\n")
-		var jsonLines []string
-		inBlock := false
-		for _, line := range lines {
-			if strings.HasPrefix(line, "```") {
-				inBlock = !inBlock
-				continue
-			}
-			if inBlock {
-				jsonLines = append(jsonLines, line)
-			}
-		}
-		text = strings.Join(jsonLines, "\n")
-	}
-
-	// Find the JSON object
-	start := strings.Index(text, "{")
-	end := strings.LastIndex(text, "}")
-	if start >= 0 && end > start {
-		text = text[start : end+1]
-	}
-
-	var resp expansionResponse
-	if err := json.Unmarshal([]byte(text), &resp); err != nil {
-		return nil, err
-	}
-
-	return &ExpandedQuery{
-		Lex:  resp.Lex,
-		Vec:  resp.Vec,
-		Hyde: resp.Hyde,
-	}, nil
-}
