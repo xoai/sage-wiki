@@ -102,27 +102,7 @@ func (c *Client) StructuredCompletion(ctx context.Context, messages []Message, s
 		return nil, "", fmt.Errorf("llm: format structured request: %w", err)
 	}
 	if !ok {
-		// Fallback: plain completion + the caller's chosen parsing path.
-		resp, err := c.ChatCompletionCtx(ctx, messages, opts)
-		if err != nil {
-			return nil, "", err
-		}
-		if strings.TrimSpace(resp.Content) == "" {
-			// Preserve the actionable empty-content hint (finish_reason /
-			// reasoning / raise-budget) on the fallback path.
-			return nil, "", fmt.Errorf("llm: structured completion: %s", resp.EmptyContentDetails())
-		}
-		if opts.RawFallback {
-			return nil, resp.Content, nil
-		}
-		payload, err := ParseJSONFromText(resp.Content)
-		if err != nil {
-			return nil, "", err
-		}
-		if err := ValidateJSON(schema.Schema, payload); err != nil {
-			return nil, "", err
-		}
-		return payload, "", nil
+		return c.structuredFallback(ctx, messages, schema, opts)
 	}
 
 	// Native path: prebuilt constrained request through the shared transport
@@ -145,6 +125,12 @@ func (c *Client) StructuredCompletion(ctx context.Context, messages []Message, s
 			}
 		}
 		if err != nil {
+			// Spec §3: a second 400 (degrade failed) or a 400 without the
+			// field mention → plain completion + fence-strip fallback.
+			var se *StatusError
+			if errors.As(err, &se) && se.Code == 400 {
+				return c.structuredFallback(ctx, messages, schema, opts)
+			}
 			return nil, "", err
 		}
 	}
@@ -194,6 +180,32 @@ func (c *Client) StructuredCompletion(ctx context.Context, messages []Message, s
 			return nil, "", err // content-invalid: constraint worked, shape wrong — NO fallback
 		}
 		return payload, "", nil
+	}
+	if err := ValidateJSON(schema.Schema, payload); err != nil {
+		return nil, "", err
+	}
+	return payload, "", nil
+}
+
+// structuredFallback is the plain-completion + fence-strip path (used
+// when the provider has no mechanism AND when the mechanism is rejected
+// with a 400 — spec §3).
+func (c *Client) structuredFallback(ctx context.Context, messages []Message, schema JSONSchema, opts CallOpts) (json.RawMessage, string, error) {
+	resp, err := c.ChatCompletionCtx(ctx, messages, opts)
+	if err != nil {
+		return nil, "", err
+	}
+	if strings.TrimSpace(resp.Content) == "" {
+		// Preserve the actionable empty-content hint (finish_reason /
+		// reasoning / raise-budget) on the fallback path.
+		return nil, "", fmt.Errorf("llm: structured completion: %s", resp.EmptyContentDetails())
+	}
+	if opts.RawFallback {
+		return nil, resp.Content, nil
+	}
+	payload, err := ParseJSONFromText(resp.Content)
+	if err != nil {
+		return nil, "", err
 	}
 	if err := ValidateJSON(schema.Schema, payload); err != nil {
 		return nil, "", err
