@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/store"
 )
 
@@ -55,7 +56,9 @@ func (s *Searcher) Search(opts SearchOpts, queryVec []float32) ([]SearchResult, 
 	candidateLimit := opts.Limit * 3
 
 	// BM25 search
+	bm25Start := time.Now()
 	bm25Results, err := s.memory.Search(opts.Query, opts.Tags, candidateLimit)
+	metrics.ObserveDuration(metrics.HistogramNamed("search_duration_seconds", metrics.LatencyBuckets(), "stage", "bm25"), bm25Start)
 	if err != nil {
 		return nil, err
 	}
@@ -63,13 +66,18 @@ func (s *Searcher) Search(opts SearchOpts, queryVec []float32) ([]SearchResult, 
 	// Vector search (if embedding available)
 	var vecResults []store.VectorResult
 	if queryVec != nil {
+		vecStart := time.Now()
 		vecResults, err = s.vectors.Search(queryVec, candidateLimit)
+		metrics.ObserveDuration(metrics.HistogramNamed("search_duration_seconds", metrics.LatencyBuckets(), "stage", "vector"), vecStart)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	// Build RRF fusion
+	// Build RRF fusion (includes hydration: memory.Get lookups for
+	// vector-only hits — design D4 stage boundary)
+	rrfStart := time.Now()
+	defer metrics.ObserveDuration(metrics.HistogramNamed("search_duration_seconds", metrics.LatencyBuckets(), "stage", "rrf"), rrfStart)
 	scores := make(map[string]*fusionEntry)
 
 	for _, r := range bm25Results {
