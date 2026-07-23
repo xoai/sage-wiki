@@ -11,6 +11,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -44,10 +45,10 @@ type StatusInfo struct {
 
 // Stores holds shared store references to avoid re-opening the DB.
 type Stores struct {
-	Mem *memory.Store
-	Vec *vectors.Store
-	Ont *ontology.Store
-	DB  *storage.DB // optional — used for compile_items tier stats
+	Mem store.EntryStore
+	Vec store.VectorStore
+	Ont store.OntologyStore
+	DB  store.DBHandle // optional — used for compile_items tier stats
 }
 
 // GetStatus collects wiki stats from the project.
@@ -81,15 +82,18 @@ func GetStatus(projectDir string, stores *Stores) (*StatusInfo, error) {
 	info.PendingCount = len(mf.PendingSources())
 
 	// Use provided stores or open DB
-	var memStore *memory.Store
-	var vecStore *vectors.Store
-	var ontStore *ontology.Store
+	var memStore store.EntryStore
+	var vecStore store.VectorStore
+	var ontStore store.OntologyStore
 
 	if stores != nil {
 		memStore = stores.Mem
 		vecStore = stores.Vec
 		ontStore = stores.Ont
 	} else {
+		// P2-1 skip-list: wiki is imported (incl. in tests) by compiler and
+		// linter, which sqlitestore imports — routing via storedial closes an
+		// import cycle. Backend selection deferred to T9a caller-injection.
 		dbPath := filepath.Join(projectDir, ".sage", "wiki.db")
 		db, err := storage.Open(dbPath)
 		if err != nil {

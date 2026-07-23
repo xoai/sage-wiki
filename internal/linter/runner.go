@@ -9,6 +9,7 @@ import (
 
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 // Severity levels for findings.
@@ -40,7 +41,7 @@ type LintContext struct {
 	ProjectDir       string
 	OutputDir        string
 	DBPath           string
-	DB               *storage.DB // shared DB connection (optional — opened from DBPath if nil)
+	DB               store.DBHandle // shared DB connection (optional — opened from DBPath if nil)
 	ValidRelations   []string    // valid ontology relation type names
 	ValidEntityTypes []string    // valid ontology entity type names
 	QualityThreshold float64     // quality_score warning threshold (issue #97); 0 → pass default (0.5)
@@ -83,6 +84,9 @@ func (ctx *LintContext) EnsureDB() (func(), error) {
 	if ctx.DBPath == "" {
 		return func() {}, nil
 	}
+	// P2-1 skip-list: LintContext carries a bare DB path (no project dir,
+	// no config) — backend selection deferred; T9 rewires linter to the
+	// Backend seam (decisions.md 2026-07-21).
 	db, err := storage.Open(ctx.DBPath)
 	if err != nil {
 		return func() {}, err

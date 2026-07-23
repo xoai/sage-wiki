@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -93,6 +94,9 @@ func (db *DB) ReadDB() *sql.DB {
 // WriteTx executes fn within a serialized write transaction.
 // Only one write transaction runs at a time.
 func (db *DB) WriteTx(fn func(tx *sql.Tx) error) error {
+	if db.write == nil {
+		return errors.New("storage.WriteTx: read-only database")
+	}
 	db.writeMu.Lock()
 	defer db.writeMu.Unlock()
 
@@ -114,17 +118,39 @@ func (db *DB) Close() error {
 	var closeErr error
 	db.closeOnce.Do(func() {
 		var errs []error
-		if err := db.read.Close(); err != nil {
-			errs = append(errs, err)
+		if db.read != nil {
+			if err := db.read.Close(); err != nil {
+				errs = append(errs, err)
+			}
 		}
-		if err := db.write.Close(); err != nil {
-			errs = append(errs, err)
+		if db.write != nil {
+			if err := db.write.Close(); err != nil {
+				errs = append(errs, err)
+			}
 		}
 		if len(errs) > 0 {
 			closeErr = fmt.Errorf("storage.Close: %v", errs)
 		}
 	})
 	return closeErr
+}
+
+// migration is one schema migration step.
+type migration struct {
+	sql       string
+	disableFK bool // run PRAGMA foreign_keys=OFF before tx, restore after
+}
+
+// schemaMigrations is the append-only V-series. CurrentSchemaVersion tracks it.
+var schemaMigrations = []migration{
+	{sql: migrationV1},
+	{sql: migrationV2},
+	{sql: migrationV3},
+	{sql: migrationV4, disableFK: true},
+	{sql: migrationV5},
+	{sql: migrationV6},
+	{sql: migrationV7},
+	{sql: migrationV8},
 }
 
 // migrate runs schema migrations.
@@ -144,21 +170,7 @@ func (db *DB) migrate() error {
 		return err
 	}
 
-	type migration struct {
-		sql            string
-		disableFK      bool // run PRAGMA foreign_keys=OFF before tx, restore after
-	}
-
-	migrations := []migration{
-		{sql: migrationV1},
-		{sql: migrationV2},
-		{sql: migrationV3},
-		{sql: migrationV4, disableFK: true},
-		{sql: migrationV5},
-		{sql: migrationV6},
-		{sql: migrationV7},
-		{sql: migrationV8},
-	}
+	migrations := schemaMigrations
 
 	for i := version; i < len(migrations); i++ {
 		m := migrations[i]

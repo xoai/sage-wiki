@@ -5,28 +5,22 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-	"time"
 	"unicode"
 
-	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 // Entry represents a searchable wiki entry in FTS5.
-type Entry struct {
-	ID          string
-	Content     string
-	Tags        []string
-	ArticlePath string
-	CreatedAt   time.Time
-}
+// Entry is aliased to store.Entry (P2-1 D2-prime relocation).
+type Entry = store.Entry
 
 // Store manages FTS5 entries.
 type Store struct {
-	db *storage.DB
+	db store.DBHandle
 }
 
 // NewStore creates a new memory store.
-func NewStore(db *storage.DB) *Store {
+func NewStore(db store.DBHandle) *Store {
 	return &Store{db: db}
 }
 
@@ -83,14 +77,7 @@ func (s *Store) Get(id string) (*Entry, error) {
 }
 
 // SearchResult represents a BM25 search hit.
-type SearchResult struct {
-	ID          string
-	Content     string
-	Tags        []string
-	ArticlePath string
-	BM25Score   float64
-	Rank        int
-}
+type SearchResult = store.SearchResult
 
 // Search performs BM25 search with optional tag filtering.
 func (s *Store) Search(query string, tags []string, limit int) ([]SearchResult, error) {
@@ -228,4 +215,50 @@ var stopwords = map[string]bool{
 
 func isStopword(w string) bool {
 	return stopwords[w]
+}
+
+// ListAll returns every entry, fully populated (P2-1: absorbs reembed's raw
+// entries scan). Unbounded by design — reembed needs the full table.
+func (s *Store) ListAll() ([]Entry, error) {
+	rows, err := s.db.ReadDB().Query("SELECT id, content, tags, article_path FROM entries")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Entry
+	for rows.Next() {
+		var e Entry
+		var tags string
+		if err := rows.Scan(&e.ID, &e.Content, &tags, &e.ArticlePath); err != nil {
+			return nil, err
+		}
+		if tags != "" {
+			e.Tags = strings.Split(tags, ",")
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// CountUncompiled counts uncompiled (tier<3) source entries matching a query
+// (P2-1: absorbs mcp/server.go's cross-store FTS × compile_items join).
+// Tolerance: query/scan errors return 0 (compile_items may not exist on
+// legacy vaults — mcp:301 parity). Empty sanitized query returns 0.
+func (s *Store) CountUncompiled(query string) (int, error) {
+	sanitized := SanitizeFTS(query)
+	if sanitized == "" {
+		return 0, nil
+	}
+	var count int
+	err := s.db.ReadDB().QueryRow(`
+		SELECT COUNT(*) FROM entries
+		JOIN compile_items ON compile_items.source_path = SUBSTR(entries.id, 5)
+		WHERE entries MATCH ? AND entries.id LIKE 'src:%'
+		AND compile_items.tier < 3
+	`, sanitized).Scan(&count)
+	if err != nil {
+		return 0, nil // table may not exist yet (documented tolerance)
+	}
+	return count, nil
 }

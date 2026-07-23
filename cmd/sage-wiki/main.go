@@ -34,7 +34,8 @@ import (
 	"github.com/xoai/sage-wiki/internal/query"
 	"github.com/xoai/sage-wiki/internal/scribe"
 	"github.com/xoai/sage-wiki/internal/skill"
-	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/storedial"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/vectors"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
@@ -398,7 +399,9 @@ func reconcileStartup(ctx context.Context, dir string) {
 	if _, err := os.Stat(dbPath); err != nil {
 		return // no database yet
 	}
-	db, err := storage.Open(dbPath)
+	// P2-1 skip-list: no config in scope here; backend selection falls back
+	// to the sqlite default (decisions.md 2026-07-21).
+	db, err := storedial.OpenConcrete(dir, config.StorageConfig{})
 	if err != nil {
 		log.Warn("startup reconcile: open db failed", "error", err)
 		return
@@ -427,7 +430,17 @@ func runCompile(cmd *cobra.Command, args []string) error {
 
 	reEmbed, _ := cmd.Flags().GetBool("re-embed")
 	if reEmbed {
-		count, err := compiler.ReEmbed(dir)
+		// P2-1: inject the Backend so re-embed honors storage.backend.
+		cfg, err := config.Load(resolveConfigPath(dir))
+		if err != nil {
+			return fmt.Errorf("re-embed: load config: %w", err)
+		}
+		backend, err := storedial.Open(cfg.Storage, store.OpenOptions{Mode: store.ModeWriter, ProjectDir: dir})
+		if err != nil {
+			return fmt.Errorf("re-embed: open db: %w", err)
+		}
+		defer backend.Close()
+		count, err := compiler.ReEmbed(dir, backend)
 		if err != nil {
 			return err
 		}
@@ -498,6 +511,18 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// P2-1 T9a-2: inject the Backend so compile honors storage.backend.
+	// Error text matches Compile's own config-load failure byte-for-byte.
+	cfg, err := config.Load(resolveConfigPath(dir))
+	if err != nil {
+		return fmt.Errorf("compile: load config: %w", err)
+	}
+	backend, err := storedial.Open(cfg.Storage, store.OpenOptions{Mode: store.ModeWriter, ProjectDir: dir})
+	if err != nil {
+		return fmt.Errorf("compile: open db: %w", err)
+	}
+	defer backend.Close()
+
 	result, err := compiler.Compile(dir, compiler.CompileOpts{
 		Ctx:     ctx,
 		DryRun:  dryRun,
@@ -505,6 +530,7 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		Batch:   batch,
 		NoCache: noCache,
 		Prune:   prune,
+		Backend: backend,
 	})
 	if err != nil {
 		return err
@@ -651,7 +677,9 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	tags, _ := cmd.Flags().GetStringSlice("tags")
 	limit, _ := cmd.Flags().GetInt("limit")
 
-	db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	// P2-1 skip-list: runSearch must tolerate config-load failure (P1-8
+	// documented BM25 degrade); backend selection falls back to sqlite.
+	db, err := storedial.OpenConcrete(dir, config.StorageConfig{})
 	if err != nil {
 		return err
 	}
@@ -953,8 +981,7 @@ func runScribe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Open DB
-	dbPath := filepath.Join(dir, ".sage", "wiki.db")
-	db, err := storage.Open(dbPath)
+	db, err := storedial.OpenConcrete(dir, cfg.Storage)
 	if err != nil {
 		return fmt.Errorf("scribe: open db: %w", err)
 	}

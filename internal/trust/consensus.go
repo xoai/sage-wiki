@@ -9,10 +9,11 @@ import (
 	"strings"
 
 	"github.com/xoai/sage-wiki/internal/embed"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/llm"
 )
 
-func EmbedAndStoreQuestion(tx *sql.Tx, questionHash string, embedding []float32) error {
+func (s *Store) EmbedAndStoreQuestion(tx *sql.Tx, questionHash string, embedding []float32) error {
 	blob := encodeFloat32s(embedding)
 	_, err := tx.Exec(
 		`INSERT OR REPLACE INTO pending_questions_vec (question_hash, embedding, dimensions) VALUES (?, ?, ?)`,
@@ -20,12 +21,9 @@ func EmbedAndStoreQuestion(tx *sql.Tx, questionHash string, embedding []float32)
 	return err
 }
 
-type SimilarQuestion struct {
-	Output *PendingOutput
-	Score  float64
-}
+type SimilarQuestion = store.SimilarQuestion
 
-func FindSimilarQuestion(tx *sql.Tx, questionVec []float32, threshold float64) (*SimilarQuestion, error) {
+func (s *Store) FindSimilarQuestion(tx *sql.Tx, questionVec []float32, threshold float64) (*SimilarQuestion, error) {
 	rows, err := tx.Query(`SELECT pqv.question_hash, pqv.embedding, pqv.dimensions
 		FROM pending_questions_vec pqv
 		INNER JOIN pending_outputs po ON po.question_hash = pqv.question_hash

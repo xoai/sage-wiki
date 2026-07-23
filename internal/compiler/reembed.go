@@ -9,12 +9,14 @@ import (
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
 // ReEmbed regenerates vector embeddings for all FTS5 entries
-// without re-summarizing or recompiling.
-func ReEmbed(projectDir string) (int, error) {
+// without re-summarizing or recompiling. backend may be nil (legacy sqlite
+// open); when set, the caller retains ownership (P2-1 T16).
+func ReEmbed(projectDir string, backend store.Backend) (int, error) {
 	cfg, err := config.Load(filepath.Join(projectDir, "config.yaml"))
 	if err != nil {
 		return 0, fmt.Errorf("re-embed: load config: %w", err)
@@ -25,35 +27,48 @@ func ReEmbed(projectDir string) (int, error) {
 		return 0, fmt.Errorf("re-embed: no embedding provider available")
 	}
 
-	db, err := storage.Open(filepath.Join(projectDir, ".sage", "wiki.db"))
-	if err != nil {
-		return 0, fmt.Errorf("re-embed: open db: %w", err)
+	// compiler cannot import storedial (cycle) — the Backend is injected by
+	// leaf callers; nil keeps the legacy sqlite open byte-identical.
+	var db store.DBHandle
+	if backend != nil {
+		db = backend
+		defer func() {}() // caller owns the Backend
+	} else {
+		sdb, err := storage.Open(filepath.Join(projectDir, ".sage", "wiki.db"))
+		if err != nil {
+			return 0, fmt.Errorf("re-embed: open db: %w", err)
+		}
+		defer sdb.Close()
+		db = sdb
 	}
-	defer db.Close()
 
-	memStore := memory.NewStore(db)
-	vecStore := vectors.NewStore(db)
+	var memStore store.EntryStore
+	var vecStore store.VectorStore
+	var chunkStore store.ChunkStore
+	if backend != nil {
+		memStore = backend.Entries()
+		vecStore = backend.Vectors()
+		chunkStore = backend.Chunks()
+	} else {
+		memStore = memory.NewStore(db)
+		vecStore = vectors.NewStore(db)
+		chunkStore = memory.NewChunkStore(db)
+	}
 
-	// Get all FTS5 entries
-	rows, err := db.ReadDB().Query("SELECT id, content FROM entries")
+	// Get all FTS5 entries (P2-1: via the EntryStore seam)
+	storeEntries, err := memStore.ListAll()
 	if err != nil {
 		return 0, fmt.Errorf("re-embed: query entries: %w", err)
 	}
-	defer rows.Close()
 
 	type entry struct {
 		id      string
 		content string
 	}
 	var entries []entry
-	for rows.Next() {
-		var e entry
-		if err := rows.Scan(&e.id, &e.content); err != nil {
-			continue
-		}
-		entries = append(entries, e)
+	for _, e := range storeEntries {
+		entries = append(entries, entry{id: e.ID, content: e.Content})
 	}
-	_ = memStore // used for count verification
 
 	log.Info("re-embedding entries", "count", len(entries), "provider", embedder.Name())
 
@@ -79,11 +94,10 @@ func ReEmbed(projectDir string) (int, error) {
 	// consistent with the current embedding model. Skipping this leaves stale
 	// chunks (e.g., from a prior 768-dim Ollama run) that break hybrid search
 	// when their dim disagrees with the entry-level vectors.
-	chunkRows, err := db.ReadDB().Query("SELECT chunk_id, doc_id, content FROM chunks_meta")
+	storeChunks, err := chunkStore.ListAll()
 	if err != nil {
 		return embedded, fmt.Errorf("re-embed: query chunks: %w", err)
 	}
-	defer chunkRows.Close()
 
 	type chunk struct {
 		chunkID string
@@ -91,12 +105,8 @@ func ReEmbed(projectDir string) (int, error) {
 		content string
 	}
 	var chunks []chunk
-	for chunkRows.Next() {
-		var c chunk
-		if err := chunkRows.Scan(&c.chunkID, &c.docID, &c.content); err != nil {
-			continue
-		}
-		chunks = append(chunks, c)
+	for _, c := range storeChunks {
+		chunks = append(chunks, chunk{chunkID: c.ChunkID, docID: c.DocID, content: c.Content})
 	}
 
 	if len(chunks) == 0 {
@@ -105,7 +115,10 @@ func ReEmbed(projectDir string) (int, error) {
 
 	log.Info("re-embedding chunks", "count", len(chunks), "provider", embedder.Name())
 
-	tx, err := db.WriteDB().Begin()
+	// P2-1: BeginWrite holds the write mutex for the tx duration (parity
+	// with the single-write-connection world — design D9); Commit/Rollback
+	// releases it.
+	tx, err := db.BeginWrite()
 	if err != nil {
 		return embedded, fmt.Errorf("re-embed: begin chunk tx: %w", err)
 	}
@@ -116,7 +129,7 @@ func ReEmbed(projectDir string) (int, error) {
 			log.Warn("chunk embedding failed", "progress", fmt.Sprintf("%d/%d", i+1, len(chunks)), "chunk", c.chunkID, "error", err)
 			continue
 		}
-		if err := vecStore.UpsertChunk(tx, c.chunkID, c.docID, vec); err != nil {
+		if err := vecStore.UpsertChunk(tx.Tx, c.chunkID, c.docID, vec); err != nil {
 			log.Warn("chunk upsert failed", "chunk", c.chunkID, "error", err)
 			continue
 		}

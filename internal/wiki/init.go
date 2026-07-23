@@ -46,6 +46,9 @@ func InitGreenfield(dir string, project string, model string) error {
 	}
 
 	// Create SQLite DB
+	// P2-1 skip-list: init bootstraps the sqlite index file even when a
+	// preserved config selects postgres — postgres bootstrap is reconcile/
+	// recompile from files (design D10), not init (decisions.md 2026-07-21).
 	dbPath := filepath.Join(dir, ".sage", "wiki.db")
 	db, err := storage.Open(dbPath)
 	if err != nil {
@@ -121,6 +124,9 @@ func InitVaultOverlay(dir string, project string, sourceFolders []string, ignore
 	}
 
 	// Create SQLite DB
+	// P2-1 skip-list: init bootstraps the sqlite index file even when a
+	// preserved config selects postgres — postgres bootstrap is reconcile/
+	// recompile from files (design D10), not init (decisions.md 2026-07-21).
 	dbPath := filepath.Join(dir, ".sage", "wiki.db")
 	db, err := storage.Open(dbPath)
 	if err != nil {

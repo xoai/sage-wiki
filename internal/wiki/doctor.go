@@ -38,11 +38,19 @@ func RunDoctor(projectDir string) *DoctorResult {
 	result.add("config", "ok", fmt.Sprintf("Project %q loaded", cfg.Project))
 
 	// Check project structure
-	dbPath := filepath.Join(projectDir, ".sage", "wiki.db")
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		result.add("database", "error", "wiki.db not found — run sage-wiki init first")
+	// P2-1: os.Stat has no meaning for the postgres backend, and wiki cannot
+	// dial it (storedial import would close a cycle via compiler's test
+	// imports) — report the configured backend instead. SQLite path is
+	// byte-identical to before.
+	if cfg.Storage.Backend == "postgres" {
+		result.add("database", "ok", "postgres backend configured — verified at first connection")
 	} else {
-		result.add("database", "ok", "wiki.db exists")
+		dbPath := filepath.Join(projectDir, ".sage", "wiki.db")
+		if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+			result.add("database", "error", "wiki.db not found — run sage-wiki init first")
+		} else {
+			result.add("database", "ok", "wiki.db exists")
+		}
 	}
 
 	// Check source directories

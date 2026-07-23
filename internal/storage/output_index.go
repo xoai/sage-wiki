@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"github.com/xoai/sage-wiki/internal/store"
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
@@ -19,11 +20,11 @@ func HashBytes(b []byte) string {
 // (D5), and treats a missing row (with the file present but unindexed) as the
 // "file-no-DB" case.
 type OutputIndex struct {
-	db *DB
+	db store.DBHandle
 }
 
 // NewOutputIndex returns an OutputIndex over db.
-func NewOutputIndex(db *DB) *OutputIndex {
+func NewOutputIndex(db store.DBHandle) *OutputIndex {
 	return &OutputIndex{db: db}
 }
 
@@ -45,13 +46,14 @@ func (o *OutputIndex) Get(outputPath string) (hash string, ok bool, err error) {
 // so a crash mid-reindex never leaves a row that looks indexed but is partial.
 func (o *OutputIndex) Set(outputPath, hash string) error {
 	return o.db.WriteTx(func(tx *sql.Tx) error {
-		return SetOutputHashTx(tx, outputPath, hash)
+		return o.SetTx(tx, outputPath, hash)
 	})
 }
 
-// SetOutputHashTx upserts within an existing write transaction, so the hash can
+// SetTx upserts within an existing write transaction, so the hash can
 // be written atomically with the index rows it certifies.
-func SetOutputHashTx(tx *sql.Tx, outputPath, hash string) error {
+// (Renamed from SetOutputHashTx, P2-1 T7 — method form for the OutputIndexStore seam.)
+func (o *OutputIndex) SetTx(tx *sql.Tx, outputPath, hash string) error {
 	_, err := tx.Exec(`
 		INSERT INTO output_index (output_path, content_hash, indexed_at)
 		VALUES (?, ?, datetime('now'))
@@ -66,12 +68,13 @@ func SetOutputHashTx(tx *sql.Tx, outputPath, hash string) error {
 // Delete removes the record for outputPath (the output file vanished, D5 case b).
 func (o *OutputIndex) Delete(outputPath string) error {
 	return o.db.WriteTx(func(tx *sql.Tx) error {
-		return DeleteOutputHashTx(tx, outputPath)
+		return o.DeleteTx(tx, outputPath)
 	})
 }
 
-// DeleteOutputHashTx removes within an existing write transaction.
-func DeleteOutputHashTx(tx *sql.Tx, outputPath string) error {
+// DeleteTx removes within an existing write transaction.
+// (Renamed from DeleteOutputHashTx, P2-1 T7.)
+func (o *OutputIndex) DeleteTx(tx *sql.Tx, outputPath string) error {
 	if _, err := tx.Exec("DELETE FROM output_index WHERE output_path = ?", outputPath); err != nil {
 		return fmt.Errorf("OutputIndex.Delete: %w", err)
 	}

@@ -48,3 +48,29 @@ func TestFederatedSearch(t *testing.T) {
 		}
 	}
 }
+
+// TestMultiProjectReaderOpens verifies N>3 projects can be searched through
+// the reader-mode path without resource exhaustion (spec done-when 7; the
+// postgres pool-size leg runs under TEST_DATABASE_URL in T14).
+func TestMultiProjectReaderOpens(t *testing.T) {
+	projects := map[string]Project{}
+	for _, name := range []string{"p1", "p2", "p3", "p4", "p5"} {
+		dir := setupTestDB(t, name)
+		projects[name] = Project{Path: dir, Searchable: true}
+	}
+
+	results, err := FederatedSearch(projects, "test content", 20)
+	if err != nil {
+		t.Fatalf("FederatedSearch: %v", err)
+	}
+	// Every project contributed at least one readable result.
+	seen := map[string]bool{}
+	for _, r := range results {
+		seen[r.Project] = true
+	}
+	for name := range projects {
+		if !seen[name] {
+			t.Errorf("project %s produced no results through reader path", name)
+		}
+	}
+}

@@ -10,6 +10,8 @@ import (
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/memory"
+	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/internal/storedial"
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
@@ -84,21 +86,47 @@ func FederatedSearch(projects map[string]Project, query string, limit int) ([]Fe
 }
 
 func searchProject(projectDir string, query string, limit int) ([]hybrid.SearchResult, error) {
-	// TODO: use read-only open when storage.OpenReadOnly is available
-	db, err := storage.Open(filepath.Join(projectDir, ".sage", "wiki.db"))
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
-
-	mem := memory.NewStore(db)
-	vec := vectors.NewStore(db)
-	searcher := hybrid.NewSearcher(mem, vec)
-
-	var queryVec []float32
-	var bm25W, vecW float64
+	// P2-1 T11: reader mode (no migrations, no advisory lock) with the
+	// hub-sized read pool (4/2 — N projects × writer pools would exhaust
+	// max_connections on postgres). Config load failure or reader-open
+	// failure (e.g. schema behind → needs a writer pass) falls back to the
+	// legacy writer open — today's behavior in both cases.
+	var b store.Backend
 	cfg, cfgErr := config.Load(filepath.Join(projectDir, "config.yaml"))
 	if cfgErr == nil {
+		lt, _ := cfg.Storage.LockTimeoutDuration()
+		b, _ = storedial.Open(cfg.Storage, store.OpenOptions{
+			Mode:        store.ModeReader,
+			ProjectDir:  projectDir,
+			LockTimeout: lt,
+			Pool:        store.PoolConfig{MaxOpen: 4, MaxIdle: 2},
+		})
+	}
+	if b == nil {
+		b, _ = storedial.Open(config.StorageConfig{}, store.OpenOptions{
+			Mode:       store.ModeWriter,
+			ProjectDir: projectDir,
+		})
+	}
+	if b == nil {
+		// Last resort: legacy direct open (unreachable in practice —
+		// sqlite writer open rarely fails when the file exists).
+		db, err := storage.Open(filepath.Join(projectDir, ".sage", "wiki.db"))
+		if err != nil {
+			return nil, err
+		}
+		defer db.Close()
+		return searchWithStores(hybrid.NewSearcher(memory.NewStore(db), vectors.NewStore(db)), cfg, query, limit)
+	}
+	defer b.Close()
+
+	return searchWithStores(hybrid.NewSearcher(b.Entries(), b.Vectors()), cfg, query, limit)
+}
+
+func searchWithStores(searcher *hybrid.Searcher, cfg *config.Config, query string, limit int) ([]hybrid.SearchResult, error) {
+	var queryVec []float32
+	var bm25W, vecW float64
+	if cfg != nil {
 		if embedder := embed.NewFromConfig(cfg); embedder != nil {
 			queryVec, _ = embedder.Embed(query)
 		}

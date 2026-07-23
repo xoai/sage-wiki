@@ -18,26 +18,25 @@ import (
 	"sync/atomic"
 	"time"
 
+		"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
-	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/pathsafe"
 	"github.com/xoai/sage-wiki/internal/query"
-	"github.com/xoai/sage-wiki/internal/storage"
-	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
 // WebServer serves the web UI and REST API.
 type WebServer struct {
 	projectDir   string
-	db           *storage.DB
-	mem          *memory.Store
-	vec          *vectors.Store
-	ont          *ontology.Store
+	db           store.DBHandle
+	backend      store.Backend
+	mem          store.EntryStore
+	vec          store.VectorStore
+	ont          store.OntologyStore
 	searcher     *hybrid.Searcher
 	cfg          *config.Config
 	wsClients    map[chan string]bool
@@ -70,6 +69,7 @@ func NewWebServer(projectDir string) (*WebServer, error) {
 	s := &WebServer{
 		projectDir: projectDir,
 		db:         a.DB,
+		backend:    a.Backend,
 		mem:        a.Mem,
 		vec:        a.Vec,
 		ont:        a.Ont,
@@ -179,7 +179,7 @@ func (s *WebServer) Start(addr string) error {
 
 // Close cleans up resources.
 func (s *WebServer) Close() error {
-	return s.db.Close()
+	return s.backend.Close()
 }
 
 // watchOutputDir watches the output directory for changes and broadcasts
@@ -708,21 +708,9 @@ func (s *WebServer) handleGraph(w http.ResponseWriter, r *http.Request) {
 		allEntities, _ := s.ont.ListEntities("")
 
 		// Pre-compute connection counts in a single query (avoids N+1)
-		connCounts := make(map[string]int)
-		countRows, err := s.db.ReadDB().Query(`
-			SELECT id, cnt FROM (
-				SELECT source_id AS id, COUNT(*) AS cnt FROM relations GROUP BY source_id
-				UNION ALL
-				SELECT target_id AS id, COUNT(*) AS cnt FROM relations GROUP BY target_id
-			) GROUP BY id`)
-		if err == nil {
-			defer countRows.Close()
-			for countRows.Next() {
-				var id string
-				var cnt int
-				countRows.Scan(&id, &cnt)
-				connCounts[id] += cnt
-			}
+		connCounts, err := s.ont.EntityConnectionCounts()
+		if err != nil {
+			connCounts = map[string]int{}
 		}
 
 		entitySet := make(map[string]bool)
@@ -735,14 +723,10 @@ func (s *WebServer) handleGraph(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// All relations (only between non-source entities)
-		rows, err := s.db.ReadDB().Query("SELECT source_id, target_id, relation FROM relations")
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var e edge
-				rows.Scan(&e.Source, &e.Target, &e.Relation)
-				if entitySet[e.Source] && entitySet[e.Target] {
-					edges = append(edges, e)
+		if rels, err := s.ont.AllRelations(); err == nil {
+			for _, rel := range rels {
+				if entitySet[rel.SourceID] && entitySet[rel.TargetID] {
+					edges = append(edges, edge{Source: rel.SourceID, Target: rel.TargetID, Relation: rel.Relation})
 				}
 			}
 		}

@@ -4,11 +4,11 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+		"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/memory"
-	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/tui"
 	"github.com/xoai/sage-wiki/internal/tui/browse"
 	"github.com/xoai/sage-wiki/internal/tui/compile"
@@ -44,7 +44,7 @@ type Model struct {
 }
 
 // New creates the dashboard with all tabs.
-func New(projectDir string, cfg *config.Config, db *storage.DB) Model {
+func New(projectDir string, cfg *config.Config, db store.DBHandle) Model {
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
 	searcher := hybrid.NewSearcher(memStore, vecStore)

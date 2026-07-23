@@ -13,8 +13,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/memory"
-	"github.com/xoai/sage-wiki/internal/storage"
-	"github.com/xoai/sage-wiki/internal/vectors"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 // parserRegistry is the shared parser registry for code file parsing.
@@ -23,7 +22,7 @@ var parserRegistry = parsers.NewRegistry()
 // indexRawSources indexes source files into FTS5 at Tier 0 (no embedding).
 // Uses "src:" prefix on entry IDs to distinguish from compiled article entries.
 // Skips sources that already have a compiled entry (non-prefixed) in FTS5.
-func indexRawSources(projectDir string, sources []CompileItem, memStore *memory.Store, items *CompileItemStore, extractOpts ...extract.ExtractOpts) int {
+func indexRawSources(projectDir string, sources []CompileItem, memStore store.EntryStore, items store.CompileItemStore, extractOpts ...extract.ExtractOpts) int {
 	indexed := 0
 	for _, src := range sources {
 		// Skip if a compiled entry already exists (higher quality)
@@ -76,14 +75,14 @@ func indexRawSources(projectDir string, sources []CompileItem, memStore *memory.
 func indexAndEmbedSources(
 	projectDir string,
 	sources []CompileItem,
-	memStore *memory.Store,
-	vecStore *vectors.Store,
+	memStore store.EntryStore,
+	vecStore store.VectorStore,
 	embedder embed.Embedder,
-	items *CompileItemStore,
+	items store.CompileItemStore,
 	bp *BackpressureController,
-	chunkStore *memory.ChunkStore,
+	chunkStore store.ChunkStore,
 	chunkSize int,
-	db *storage.DB,
+	db store.DBHandle,
 	extractOpts ...extract.ExtractOpts,
 ) (indexed, embedded int) {
 	// Step 1: FTS5 index any sources not yet indexed

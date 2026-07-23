@@ -1,37 +1,16 @@
 package trust
 
-import "time"
+import "github.com/xoai/sage-wiki/internal/store"
 
-type OutputState string
+type OutputState = store.OutputState
 
 const (
-	StatePending   OutputState = "pending"
-	StateConfirmed OutputState = "confirmed"
-	StateConflict  OutputState = "conflict"
-	StateStale     OutputState = "stale"
+	StatePending   = store.StatePending
+	StateConfirmed = store.StateConfirmed
+	StateConflict  = store.StateConflict
+	StateStale     = store.StateStale
 )
 
-type PendingOutput struct {
-	ID              string
-	Question        string
-	QuestionHash    string
-	Answer          string
-	AnswerHash      string
-	State           OutputState
-	Confirmations   int
-	GroundingScore  *float64
-	SourcesHash     string
-	SourcesUsed     string // JSON array
-	FilePath        string
-	CreatedAt       time.Time
-	PromotedAt      *time.Time
-	DemotedAt       *time.Time
-}
+type PendingOutput = store.PendingOutput
 
-type Confirmation struct {
-	ID          int
-	OutputID    string
-	ChunkIDs    string // JSON array
-	AnswerHash  string
-	ConfirmedAt time.Time
-}
+type Confirmation = store.Confirmation

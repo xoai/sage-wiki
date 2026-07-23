@@ -5,36 +5,28 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
+// Countable is aliased to store.Countable (P2-1 D2-prime relocation).
+type Countable = store.Countable
+
 // ChunkEntry represents a chunk to be indexed.
-type ChunkEntry struct {
-	ChunkID     string
-	ChunkIndex  int
-	Heading     string
-	Content     string
-	StartOffset int
-	EndOffset   int
-}
+type ChunkEntry = store.ChunkEntry
+
+// ChunkEntryWithDoc is a ChunkEntry plus its owning doc ID (ListAll rows).
+type ChunkEntryWithDoc = store.ChunkEntryWithDoc
 
 // ChunkResult represents a chunk search hit.
-type ChunkResult struct {
-	ChunkID   string
-	DocID     string
-	Heading   string
-	Content   string
-	BM25Score float64
-	Rank      int
-}
+type ChunkResult = store.ChunkResult
 
 // ChunkStore manages chunk-level FTS5 entries.
 type ChunkStore struct {
-	db *storage.DB
+	db store.DBHandle
 }
 
 // NewChunkStore creates a new chunk store.
-func NewChunkStore(db *storage.DB) *ChunkStore {
+func NewChunkStore(db store.DBHandle) *ChunkStore {
 	return &ChunkStore{db: db}
 }
 
@@ -190,7 +182,7 @@ func (s *ChunkStore) SearchChunksMultiQuery(queries []string, limit int) ([]Chun
 }
 
 // NeedsBackfill returns true if chunk index is empty but entries exist.
-func (s *ChunkStore) NeedsBackfill(memStore *Store) bool {
+func (s *ChunkStore) NeedsBackfill(memStore Countable) bool {
 	chunkCount, err := s.Count()
 	if err != nil || chunkCount > 0 {
 		return false
@@ -199,3 +191,24 @@ func (s *ChunkStore) NeedsBackfill(memStore *Store) bool {
 	return err == nil && entryCount > 0
 }
 
+
+// ListAll returns every chunk, fully populated, ordered for determinism
+// (P2-1: absorbs reembed's raw chunks_meta scan). Unbounded by design.
+func (s *ChunkStore) ListAll() ([]ChunkEntryWithDoc, error) {
+	rows, err := s.db.ReadDB().Query(
+		"SELECT chunk_id, doc_id, chunk_index, heading, content, start_offset, end_offset FROM chunks_meta ORDER BY doc_id, chunk_index")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []ChunkEntryWithDoc
+	for rows.Next() {
+		var c ChunkEntryWithDoc
+		if err := rows.Scan(&c.ChunkID, &c.DocID, &c.ChunkIndex, &c.Heading, &c.Content, &c.StartOffset, &c.EndOffset); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}

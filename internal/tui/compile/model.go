@@ -14,7 +14,8 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/xoai/sage-wiki/internal/compiler"
-	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/storedial"
 	"github.com/xoai/sage-wiki/internal/tui"
 	"github.com/xoai/sage-wiki/internal/tui/components"
 )
@@ -329,8 +330,9 @@ func (m Model) runCompile() tea.Cmd {
 // not a store stack.
 // queryTierLine returns a compact tier distribution string like "T0:5 T1:90 T3:3".
 func queryTierLine(projectDir string) string {
-	dbPath := filepath.Join(projectDir, ".sage", "wiki.db")
-	db, err := storage.Open(dbPath)
+	// P2-1 skip-list: 3-line probe with no config in scope; backend
+	// selection falls back to the sqlite default (decisions.md 2026-07-21).
+	db, err := storedial.OpenConcrete(projectDir, config.StorageConfig{})
 	if err != nil {
 		return ""
 	}

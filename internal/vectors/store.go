@@ -8,12 +8,12 @@ import (
 	"math"
 
 	"github.com/xoai/sage-wiki/internal/log"
-	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 // Store manages vector embeddings as BLOBs in SQLite.
 type Store struct {
-	db         *storage.DB
+	db         store.DBHandle
 	docCache   *vectorCache
 	chunkCache *vectorCache
 }
@@ -168,7 +168,7 @@ func (s *Store) Upsert(id string, embedding []float32) error {
 }
 
 // NewStore creates a new vector store.
-func NewStore(db *storage.DB) *Store {
+func NewStore(db store.DBHandle) *Store {
 	return &Store{
 		db:         db,
 		docCache:   &vectorCache{},
@@ -213,11 +213,7 @@ func (s *Store) Delete(id string) error {
 }
 
 // VectorResult represents a cosine similarity search result.
-type VectorResult struct {
-	ID    string
-	Score float64
-	Rank  int
-}
+type VectorResult = store.VectorResult
 
 // Search performs cosine similarity search over the in-memory matrix cache
 // (PERF-01): one lazy load from SQLite, then dot-product passes with no
@@ -343,12 +339,7 @@ func (s *Store) HasChunkVectors(docID string) (bool, error) {
 }
 
 // ChunkVectorResult represents a chunk cosine similarity search result.
-type ChunkVectorResult struct {
-	ChunkID string
-	DocID   string
-	Score   float64
-	Rank    int
-}
+type ChunkVectorResult = store.ChunkVectorResult
 
 // insertChunkSorted maintains a sorted slice of top-k chunk results (descending by score).
 func insertChunkSorted(results []ChunkVectorResult, item ChunkVectorResult, limit int) []ChunkVectorResult {

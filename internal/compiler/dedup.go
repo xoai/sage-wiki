@@ -3,6 +3,7 @@ package compiler
 import (
 	"sync"
 
+		"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/vectors"
@@ -22,7 +23,7 @@ const (
 // DedupCache is safe for concurrent use.
 type DedupCache struct {
 	embedder  embed.Embedder
-	vecStore  *vectors.Store // optional — load pre-stored embeddings
+	vecStore  store.VectorStore // optional — load pre-stored embeddings
 	threshold float64        // cosine similarity threshold (default 0.85)
 
 	mu    sync.RWMutex // protects cache
@@ -32,7 +33,7 @@ type DedupCache struct {
 // NewDedupCache creates a dedup cache with the given embedder and threshold.
 // If threshold <= 0, defaults to 0.85. vecStore is optional — if provided,
 // Seed will load existing embeddings from the store instead of re-embedding.
-func NewDedupCache(embedder embed.Embedder, vecStore *vectors.Store, threshold float64) *DedupCache {
+func NewDedupCache(embedder embed.Embedder, vecStore store.VectorStore, threshold float64) *DedupCache {
 	if threshold <= 0 {
 		threshold = 0.85
 	}

@@ -17,11 +17,9 @@ import (
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
-	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/pathsafe"
-	"github.com/xoai/sage-wiki/internal/storage"
-	"github.com/xoai/sage-wiki/internal/vectors"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
 
@@ -29,10 +27,12 @@ import (
 type Server struct {
 	mcp         *server.MCPServer
 	projectDir  string
-	db          *storage.DB
-	mem         *memory.Store
-	vec         *vectors.Store
-	ont         *ontology.Store
+	db          store.DBHandle
+	backend     store.Backend
+	closeDB     func() error
+	mem         store.EntryStore
+	vec         store.VectorStore
+	ont         store.OntologyStore
 	searcher    *hybrid.Searcher
 	cfg         *config.Config
 	embedder    embed.Embedder
@@ -63,6 +63,8 @@ func NewServer(projectDir string, coordinator ...*compiler.CompileCoordinator) (
 	s := &Server{
 		projectDir:  projectDir,
 		db:          a.DB,
+		backend:     a.Backend,
+		closeDB:     a.Close,
 		mem:         a.Mem,
 		vec:         a.Vec,
 		ont:         a.Ont,
@@ -89,13 +91,13 @@ func NewServer(projectDir string, coordinator ...*compiler.CompileCoordinator) (
 
 // ServeStdio starts the MCP server on stdio transport.
 func (s *Server) ServeStdio() error {
-	defer s.db.Close()
+	defer s.closeDB()
 	return server.ServeStdio(s.mcp)
 }
 
 // ServeSSE starts the MCP server on SSE transport (localhost only).
 func (s *Server) ServeSSE(port int) error {
-	defer s.db.Close()
+	defer s.closeDB()
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	sseServer := server.NewSSEServer(s.mcp, server.WithBaseURL("http://"+addr))
 	return sseServer.Start(addr)
@@ -103,7 +105,7 @@ func (s *Server) ServeSSE(port int) error {
 
 // Close cleans up resources.
 func (s *Server) Close() error {
-	return s.db.Close()
+	return s.closeDB()
 }
 
 // MCPServer returns the underlying MCP server for testing.
@@ -112,13 +114,13 @@ func (s *Server) MCPServer() *server.MCPServer {
 }
 
 // MemStore returns the memory store for testing.
-func (s *Server) MemStore() *memory.Store { return s.mem }
+func (s *Server) MemStore() store.EntryStore { return s.mem }
 
 // VecStore returns the vector store for testing.
-func (s *Server) VecStore() *vectors.Store { return s.vec }
+func (s *Server) VecStore() store.VectorStore { return s.vec }
 
 // OntStore returns the ontology store for testing.
-func (s *Server) OntStore() *ontology.Store { return s.ont }
+func (s *Server) OntStore() store.OntologyStore { return s.ont }
 
 // CallTool invokes a tool handler by name. Used for testing.
 func (s *Server) CallTool(ctx context.Context, name string, req mcp.CallToolRequest) *mcp.CallToolResult {
@@ -290,23 +292,10 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 
 // countUncompiledMatches counts FTS5 entries with "src:" prefix matching
 // the query that are below Tier 3 in compile_items.
+// (P2-1: moved behind the EntryStore seam — same query, same error→0
+// tolerance, via the concrete sqlite store.)
 func (s *Server) countUncompiledMatches(query string) int {
-	// Sanitize query for FTS5 (reuse existing sanitization)
-	sanitized := memory.SanitizeFTS(query)
-	if sanitized == "" {
-		return 0
-	}
-
-	var count int
-	err := s.db.ReadDB().QueryRow(`
-		SELECT COUNT(*) FROM entries
-		JOIN compile_items ON compile_items.source_path = SUBSTR(entries.id, 5)
-		WHERE entries MATCH ? AND entries.id LIKE 'src:%'
-		AND compile_items.tier < 3
-	`, sanitized).Scan(&count)
-	if err != nil {
-		return 0 // table may not exist yet
-	}
+	count, _ := s.mem.CountUncompiled(query)
 	return count
 }
 
@@ -365,10 +354,10 @@ func (s *Server) handleRead(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 
 func (s *Server) handleStatus(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	info, err := wiki.GetStatus(s.projectDir, &wiki.Stores{
-		Mem: s.mem,
-		Vec: s.vec,
-		Ont: s.ont,
-		DB:  s.db,
+		Mem:   s.mem,
+		Vec:   s.vec,
+		Ont:   s.ont,
+		DB:    s.db,
 	})
 	if err != nil {
 		return errorResult(err.Error()), nil

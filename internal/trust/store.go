@@ -6,14 +6,14 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 type Store struct {
-	db *storage.DB
+	db store.DBHandle
 }
 
-func NewStore(db *storage.DB) *Store {
+func NewStore(db store.DBHandle) *Store {
 	return &Store{db: db}
 }
 

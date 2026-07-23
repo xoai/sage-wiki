@@ -47,7 +47,7 @@ func TestMigrateCheckpoint(t *testing.T) {
 		Compiler: config.CompilerConfig{DefaultTier: 1},
 	}
 
-	migrated, err := MigrateCheckpoint(projectDir, db, mf, cfg)
+	migrated, err := MigrateCheckpoint(projectDir, NewCompileItemStore(db), mf, cfg)
 	if err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestMigrateCheckpoint_NoFile(t *testing.T) {
 	mf := manifest.New()
 	cfg := &config.Config{}
 
-	migrated, err := MigrateCheckpoint(projectDir, db, mf, cfg)
+	migrated, err := MigrateCheckpoint(projectDir, NewCompileItemStore(db), mf, cfg)
 	if err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestMigrateCheckpoint_AfterBatchSplit(t *testing.T) {
 	mf.AddSource("raw/d.md", "sha256:ddd", "article", 500)
 	cfg := &config.Config{}
 
-	migrated, err := MigrateCheckpoint(projectDir, db, mf, cfg)
+	migrated, err := MigrateCheckpoint(projectDir, NewCompileItemStore(db), mf, cfg)
 	if err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestMigrateCheckpoint_DefensiveStripUnreachableBatch(t *testing.T) {
 	mf.MarkCompiled("raw/a.md", "wiki/summaries/a.md", nil)
 	cfg := &config.Config{}
 
-	migrated, err := MigrateCheckpoint(projectDir, db, mf, cfg)
+	migrated, err := MigrateCheckpoint(projectDir, NewCompileItemStore(db), mf, cfg)
 	if err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestPopulateFromManifest(t *testing.T) {
 		},
 	}
 
-	populated, err := PopulateFromManifest(db, mf, cfg)
+	populated, err := PopulateFromManifest(NewCompileItemStore(db), mf, cfg)
 	if err != nil {
 		t.Fatalf("populate: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestPopulateFromManifest(t *testing.T) {
 	}
 
 	// Re-running should not duplicate
-	populated2, _ := PopulateFromManifest(db, mf, cfg)
+	populated2, _ := PopulateFromManifest(NewCompileItemStore(db), mf, cfg)
 	if populated2 != 0 {
 		t.Errorf("second populate = %d, want 0 (already exists)", populated2)
 	}

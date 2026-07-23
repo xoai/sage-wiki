@@ -1,13 +1,11 @@
 package linter
 
 import (
-	"crypto/sha256"
 	"database/sql"
-	"fmt"
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/log"
-	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 const (
@@ -17,12 +15,13 @@ const (
 
 // StoreLearning saves a learning entry with deduplication.
 // LearningID generates a deterministic ID for a learning entry.
+// The algorithm lives in internal/store (P2-1: single home shared by both
+// storage backends); this delegates for backward compatibility.
 func LearningID(content string) string {
-	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
-	return "learn-" + hash[:16]
+	return store.LearningID(content)
 }
 
-func StoreLearning(db *storage.DB, learnType string, content string, tags string, lintPass string) error {
+func StoreLearning(db store.DBHandle, learnType string, content string, tags string, lintPass string) error {
 	id := LearningID(content)
 
 	return db.WriteTx(func(tx *sql.Tx) error {
@@ -42,7 +41,7 @@ func StoreLearning(db *storage.DB, learnType string, content string, tags string
 }
 
 // PruneLearnings enforces the 500-entry limit and 180-day TTL.
-func PruneLearnings(db *storage.DB) (int, error) {
+func PruneLearnings(db store.DBHandle) (int, error) {
 	pruned := 0
 
 	// TTL pruning
@@ -89,7 +88,7 @@ func PruneLearnings(db *storage.DB) (int, error) {
 }
 
 // ListLearnings returns all learning entries.
-func ListLearnings(db *storage.DB) ([]Learning, error) {
+func ListLearnings(db store.DBHandle) ([]Learning, error) {
 	rows, err := db.ReadDB().Query(
 		"SELECT id, type, content, COALESCE(tags,''), created_at, COALESCE(source_lint_pass,'') FROM learnings ORDER BY created_at DESC",
 	)
@@ -120,7 +119,7 @@ type Learning struct {
 }
 
 // RecallLearnings retrieves relevant learnings for a domain query.
-func RecallLearnings(db *storage.DB, query string, limit int) ([]Learning, error) {
+func RecallLearnings(db store.DBHandle, query string, limit int) ([]Learning, error) {
 	if limit <= 0 {
 		limit = 10
 	}
