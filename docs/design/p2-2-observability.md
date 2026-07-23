@@ -1,12 +1,12 @@
 # Design: P2-2 — Observability
 
-**Status:** draft, review iteration 3 (first commit of PR per Phase-2 spec preamble)
+**Status:** draft, review iteration 4 (first commit of PR per Phase-2 spec preamble)
 
-> Iteration log: i1 0C/4M/6S/2cos (batch tokens, 429 semantics, pass enum,
-> disabled contradiction, format rules, naming). i2 0C/4M/3S/1cos — false
-> blind-spot premise, 429 multi-site reality, D3/D4 enum contradiction,
-> PROCESS-SPLIT miss (compile runs in a separate process from serve).
-> All folded in below.
+> Iteration log: i1 0C/4M/6S/2cos · i2 0C/4M/3S/1cos · i3 0C/5M/2S/1cos —
+> web server never compiles (compile-on-demand lives in the MCP process),
+> MCP SSE topology unenumerated, D3 still listed dropped labels, brief
+> stale in three places, /metrics auth gate is path-based (unauthenticated
+> on non-loopback binds). All folded in below.
 
 > Iteration log: i1 found 0C/4M/6S/2cos — batch token invisibility, 429
 > counting semantics, pass-label enum mismatch, brief/design "disabled"
@@ -119,27 +119,37 @@ Pinned semantics (i1+i2):
   (registry is always live; "off by default" means the ENDPOINT).
 - **Endpoint:** web server registers `GET /metrics` ONLY when
   `serve.metrics: true` (new `Metrics bool` field on ServeConfig). The
-  handler is NOT build-tagged — `/metrics` ships in the default (no-webui)
-  binary and inherits the web server's localhost binding and any auth
-  middleware it applies to non-loopback binds (both pinned by tests).
+  handler is NOT build-tagged — it ships in the default (no-webui) binary.
+  **Auth (i3):** token auth is path-based (`/api/*`, `/ws` only), so
+  `/metrics` would be unauthenticated on a non-loopback bind — the gate is
+  EXTENDED to cover `/metrics` (operational data), and the test pins both
+  behaviors: loopback open, non-loopback auth-required.
+- **Snapshots (D5 extension):** `Snapshot()` logs at compile phase ends,
+  at compile completion, AND at process shutdown (covers search-only
+  processes per D8).
 
-### D8 — Process split (i2): which process serves which series
+### D8 — Process topology (i3-verified): which process serves which series
 
-The registry is per-process. Compile runs as a CLI invocation; `serve` is
-a separate long-lived process. Therefore:
+The registry is per-process, and the compile topology is verified:
 
-- **`/metrics` (serve process)** exposes only serve-process series:
-  `search_duration_seconds`, `query_duration_seconds`, `embed_calls_total`,
-  `vector_cache_*`, and any in-process compile work the web server itself
-  triggers (compile-on-demand runs in-process).
-- **Compile-process series** (`compile_pass_duration_seconds`, `llm_*`,
-  `compile_backpressure_*`) exist only in the compile process and are
-  delivered via the log snapshots (D5) — they NEVER appear on the endpoint
-  unless the web server compiles in-process.
-- Acceptance scenario corrected accordingly: after a CLI compile + a
-  search, GET /metrics shows search/query/cache series; compile/token
-  series are asserted in the compile process's LOG output, not the
-  endpoint. A shared metrics file/daemon is rejected as over-engineering.
+- **CLI compile** (`sage-wiki compile`): own process; compile/token/
+  backpressure series are **log-snapshot-only** (D5).
+- **MCP stdio** (default transport): long-lived; compile-on-demand runs
+  IN-PROCESS here (tools_compound.go:40, tools_write.go:671) — but stdio
+  serves no HTTP, so those series are also **log-snapshot-only**.
+- **MCP SSE**: long-lived, serves HTTP on 127.0.0.1, holds compile+search
+  series. DECISION: `/metrics` is **NOT** registered on MCP SSE — it is an
+  MCP transport, not an ops surface; adding a second metrics listener
+  fragments the story. MCP-series stay log-snapshot-only.
+- **Web server** (`serve [--ui]`): the ONLY `/metrics` host. It never
+  compiles (verified: zero compile references in internal/web;
+  `serve --ui` builds web only), so the endpoint exposes search/query/
+  embed/cache series only.
+- **Search metrics in serve-less deployments** (MCP-only): silently
+  accumulate with no endpoint — accepted and documented; a snapshot fires
+  at process shutdown in addition to compile phase ends (D5), so the data
+  is never lost, only non-live.
+- A shared metrics file/daemon is rejected as over-engineering.
 
 ### D6 — Hook placement discipline
 
