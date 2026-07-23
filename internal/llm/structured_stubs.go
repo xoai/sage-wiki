@@ -11,14 +11,6 @@ import (
 // ok == false UNCONDITIONALLY — even wrapping a raw openai provider
 // (design D2: byte-identical fallback for openai-compatible).
 
-func (p *anthropicProvider) FormatStructuredRequest(messages []Message, schema JSONSchema, opts CallOpts) (func() (*http.Request, error), bool, error) {
-	return nil, false, nil // real impl in T3
-}
-
-func (p *anthropicProvider) ParseStructuredResponse(body []byte) (json.RawMessage, error) {
-	return nil, ErrStructuredUnsupported
-}
-
 func (p *openaiProvider) FormatStructuredRequest(messages []Message, schema JSONSchema, opts CallOpts) (func() (*http.Request, error), bool, error) {
 	return nil, false, nil // real impl in T4
 }
