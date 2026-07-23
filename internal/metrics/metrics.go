@@ -35,13 +35,14 @@ func LatencyBuckets() []float64 { return append([]float64{}, latencyBuckets...) 
 func CompileBuckets() []float64 { return append([]float64{}, compileBuckets...) }
 
 type series struct {
-	name    string
-	labels  string // pre-rendered `{k="v",...}` or ""
-	help    string
-	typ     string
-	counter *Counter
-	gauge   *Gauge
-	hist    *Histogram
+	name      string
+	labels    string // pre-rendered `{k="v",...}` or ""
+	rawLabels []string // raw k,v pairs at creation (ValidateLabels uses these — rendered re-parse would break on values containing , or =)
+	help      string
+	typ       string
+	counter   *Counter
+	gauge     *Gauge
+	hist      *Histogram
 }
 
 var registry = struct {
@@ -100,7 +101,7 @@ func getSeries(name, typ string, labels []string, mk func() any) *series {
 	if s, ok := registry.handles[key]; ok {
 		return s
 	}
-	s := &series{name: name, labels: renderLabels(labels), typ: typ}
+	s := &series{name: name, labels: renderLabels(labels), rawLabels: append([]string{}, labels...), typ: typ}
 	switch v := mk().(type) {
 	case *Counter:
 		v.self = s
@@ -119,7 +120,6 @@ func getSeries(name, typ string, labels []string, mk func() any) *series {
 // register marks a series as having ≥1 recording (lazy registration).
 func register(s *series) {
 	registry.Lock()
-	registry.order[labelsKey(s.name, strings.Split(strings.Trim(s.labels, "{}"), "\x01"))] = true
 	registry.order[s.name+s.labels] = true
 	registry.Unlock()
 }
@@ -292,7 +292,9 @@ func Handler() http.Handler {
 				fmt.Fprintf(&b, "%s_count%s %d\n", s.name, s.labels, s.hist.count.Load())
 			}
 		}
-		w.Write([]byte(b.String()))
+		if _, err := w.Write([]byte(b.String())); err != nil {
+			return
+		}
 	})
 }
 
@@ -349,24 +351,15 @@ var allowedLabelKV = map[string]map[string]bool{
 func ValidateLabels() error {
 	var errs []string
 	for _, s := range sortedFamilies() {
-		if s.labels == "" {
-			continue
-		}
-		inner := strings.Trim(s.labels, "{}")
-		for _, pair := range strings.Split(inner, ",") {
-			kv := strings.SplitN(pair, "=", 2)
-			if len(kv) != 2 {
-				errs = append(errs, fmt.Sprintf("%s: malformed label %q", s.name, pair))
-				continue
-			}
-			vals, ok := allowedLabelKV[kv[0]]
+		for i := 0; i+1 < len(s.rawLabels); i += 2 {
+			key, v := s.rawLabels[i], s.rawLabels[i+1]
+			vals, ok := allowedLabelKV[key]
 			if !ok {
-				errs = append(errs, fmt.Sprintf("%s: label key %q outside inventory", s.name, kv[0]))
+				errs = append(errs, fmt.Sprintf("%s: label key %q outside inventory", s.name, key))
 				continue
 			}
-			v := strings.Trim(kv[1], `"`)
 			if vals != nil && !vals[v] {
-				errs = append(errs, fmt.Sprintf("%s: label value %q for %q outside inventory", s.name, v, kv[0]))
+				errs = append(errs, fmt.Sprintf("%s: label value %q for %q outside inventory", s.name, v, key))
 			}
 		}
 	}

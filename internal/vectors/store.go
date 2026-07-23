@@ -34,6 +34,7 @@ func (s *Store) loadDocCache() error {
 	s.docCache.mu.Lock()
 	defer s.docCache.mu.Unlock()
 	if s.docCache.loaded {
+		metrics.CounterNamed("vector_cache_hits_total", "cache", "doc").Inc() // blocked-then-loaded still serves from the loaded matrix (P2-2)
 		return nil
 	}
 	metrics.CounterNamed("vector_cache_misses_total", "cache", "doc").Inc() // actual reload (P2-2)
@@ -94,6 +95,7 @@ func (s *Store) loadChunkCache() error {
 	s.chunkCache.mu.Lock()
 	defer s.chunkCache.mu.Unlock()
 	if s.chunkCache.loaded {
+		metrics.CounterNamed("vector_cache_hits_total", "cache", "chunk").Inc() // blocked-then-loaded (P2-2)
 		return nil
 	}
 	metrics.CounterNamed("vector_cache_misses_total", "cache", "chunk").Inc() // actual reload (P2-2)
