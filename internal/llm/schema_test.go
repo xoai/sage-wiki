@@ -157,3 +157,68 @@ func TestStatusErrorFormat(t *testing.T) {
 		t.Errorf("format = %q", err.Error())
 	}
 }
+
+func TestValidateJSONRequiredNull(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"text": map[string]any{"type": "string"},
+		},
+		"required": []string{"text"},
+	}
+	if err := ValidateJSON(schema, json.RawMessage(`{"text": null}`)); err == nil {
+		t.Error("required-null must fail validation")
+	}
+	// Nullable union: required-null is ACCEPTED.
+	nullable := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"aliases": map[string]any{"type": []string{"array", "null"}, "items": map[string]any{"type": "string"}},
+		},
+		"required": []string{"aliases"},
+	}
+	if err := ValidateJSON(nullable, json.RawMessage(`{"aliases": null}`)); err != nil {
+		t.Errorf("nullable-union required-null must pass: %v", err)
+	}
+}
+
+func TestValidateJSONFloatMinMax(t *testing.T) {
+	schema := map[string]any{
+		"type": "array", "items": map[string]any{"type": "string"},
+		"minItems": float64(1), "maxItems": float64(2),
+	}
+	if err := ValidateJSON(schema, json.RawMessage(`[]`)); err == nil {
+		t.Error("float64 minItems not enforced")
+	}
+	if err := ValidateJSON(schema, json.RawMessage(`["a","b","c"]`)); err == nil {
+		t.Error("float64 maxItems not enforced")
+	}
+	if err := ValidateJSON(schema, json.RawMessage(`["a","b"]`)); err != nil {
+		t.Errorf("valid: %v", err)
+	}
+}
+
+func TestValidateJSONEnumNumeric(t *testing.T) {
+	schema := map[string]any{
+		"type": "integer",
+		"enum": []int{1, 2, 3},
+	}
+	if err := ValidateJSON(schema, json.RawMessage(`2`)); err != nil {
+		t.Errorf("int enum should match JSON float64: %v", err)
+	}
+	if err := ValidateJSON(schema, json.RawMessage(`5`)); err == nil {
+		t.Error("non-member not rejected")
+	}
+}
+
+func TestValidateJSONEnumUncomparableSafe(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"tags": map[string]any{"type": "array"},
+		},
+		"enum": []any{[]any{"a"}},
+	}
+	// must not panic on uncomparable enum member comparison
+	_ = ValidateJSON(schema, json.RawMessage(`{"tags": ["a"]}`))
+}

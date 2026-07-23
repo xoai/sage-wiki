@@ -155,10 +155,10 @@ func validateValue(schema map[string]any, v any, path string) error {
 			return fmt.Errorf("structured: %s: expected boolean, got %T", path, v)
 		}
 	}
-	if enumVals, ok := schema["enum"].([]any); ok {
+	if enumVals, ok := enumList(schema["enum"]); ok {
 		found := false
 		for _, e := range enumVals {
-			if e == v || numericEqual(e, v) {
+			if safeEqual(e, v) || numericEqual(e, v) {
 				found = true
 				break
 			}
@@ -168,6 +168,37 @@ func validateValue(schema map[string]any, v any, path string) error {
 		}
 	}
 	return nil
+}
+
+// enumList normalizes Go-authored enum forms ([]any, []string, []int).
+func enumList(v any) ([]any, bool) {
+	switch list := v.(type) {
+	case []any:
+		return list, true
+	case []string:
+		out := make([]any, len(list))
+		for i, s := range list {
+			out[i] = s
+		}
+		return out, true
+	case []int:
+		out := make([]any, len(list))
+		for i, n := range list {
+			out[i] = n
+		}
+		return out, true
+	}
+	return nil, false
+}
+
+// safeEqual compares without panicking on uncomparable types (slice/map).
+func safeEqual(a, b any) (eq bool) {
+	defer func() {
+		if recover() != nil {
+			eq = false
+		}
+	}()
+	return a == b
 }
 
 // numericEqual compares numeric enum values across int/float64 domains

@@ -133,10 +133,15 @@ func (c *Client) StructuredCompletion(ctx context.Context, messages []Message, s
 		// json_object retry (envelope root for arrays; spec §3).
 		var se *StatusError
 		if errors.As(err, &se) && se.Code == 400 && mentionsConstraintField(se.Body) {
-			degraded := schema
-			degraded.Degraded = true
-			if dreq, dok, derr := c.provider.FormatStructuredRequest(messages, degraded, opts); derr == nil && dok {
-				body, err = c.doWithRetry(ctx, dreq)
+			// The json_object degrade is an OpenAI mechanism; providers whose
+			// formatter ignores Degraded (anthropic/gemini) must not resend
+			// the identical request. Pinned: only openaiProvider degrades.
+			if _, isOpenAI := c.provider.(*openaiProvider); isOpenAI {
+				degraded := schema
+				degraded.Degraded = true
+				if dreq, dok, derr := c.provider.FormatStructuredRequest(messages, degraded, opts); derr == nil && dok {
+					body, err = c.doWithRetry(ctx, dreq)
+				}
 			}
 		}
 		if err != nil {

@@ -1,8 +1,9 @@
 package search
 
 import (
-	"encoding/json"
 	"context"
+	"errors"
+	"encoding/json"
 	"fmt"
 	"math"
 
@@ -45,6 +46,9 @@ Respond ONLY with JSON, no explanation:
 		{Role: "user", Content: prompt},
 	}, ExpansionSchema, llm.CallOpts{Model: model, MaxTokens: 300})
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err // never swallow cancellation into the fallback
+		}
 		return fallbackExpansion(question), nil // degrade gracefully, don't return error
 	}
 
@@ -69,8 +73,8 @@ var ExpansionSchema = llm.JSONSchema{
 	Schema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"lex": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-			"vec": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"lex":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"vec":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			"hyde": map[string]any{"type": "string"},
 		},
 		"required": []string{"lex", "vec", "hyde"},
@@ -117,4 +121,3 @@ type expansionResponse struct {
 	Vec  []string `json:"vec"`
 	Hyde string   `json:"hyde"`
 }
-
