@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 
+		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/store"
 )
@@ -34,6 +35,7 @@ func (s *Store) loadDocCache() error {
 	if s.docCache.loaded {
 		return nil
 	}
+	metrics.CounterNamed("vector_cache_misses_total", "cache", "doc").Inc() // actual reload (P2-2)
 
 	rows, err := s.db.ReadDB().Query("SELECT id, embedding, dimensions FROM vec_entries")
 	if err != nil {
@@ -92,6 +94,7 @@ func (s *Store) loadChunkCache() error {
 	if s.chunkCache.loaded {
 		return nil
 	}
+	metrics.CounterNamed("vector_cache_misses_total", "cache", "chunk").Inc() // actual reload (P2-2)
 
 	rows, err := s.db.ReadDB().Query("SELECT chunk_id, doc_id, embedding, dimensions FROM vec_chunks")
 	if err != nil {
@@ -223,6 +226,9 @@ func (s *Store) Search(query []float32, limit int) ([]VectorResult, error) {
 	if limit <= 0 {
 		limit = 10
 	}
+	if s.docCache.isLoaded() {
+		metrics.CounterNamed("vector_cache_hits_total", "cache", "doc").Inc() // served-from-loaded (P2-2)
+	}
 	if err := s.loadDocCache(); err != nil {
 		return nil, err
 	}
@@ -259,6 +265,9 @@ func (s *Store) SearchChunks(query []float32, limit int) ([]ChunkVectorResult, e
 	if limit <= 0 {
 		limit = 20
 	}
+	if s.chunkCache.isLoaded() {
+		metrics.CounterNamed("vector_cache_hits_total", "cache", "chunk").Inc()
+	}
 	if err := s.loadChunkCache(); err != nil {
 		return nil, err
 	}
@@ -290,6 +299,9 @@ func (s *Store) SearchChunksFiltered(query []float32, docIDs []string, limit int
 		docIDs = docIDs[:100]
 	}
 
+	if s.chunkCache.isLoaded() {
+		metrics.CounterNamed("vector_cache_hits_total", "cache", "chunk").Inc()
+	}
 	if err := s.loadChunkCache(); err != nil {
 		return nil, err
 	}

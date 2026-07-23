@@ -69,12 +69,19 @@ func NewFromConfig(cfg *config.Config) Embedder {
 	return NewCascade(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, ov)
 }
 
+
 // NewCascade auto-detects the best available embedding provider.
 // Tier 0: Explicit embed config override (if model + credentials provided).
 // Tier 1: Provider embedding API (if available).
 // Tier 2: Ollama local (if running).
 // Returns nil if no embedding provider is available.
+// The metrics wrapper is applied here — the single constructor choke point
+// (P2-2): every provider return path is covered, nil stays nil.
 func NewCascade(provider string, apiKey string, baseURL string, override *EmbedOverride) Embedder {
+	return wrapMetrics(newCascade(provider, apiKey, baseURL, override))
+}
+
+func newCascade(provider string, apiKey string, baseURL string, override *EmbedOverride) Embedder {
 	// Tier 0: Explicit embed config — user specified model/credentials
 	if override != nil && override.Model != "" {
 		p := override.Provider
