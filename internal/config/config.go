@@ -433,6 +433,10 @@ type LintingConfig struct {
 type ServeConfig struct {
 	Transport string `yaml:"transport"`
 	Port      int    `yaml:"port"`
+	// Metrics, when true, registers a Prometheus /metrics endpoint on the web
+	// server (P2-2). Off by default; gated by the same bearer-token auth as
+	// /api/* when a token is configured.
+	Metrics bool `yaml:"metrics,omitempty"`
 	// Token, when set, requires an `Authorization: Bearer <token>` header (or a
 	// `?token=` query param) on all /api/* and /ws requests. Lowest-precedence
 	// source; the --token flag and SAGE_WIKI_TOKEN env override it. A token is

@@ -21,6 +21,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/search"
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/vectors"
@@ -43,6 +44,7 @@ type QueryOpts struct {
 
 // Query performs a Q&A operation: search → read articles → LLM synthesis.
 func Query(projectDir string, question string, format string, topK int, opts ...QueryOpts) (*QueryResult, error) {
+	defer metrics.ObserveDuration(metrics.HistogramNamed("query_duration_seconds", metrics.LatencyBuckets()), time.Now())
 	if format == "" {
 		format = "markdown"
 	}
@@ -733,6 +735,7 @@ format: %s
 // StreamQuery performs Q&A with streaming token output and auto-files to outputs/.
 // The context is used to cancel the LLM call on client disconnect.
 func StreamQuery(ctx context.Context, projectDir string, question string, topK int, tokenCB func(string), db store.DBHandle) ([]string, error) {
+	defer metrics.ObserveDuration(metrics.HistogramNamed("query_duration_seconds", metrics.LatencyBuckets()), time.Now())
 	if topK <= 0 {
 		topK = 5
 	}

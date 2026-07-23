@@ -10,6 +10,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
@@ -105,6 +106,7 @@ func (s *Server) ServeSSE(port int) error {
 
 // Close cleans up resources.
 func (s *Server) Close() error {
+	metrics.LogSnapshot() // P2-2: shutdown snapshot for serve-less processes (design D8)
 	return s.closeDB()
 }
 

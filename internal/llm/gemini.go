@@ -197,6 +197,7 @@ func (p *geminiProvider) SetupCache(systemPrompt string, model string) (string, 
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		recordRateLimited(resp.StatusCode)
 		return "", fmt.Errorf("gemini: cache setup failed (%d): %s", resp.StatusCode, sanitizeGeminiError(string(respBody)))
 	}
 
@@ -459,6 +460,7 @@ func (p *geminiProvider) uploadBatchInputFile(jsonl []byte) (string, error) {
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		recordRateLimited(resp.StatusCode)
 		return "", fmt.Errorf("gemini batch: upload returned %d: %s", resp.StatusCode, sanitizeGeminiError(string(body)))
 	}
 
@@ -540,6 +542,7 @@ func (p *geminiProvider) SubmitBatch(requests []BatchRequest) (string, error) {
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		recordRateLimited(resp.StatusCode)
 		return "", fmt.Errorf("gemini batch: submit returned %d: %s", resp.StatusCode, sanitizeGeminiError(string(respBody)))
 	}
 
@@ -575,6 +578,7 @@ func (p *geminiProvider) PollBatch(batchID string) (*BatchStatusResponse, error)
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		recordRateLimited(resp.StatusCode)
 		return nil, fmt.Errorf("gemini batch: poll returned %d: %s", resp.StatusCode, sanitizeGeminiError(string(body)))
 	}
 
@@ -622,6 +626,7 @@ func (p *geminiProvider) RetrieveBatch(resultsRef string) ([]BatchResult, error)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		recordRateLimited(resp.StatusCode)
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("gemini batch: download returned %d: %s", resp.StatusCode, sanitizeGeminiError(string(body)))
 	}

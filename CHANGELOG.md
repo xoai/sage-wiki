@@ -22,6 +22,24 @@
   Note: multi-writer concurrency remains P2-3 scope — the single-writer
   process model is unchanged.
 
+### Added
+
+- **Observability (STRAT-02, P2-2).** A zero-dependency metrics registry
+  (`internal/metrics`, nil-safe atomic instruments, lazy series
+  registration) instrumenting compile pass durations, LLM tokens
+  (input/output/cached, sync+batch), retries and 429s (counted once per
+  response at each transport path), backpressure gauges, search stage
+  latencies (BM25/vector/RRF), query latency, embedding calls, and vector
+  cache hit/miss. Delivery: structured-log snapshots at compile phase
+  ends, command returns, and graceful shutdown (always on), plus an
+  optional Prometheus `/metrics` endpoint on the web server behind
+  `serve.metrics: true` (off by default; bearer-gated like `/api/*`;
+  hand-rolled exposition, no new dependencies). Cardinality is pinned to
+  fixed label enums (enforced by a runtime registry-enumeration
+  validator plus static site pins). MCP transports
+  deliberately do not serve `/metrics`; compile-process series are
+  log-snapshot-only (per-process registries).
+
 ### Security
 
 - **Prompt-injection defenses for compile and query prompts (SEC-04, P1-6).**

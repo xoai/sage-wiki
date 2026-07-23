@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/log"
 )
 
@@ -202,7 +203,8 @@ func (c *Client) chatCompletionDirect(ctx context.Context, messages []Message, o
 	var lastErr error
 	var lastStatusCode int
 
-	for attempt := 0; attempt < 4; attempt++ {
+	const maxAttempts = 4
+	for attempt := 0; attempt < maxAttempts; attempt++ {
 		// Abort before doing more work if already cancelled.
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -236,13 +238,19 @@ func (c *Client) chatCompletionDirect(ctx context.Context, messages []Message, o
 
 		if isRetryable(resp.StatusCode) {
 			delay := backoffDelay(attempt)
-			log.Warn("retryable error, retrying", "status", resp.StatusCode, "attempt", attempt+1, "delay", delay)
-			// Cancellable backoff: a cancel during the sleep returns promptly.
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(delay):
+			if resp.StatusCode == 429 {
+				metrics.CounterNamed("llm_rate_limited_total").Inc() // first discrimination (P2-2; typed error at :256 not re-counted)
 			}
+			log.Warn("retryable error, retrying", "status", resp.StatusCode, "attempt", attempt+1, "delay", delay)
+			if attempt+1 < maxAttempts {
+				// Cancellable backoff: a cancel during the sleep returns promptly.
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(delay):
+				}
+				metrics.CounterNamed("llm_retries_total").Inc() // a retry actually ran (P2-2)
+			} // final attempt: no sleep, no counter (no retry follows)
 			lastStatusCode = resp.StatusCode
 			lastErr = fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 			continue
@@ -373,6 +381,15 @@ func defaultRateLimit(provider string) int {
 		return 0 // self-hosted: no client-side RPM cap
 	default:
 		return 30
+	}
+}
+
+// recordRateLimited is the 429 metrics hook for transport paths without a
+// typed branch (batch submit/poll/retrieve, provider variants) — one-line,
+// first-discrimination-per-response (P2-2).
+func recordRateLimited(statusCode int) {
+	if statusCode == 429 {
+		metrics.CounterNamed("llm_rate_limited_total").Inc()
 	}
 }
 

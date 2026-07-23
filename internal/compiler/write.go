@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode"
 
+		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/extract"
 	"github.com/xoai/sage-wiki/internal/fsutil"
@@ -71,6 +72,7 @@ type ArticleWriteOpts struct {
 
 // WriteArticles runs Pass 3: write concept articles with ontology edges.
 func WriteArticles(opts ArticleWriteOpts, concepts []ExtractedConcept) []ArticleResult {
+	defer metrics.ObserveDuration(metrics.HistogramNamed("compile_pass_duration_seconds", metrics.CompileBuckets(), "pass", "write"), time.Now())
 	maxParallel := opts.MaxParallel
 	if maxParallel <= 0 {
 		maxParallel = 20

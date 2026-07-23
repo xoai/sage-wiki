@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 
+		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/log"
 )
 
@@ -88,6 +89,7 @@ func (c *Client) ChatCompletionCachedCtx(ctx context.Context, cacheID string, me
 
 	// On error, fall back to direct path (no cacheID check)
 	if resp.StatusCode == 429 {
+		metrics.CounterNamed("llm_rate_limited_total").Inc() // cached-path discrimination (P2-2)
 		log.Warn("rate limited on cached request, retrying direct")
 		return c.chatCompletionDirect(ctx, messages, opts)
 	}

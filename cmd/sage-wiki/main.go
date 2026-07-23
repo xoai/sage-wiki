@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/log"
 	"strings"
 
@@ -423,6 +424,7 @@ func reconcileStartup(ctx context.Context, dir string) {
 }
 
 func runCompile(cmd *cobra.Command, args []string) error {
+	defer metrics.LogSnapshot() // P2-2: one-shot CLI metrics are never lost
 	dir, _ := filepath.Abs(projectDir)
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	fresh, _ := cmd.Flags().GetBool("fresh")
@@ -614,6 +616,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer srv.Close() // also fires the P2-2 shutdown snapshot (D8)
 
 	transport, _ := cmd.Flags().GetString("transport")
 	if transport == "sse" {
@@ -672,6 +675,7 @@ func runLint(cmd *cobra.Command, args []string) error {
 // config-load failure (BM25-only degrade) and honors the global --config
 // flag via resolveConfigPath; both break under app.Open's strict shape.
 func runSearch(cmd *cobra.Command, args []string) error {
+	defer metrics.LogSnapshot() // P2-2: one-shot CLI metrics are never lost
 	dir, _ := filepath.Abs(projectDir)
 	queryStr := strings.Join(args, " ")
 	tags, _ := cmd.Flags().GetStringSlice("tags")
@@ -740,6 +744,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 }
 
 func runQuery(cmd *cobra.Command, args []string) error {
+	defer metrics.LogSnapshot() // P2-2: one-shot CLI metrics are never lost
 	dir, _ := filepath.Abs(projectDir)
 	question := strings.Join(args, " ")
 

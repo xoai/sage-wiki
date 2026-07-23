@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/cli"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
@@ -51,6 +52,7 @@ func init() {
 }
 
 func runWriteSummary(cmd *cobra.Command, args []string) error {
+	defer metrics.LogSnapshot() // P2-2: one-shot CLI metrics are never lost
 	dir, _ := filepath.Abs(projectDir)
 	source, _ := cmd.Flags().GetString("source")
 	content, _ := cmd.Flags().GetString("content")
@@ -114,6 +116,7 @@ func runWriteSummary(cmd *cobra.Command, args []string) error {
 }
 
 func runWriteArticle(cmd *cobra.Command, args []string) error {
+	defer metrics.LogSnapshot() // P2-2: one-shot CLI metrics are never lost
 	dir, _ := filepath.Abs(projectDir)
 	conceptID, _ := cmd.Flags().GetString("concept")
 	content, _ := cmd.Flags().GetString("content")

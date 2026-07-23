@@ -16,6 +16,15 @@ func init() {
 	}))
 }
 
+// SetLoggerForTest swaps the package logger and returns a restore func
+// (tests only — captures Info/Warn output via slog.SetDefault won't work
+// because log keeps its own package-level logger).
+func SetLoggerForTest(l *slog.Logger) func() {
+	orig := logger
+	logger = l
+	return func() { logger = orig }
+}
+
 // SetVerbose enables info-level logging (single -v).
 func SetVerbose(verbose bool) {
 	if verbose {

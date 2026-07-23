@@ -18,7 +18,8 @@ import (
 	"sync/atomic"
 	"time"
 
-		"github.com/xoai/sage-wiki/internal/store"
+			"github.com/xoai/sage-wiki/internal/metrics"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/hybrid"
@@ -115,6 +116,13 @@ func (s *WebServer) Handler() http.Handler {
 	mux.HandleFunc("/api/provenance", s.handleProvenance)
 	mux.HandleFunc("/ws", s.handleWebSocket)
 
+	// Optional observability endpoint (P2-2). NOT build-tagged — ships in
+	// the default (no-webui) binary. MCP SSE deliberately does not register
+	// this (design D8: the MCP transport is not an ops surface).
+	if s.cfg.Serve.Metrics {
+		mux.Handle("/metrics", metrics.Handler())
+	}
+
 	// Static files + SPA fallback
 	handler := defaultStaticHandler(s.projectDir)
 	if staticHandler != nil {
@@ -130,6 +138,7 @@ func (s *WebServer) Handler() http.Handler {
 // down gracefully when ctx is cancelled (SIGINT/SIGTERM from the caller). It
 // blocks until the server stops or errors.
 func (s *WebServer) Serve(ctx context.Context, addr string) error {
+	defer metrics.LogSnapshot() // P2-2 shutdown snapshot
 	s.httpSrv = &http.Server{
 		Addr:              addr,
 		Handler:           s.Handler(),
@@ -396,8 +405,9 @@ func (s *WebServer) securityMiddleware(next http.Handler) http.Handler {
 }
 
 // requiresAuth reports whether a path is gated by the bearer token.
+// /metrics is gated exactly like /api/* (P2-2: operational data).
 func requiresAuth(path string) bool {
-	return strings.HasPrefix(path, "/api/") || path == "/ws"
+	return strings.HasPrefix(path, "/api/") || path == "/ws" || path == "/metrics"
 }
 
 // hostAllowed reports whether the request Host is loopback or explicitly allowed

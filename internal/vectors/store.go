@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 
+		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/store"
 )
@@ -26,14 +27,17 @@ func (s *Store) loadDocCache() error {
 	loaded := s.docCache.loaded
 	s.docCache.mu.RUnlock()
 	if loaded {
+		metrics.CounterNamed("vector_cache_hits_total", "cache", "doc").Inc() // served-from-loaded, race-free inside the loader (P2-2)
 		return nil
 	}
 
 	s.docCache.mu.Lock()
 	defer s.docCache.mu.Unlock()
 	if s.docCache.loaded {
+		metrics.CounterNamed("vector_cache_hits_total", "cache", "doc").Inc() // blocked-then-loaded still serves from the loaded matrix (P2-2)
 		return nil
 	}
+	metrics.CounterNamed("vector_cache_misses_total", "cache", "doc").Inc() // actual reload (P2-2)
 
 	rows, err := s.db.ReadDB().Query("SELECT id, embedding, dimensions FROM vec_entries")
 	if err != nil {
@@ -84,14 +88,17 @@ func (s *Store) loadChunkCache() error {
 	loaded := s.chunkCache.loaded
 	s.chunkCache.mu.RUnlock()
 	if loaded {
+		metrics.CounterNamed("vector_cache_hits_total", "cache", "chunk").Inc() // served-from-loaded (P2-2)
 		return nil
 	}
 
 	s.chunkCache.mu.Lock()
 	defer s.chunkCache.mu.Unlock()
 	if s.chunkCache.loaded {
+		metrics.CounterNamed("vector_cache_hits_total", "cache", "chunk").Inc() // blocked-then-loaded (P2-2)
 		return nil
 	}
+	metrics.CounterNamed("vector_cache_misses_total", "cache", "chunk").Inc() // actual reload (P2-2)
 
 	rows, err := s.db.ReadDB().Query("SELECT chunk_id, doc_id, embedding, dimensions FROM vec_chunks")
 	if err != nil {
