@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode"
 
+		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/extract"
 	"github.com/xoai/sage-wiki/internal/fsutil"
@@ -71,6 +72,10 @@ type ArticleWriteOpts struct {
 
 // WriteArticles runs Pass 3: write concept articles with ontology edges.
 func WriteArticles(opts ArticleWriteOpts, concepts []ExtractedConcept) []ArticleResult {
+	// P2-2: batch-mode compiles bypass this function (submit/resume returns
+	// before runTiers) — no pass duration is recorded for batch pass 1 (spec
+	// pinned caveat). Batch runs also emit no phase-end snapshots.
+	defer metrics.ObserveDuration(metrics.HistogramNamed("compile_pass_duration_seconds", metrics.CompileBuckets(), "pass", "write"), time.Now())
 	maxParallel := opts.MaxParallel
 	if maxParallel <= 0 {
 		maxParallel = 20

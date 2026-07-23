@@ -2,11 +2,13 @@ package compiler
 
 import (
 	"context"
+	"time"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 
+		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
@@ -53,6 +55,7 @@ func ExtractConcepts(
 	maxTokens int,
 	concurrency int,
 ) ([]ExtractedConcept, error) {
+	defer metrics.ObserveDuration(metrics.HistogramNamed("compile_pass_duration_seconds", metrics.CompileBuckets(), "pass", "extract"), time.Now())
 	if ctx == nil {
 		ctx = context.Background()
 	}

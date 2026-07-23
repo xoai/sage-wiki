@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"math"
 	"math/rand"
 	"sync"
@@ -44,6 +45,7 @@ func NewBackpressureController(maxParallel int) *BackpressureController {
 	}
 	bc.cond = sync.NewCond(&bc.mu)
 	bc.currentLimit.Store(int32(maxParallel))
+	metrics.GaugeNamed("compile_backpressure_limit").Set(int64(maxParallel))
 	return bc
 }
 
@@ -78,6 +80,7 @@ func (bc *BackpressureController) Acquire() func() {
 		limit := bc.currentLimit.Load()
 		if current < limit {
 			if bc.inFlight.CompareAndSwap(current, current+1) {
+				metrics.GaugeNamed("compile_backpressure_in_flight").Set(int64(current + 1))
 				bc.mu.Unlock()
 				break
 			}
@@ -88,7 +91,7 @@ func (bc *BackpressureController) Acquire() func() {
 	}
 
 	return func() {
-		bc.inFlight.Add(-1)
+		metrics.GaugeNamed("compile_backpressure_in_flight").Set(int64(bc.inFlight.Add(-1)))
 		<-bc.sem
 		bc.cond.Signal() // wake one waiter blocked on the effective limit
 	}
@@ -109,6 +112,7 @@ func (bc *BackpressureController) OnSuccess() {
 		}
 		if newLimit > current {
 			bc.currentLimit.Store(newLimit)
+			metrics.GaugeNamed("compile_backpressure_limit").Set(int64(newLimit))
 			// Reset backoff count on recovery. This means a subsequent 429
 			// starts backoff from scratch (2^0 = 1s base delay). This is
 			// intentional: the system has proven it can handle the current
@@ -139,6 +143,7 @@ func (bc *BackpressureController) OnRateLimit() time.Duration {
 		newLimit = 1
 	}
 	bc.currentLimit.Store(newLimit)
+	metrics.GaugeNamed("compile_backpressure_limit").Set(int64(newLimit))
 
 	// Exponential backoff with jitter
 	bc.backoffCount++

@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/extract"
 	"github.com/xoai/sage-wiki/internal/fsutil"
 	"github.com/xoai/sage-wiki/internal/llm"
@@ -54,6 +55,10 @@ type SummarizeOpts struct {
 
 // Summarize processes sources through Pass 1, producing summaries.
 func Summarize(opts SummarizeOpts) []SummaryResult {
+	// P2-2: batch-mode compiles bypass this function (submit/resume returns
+	// before runTiers) — no pass duration is recorded for batch pass 1 (spec
+	// pinned caveat). Batch runs also emit no phase-end snapshots.
+	defer metrics.ObserveDuration(metrics.HistogramNamed("compile_pass_duration_seconds", metrics.CompileBuckets(), "pass", "summarize"), time.Now())
 	maxParallel := opts.MaxParallel
 	if maxParallel <= 0 {
 		maxParallel = 20
