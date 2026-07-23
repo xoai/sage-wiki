@@ -1,6 +1,12 @@
 # Design: P2-4 — Provider-native structured outputs
 
-**Status:** draft, review iteration 2 (first commit of PR per Phase-2 spec preamble)
+**Status:** draft, review iteration 3 (first commit of PR per Phase-2 spec preamble)
+
+> Iteration log: i1 3C/5M/5S/1cos (interface redesign, tool_use extraction,
+> envelope, shapes, strict mode, wrapper decision, StatusError, non-cached).
+> i2 1C/3M/3S/2cos — no execution model (providers Format/Parse, Client owns
+> transport), unwrap ownership ambiguous, optional-field nullable unions,
+> grounding minItems contradicts its prompt contract. All folded in below.
 
 > Iteration log: i1 found 3C/6M/5S/1cos — interface doesn't compose with the
 > provider split (no body-map seam), anthropic ParseResponse discards
@@ -57,15 +63,33 @@ INSIDE each provider via one new method on the Provider interface
 assertions — the extraParams bug pattern):
 
 ```go
+// On the Provider interface (format/parse only — the CLIENT owns HTTP,
+// rate limiting, retries, metrics, and usage tracking; i2 correction:
+// providers never execute transport):
 type Provider interface {
     // ... existing methods ...
-    // StructuredCompletion issues messages with the provider's native
-    // JSON constraint and returns the parsed structured payload.
-    // ok == false means the provider has no mechanism — caller falls back
-    // to fence-strip+parse of a plain completion.
-    StructuredCompletion(ctx context.Context, messages []Message, schema JSONSchema, opts CallOpts) (payload json.RawMessage, ok bool, err error)
+    // FormatStructuredRequest builds the constrained request body.
+    // ok == false: no mechanism — the client uses a plain completion.
+    FormatStructuredRequest(messages []Message, schema JSONSchema, opts CallOpts) (body []byte, ok bool, err error)
+    // ParseStructuredResponse extracts the constrained payload from a
+    // raw provider response (anthropic: the tool_use block's input).
+    ParseStructuredResponse(resp *Response) (payload json.RawMessage, err error)
 }
+
+// On Client: the orchestrator.
+func (c *Client) StructuredCompletion(ctx context.Context, messages []Message, schema JSONSchema, opts CallOpts) (json.RawMessage, error)
 ```
+
+**Client execution model (i2):** `Client.StructuredCompletion` =
+`FormatStructuredRequest` → on ok==false, plain `ChatCompletion` +
+fence-strip (D5) → execute ONCE via the existing direct transport
+(chatCompletionDirect — same http.Client, rate limiter, retry loop,
+metrics, and **trackUsage fires exactly as on any completion**) →
+`ParseStructuredResponse` → **validate against the FULL (envelope)
+schema** → **unwrap `items`** → return the bare payload. The degrade
+retry (D5) lives here too (StatusError originates in client transport).
+The non-cached routing (D7) is natural: the direct path is the only one
+used.
 
 - **anthropic**: `tools: [{name, description, input_schema}]` +
   `tool_choice: {type: "tool", name}` in its own formatBody variant.
@@ -107,10 +131,13 @@ false` presence-only, `enum`, **`minItems`/`maxItems`** (added i1 —
 rerank's silent-empty-entries failure mode is undetectable without it).
 Anything beyond the subset is ignored. A validation failure is a CONTENT
 error returned to the caller (mapped to each site's existing graceful
-degrade, D5). **OpenAI strict-mode compliance (i1):** every object in
-every authored schema sets `additionalProperties: false` AND lists all
-properties in `required` EXCEPT envelope-optional fields — strict mode
-400s otherwise.
+degrade, D5). **OpenAI strict-mode compliance (i1+i2):** every object sets
+`additionalProperties: false` AND lists ALL properties in `required`.
+Optionality (concepts.aliases) is expressed as a **nullable union**
+(`type: ["array", "null"]`) — strict mode rejects non-required
+properties outright. The validator accepts null for nullable-union
+fields; anthropic/gemini formatters use the same schema minus the union
+wrinkle (their mechanisms tolerate non-required).
 
 ### D5 — Fallback semantics (mechanism vs content errors, exactly)
 
@@ -125,6 +152,9 @@ properties in `required` EXCEPT envelope-optional fields — strict mode
   json_object ONCE, only when Code==400 AND Body mentions
   "response_format"/"json_schema" (a context-length 400 never degrades).
   If the json_object retry also 400s, plain-completion + fence-strip.
+  StatusError.Error() matches the current "llm: API returned %d: %s"
+  format byte-for-byte (stream.go:53 keeps the old format — the
+  structured path is non-streaming).
 - **Mechanism succeeded but content invalid**: validation error
   returned (no fallback — the constraint worked, the content is wrong).
 - **Graceful-degrade parity:** expand.go and rerank.go currently
@@ -144,6 +174,9 @@ unchanged (both accept draft-07 subset).
 
 ### D7 — Structured path is deliberately NON-cached (i1 correction)
 
+Usage tracking: the structured path fires trackUsage through the same
+client transport (D2 execution model) — cost accounting loses nothing.
+
 Anthropic's cache prefix is evaluated tools → system → messages, so
 inserting a per-site tool definition BEFORE the cached system block
 would change the prefix and break the existing system cache_control
@@ -159,17 +192,23 @@ server-side cache in this codebase — unaffected.
 Authored per site (source of truth in the site's package); array shapes
 use the D2 envelope:
 - grounding.go (claims): `items: [{text}]` — Claim is a single-field
-  object (grounding.go:12). minItems: 1 (empty claims are a model
-  failure, not data).
+  object (grounding.go:12). minItems: 0 — the prompt contract says
+  "return an empty array when there are no factual claims"
+  (grounding.go:24); empty is legitimate data, NOT a failure (i2 — a
+  minItems:1 here would pressure the model to invent claims in a trust
+  feature).
 - concepts.go: `items: [{name, aliases?, sources[], type}]` — required:
   name, sources, type (concepts.go:19-24).
 - tools_write.go capture: `items: [{title, content}]` — both required
   (tools_write.go:447-450).
 - expand.go (object root, no envelope): `{lex[], vec[], hyde}` — all
   required (expand.go:92-96).
-- rerank.go: `items: [{id, score}]` — id integer, score number,
-  minItems: 1 (rerank.go:120-123; an empty entries list is the model's
-  silent-failure mode the validator must catch — D4 adds minItems).
+- rerank.go: `items: [{id, score}]` — id integer, score number.
+  **minItems: 1 here and ONLY here** (rerank.go:159-164: empty entries
+  silently zero all scores today — that IS the failure mode to catch;
+  validation error maps to the site's existing unranked-order degrade).
+  concepts/capture use minItems: 0 (empty is legitimate: a source may
+  have no concepts; a capture may produce no items).
 
 ## 3. Non-goals
 
