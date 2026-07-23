@@ -301,44 +301,6 @@ func deduplicateConcepts(concepts []ExtractedConcept) []ExtractedConcept {
 	return result
 }
 
-// parseConceptsJSON extracts a JSON array from the LLM response.
-// Handles cases where the LLM wraps JSON in markdown code fences.
-func parseConceptsJSON(text string) ([]ExtractedConcept, error) {
-	text = strings.TrimSpace(text)
-
-	// Strip markdown code fences if present
-	if strings.HasPrefix(text, "```") {
-		lines := strings.Split(text, "\n")
-		var jsonLines []string
-		inBlock := false
-		for _, line := range lines {
-			if strings.HasPrefix(line, "```") {
-				inBlock = !inBlock
-				continue
-			}
-			if inBlock {
-				jsonLines = append(jsonLines, line)
-			}
-		}
-		text = strings.Join(jsonLines, "\n")
-	}
-
-	// Find the JSON array
-	start := strings.Index(text, "[")
-	end := strings.LastIndex(text, "]")
-	if start >= 0 && end > start {
-		text = text[start : end+1]
-	}
-
-	var concepts []ExtractedConcept
-	if err := json.Unmarshal([]byte(text), &concepts); err != nil {
-		return nil, fmt.Errorf("invalid JSON: %w\nraw: %s", err, text[:min(200, len(text))])
-	}
-
-	return concepts, nil
-}
-
-
 // ConceptsSchema is the canonical schema for concept extraction (P2-4).
 var ConceptsSchema = llm.JSONSchema{
 	Name:        "concepts",
