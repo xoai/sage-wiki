@@ -8,7 +8,7 @@ package auth
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
+	"time"
 
 	"github.com/zalando/go-keyring"
 )
@@ -218,4 +218,57 @@ type fataler interface {
 	Fatal(args ...any)
 }
 
-var _ = strings.TrimSpace
+func timeUnixRFC3339(sec int64) string {
+	return time.Unix(sec, 0).Format(time.RFC3339)
+}
+
+// formatStatusLine mirrors auth_cmd.go's per-credential line format for
+// the secret-scan test (spec §7.8).
+func formatStatusLine(name string, cred *Credential, location string) string {
+	expiry := "unknown"
+	if cred.ExpiresAt != 0 {
+		expiry = timeUnixRFC3339(cred.ExpiresAt)
+	}
+	loc := ""
+	if location != "" {
+		loc = "  [" + location + "]"
+	}
+	return fmt.Sprintf("  %-16s  token: %s  source: %-6s  status: %-17s  expires: %s%s",
+		name, cred.String(), cred.Source, cred.Status(), expiry, loc)
+}
+
+// CredentialLocation reports where a credential physically lives for
+// `auth status` (design D5): "keychain", "file", "keychain+file", or ""
+// (not stored). When both copies exist and DIFFER, appends
+// " (copies differ)" — no direction claimed (no timestamps exist).
+func (s *Store) CredentialLocation(provider string) string {
+	backend, _ := s.backendForStore()
+
+	inFile := false
+	sf, err := s.read()
+	var fileCred *Credential
+	if err == nil {
+		fileCred, inFile = sf.Credentials[provider]
+	}
+
+	inKeychain := false
+	var kcCred *Credential
+	if backend == "keychain" {
+		if c, err := s.keychainGet(provider); err == nil {
+			inKeychain, kcCred = true, c
+		}
+	}
+
+	switch {
+	case inKeychain && inFile:
+		if kcCred.AccessToken != fileCred.AccessToken || kcCred.RefreshToken != fileCred.RefreshToken {
+			return "keychain+file (copies differ)"
+		}
+		return "keychain+file"
+	case inKeychain:
+		return "keychain"
+	case inFile:
+		return "file"
+	}
+	return ""
+}

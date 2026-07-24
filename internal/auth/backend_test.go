@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"encoding/json"
+	"strings"
 	"errors"
 	"testing"
 
@@ -200,5 +202,81 @@ func TestRefreshAndGetUsesBackendPut(t *testing.T) {
 	after := s.readFileBytes(t)
 	if string(before) != string(after) {
 		t.Error("refresh wrote to the FILE on the keychain backend — must route through backend Put")
+	}
+}
+
+func TestCredentialLocation(t *testing.T) {
+	kr := newRecordingKeyring()
+	s := newTestStore(t, kr, "keychain")
+	cred := fullCred()
+
+	// File only.
+	s.writeFileOnly(t, cred)
+	if got := s.CredentialLocation("openai"); got != "file" {
+		t.Errorf("file-only location = %q", got)
+	}
+
+	// Both, same content.
+	if err := s.Put("openai", cred); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.CredentialLocation("openai"); got != "keychain+file" {
+		t.Errorf("both location = %q", got)
+	}
+
+	// Both, divergent.
+	stale := fullCred()
+	stale.AccessToken = "sk-OLD-stale"
+	sf, _ := s.read()
+	sf.Credentials["openai"] = stale
+	unlock, _ := lockFile(s.path)
+	s.write(sf)
+	unlock()
+	if got := s.CredentialLocation("openai"); got != "keychain+file (copies differ)" {
+		t.Errorf("divergent location = %q", got)
+	}
+
+	// Keychain only.
+	if err := s.deleteWithBackend("openai"); err != nil {
+		t.Fatal(err)
+	}
+	if err := kr.Set(keyringService, "openai", mustJSON(t, cred)); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.CredentialLocation("openai"); got != "keychain" {
+		t.Errorf("keychain-only location = %q", got)
+	}
+
+	// Absent.
+	if got := s.CredentialLocation("gemini"); got != "" {
+		t.Errorf("absent location = %q", got)
+	}
+}
+
+func mustJSON(t *testing.T, c *Credential) string {
+	t.Helper()
+	c2 := *c
+	c2.Provider = ""
+	data, err := json.Marshal(&c2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// TestStatusOutputNoFullSecrets pins the secrets discipline (spec §7.8):
+// `auth status` output must NEVER contain the FULL access or refresh
+// token strings (the last-4 display via cred.String() is allowed).
+func TestStatusOutputNoFullSecrets(t *testing.T) {
+	cred := fullCred()
+	out := formatStatusLine("openai", cred, "keychain+file")
+	if strings.Contains(out, cred.AccessToken) {
+		t.Errorf("status line leaks the FULL access token: %s", out)
+	}
+	if strings.Contains(out, cred.RefreshToken) {
+		t.Errorf("status line leaks the FULL refresh token: %s", out)
+	}
+	if !strings.Contains(out, cred.String()) {
+		t.Errorf("status line should include the redacted display: %s", out)
 	}
 }

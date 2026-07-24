@@ -378,3 +378,17 @@ credentials in a non-default location. Check:
 
 - [Local Model Configuration](local-models.md) -- per-pass model routing with local and cloud models
 - [Self-Hosted Server](self-hosted-server.md) -- Docker deployment, Syncthing, reverse proxy
+
+## Credential storage backend (P2-6)
+
+On systems with an OS keychain, credentials store via the OS keyring
+(macOS Keychain, Windows Credential Manager, Secret Service) instead of
+`~/.sage-wiki/auth.json`. Selection is automatic (read-only probe with a
+500ms timeout — a locked or absent keyring means the file backend, which
+is byte-identical to before). Run `sage-wiki auth migrate` once to move
+existing file credentials; the file stays as a frozen point-in-time
+backup and refreshed tokens never touch disk again. `auth status` shows
+the active backend and where each credential lives. Note: if a provider
+is ever removed from the supported set, its keychain entries can only be
+cleared via the OS's own keychain UI (the app's closed provider set
+can't enumerate them).
