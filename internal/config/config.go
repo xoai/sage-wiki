@@ -324,6 +324,20 @@ type SearchConfig struct {
 	WeightSourceOverlap  *float64 `yaml:"weight_source_overlap,omitempty"`  // graph signal weight (default: 4.0, set 0 to disable)
 	WeightCommonNeighbor *float64 `yaml:"weight_common_neighbor,omitempty"` // graph signal weight (default: 1.5, set 0 to disable)
 	WeightTypeAffinity   *float64 `yaml:"weight_type_affinity,omitempty"`   // graph signal weight (default: 1.0, set 0 to disable)
+
+	// ANN selects the approximate (HNSW) vector index for large vaults
+	// (P2-7). Default off: exact brute-force search.
+	ANN ANNConfig `yaml:"ann,omitempty"`
+}
+
+// ANNConfig toggles the approximate vector index backend.
+type ANNConfig struct {
+	Enabled *bool `yaml:"enabled,omitempty"`
+}
+
+// ANNEnabled resolves the ANN flag (default: false — brute-force).
+func (c *SearchConfig) ANNEnabled() bool {
+	return c.ANN.Enabled != nil && *c.ANN.Enabled
 }
 
 // QueryExpansionEnabled returns whether query expansion is enabled (default: true).

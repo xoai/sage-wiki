@@ -29,6 +29,7 @@ func Open(cfg config.StorageConfig, opts store.OpenOptions) (store.Backend, erro
 		return sqlitestore.OpenPath(path, opts.Mode, sqlitestore.Options{
 			ValidRelations:   opts.ValidRelations,
 			ValidEntityTypes: opts.ValidEntityTypes,
+			ANN:              opts.ANN,
 		})
 	case "postgres":
 		return postgres.Open(cfg.DSN, opts)

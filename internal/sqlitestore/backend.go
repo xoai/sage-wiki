@@ -25,6 +25,7 @@ import (
 type Options struct {
 	ValidRelations   []string
 	ValidEntityTypes []string
+	ANN              bool // opt-in HNSW vector index (P2-7)
 }
 
 type backend struct {
@@ -86,7 +87,7 @@ func newBackend(db *storage.DB, path string, mode store.Mode, o Options) *backen
 		mode:    mode,
 		entries: memory.NewStore(db),
 		chunks:  memory.NewChunkStore(db),
-		vec:     vectors.NewStore(db),
+		vec:     vectors.NewStore(db, vectors.WithANN(o.ANN)),
 		ont:     ontology.NewStore(db, o.ValidRelations, o.ValidEntityTypes),
 		trustS:  trust.NewStore(db),
 		items:   compiler.NewCompileItemStore(db),

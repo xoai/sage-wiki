@@ -17,6 +17,26 @@ type Store struct {
 	db         store.DBHandle
 	docCache   *vectorCache
 	chunkCache *vectorCache
+	ann        bool // P2-7: opt-in HNSW index backend (T6); brute-force default
+}
+
+// Option configures a Store (P2-7).
+type Option func(*Store)
+
+// WithANN selects the HNSW approximate index backend (P2-7, opt-in).
+// Default (unset) is the exact brute-force cache from P1-5.
+func WithANN(enabled bool) Option {
+	return func(s *Store) { s.ann = enabled }
+}
+
+// IndexKind reports the configured index backend ("brute-force" or
+// "hnsw") — makes the WithANN plumbing observable (T6 implements the
+// HNSW backend behind it).
+func (s *Store) IndexKind() string {
+	if s.ann {
+		return "hnsw"
+	}
+	return "brute-force"
 }
 
 // loadDocCache populates the doc-level cache from SQLite, single-flight:
@@ -175,12 +195,16 @@ func (s *Store) Upsert(id string, embedding []float32) error {
 }
 
 // NewStore creates a new vector store.
-func NewStore(db store.DBHandle) *Store {
-	return &Store{
+func NewStore(db store.DBHandle, opts ...Option) *Store {
+	s := &Store{
 		db:         db,
 		docCache:   &vectorCache{},
 		chunkCache: &vectorCache{docIDs: []string{}},
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Get retrieves a vector by ID. Returns (nil, nil) ONLY when the ID is
