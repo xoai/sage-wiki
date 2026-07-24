@@ -213,6 +213,12 @@ Features:
 
 The web UI is built with Preact + Tailwind CSS and embedded into the Go binary via `go:embed`. It adds ~1.2 MB (gzipped) to the binary size. To build without the web UI, omit the `-tags webui` flag — the binary will still work for all CLI and MCP operations.
 
+**Regenerating `internal/web/dist`.** The committed dist must byte-match a `node:22-alpine` build (CI enforces this with a hard-fail drift check). After changing anything under `web/`, regenerate inside the pinned environment and commit the result:
+
+```sh
+docker run --rm -v "$PWD:/src" -w /src/web node:22-alpine sh -c "npm ci && npm run build"
+```
+
 Options:
 
 - `--port 3333` — change the port (default 3333)
