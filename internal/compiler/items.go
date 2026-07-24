@@ -66,9 +66,18 @@ func (s *CompileItemStore) Upsert(item CompileItem) error {
 					THEN 1 ELSE excluded.pass_extracted END,
 				pass_written=CASE WHEN compile_items.hash = excluded.hash AND compile_items.pass_written = 1
 					THEN 1 ELSE excluded.pass_written END,
-				compile_id=excluded.compile_id, error=excluded.error, error_count=excluded.error_count,
-				summary_path=excluded.summary_path, source_type=excluded.source_type,
-				quality_score=excluded.quality_score, updated_at=datetime('now')
+			compile_id=excluded.compile_id, error=excluded.error, error_count=excluded.error_count,
+			summary_path=excluded.summary_path, source_type=excluded.source_type,
+			quality_score=excluded.quality_score, updated_at=datetime('now'),
+			-- Queue revival (P2-3): a hash change means new content — reset the
+			-- item to pending with a fresh attempt budget and no lease, so a
+			-- fixed dead-lettered source retries. Same-hash upserts never
+			-- touch queue state.
+			status=CASE WHEN compile_items.hash = excluded.hash THEN compile_items.status ELSE 'pending' END,
+			attempts=CASE WHEN compile_items.hash = excluded.hash THEN compile_items.attempts ELSE 0 END,
+			lease_owner=CASE WHEN compile_items.hash = excluded.hash THEN compile_items.lease_owner ELSE NULL END,
+			lease_until=CASE WHEN compile_items.hash = excluded.hash THEN compile_items.lease_until ELSE NULL END,
+			heartbeat_at=CASE WHEN compile_items.hash = excluded.hash THEN compile_items.heartbeat_at ELSE NULL END
 		`,
 			item.SourcePath, item.Hash, item.FileType, item.SizeBytes,
 			item.Tier, item.TierDefault, tierOverride,
@@ -82,16 +91,21 @@ func (s *CompileItemStore) Upsert(item CompileItem) error {
 	})
 }
 
+// compileItemCols is the shared SELECT column list for compile_items reads
+// (postgres parity: internal/storage/postgres/items.go itemCols).
+const compileItemCols = `source_path, hash, file_type, size_bytes,
+	tier, tier_default, tier_override,
+	pass_indexed, pass_embedded, pass_parsed,
+	pass_summarized, pass_extracted, pass_written,
+	compile_id, error, error_count, summary_path,
+	query_hit_count, last_queried_at, promoted_at, demoted_at,
+	source_type, quality_score,
+	status, lease_owner, lease_until, heartbeat_at, attempts,
+	created_at, updated_at`
+
 // GetByPath returns a single compile item.
 func (s *CompileItemStore) GetByPath(path string) (*CompileItem, error) {
-	row := s.db.ReadDB().QueryRow(`
-		SELECT source_path, hash, file_type, size_bytes,
-			tier, tier_default, tier_override,
-			pass_indexed, pass_embedded, pass_parsed,
-			pass_summarized, pass_extracted, pass_written,
-			compile_id, error, error_count, summary_path,
-			query_hit_count, last_queried_at, promoted_at, demoted_at,
-			source_type, quality_score, created_at, updated_at
+	row := s.db.ReadDB().QueryRow(`SELECT `+compileItemCols+`
 		FROM compile_items WHERE source_path = ?
 	`, path)
 	return scanCompileItem(row)
@@ -99,14 +113,7 @@ func (s *CompileItemStore) GetByPath(path string) (*CompileItem, error) {
 
 // ListByTier returns all items at a given tier.
 func (s *CompileItemStore) ListByTier(tier int) ([]CompileItem, error) {
-	rows, err := s.db.ReadDB().Query(`
-		SELECT source_path, hash, file_type, size_bytes,
-			tier, tier_default, tier_override,
-			pass_indexed, pass_embedded, pass_parsed,
-			pass_summarized, pass_extracted, pass_written,
-			compile_id, error, error_count, summary_path,
-			query_hit_count, last_queried_at, promoted_at, demoted_at,
-			source_type, quality_score, created_at, updated_at
+	rows, err := s.db.ReadDB().Query(`SELECT `+compileItemCols+`
 		FROM compile_items WHERE tier = ?
 	`, tier)
 	if err != nil {
@@ -120,28 +127,12 @@ func (s *CompileItemStore) ListByTier(tier int) ([]CompileItem, error) {
 // For Tier 0: pass_indexed=0. For Tier 1: pass_embedded=0.
 // For Tier 3: any of pass_summarized/pass_extracted/pass_written=0.
 func (s *CompileItemStore) ListPending(tier int) ([]CompileItem, error) {
-	var where string
-	switch tier {
-	case 0:
-		where = "tier >= 0 AND pass_indexed = 0"
-	case 1:
-		where = "tier >= 1 AND pass_embedded = 0"
-	case 2:
-		where = "tier >= 2 AND pass_parsed = 0"
-	case 3:
-		where = "tier >= 3 AND (pass_summarized = 0 OR pass_extracted = 0 OR pass_written = 0)"
-	default:
-		return nil, fmt.Errorf("invalid tier: %d", tier)
+	where, err := pendingWhere(tier)
+	if err != nil {
+		return nil, err
 	}
 
-	rows, err := s.db.ReadDB().Query(fmt.Sprintf(`
-		SELECT source_path, hash, file_type, size_bytes,
-			tier, tier_default, tier_override,
-			pass_indexed, pass_embedded, pass_parsed,
-			pass_summarized, pass_extracted, pass_written,
-			compile_id, error, error_count, summary_path,
-			query_hit_count, last_queried_at, promoted_at, demoted_at,
-			source_type, quality_score, created_at, updated_at
+	rows, err := s.db.ReadDB().Query(fmt.Sprintf(`SELECT `+compileItemCols+`
 		FROM compile_items WHERE %s
 	`, where))
 	if err != nil {
@@ -455,6 +446,7 @@ func scanCompileItem(row *sql.Row) (*CompileItem, error) {
 	var tierOverride sql.NullInt64
 	var qualityScore sql.NullFloat64
 	var compileID, errStr, summaryPath, lastQueried, promoted, demoted sql.NullString
+	var leaseOwner, leaseUntil, heartbeatAt sql.NullString
 	var passIdx, passEmbed, passParse, passSum, passExt, passWrite int
 
 	err := row.Scan(
@@ -463,7 +455,9 @@ func scanCompileItem(row *sql.Row) (*CompileItem, error) {
 		&passIdx, &passEmbed, &passParse, &passSum, &passExt, &passWrite,
 		&compileID, &errStr, &item.ErrorCount, &summaryPath,
 		&item.QueryHitCount, &lastQueried, &promoted, &demoted,
-		&item.SourceType, &qualityScore, &item.CreatedAt, &item.UpdatedAt,
+		&item.SourceType, &qualityScore,
+		&item.Status, &leaseOwner, &leaseUntil, &heartbeatAt, &item.Attempts,
+		&item.CreatedAt, &item.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -491,6 +485,9 @@ func scanCompileItem(row *sql.Row) (*CompileItem, error) {
 	item.LastQueriedAt = lastQueried.String
 	item.PromotedAt = promoted.String
 	item.DemotedAt = demoted.String
+	item.LeaseOwner = leaseOwner.String
+	item.LeaseUntil = leaseUntil.String
+	item.HeartbeatAt = heartbeatAt.String
 
 	return &item, nil
 }
@@ -502,6 +499,7 @@ func scanCompileItems(rows *sql.Rows) ([]CompileItem, error) {
 		var tierOverride sql.NullInt64
 		var qualityScore sql.NullFloat64
 		var compileID, errStr, summaryPath, lastQueried, promoted, demoted sql.NullString
+		var leaseOwner, leaseUntil, heartbeatAt sql.NullString
 		var passIdx, passEmbed, passParse, passSum, passExt, passWrite int
 
 		err := rows.Scan(
@@ -510,7 +508,9 @@ func scanCompileItems(rows *sql.Rows) ([]CompileItem, error) {
 			&passIdx, &passEmbed, &passParse, &passSum, &passExt, &passWrite,
 			&compileID, &errStr, &item.ErrorCount, &summaryPath,
 			&item.QueryHitCount, &lastQueried, &promoted, &demoted,
-			&item.SourceType, &qualityScore, &item.CreatedAt, &item.UpdatedAt,
+			&item.SourceType, &qualityScore,
+			&item.Status, &leaseOwner, &leaseUntil, &heartbeatAt, &item.Attempts,
+			&item.CreatedAt, &item.UpdatedAt,
 		)
 		if err != nil {
 			return nil, err
@@ -535,10 +535,204 @@ func scanCompileItems(rows *sql.Rows) ([]CompileItem, error) {
 		item.LastQueriedAt = lastQueried.String
 		item.PromotedAt = promoted.String
 		item.DemotedAt = demoted.String
+		item.LeaseOwner = leaseOwner.String
+		item.LeaseUntil = leaseUntil.String
+		item.HeartbeatAt = heartbeatAt.String
 
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+// --- Durable queue (P2-3, spec C2) ---
+
+// pendingWhere mirrors ListPending's per-tier predicate (tiers 0-3).
+func pendingWhere(tier int) (string, error) {
+	switch tier {
+	case 0:
+		return "tier >= 0 AND pass_indexed = 0", nil
+	case 1:
+		return "tier >= 1 AND pass_embedded = 0", nil
+	case 2:
+		return "tier >= 2 AND pass_parsed = 0", nil
+	case 3:
+		return "tier >= 3 AND (pass_summarized = 0 OR pass_extracted = 0 OR pass_written = 0)", nil
+	default:
+		return "", fmt.Errorf("invalid tier: %d", tier)
+	}
+}
+
+// Claim leases up to limit pending items at a tier for owner. Fencing is a
+// conditional UPDATE per candidate: an item whose lease state changed since
+// the candidate scan affects 0 rows and is skipped — no double-claim.
+// Lease timestamps are RFC3339 UTC so TEXT comparisons sort correctly.
+func (s *CompileItemStore) Claim(tier int, owner string, ttl time.Duration, limit int) ([]CompileItem, error) {
+	where, err := pendingWhere(tier)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	nowStr := now.Format(time.RFC3339)
+	untilStr := now.Add(ttl).Format(time.RFC3339)
+
+	var claimed []CompileItem
+	return claimed, s.db.WriteTx(func(tx *sql.Tx) error {
+		rows, err := tx.Query(fmt.Sprintf(`SELECT `+compileItemCols+`
+			FROM compile_items
+			WHERE %s AND status != 'failed'
+				AND (lease_until IS NULL OR lease_until < ? OR lease_owner = ?)
+			ORDER BY source_path LIMIT ?
+		`, where), nowStr, owner, limit)
+		if err != nil {
+			return err
+		}
+		candidates, err := scanCompileItems(rows)
+		rows.Close()
+		if err != nil {
+			return err
+		}
+		for _, c := range candidates {
+			res, err := tx.Exec(`
+				UPDATE compile_items SET status = 'leased', lease_owner = ?,
+					lease_until = ?, heartbeat_at = ?, attempts = attempts + 1,
+					updated_at = datetime('now')
+				WHERE source_path = ?
+					AND (lease_until IS NULL OR lease_until < ? OR lease_owner = ?)
+			`, owner, untilStr, nowStr, c.SourcePath, nowStr, owner)
+			if err != nil {
+				return err
+			}
+			if n, err := res.RowsAffected(); err != nil || n == 0 {
+				continue // lost the race — another owner holds it now
+			}
+			c.Status = "leased"
+			c.LeaseOwner = owner
+			c.LeaseUntil = untilStr
+			c.HeartbeatAt = nowStr
+			c.Attempts++
+			claimed = append(claimed, c)
+		}
+		return nil
+	})
+}
+
+// Heartbeat refreshes the lease on items still owned by owner.
+func (s *CompileItemStore) Heartbeat(owner string, paths []string, ttl time.Duration) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	nowStr := now.Format(time.RFC3339)
+	untilStr := now.Add(ttl).Format(time.RFC3339)
+	return s.db.WriteTx(func(tx *sql.Tx) error {
+		for _, chunk := range chunkStrings(paths, 500) {
+			placeholders, args := buildInClause(chunk)
+			allArgs := append([]interface{}{nowStr, untilStr, owner}, args...)
+			if _, err := tx.Exec(`
+				UPDATE compile_items SET heartbeat_at = ?, lease_until = ?,
+					updated_at = datetime('now')
+				WHERE lease_owner = ? AND source_path IN (`+placeholders+`)
+			`, allArgs...); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// tierComplete reports whether every pass applicable to the item's tier is
+// done — the same predicate as the V9 backfill (spec C1).
+func tierComplete(it *CompileItem) bool {
+	if !it.PassIndexed {
+		return false
+	}
+	switch it.Tier {
+	case 0:
+		return true
+	case 1:
+		return it.PassEmbedded
+	case 2:
+		return it.PassEmbedded && it.PassParsed
+	default: // tier 3
+		return it.PassEmbedded && it.PassSummarized && it.PassExtracted && it.PassWritten
+	}
+}
+
+// Release clears the lease and sets the outcome status. ReleaseDone is
+// tier-complete-aware: an item that still owes passes returns to pending.
+// The lease_owner match fences stale workers out of state flips.
+func (s *CompileItemStore) Release(path string, owner string, outcome store.ReleaseOutcome) error {
+	return s.db.WriteTx(func(tx *sql.Tx) error {
+		var status string
+		switch outcome {
+		case store.ReleaseDone:
+			row := tx.QueryRow(`SELECT `+compileItemCols+`
+				FROM compile_items WHERE source_path = ?`, path)
+			it, err := scanCompileItem(row)
+			if err != nil {
+				return err
+			}
+			if it == nil {
+				return fmt.Errorf("Release: source not found: %s", path)
+			}
+			if tierComplete(it) {
+				status = "done"
+			} else {
+				status = "pending"
+			}
+		case store.ReleaseRetry:
+			status = "pending"
+		case store.ReleaseFailed:
+			status = "failed"
+		default:
+			return fmt.Errorf("Release: unknown outcome: %d", outcome)
+		}
+		_, err := tx.Exec(`
+			UPDATE compile_items SET status = ?, lease_owner = NULL,
+				lease_until = NULL, heartbeat_at = NULL, updated_at = datetime('now')
+			WHERE source_path = ? AND lease_owner = ?
+		`, status, path, owner)
+		return err
+	})
+}
+
+// RequeueExpired returns items whose leases expired to pending (crash
+// recovery — spec C7). Returns the number requeued.
+func (s *CompileItemStore) RequeueExpired(now time.Time) (int, error) {
+	var n int64
+	err := s.db.WriteTx(func(tx *sql.Tx) error {
+		res, err := tx.Exec(`
+			UPDATE compile_items SET status = 'pending', lease_owner = NULL,
+				lease_until = NULL, heartbeat_at = NULL, updated_at = datetime('now')
+			WHERE status = 'leased' AND lease_until < ?
+		`, now.UTC().Format(time.RFC3339))
+		if err != nil {
+			return err
+		}
+		n, err = res.RowsAffected()
+		return err
+	})
+	return int(n), err
+}
+
+// ResetFailed revives dead-lettered items with a fresh attempt budget
+// (used by compile --fresh).
+func (s *CompileItemStore) ResetFailed() (int, error) {
+	var n int64
+	err := s.db.WriteTx(func(tx *sql.Tx) error {
+		res, err := tx.Exec(`
+			UPDATE compile_items SET status = 'pending', attempts = 0,
+				lease_owner = NULL, lease_until = NULL, heartbeat_at = NULL,
+				updated_at = datetime('now')
+			WHERE status = 'failed'
+		`)
+		if err != nil {
+			return err
+		}
+		n, err = res.RowsAffected()
+		return err
+	})
+	return int(n), err
 }
 
 // QualityScoreRow is a (source_path, quality_score) pair.

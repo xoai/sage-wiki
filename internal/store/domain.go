@@ -206,6 +206,19 @@ type CompileStats struct {
 	AvgQuality    float64
 }
 
+// ReleaseOutcome is how a worker releases a claimed queue item (P2-3).
+type ReleaseOutcome int
+
+const (
+	// ReleaseDone — processing succeeded; status becomes 'done' only when
+	// every pass applicable to the item's tier is complete, else 'pending'.
+	ReleaseDone ReleaseOutcome = iota
+	// ReleaseRetry — transient failure; status 'pending', lease cleared.
+	ReleaseRetry
+	// ReleaseFailed — attempt cap hit; status 'failed' (dead letter).
+	ReleaseFailed
+)
+
 type QualityScoreRow struct {
 	SourcePath string
 	Score      float64
