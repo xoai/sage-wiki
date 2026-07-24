@@ -64,15 +64,34 @@ UX/security deviation. Pinned: NO automatic migration. Instead:
   file), prints per-provider "moved" lines (never token values), and
   leaves the file intact as backup.
 - On the FIRST run with the keychain backend active and file creds
-  present, one stderr notice line: "credentials available in OS keychain
-  — run `sage-wiki auth migrate` to move them (file fallback unchanged)".
-  Non-interactive (never blocks a pipeline), printed at most once per
-  state (suppressed once no file creds remain or after migration).
+  present, one stderr notice line: "credentials found in file backup —
+  run `sage-wiki auth migrate` to move them into the OS keychain (file
+  fallback unchanged)". Non-interactive (never blocks a pipeline).
+  **Suppression mechanism (i2):** a flag `keychain_notice_shown: true`
+  written into auth.json after the first print — persisted, not
+  per-run noise; the flag lives in the file store (TOS territory, not
+  the keychain).
 **Enumeration without a List API (i1):** go-keyring exposes only
 Get/Set/Delete/DeleteAll — no enumeration. `auth migrate` and
 `Store.List()` enumerate the CLOSED provider set (the providers auth
 knows about) with per-provider Get probes; no keychain prefix-scanning
 exists or is needed.
+**`auth migrate` on a headless/file-backend system (i2):** prints "no
+OS keychain available on this system — credentials stay in the file"
+and exits NON-ZERO (a scripting signal, not a silent no-op).
+**Orphan note (i2):** a provider later removed from the closed set
+leaves its keychain entry unreachable by List/migrate/Delete (the file
+map is enumerable, the keychain is not) — acknowledged; such entries
+are deleted only via the OS's own keychain UI.
+**Transient keyring errors on Get (i2):** only `keyring.ErrNotFound`
+falls back to the file; any OTHER keyring error (locked-after-probe,
+dbus failure mid-session) FAILS the Get with the error surfaced — a
+mid-session keychain failure is not silently downgraded to stale file
+state.
+**Downgrade note (i2):** a user running file-backend on a second
+machine after migration gets the FROZEN (pre-migration) file token —
+expected by design; `auth status` flags credentials whose file and
+keychain copies differ as "keychain newer (file backup is stale)".
 
 ### D4 — Read fallback, but Delete and Put are dual-backend (i1 CRITICAL)
 
