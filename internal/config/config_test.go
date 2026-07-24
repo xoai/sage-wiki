@@ -961,3 +961,20 @@ func TestWorkerEnabled(t *testing.T) {
 		t.Error("explicit enabled: false not honored")
 	}
 }
+
+func TestWorkerConfigValidate_ResolvedPair(t *testing.T) {
+	// Small TTL with unset heartbeat: resolves to 30s heartbeat >= 20s TTL — must fail.
+	cfg := Defaults()
+	cfg.Project = "test"
+	cfg.Serve.Worker.LeaseTTLSeconds = 20
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected validation error: resolved heartbeat 30s >= ttl 20s")
+	}
+	// Small heartbeat with unset TTL: resolves against 120s — passes.
+	cfg = Defaults()
+	cfg.Project = "test"
+	cfg.Serve.Worker.HeartbeatIntervalSeconds = 30
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("unexpected error for resolved 30s < 120s: %v", err)
+	}
+}

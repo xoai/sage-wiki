@@ -162,6 +162,9 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 	go w.heartbeatLoop(hbCtx, allPaths)
 
 	errored := map[string]bool{}
+	// Items whose post-pass state could not be read: excluded from release
+	// (lease expires, no budget change either way).
+	readFailed := map[string]bool{}
 
 	// Tier 0 + 1: group passes; per-item failure shows up as an ErrorCount
 	// bump (index funcs MarkError per failed item).
@@ -187,9 +190,12 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 			cur, err := w.deps.Items.GetByPath(it.SourcePath)
 			if err != nil {
 				// A transient store read error is NOT a processing failure:
-				// skip the release (the lease expires and requeues) rather
-				// than burning the item's attempt budget.
+				// the item is excluded from release entirely (its lease
+				// expires and requeues) — burning no attempt budget either
+				// way (retry burns; done would wrongly reset a possibly-
+				// failed item's budget to 0).
 				log.Warn("worker: post-pass read failed — leaving lease to expire", "path", it.SourcePath, "error", err)
+				readFailed[it.SourcePath] = true
 				continue
 			}
 			if cur == nil || cur.ErrorCount > it.ErrorCount {
@@ -287,6 +293,9 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 	// budget reset (progress).
 	failures := 0
 	for p := range paths {
+		if readFailed[p] {
+			continue // lease left to expire — no release, no budget change
+		}
 		it := claimedItemFor(claimed, p)
 		if errored[p] {
 			failures++

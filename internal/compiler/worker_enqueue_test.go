@@ -137,3 +137,53 @@ func TestWorker_PromotionsRun(t *testing.T) {
 		t.Errorf("tier = %d, want 3 (promoted by the worker sweep)", got.Tier)
 	}
 }
+
+func TestWorker_RemovedSourceDeferredOrphanKeepsRow(t *testing.T) {
+	h := newWorkerHarness(t, 1, http.StatusOK)
+	h.newWorker(t, 50*time.Millisecond, time.Second, 5)
+
+	// Manifest knows the source AND a concept whose ONLY source it is —
+	// handleRemovedSources(prune=false) defers removal, and the queue row
+	// must survive the deferral (F-032 regression).
+	h.writeSource(t, "sole.md", "# Sole\n\nOnly source of a concept.")
+	mfPath := filepath.Join(h.dir, ".manifest.json")
+	mf, err := manifest.Load(mfPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mf.AddSource("raw/sole.md", "h1", "md", 10)
+	mf.AddConcept("sole-concept", "wiki/concepts/sole.md", []string{"raw/sole.md"})
+	if err := mf.Save(mfPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.items.Upsert(CompileItem{SourcePath: "raw/sole.md", Hash: "h1", FileType: "md", Tier: 1, PassIndexed: true, PassEmbedded: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(h.dir, "raw", "sole.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := h.worker.cycle(context.Background()); err != nil {
+		t.Fatalf("cycle: %v", err)
+	}
+	got, _ := h.items.GetByPath("raw/sole.md")
+	if got == nil {
+		t.Fatal("queue row deleted for deferred sole-source orphan — must survive")
+	}
+}
+
+func TestWorker_FailStreakResetsOnIdle(t *testing.T) {
+	h := newWorkerHarness(t, 1, http.StatusOK)
+	h.newWorker(t, 50*time.Millisecond, time.Second, 5)
+	h.worker.failStreak = 3
+
+	// Idle cycle (nothing to claim) decays the backoff.
+	if worked, err := h.worker.cycle(context.Background()); err != nil {
+		t.Fatalf("cycle: %v", err)
+	} else if worked {
+		t.Fatal("expected idle cycle")
+	}
+	if h.worker.failStreak != 0 {
+		t.Errorf("failStreak = %d after idle cycle, want 0", h.worker.failStreak)
+	}
+}

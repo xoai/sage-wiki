@@ -105,9 +105,11 @@ func TestMigrationV2QueueColumns(t *testing.T) {
 			AND pass_summarized = 1 AND pass_extracted = 1 AND pass_written = 1)`); err != nil {
 		t.Fatal(err)
 	}
+	// Scoped to the inserted rows: the template database may carry its own
+	// compile_items rows, and table-wide counts would falsify the check.
 	var done, pending int
-	raw.QueryRow("SELECT COUNT(*) FROM compile_items WHERE status='done'").Scan(&done)
-	raw.QueryRow("SELECT COUNT(*) FROM compile_items WHERE status='pending'").Scan(&pending)
+	raw.QueryRow("SELECT COUNT(*) FROM compile_items WHERE status='done' AND source_path LIKE 't1-%'").Scan(&done)
+	raw.QueryRow("SELECT COUNT(*) FROM compile_items WHERE status='pending' AND source_path LIKE 't1-%'").Scan(&pending)
 	if done != 1 || pending != 1 {
 		t.Errorf("backfill: done=%d pending=%d, want 1/1", done, pending)
 	}

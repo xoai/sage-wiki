@@ -70,6 +70,13 @@ func (p *Progress) Subscribe(buffer int) (<-chan ProgressEvent, func()) {
 	}
 }
 
+// SubscriberCount reports the live subscription count (tests + ops probes).
+func (p *Progress) SubscriberCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.subs)
+}
+
 // emit fans an event out to subscribers without blocking the pipeline.
 // Callers hold no lock.
 func (p *Progress) emit(ev ProgressEvent) {

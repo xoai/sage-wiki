@@ -117,6 +117,14 @@ func TestCompileProgressSSE(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Error("stream did not terminate after client cancel — handler leak")
 	}
+	// Server side: the handler's unsubscribe ran (R3 — no subscriber leak).
+	unsubDeadline := time.Now().Add(2 * time.Second)
+	for progress.SubscriberCount() > 0 && time.Now().Before(unsubDeadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := progress.SubscriberCount(); n != 0 {
+		t.Errorf("subscriber count = %d after disconnect, want 0", n)
+	}
 }
 
 func TestCompileProgressSSE_NoWorker(t *testing.T) {
