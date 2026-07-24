@@ -90,7 +90,7 @@ func TestGet_CorruptBlob_ReturnsError(t *testing.T) {
 		if _, err := db.WriteDB().Exec("INSERT OR REPLACE INTO vec_entries (id, embedding, dimensions) VALUES (?, ?, ?)", "corrupt-"+name, blob, len(blob)/4); err != nil {
 			t.Fatalf("plant corrupt blob: %v", err)
 		}
-		vec, err := s.Get("corrupt-"+name)
+		vec, err := s.Get("corrupt-" + name)
 		if err == nil {
 			t.Errorf("blob %v: expected corrupt-blob error, got vec=%v (len %d) nil — corrupt data must not masquerade as a hit", blob, vec, len(vec))
 		}

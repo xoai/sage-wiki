@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"math"
 
-		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/store"
 )
 
@@ -97,6 +97,12 @@ func (s *Store) loadDocCache() error {
 	s.docCache.dim = dim
 	s.docCache.ids = ids
 	s.docCache.mat = mat
+	if s.ann {
+		if s.docCache.ann == nil {
+			s.docCache.ann = newHNSWBackend()
+		}
+		s.docCache.ann.rebuild(ids, nil, mat, dim)
+	}
 	s.docCache.loads++
 	s.docCache.loaded = true
 	return nil
@@ -161,6 +167,12 @@ func (s *Store) loadChunkCache() error {
 	s.chunkCache.ids = ids
 	s.chunkCache.docIDs = docIDs
 	s.chunkCache.mat = mat
+	if s.ann {
+		if s.chunkCache.ann == nil {
+			s.chunkCache.ann = newHNSWBackend()
+		}
+		s.chunkCache.ann.rebuild(ids, docIDs, mat, dim)
+	}
 	s.chunkCache.loads++
 	s.chunkCache.loaded = true
 	return nil

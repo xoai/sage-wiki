@@ -30,6 +30,10 @@ type vectorCache struct {
 	docIDs []string // chunk cache only (row-aligned); nil for the doc cache
 	mat    []float32
 	loads  int // load counter — test observability
+
+	// ann, when non-nil, is the search structure (P2-7 opt-in). The matrix
+	// stays complete as the patch-maintained state; the graph mirrors it.
+	ann *hnswBackend
 }
 
 func (c *vectorCache) isLoaded() bool {
@@ -102,6 +106,9 @@ func (c *vectorCache) upsert(id, docID string, vec []float32) {
 			if c.docIDs != nil {
 				c.docIDs[i] = docID
 			}
+			if c.ann != nil {
+				c.ann.add(id, docID, nv)
+			}
 			return
 		}
 	}
@@ -110,6 +117,9 @@ func (c *vectorCache) upsert(id, docID string, vec []float32) {
 		c.docIDs = append(c.docIDs, docID)
 	}
 	c.mat = append(c.mat, nv...)
+	if c.ann != nil {
+		c.ann.add(id, docID, nv)
+	}
 }
 
 // remove swap-removes a row by id. No-op when !loaded.
@@ -130,6 +140,9 @@ func (c *vectorCache) remove(id string) {
 			}
 			copy(c.mat[i*c.dim:last*c.dim], c.mat[last*c.dim:])
 			c.mat = c.mat[:last*c.dim]
+			if c.ann != nil {
+				c.ann.remove(id)
+			}
 			return
 		}
 	}
@@ -158,6 +171,9 @@ func (c *vectorCache) removeDoc(docID string) {
 	c.ids = c.ids[:kept]
 	c.docIDs = c.docIDs[:kept]
 	c.mat = c.mat[:kept*c.dim]
+	if c.ann != nil {
+		c.ann.rebuild(c.ids, c.docIDs, c.mat, c.dim)
+	}
 }
 
 // cacheResult is one scored row returned from a cache search.
@@ -183,6 +199,9 @@ func (c *vectorCache) search(nq []float32, limit int, filter map[string]bool) []
 
 	if len(nq) != c.dim {
 		return nil
+	}
+	if c.ann != nil {
+		return c.ann.search(nq, limit, filter)
 	}
 
 	top := make([]cacheResult, 0, limit)
