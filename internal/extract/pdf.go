@@ -2,13 +2,13 @@ package extract
 
 import (
 	"context"
-	"github.com/xoai/sage-wiki/internal/log"
 	"fmt"
 	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/ledongthuc/pdf"
+	"github.com/xoai/sage-wiki/internal/log"
 )
 
 // extractPDF extracts text from a PDF file.

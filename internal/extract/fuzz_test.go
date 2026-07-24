@@ -33,8 +33,9 @@ func headerBound(data []byte, perEntry func(name string) int) int64 {
 
 func xlsxHeader(name string) int { return 17 + len(name) }
 func epubHeader(name string) int {
-	// "\n--- Chapter N (<base>) ---\n": 17 + digits + base, digits ≤ 8.
-	return 25 + len(filepath.Base(name))
+	// "\n--- Chapter N (<base>) ---\n" + trailing "\n": 22 fixed + digits
+	// (≤ 6 at 1M chapters) + base. 30 covers the realistic ceiling.
+	return 30 + len(filepath.Base(name))
 }
 
 type extractFn func(path string) (*SourceContent, error)
