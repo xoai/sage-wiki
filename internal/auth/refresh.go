@@ -163,9 +163,11 @@ func refreshCopilotToken(cred *Credential) (*Credential, error) {
 }
 
 func (s *Store) RefreshAndGet(providerName string) (*Credential, error) {
-	// P2-6: the file lock is only needed on the file backend — on keychain
-	// machines no file write happens, and holding the flock across an
-	// unbounded keyring write would wedge all auth ops if the keyring locks.
+	// P2-6: on the file backend the whole refresh flow holds the flock
+	// (as before). On keychain machines the write side never touches the
+	// file, but the READ fallback does — and store.write is os.WriteFile
+	// (not atomic), so the fallback read takes the lock for the READ ONLY
+	// (no flock held across the unbounded keyring write or HTTP refresh).
 	backend, _ := s.backendForStore()
 	var unlock func()
 	if backend != "keychain" {
@@ -177,7 +179,18 @@ func (s *Store) RefreshAndGet(providerName string) (*Credential, error) {
 		defer unlock()
 	}
 
-	cred, err := s.Get(providerName)
+	var cred *Credential
+	var err error
+	if backend == "keychain" {
+		readUnlock, err := lockFile(s.path)
+		if err != nil {
+			return nil, err
+		}
+		cred, err = s.Get(providerName)
+		readUnlock()
+	} else {
+		cred, err = s.Get(providerName)
+	}
 	if err != nil {
 		return nil, err
 	}

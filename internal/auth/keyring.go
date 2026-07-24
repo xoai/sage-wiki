@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"sync"
 	"time"
 
@@ -60,7 +61,7 @@ func runProbe(kr keyringAPI) string {
 	}()
 	select {
 	case r := <-ch:
-		if r.err == nil || r.err == keyring.ErrNotFound {
+		if r.err == nil || errors.Is(r.err, keyring.ErrNotFound) {
 			return "keychain"
 		}
 		return "file"

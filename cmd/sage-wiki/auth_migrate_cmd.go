@@ -24,8 +24,9 @@ func init() {
 func runAuthMigrate(cmd *cobra.Command, args []string) error {
 	store := auth.NewStore(auth.DefaultStorePath())
 	if store.Backend() != "keychain" {
-		fmt.Fprintln(os.Stderr, "no OS keychain available on this system — credentials stay in the file")
-		return fmt.Errorf("no keychain available")
+		// Return the message as the error (cobra prints it once — no
+		// duplicate stderr+error output).
+		return fmt.Errorf("no OS keychain available on this system — credentials stay in the file")
 	}
 	result, err := auth.MigrateToKeychain(store)
 	if err != nil {

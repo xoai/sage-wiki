@@ -2,8 +2,11 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+
+	"github.com/zalando/go-keyring"
 )
 
 // Migration support (P2-6 spec §4): the explicit, only path copying file
@@ -46,6 +49,11 @@ func MigrateToKeychain(s *Store) (*MigrateResult, error) {
 		// file copy). Skip and report instead.
 		if _, err := kr.Get(keyringService, name); err == nil {
 			res.Skipped = append(res.Skipped, name)
+			continue
+		} else if !errors.Is(err, keyring.ErrNotFound) {
+			// A locked keyring read is NOT "absent" — writing here could
+			// overwrite an existing entry (the revert-rotated-token hole).
+			res.Failed = append(res.Failed, FailedProvider{name, err})
 			continue
 		}
 		snapshot := *cred // copy-then-marshal (i1: no mutation of the caller's Credential)
