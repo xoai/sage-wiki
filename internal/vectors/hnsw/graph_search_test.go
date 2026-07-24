@@ -23,7 +23,7 @@ func TestSearch_SelfQueryRecall(t *testing.T) {
 		}
 	}
 	for attempt := 0; attempt < 20; attempt++ {
-		g := NewGraph[string]() // default ef=20 is fine for recall@1 here
+		g := NewGraph[string]()                          // default ef=20 is fine for recall@1 here
 		g.Rng = rand.New(rand.NewSource(int64(attempt))) // deterministic graphs — no flaky gate
 		for i, v := range vecs {
 			g.Add(MakeNode(fmt.Sprintf("d%d", i), v))
@@ -86,6 +86,10 @@ func TestDelete_SearchWithEmptyTopLayerNoPanic(t *testing.T) {
 	// Delete every node except a base-layer handful.
 	for i := 0; i < 197; i++ {
 		g.Delete(string(rune('a'+i%26)) + string(rune('0'+i/26)))
+	}
+	after := g.DebugLayerSizes()
+	if len(after) < 2 || after[0] == 0 {
+		t.Fatalf("test setup failed to leave an emptied upper layer: %v", after)
 	}
 	nodes := g.Search(Vector{1, 0, 0, 0}, 1)
 	if len(nodes) == 0 {

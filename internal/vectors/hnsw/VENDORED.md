@@ -52,6 +52,16 @@ open), analyzer.go, SavedGraph, tests.
 - Upstream's `heap.Max()`/`PopLast()` (the proven-broken API) is DELETED
   from this copy so it can't be re-misused.
 
+### Known latent quirks (documented, not bugs today)
+
+- `replenish()` hard-codes `CosineDistance` rather than the graph's
+  configured `Distance` (upstream quirk). Nothing changes `Distance` in
+  this codebase; if that ever happens, replenish must take it.
+- After a full Delete-prune, `Dims()==0` makes `assertDims` a no-op, so
+  the next Add redefines dimensionality (previously a mismatch panic).
+  Consistent with the store-level dimension guard; noted for future
+  direct-Graph callers.
+
 ## Upstream
 
 Report-worthy: github.com/coder/hnsw — heap.Max() min-heap fallacy in
