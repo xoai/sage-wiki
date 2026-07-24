@@ -1,17 +1,34 @@
 package search
 
 import (
+	"encoding/json"
 	"math"
 	"path/filepath"
 	"testing"
 
+	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/storage"
 )
 
+// parseExpansionForTest exercises the SHARED fence-strip parser (P2-4:
+// parseExpansionJSON was deleted; its tolerance contract now lives in
+// llm.ParseJSONFromText).
+func parseExpansionForTest(text string) (*ExpandedQuery, error) {
+	payload, err := llm.ParseJSONFromText(text)
+	if err != nil {
+		return nil, err
+	}
+	var resp expansionResponse
+	if err := json.Unmarshal(payload, &resp); err != nil {
+		return nil, err
+	}
+	return &ExpandedQuery{Lex: resp.Lex, Vec: resp.Vec, Hyde: resp.Hyde}, nil
+}
+
 func TestParseExpansionJSON_Valid(t *testing.T) {
 	input := `{"lex":["keyword search","full text lookup"],"vec":["semantic meaning of query"],"hyde":"The answer would discuss..."}`
-	eq, err := parseExpansionJSON(input)
+	eq, err := parseExpansionForTest(input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +45,7 @@ func TestParseExpansionJSON_Valid(t *testing.T) {
 
 func TestParseExpansionJSON_CodeFenced(t *testing.T) {
 	input := "```json\n{\"lex\":[\"alpha\",\"beta\"],\"vec\":[\"gamma\"],\"hyde\":\"delta\"}\n```"
-	eq, err := parseExpansionJSON(input)
+	eq, err := parseExpansionForTest(input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +56,7 @@ func TestParseExpansionJSON_CodeFenced(t *testing.T) {
 
 func TestParseExpansionJSON_WithPreamble(t *testing.T) {
 	input := "Here are the search variants:\n{\"lex\":[\"x\",\"y\"],\"vec\":[\"z\"],\"hyde\":\"h\"}"
-	eq, err := parseExpansionJSON(input)
+	eq, err := parseExpansionForTest(input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,14 +66,14 @@ func TestParseExpansionJSON_WithPreamble(t *testing.T) {
 }
 
 func TestParseExpansionJSON_Malformed(t *testing.T) {
-	_, err := parseExpansionJSON("this is not json at all")
+	_, err := parseExpansionForTest("this is not json at all")
 	if err == nil {
 		t.Error("expected error for malformed input")
 	}
 }
 
 func TestParseExpansionJSON_Empty(t *testing.T) {
-	_, err := parseExpansionJSON("")
+	_, err := parseExpansionForTest("")
 	if err == nil {
 		t.Error("expected error for empty input")
 	}
@@ -65,7 +82,7 @@ func TestParseExpansionJSON_Empty(t *testing.T) {
 func TestParseExpansionJSON_MissingFields(t *testing.T) {
 	// Missing hyde — should still parse, hyde is empty string
 	input := `{"lex":["a","b"],"vec":["c"]}`
-	eq, err := parseExpansionJSON(input)
+	eq, err := parseExpansionForTest(input)
 	if err != nil {
 		t.Fatal(err)
 	}

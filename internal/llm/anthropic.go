@@ -30,7 +30,7 @@ func mergeExtraParams(body map[string]any, extra map[string]interface{}, protect
 
 // anthropicProtectedKeys are the structural body keys extra_params must not
 // clobber (model/messages/stream/system shape the request itself).
-var anthropicProtectedKeys = map[string]bool{"model": true, "messages": true, "stream": true, "system": true}
+var anthropicProtectedKeys = map[string]bool{"model": true, "messages": true, "stream": true, "system": true, "tools": true, "tool_choice": true}
 
 // normalizeAnthropicStop maps Anthropic stop_reason values to the OpenAI-style
 // finish_reason vocabulary used across providers, so EmptyContentDetails gives
@@ -57,7 +57,7 @@ func newAnthropicProvider(apiKey string, baseURL string) *anthropicProvider {
 	return &anthropicProvider{apiKey: apiKey, baseURL: baseURL}
 }
 
-func (p *anthropicProvider) Name() string        { return "anthropic" }
+func (p *anthropicProvider) Name() string         { return "anthropic" }
 func (p *anthropicProvider) SupportsVision() bool { return true }
 
 func (p *anthropicProvider) formatBody(messages []Message, opts CallOpts, stream bool) (map[string]any, string) {

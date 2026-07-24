@@ -40,6 +40,22 @@
   deliberately do not serve `/metrics`; compile-process series are
   log-snapshot-only (per-process registries).
 
+### Added
+
+- **Provider-native structured outputs (MAINT-06, P2-4).** LLM JSON
+  extraction moved off fence-stripping where providers support it:
+  Anthropic forced `tool_use`, OpenAI strict `json_schema` (recursive
+  required-all + nullable unions + `additionalProperties: false`, with a
+  one-shot `json_object` degrade on schema rejection), and Gemini
+  `responseSchema` — with byte-identical fence-strip fallback for
+  openai-compatible backends. One `Client.StructuredCompletion` handles
+  mechanism selection, schema validation (subset validator, no new deps),
+  envelope wrapping for array shapes, and graceful degradation. Applied to
+  trust claim extraction, concept extraction, MCP capture, query
+  expansion, and rerank — rerank's silent-empty failure mode is now a
+  caught validation error. The empty-content actionable hint
+  (finish_reason/raise-budget) is preserved on every path.
+
 ### Security
 
 - **Prompt-injection defenses for compile and query prompts (SEC-04, P1-6).**

@@ -1,10 +1,11 @@
 package search
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
-	"strings"
 
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/memory"
@@ -39,19 +40,45 @@ Generate search variants to improve retrieval:
 Respond ONLY with JSON, no explanation:
 {"lex":["...","..."],"vec":["..."],"hyde":"..."}`, question)
 
-	resp, err := client.ChatCompletion([]llm.Message{
+	// P2-4: schema-guaranteed JSON where supported; graceful degrade to
+	// fallbackExpansion on any error — exactly today's failure contract.
+	payload, _, err := client.StructuredCompletion(context.Background(), []llm.Message{
 		{Role: "user", Content: prompt},
-	}, llm.CallOpts{Model: model, MaxTokens: 300})
+	}, ExpansionSchema, llm.CallOpts{Model: model, MaxTokens: 300})
 	if err != nil {
-		return fallbackExpansion(question), err
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err // never swallow cancellation into the fallback
+		}
+		return fallbackExpansion(question), nil // degrade gracefully, don't return error
 	}
 
-	expanded, err := parseExpansionJSON(resp.Content)
-	if err != nil {
-		return fallbackExpansion(question), nil // degrade gracefully, don't return error
+	var resp expansionResponse
+	if err := json.Unmarshal(payload, &resp); err != nil {
+		return fallbackExpansion(question), nil
+	}
+	expanded := &ExpandedQuery{
+		Lex:  resp.Lex,
+		Vec:  resp.Vec,
+		Hyde: resp.Hyde,
 	}
 	expanded.Original = question
 	return expanded, nil
+}
+
+// ExpansionSchema is the canonical schema for query expansion (P2-4) —
+// object-rooted (no envelope).
+var ExpansionSchema = llm.JSONSchema{
+	Name:        "expansion",
+	Description: "search query variants",
+	Schema: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"lex":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"vec":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"hyde": map[string]any{"type": "string"},
+		},
+		"required": []string{"lex", "vec", "hyde"},
+	},
 }
 
 // StrongSignal checks if the top BM25 result is confident enough to skip expansion.
@@ -93,45 +120,4 @@ type expansionResponse struct {
 	Lex  []string `json:"lex"`
 	Vec  []string `json:"vec"`
 	Hyde string   `json:"hyde"`
-}
-
-// parseExpansionJSON extracts expansion variants from LLM response.
-// Handles: raw JSON, code-fenced JSON, preamble text before JSON.
-func parseExpansionJSON(text string) (*ExpandedQuery, error) {
-	text = strings.TrimSpace(text)
-
-	// Strip markdown code fences if present
-	if strings.HasPrefix(text, "```") {
-		lines := strings.Split(text, "\n")
-		var jsonLines []string
-		inBlock := false
-		for _, line := range lines {
-			if strings.HasPrefix(line, "```") {
-				inBlock = !inBlock
-				continue
-			}
-			if inBlock {
-				jsonLines = append(jsonLines, line)
-			}
-		}
-		text = strings.Join(jsonLines, "\n")
-	}
-
-	// Find the JSON object
-	start := strings.Index(text, "{")
-	end := strings.LastIndex(text, "}")
-	if start >= 0 && end > start {
-		text = text[start : end+1]
-	}
-
-	var resp expansionResponse
-	if err := json.Unmarshal([]byte(text), &resp); err != nil {
-		return nil, err
-	}
-
-	return &ExpandedQuery{
-		Lex:  resp.Lex,
-		Vec:  resp.Vec,
-		Hyde: resp.Hyde,
-	}, nil
 }

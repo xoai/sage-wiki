@@ -475,17 +475,22 @@ func extractKnowledgeItems(cfg *config.Config, content, captureCtx, tags string)
 		model = "gpt-4o-mini"
 	}
 
-	resp, err := client.ChatCompletion([]llm.Message{
+	// P2-4: schema-guaranteed JSON where the provider supports it;
+	// RawFallback keeps this site's exact no-bracket-hunt parse tolerance.
+	payload, rawText, err := client.StructuredCompletion(context.Background(), []llm.Message{
 		{Role: "system", Content: "You are a knowledge extraction assistant. Return only valid JSON."},
 		{Role: "user", Content: prompt + "\n\n" + prompts.WrapUntrusted(content)},
-	}, llm.CallOpts{Model: model, MaxTokens: 4096})
+	}, CaptureSchema, llm.CallOpts{Model: model, MaxTokens: 4096, RawFallback: true})
 	if err != nil {
 		return nil, fmt.Errorf("LLM call: %w", err)
 	}
 
-	// Strip markdown code fences if present
-	text := strings.TrimSpace(resp.Content)
-	text = stripJSONFences(text)
+	// Strip markdown code fences if present (fallback path only)
+	text := string(payload)
+	if rawText != "" {
+		text = strings.TrimSpace(rawText)
+		text = stripJSONFences(text)
+	}
 
 	var items []capturedItem
 	if err := json.Unmarshal([]byte(text), &items); err != nil {
@@ -685,4 +690,23 @@ func (s *Server) handleCompileTopic(ctx context.Context, req mcplib.CallToolRequ
 
 	data, _ := json.MarshalIndent(result, "", "  ")
 	return textResult(string(data)), nil
+}
+
+// CaptureSchema is the canonical schema for wiki_capture parsing (P2-4).
+var CaptureSchema = llm.JSONSchema{
+	Name:        "capture",
+	Description: "knowledge items captured from raw text",
+	IsArray:     true,
+	Schema: map[string]any{
+		"type": "array",
+		"items": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"title":   map[string]any{"type": "string"},
+				"content": map[string]any{"type": "string"},
+			},
+			"required": []string{"title", "content"},
+		},
+		"minItems": 0,
+	},
 }

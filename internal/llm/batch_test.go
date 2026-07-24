@@ -69,7 +69,7 @@ func TestAnthropicBatchPoll(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"id":                "batch_abc123",
 			"processing_status": "ended",
-			"results_url":      srvURL + "/v1/messages/batches/batch_abc123/results",
+			"results_url":       srvURL + "/v1/messages/batches/batch_abc123/results",
 		})
 	}))
 	defer srv.Close()
@@ -103,7 +103,7 @@ func TestAnthropicBatchRetrieve(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"id":                "batch_abc123",
 			"processing_status": "ended",
-			"results_url":      srvURL + "/v1/messages/batches/batch_abc123/results",
+			"results_url":       srvURL + "/v1/messages/batches/batch_abc123/results",
 		})
 	}))
 	defer srv.Close()
@@ -253,10 +253,16 @@ func TestOpenAIBatchRetrieve(t *testing.T) {
 // noBatchProvider is a minimal Provider stub that does not implement BatchProvider.
 type noBatchProvider struct{}
 
-func (noBatchProvider) Name() string                                                    { return "nobatch" }
-func (noBatchProvider) SupportsVision() bool                                            { return false }
-func (noBatchProvider) FormatRequest([]Message, CallOpts) (*http.Request, error)        { return nil, nil }
-func (noBatchProvider) ParseResponse([]byte) (*Response, error)                         { return nil, nil }
+func (noBatchProvider) Name() string                                             { return "nobatch" }
+func (noBatchProvider) SupportsVision() bool                                     { return false }
+func (noBatchProvider) FormatRequest([]Message, CallOpts) (*http.Request, error) { return nil, nil }
+func (noBatchProvider) FormatStructuredRequest([]Message, JSONSchema, CallOpts) (func() (*http.Request, error), bool, error) {
+	return nil, false, nil
+}
+func (noBatchProvider) ParseStructuredResponse([]byte) (json.RawMessage, error) {
+	return nil, ErrStructuredUnsupported
+}
+func (noBatchProvider) ParseResponse([]byte) (*Response, error) { return nil, nil }
 
 func TestClientBatchNotSupported(t *testing.T) {
 	// A provider that doesn't implement BatchProvider should return an error.
@@ -319,8 +325,8 @@ func TestParseGeminiBatchResults(t *testing.T) {
 		check     func(t *testing.T, results []BatchResult)
 	}{
 		{
-			name: "successful response",
-			jsonl: `{"key":"req-1","response":{"candidates":[{"content":{"parts":[{"text":"hello world"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"totalTokenCount":15},"modelVersion":"gemini-2.5-flash"}}`,
+			name:      "successful response",
+			jsonl:     `{"key":"req-1","response":{"candidates":[{"content":{"parts":[{"text":"hello world"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"totalTokenCount":15},"modelVersion":"gemini-2.5-flash"}}`,
 			wantCount: 1,
 			check: func(t *testing.T, results []BatchResult) {
 				r := results[0]
@@ -456,10 +462,10 @@ func TestGeminiBatchState(t *testing.T) {
 
 func TestNewGeminiProviderURLDerivation(t *testing.T) {
 	tests := []struct {
-		baseURL         string
-		wantUpload      string
-		wantDownload    string
-		wantBatchHost   string
+		baseURL       string
+		wantUpload    string
+		wantDownload  string
+		wantBatchHost string
 	}{
 		{
 			baseURL:       "https://generativelanguage.googleapis.com/v1beta",

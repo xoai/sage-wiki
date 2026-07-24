@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"math/rand"
 	"net/http"
@@ -15,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/internal/metrics"
 )
 
 // Message represents a chat message.
@@ -29,9 +28,13 @@ type Message struct {
 
 // CallOpts configures an LLM call.
 type CallOpts struct {
-	Model      string
-	MaxTokens  int
+	Model       string
+	MaxTokens   int
 	Temperature float64
+	// RawFallback (P2-4, spec §4 amendment): StructuredCompletion's fallback
+	// returns raw completion text for the site's own parser instead of the
+	// shared fence-strip parse.
+	RawFallback bool
 }
 
 // Usage holds detailed token usage breakdown.
@@ -200,75 +203,18 @@ func (c *Client) ChatCompletionCtx(ctx context.Context, messages []Message, opts
 // Used by ChatCompletionCtx and as the fallback path for ChatCompletionCached.
 // The ctx bounds the HTTP call and the retry backoff.
 func (c *Client) chatCompletionDirect(ctx context.Context, messages []Message, opts CallOpts) (*Response, error) {
-	var lastErr error
-	var lastStatusCode int
-
-	const maxAttempts = 4
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		// Abort before doing more work if already cancelled.
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-
-		// Wait for rate limiter
-		c.limiter.wait()
-
-		req, err := c.provider.FormatRequest(messages, opts)
-		if err != nil {
-			return nil, fmt.Errorf("llm: format request: %w", err)
-		}
-		req = req.WithContext(ctx) // cancellation reaches the in-flight call
-
-		resp, err := c.client.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("llm: request failed: %w", err)
-		}
-
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		if resp.StatusCode == http.StatusOK {
-			result, err := c.provider.ParseResponse(body)
-			if err != nil {
-				return nil, fmt.Errorf("llm: parse response: %w", err)
-			}
-			c.trackUsage(result.Model, result.Usage)
-			return result, nil
-		}
-
-		if isRetryable(resp.StatusCode) {
-			delay := backoffDelay(attempt)
-			if resp.StatusCode == 429 {
-				metrics.CounterNamed("llm_rate_limited_total").Inc() // first discrimination (P2-2; typed error at :256 not re-counted)
-			}
-			log.Warn("retryable error, retrying", "status", resp.StatusCode, "attempt", attempt+1, "delay", delay)
-			if attempt+1 < maxAttempts {
-				// Cancellable backoff: a cancel during the sleep returns promptly.
-				select {
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				case <-time.After(delay):
-				}
-				metrics.CounterNamed("llm_retries_total").Inc() // a retry actually ran (P2-2)
-			} // final attempt: no sleep, no counter (no retry follows)
-			lastStatusCode = resp.StatusCode
-			lastErr = fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
-			continue
-		}
-
-		return nil, fmt.Errorf("llm: API returned %d: %s", resp.StatusCode, string(body))
+	body, err := c.doWithRetry(ctx, func() (*http.Request, error) {
+		return c.provider.FormatRequest(messages, opts)
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	// If the final failure was a 429, return a typed RateLimitError
-	// so BackpressureController can detect it and adjust concurrency.
-	if lastStatusCode == 429 {
-		return nil, &RateLimitError{
-			StatusCode: 429,
-			Body:       lastErr.Error(),
-		}
+	result, err := c.provider.ParseResponse(body)
+	if err != nil {
+		return nil, fmt.Errorf("llm: parse response: %w", err)
 	}
-
-	return nil, fmt.Errorf("llm: max retries exceeded: %w", lastErr)
+	c.trackUsage(result.Model, result.Usage)
+	return result, nil
 }
 
 // SupportsVision returns whether the provider supports image inputs.
@@ -323,6 +269,16 @@ type Provider interface {
 	FormatRequest(messages []Message, opts CallOpts) (*http.Request, error)
 	ParseResponse(body []byte) (*Response, error)
 	SupportsVision() bool
+	// FormatStructuredRequest builds the provider's constrained request
+	// (P2-4), returned as a builder closure so each retry gets a fresh
+	// body. ok == false: no mechanism — the client uses a plain
+	// completion + fence-strip fallback. Providers without a mechanism
+	// must still implement both methods (stub: ok == false /
+	// ErrStructuredUnsupported) so the interface is total.
+	FormatStructuredRequest(messages []Message, schema JSONSchema, opts CallOpts) (func() (*http.Request, error), bool, error)
+	// ParseStructuredResponse extracts the constrained payload from the
+	// raw response body.
+	ParseStructuredResponse(body []byte) (json.RawMessage, error)
 }
 
 // extraParamsSetter is implemented by providers that merge caller-supplied
@@ -362,7 +318,7 @@ func newProvider(name string, apiKey string, baseURL string) (Provider, error) {
 //   - Public paid APIs get conservative defaults matching their published limits.
 //   - Self-hosted backends (openai-compatible = vLLM/LocalAI/etc., ollama) return
 //     0, meaning "no client-side rate limiting": the compiler's BackpressureController
-//     + server-side capacity are the real governors, and a 1/sec (or 1/2sec) cap
+//   - server-side capacity are the real governors, and a 1/sec (or 1/2sec) cap
 //     was the hidden reason sage-wiki could not saturate a local GPU endpoint
 //     despite cfg.Compiler.MaxParallel >= 8 (PER-116 / per-112-concurrency-fix).
 //   - Unknown providers keep the previous conservative 30 RPM default — do not
