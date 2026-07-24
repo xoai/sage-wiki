@@ -575,7 +575,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		port, _ := cmd.Flags().GetInt("port")
 		bind, _ := cmd.Flags().GetString("bind")
 
-		webSrv, err := web.NewWebServer(dir)
+		webSrv, err := web.NewWebServer(dir, deps.progress)
 		if err != nil {
 			return err
 		}

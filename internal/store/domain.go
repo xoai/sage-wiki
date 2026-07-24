@@ -204,6 +204,12 @@ type CompileStats struct {
 	FullyCompiled int // pass_written=1
 	WithErrors    int
 	AvgQuality    float64
+
+	// Queue state (P2-3): status -> count, plus the active lease holder
+	// (empty when nothing is leased).
+	ByStatus      map[string]int
+	ActiveOwner   string
+	LastHeartbeat string
 }
 
 // ReleaseOutcome is how a worker releases a claimed queue item (P2-3).

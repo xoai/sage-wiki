@@ -269,7 +269,7 @@ func (s *itemStore) IncrementQueryHits(paths []string) error {
 }
 
 func (s *itemStore) Stats() (*store.CompileStats, error) {
-	stats := &store.CompileStats{ByTier: map[int]int{}, BySourceType: map[string]int{}}
+	stats := &store.CompileStats{ByTier: map[int]int{}, BySourceType: map[string]int{}, ByStatus: map[string]int{}}
 
 	rows, err := s.b.pool.Query("SELECT tier, COUNT(*) FROM compile_items GROUP BY tier")
 	if err != nil {
@@ -313,6 +313,35 @@ func (s *itemStore) Stats() (*store.CompileStats, error) {
 	}
 	if avgQ.Valid {
 		stats.AvgQuality = avgQ.Float64
+	}
+
+	// Queue state (P2-3, sqlite parity)
+	rows, err = s.b.pool.Query("SELECT status, COUNT(*) FROM compile_items GROUP BY status")
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var st string
+		var count int
+		if err := rows.Scan(&st, &count); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		stats.ByStatus[st] = count
+	}
+	rows.Close()
+	var owner *string
+	var heartbeat *time.Time
+	if err := s.b.pool.QueryRow(`SELECT lease_owner, MAX(heartbeat_at) FROM compile_items
+		WHERE status = 'leased' AND lease_owner IS NOT NULL GROUP BY lease_owner
+		ORDER BY 2 DESC LIMIT 1`).Scan(&owner, &heartbeat); err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	if owner != nil {
+		stats.ActiveOwner = *owner
+	}
+	if heartbeat != nil {
+		stats.LastHeartbeat = heartbeat.UTC().Format(time.RFC3339)
 	}
 	return stats, nil
 }

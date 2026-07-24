@@ -229,6 +229,7 @@ func (s *CompileItemStore) Stats() (*CompileStats, error) {
 	stats := &CompileStats{
 		ByTier:       make(map[int]int),
 		BySourceType: make(map[string]int),
+		ByStatus:     make(map[string]int),
 	}
 
 	// Tier distribution
@@ -284,6 +285,31 @@ func (s *CompileItemStore) Stats() (*CompileStats, error) {
 	if avgQ.Valid {
 		stats.AvgQuality = avgQ.Float64
 	}
+
+	// Queue state (P2-3)
+	rows, err = s.db.ReadDB().Query("SELECT status, COUNT(*) FROM compile_items GROUP BY status")
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var st string
+		var count int
+		if err := rows.Scan(&st, &count); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		stats.ByStatus[st] = count
+	}
+	rows.Close()
+	var owner, heartbeat sql.NullString
+	err = s.db.ReadDB().QueryRow(`SELECT lease_owner, MAX(heartbeat_at) FROM compile_items
+		WHERE status = 'leased' AND lease_owner IS NOT NULL GROUP BY lease_owner
+		ORDER BY 2 DESC LIMIT 1`).Scan(&owner, &heartbeat)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	stats.ActiveOwner = owner.String
+	stats.LastHeartbeat = heartbeat.String
 
 	return stats, nil
 }

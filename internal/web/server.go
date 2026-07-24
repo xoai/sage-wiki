@@ -18,7 +18,8 @@ import (
 	"sync/atomic"
 	"time"
 
-			"github.com/xoai/sage-wiki/internal/metrics"
+			"github.com/xoai/sage-wiki/internal/compiler"
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/config"
@@ -55,13 +56,17 @@ type WebServer struct {
 	token        string
 	allowedHosts []string
 	httpSrv      *http.Server // set in Serve; used for graceful shutdown
+
+	// progress is the shared compile-progress hub (P2-3); nil when the
+	// server runs without the worker (compile progress SSE then 503s).
+	progress *compiler.Progress
 }
 
 // NewWebServer creates a web server sharing the project's stores.
 // Construction is via the shared app container (P1-8); all fields are
 // aliased from it, and s.db = a.DB so Close semantics are unchanged
 // (closeOnce-idempotent).
-func NewWebServer(projectDir string) (*WebServer, error) {
+func NewWebServer(projectDir string, progress ...*compiler.Progress) (*WebServer, error) {
 	a, err := app.Open(projectDir)
 	if err != nil {
 		return nil, fmt.Errorf("web: %w", err)
@@ -77,6 +82,9 @@ func NewWebServer(projectDir string) (*WebServer, error) {
 		searcher:   a.Searcher,
 		cfg:        a.Config,
 		wsClients:  make(map[chan string]bool),
+	}
+	if len(progress) > 0 {
+		s.progress = progress[0]
 	}
 	s.SetAuth(a.Config.Serve.Token, splitHosts(a.Config.Serve.AllowedHost))
 	return s, nil
@@ -113,6 +121,8 @@ func (s *WebServer) Handler() http.Handler {
 	mux.HandleFunc("/api/graph", s.handleGraph)
 	mux.HandleFunc("/api/files/", s.handleFile)
 	mux.HandleFunc("/api/query", s.handleQuery)
+	mux.HandleFunc("/api/compile/status", s.handleCompileStatus)
+	mux.HandleFunc("/api/compile/progress", s.handleCompileProgress)
 	mux.HandleFunc("/api/provenance", s.handleProvenance)
 	mux.HandleFunc("/ws", s.handleWebSocket)
 
@@ -807,6 +817,65 @@ func (s *WebServer) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Done
 	fmt.Fprintf(w, "event: done\ndata: {}\n\n")
 	flusher.Flush()
+}
+
+// handleCompileStatus returns a JSON snapshot of the durable compile queue
+// (P2-3, spec C6): counts by status plus the active lease holder.
+func (s *WebServer) handleCompileStatus(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.backend.CompileItems().Stats()
+	if err != nil {
+		http.Error(w, "compile stats unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"pending":        stats.ByStatus["pending"],
+		"leased":         stats.ByStatus["leased"],
+		"done":           stats.ByStatus["done"],
+		"failed":         stats.ByStatus["failed"],
+		"active_owner":   stats.ActiveOwner,
+		"last_heartbeat": stats.LastHeartbeat,
+	})
+}
+
+// handleCompileProgress streams compile events as SSE (P2-3, spec C6),
+// following the /api/query pattern: flusher, no global write deadline,
+// unsubscribe when the client disconnects so slow/dead clients never
+// accumulate (drop-on-full protects the worker meanwhile).
+func (s *WebServer) handleCompileProgress(w http.ResponseWriter, r *http.Request) {
+	if s.progress == nil {
+		http.Error(w, "compile progress unavailable (no worker)", http.StatusServiceUnavailable)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	// Flush headers immediately — otherwise the client blocks on response
+	// headers until the first event, and an idle queue deadlocks the stream.
+	fmt.Fprintf(w, ": connected\n\n")
+	flusher.Flush()
+
+	events, unsub := s.progress.Subscribe(64)
+	defer unsub()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case ev, ok := <-events:
+			if !ok {
+				return
+			}
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, mustJSON(ev))
+			flusher.Flush()
+		}
+	}
 }
 
 // handleWebSocket upgrades to WebSocket for hot reload notifications.
