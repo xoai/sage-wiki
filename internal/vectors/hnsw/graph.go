@@ -439,7 +439,12 @@ func (h *Graph[K]) Search(near Vector, k int) []Node[K] {
 		}
 		if elevator != nil {
 			searchPoint = h.layers[layer].nodes[*elevator]
-
+			if searchPoint == nil {
+				// Defensive parity with the entry() guard: the
+				// exists-in-every-lower-layer invariant holds today, but a
+				// violated invariant must degrade, not crash.
+				searchPoint = h.layers[layer].entry()
+			}
 		}
 
 		// Descending hierarchies: greedy ef=1 per Malkov & Yashunin — a
