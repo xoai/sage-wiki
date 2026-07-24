@@ -1,6 +1,8 @@
 package hub
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/xoai/sage-wiki/internal/memory"
@@ -72,5 +74,44 @@ func TestMultiProjectReaderOpens(t *testing.T) {
 		if !seen[name] {
 			t.Errorf("project %s produced no results through reader path", name)
 		}
+	}
+}
+
+// TestSearchProject_ANNFlagNilSafe: a project WITHOUT config.yaml exercises
+// the cfgErr != nil fallback — cfg is nil, the search must still work
+// (brute-force) and never dereference cfg.
+func TestSearchProject_ANNFlagNilSafe(t *testing.T) {
+	dir := setupTestDB(t, "noconfig")
+	os.Remove(filepath.Join(dir, "config.yaml"))
+
+	results, err := searchProject(dir, "test content", 5)
+	if err != nil {
+		t.Fatalf("searchProject without config: %v", err)
+	}
+	if len(results) == 0 {
+		t.Error("expected results from nil-cfg fallback path")
+	}
+}
+
+// TestSearchProject_ANNEnabled: with search.ann.enabled: true the search
+// runs over the HNSW backend and returns results.
+func TestSearchProject_ANNEnabled(t *testing.T) {
+	dir := setupTestDB(t, "ann")
+	cfgPath := filepath.Join(dir, "config.yaml")
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = append(raw, []byte("\nsearch:\n  ann:\n    enabled: true\n")...)
+	if err := os.WriteFile(cfgPath, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := searchProject(dir, "test content", 5)
+	if err != nil {
+		t.Fatalf("searchProject with ANN: %v", err)
+	}
+	if len(results) == 0 {
+		t.Error("expected results over the ANN backend")
 	}
 }
