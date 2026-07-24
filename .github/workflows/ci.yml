@@ -146,3 +146,27 @@ jobs:
       - name: Report dist drift (advisory)
         continue-on-error: true
         run: git diff --stat --exit-code internal/web/dist
+
+  translations:
+    name: Translation drift (MAINT-05)
+    runs-on: ubuntu-latest
+    steps:
+      # Full history: the check diffs README.md against the base ref.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check README translation drift
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin main --depth=1 >/dev/null 2>&1 || git fetch origin main
+            BASE="origin/main"
+            HEAD="HEAD"
+          else
+            BASE="${{ github.event.before }}"
+            HEAD="${{ github.event.after }}"
+          fi
+          COMMIT_MSGS="$(git log --format=%B "$BASE..$HEAD")"
+          export BASE HEAD COMMIT_MSGS
+          scripts/check-readme-translations.sh

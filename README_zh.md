@@ -1,5 +1,8 @@
 [English](README.md) | **中文** | [日本語](README_ja.md) | [한국어](README_ko.md) | [Tiếng Việt](README_vi.md) | [Français](README_fr.md) | [Русский](README_ru.md)
 
+<!-- translations: may-lag -->
+> ⚠️ 本翻译可能滞后于 README.md — 以英文版为准。
+
 # sage-wiki
 
 基于 [Andrej Karpathy 的想法](https://x.com/karpathy/status/2039805659525644595)实现的 LLM 编译型个人知识库。使用 [Sage Framework](https://github.com/xoai/sage) 开发。

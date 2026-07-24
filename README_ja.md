@@ -1,5 +1,8 @@
 [English](README.md) | [中文](README_zh.md) | **日本語** | [한국어](README_ko.md) | [Tiếng Việt](README_vi.md) | [Français](README_fr.md) | [Русский](README_ru.md)
 
+<!-- translations: may-lag -->
+> ⚠️ この翻訳は README.md に遅れている場合があります — 英語版が正本です。
+
 # sage-wiki
 
 [Andrej Karpathyのアイデア](https://x.com/karpathy/status/2039805659525644595)に基づく、LLMコンパイル型パーソナルナレッジベースの実装です。[Sage Framework](https://github.com/xoai/sage)を使用して開発されました。

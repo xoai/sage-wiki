@@ -1,5 +1,8 @@
 [English](README.md) | [中文](README_zh.md) | [日本語](README_ja.md) | [한국어](README_ko.md) | [Tiếng Việt](README_vi.md) | [Français](README_fr.md) | **Русский**
 
+<!-- translations: may-lag -->
+> ⚠️ Этот перевод может отставать от README.md — английская версия является основной.
+
 # sage-wiki
 
 Реализация [идеи Андрея Карпати](https://x.com/karpathy/status/2039805659525644595) — персональная база знаний, компилируемая с помощью LLM. Разработано с использованием [Sage Framework](https://github.com/xoai/sage).

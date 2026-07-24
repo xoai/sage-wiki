@@ -1,5 +1,8 @@
 [English](README.md) | [中文](README_zh.md) | [日本語](README_ja.md) | [한국어](README_ko.md) | **Tiếng Việt** | [Français](README_fr.md) | [Русский](README_ru.md)
 
+<!-- translations: may-lag -->
+> ⚠️ Bản dịch này có thể chưa cập nhật theo README.md — bản tiếng Anh là chuẩn.
+
 # sage-wiki
 
 Một triển khai dựa trên [ý tưởng của Andrej Karpathy](https://x.com/karpathy/status/2039805659525644595) về cơ sở tri thức cá nhân được biên dịch bởi LLM. Phát triển bằng [Sage Framework](https://github.com/xoai/sage).

@@ -1,5 +1,8 @@
 [English](README.md) | [中文](README_zh.md) | [日本語](README_ja.md) | **한국어** | [Tiếng Việt](README_vi.md) | [Français](README_fr.md) | [Русский](README_ru.md)
 
+<!-- translations: may-lag -->
+> ⚠️ 이 번역은 README.md보다 뒤처질 수 있습니다 — 영어 버전이 정본입니다.
+
 # sage-wiki
 
 [Andrej Karpathy의 아이디어](https://x.com/karpathy/status/2039805659525644595)를 구현한 LLM 기반 개인 지식 베이스입니다. [Sage Framework](https://github.com/xoai/sage)를 사용하여 개발되었습니다.

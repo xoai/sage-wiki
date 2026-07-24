@@ -1,5 +1,8 @@
 [English](README.md) | [中文](README_zh.md) | [日本語](README_ja.md) | [한국어](README_ko.md) | [Tiếng Việt](README_vi.md) | **Français** | [Русский](README_ru.md)
 
+<!-- translations: may-lag -->
+> ⚠️ Cette traduction peut être en retard sur README.md — la version anglaise fait foi.
+
 # sage-wiki
 
 Une implémentation de [l'idée d'Andrej Karpathy](https://x.com/karpathy/status/2039805659525644595) pour une base de connaissances personnelle compilée par LLM. Développé avec le [Sage Framework](https://github.com/xoai/sage).
