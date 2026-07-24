@@ -323,6 +323,64 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
+// startItemHeartbeat refreshes leases on items until the returned stop func
+// is called (shared by the worker cycle and the CLI's in-process claims).
+func startItemHeartbeat(items store.CompileItemStore, token string, claimed []CompileItem, interval, ttl time.Duration) func() {
+	paths := make([]string, 0, len(claimed))
+	for _, it := range claimed {
+		paths = append(paths, it.SourcePath)
+	}
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				if err := items.Heartbeat(token, paths, ttl); err != nil {
+					log.Warn("lease heartbeat failed", "error", err)
+				}
+			}
+		}
+	}()
+	return func() { close(done) }
+}
+
+// releaseClaimed settles every claimed item by outcome (shared by worker and
+// CLI): errored items burn attempt budget and dead-letter at the cap; the
+// rest release done (tier-complete decides done vs pending).
+func releaseClaimed(items store.CompileItemStore, token string, claimed []CompileItem, errored map[string]bool, maxAttempts int) {
+	for _, it := range claimed {
+		var outcome store.ReleaseOutcome
+		switch {
+		case errored[it.SourcePath] && it.Attempts+1 >= maxAttempts:
+			outcome = store.ReleaseFailed
+		case errored[it.SourcePath]:
+			outcome = store.ReleaseRetry
+		default:
+			outcome = store.ReleaseDone
+		}
+		if err := items.Release(it.SourcePath, token, outcome); err != nil {
+			log.Warn("release claimed item failed", "path", it.SourcePath, "outcome", outcome, "error", err)
+		}
+	}
+}
+
+// erroredSinceClaim re-reads claimed items and reports which recorded a new
+// error since the claim snapshot (index passes MarkError per failed item).
+func erroredSinceClaim(items store.CompileItemStore, claimed []CompileItem) map[string]bool {
+	errored := map[string]bool{}
+	for _, it := range claimed {
+		cur, err := items.GetByPath(it.SourcePath)
+		if err != nil || cur == nil || cur.ErrorCount > it.ErrorCount {
+			errored[it.SourcePath] = true
+		}
+	}
+	return errored
+}
+
 func claimedItemFor(claimed map[int][]CompileItem, path string) CompileItem {
 	for _, items := range claimed {
 		for _, it := range items {

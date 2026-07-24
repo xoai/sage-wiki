@@ -140,6 +140,15 @@ func newTrackedClient(cfg *config.Config, opts *CompileOpts) (*llm.Client, *llm.
 	return client, tracker, nil
 }
 
+// CLI queue-claim cadence (P2-3): a crashed CLI leaves leases that expire in
+// 5 minutes and requeue on the next compile; the heartbeat keeps long runs
+// from expiring their own claims.
+const (
+	cliLeaseTTL          = 5 * time.Minute
+	cliHeartbeatInterval = 30 * time.Second
+	claimDrainLimit      = 1 << 30 // drain mode: one invocation takes everything claimable
+)
+
 // Compile runs Pass 0 (diff) and Pass 1 (summarize) of the compiler pipeline.
 // compileRun carries the shared state of a single Compile execution across
 // its decomposed steps (P1-8). Field set enumerated in the P1-8 spec D3;
@@ -556,6 +565,21 @@ func runTiers(projectDir string, run *compileRun) {
 	cfg := run.cfg
 	opts := &run.opts
 
+	// Queue lifecycle (P2-3): the CLI is an in-process worker of one. It
+	// requeues crashed leases, resets dead letters under --fresh, then
+	// claims/processes/releases per tier with heartbeats, so a killed
+	// compile leaves resumable queue state exactly like the server worker.
+	cliToken := fmt.Sprintf("cli-%d-%d", os.Getpid(), time.Now().UnixNano())
+	wc := ResolveWorkerConfig(cfg.Serve.Worker)
+	if opts.Fresh && !opts.DryRun {
+		if n, err := run.itemStore.ResetFailed(); err == nil && n > 0 {
+			log.Info("--fresh: reset dead-lettered queue items", "count", n)
+		}
+	}
+	if n, err := run.itemStore.RequeueExpired(time.Now().UTC()); err == nil && n > 0 {
+		log.Info("requeued expired compile leases", "count", n)
+	}
+
 	// Resolve tiers and upsert compile_items for new/modified sources
 	allSources := append(run.diff.Added, run.diff.Modified...)
 	upsertDiffItems(run, projectDir, allSources)
@@ -579,20 +603,26 @@ func runTiers(projectDir string, run *compileRun) {
 	}
 
 	// Tier 0: FTS5 index only (no LLM, ~5ms/doc)
-	tier0Pending, _ := run.itemStore.ListPending(0)
-	if len(tier0Pending) > 0 {
-		run.progress.StartPhase("Tier 0: Index sources", len(tier0Pending))
-		indexed := indexRawSources(projectDir, tier0Pending, run.memStore, run.itemStore, run.exOpts...)
+	tier0Claimed, _ := run.itemStore.Claim(0, cliToken, cliLeaseTTL, claimDrainLimit)
+	if len(tier0Claimed) > 0 {
+		run.progress.StartPhase("Tier 0: Index sources", len(tier0Claimed))
+		stopHB := startItemHeartbeat(run.itemStore, cliToken, tier0Claimed, cliHeartbeatInterval, cliLeaseTTL)
+		indexed := indexRawSources(projectDir, tier0Claimed, run.memStore, run.itemStore, run.exOpts...)
+		stopHB()
+		releaseClaimed(run.itemStore, cliToken, tier0Claimed, erroredSinceClaim(run.itemStore, tier0Claimed), wc.MaxAttempts)
 		run.result.TierIndexed = indexed
 		log.Info("tier 0 indexing complete", "indexed", indexed)
 		run.progress.EndPhase()
 	}
 
 	// Tier 1: FTS5 + vector embed (~200ms/doc)
-	tier1Pending, _ := run.itemStore.ListPending(1)
-	if len(tier1Pending) > 0 {
-		run.progress.StartPhase("Tier 1: Index + embed sources", len(tier1Pending))
-		indexed, embedded := indexAndEmbedSources(projectDir, tier1Pending, run.memStore, run.vecStore, run.embedder, run.itemStore, run.bp, run.chunkStore, cfg.Search.ChunkSizeOrDefault(), run.db, run.exOpts...)
+	tier1Claimed, _ := run.itemStore.Claim(1, cliToken, cliLeaseTTL, claimDrainLimit)
+	if len(tier1Claimed) > 0 {
+		run.progress.StartPhase("Tier 1: Index + embed sources", len(tier1Claimed))
+		stopHB := startItemHeartbeat(run.itemStore, cliToken, tier1Claimed, cliHeartbeatInterval, cliLeaseTTL)
+		indexed, embedded := indexAndEmbedSources(projectDir, tier1Claimed, run.memStore, run.vecStore, run.embedder, run.itemStore, run.bp, run.chunkStore, cfg.Search.ChunkSizeOrDefault(), run.db, run.exOpts...)
+		stopHB()
+		releaseClaimed(run.itemStore, cliToken, tier1Claimed, erroredSinceClaim(run.itemStore, tier1Claimed), wc.MaxAttempts)
 		run.result.TierIndexed += indexed
 		run.result.TierEmbedded = embedded
 		log.Info("tier 1 indexing complete", "indexed", indexed, "embedded", embedded)
@@ -600,9 +630,9 @@ func runTiers(projectDir string, run *compileRun) {
 	}
 
 	// Tier 3: Full LLM pipeline (Pass 1 → 2 → 3) — only for Tier 3 sources
-	tier3Pending, _ := run.itemStore.ListPending(3)
+	tier3Claimed, _ := run.itemStore.Claim(3, cliToken, cliLeaseTTL, claimDrainLimit)
 	tier3Set := make(map[string]bool)
-	for _, item := range tier3Pending {
+	for _, item := range tier3Claimed {
 		tier3Set[item.SourcePath] = true
 	}
 	for _, s := range allSources {
@@ -624,6 +654,7 @@ func runTiers(projectDir string, run *compileRun) {
 			log.Info("prompt caching unavailable with Gemini subscription auth")
 			fmt.Fprintln(os.Stderr, "Prompt caching unavailable with Gemini subscription auth.")
 		}
+		stopHB := startItemHeartbeat(run.itemStore, cliToken, tier3Claimed, cliHeartbeatInterval, cliLeaseTTL)
 		pipelineResult := runFullPipeline(run.toProcess, FullPipelineOpts{
 			Ctx:          opts.Ctx,
 			ProjectDir:   projectDir,
@@ -655,13 +686,14 @@ func runTiers(projectDir string, run *compileRun) {
 		// rollback (RemoveSource on just the sources) left the run's concepts
 		// orphaned, since RemoveSource deletes Sources only. P1-1 / C1.
 		run.pipelineIncomplete = !pipelineResult.Pass23Completed
+		stopHB()
+		succeeded := make(map[string]bool)
+		for _, p := range pipelineResult.SucceededSources {
+			succeeded[p] = true
+		}
 		if !run.pipelineIncomplete {
 			// Pass 2/3 completed — advance all three pass flags for the sources that
 			// summarized successfully so ListPending treats them as fully compiled.
-			succeeded := make(map[string]bool)
-			for _, p := range pipelineResult.SucceededSources {
-				succeeded[p] = true
-			}
 			for _, s := range run.toProcess {
 				if succeeded[s.Path] {
 					for _, pass := range []string{"summarized", "extracted", "written"} {
@@ -672,6 +704,16 @@ func runTiers(projectDir string, run *compileRun) {
 				}
 			}
 		}
+		// Settle the queue leases: succeeded items release done (tier-complete
+		// decides), the rest retry — including on an incomplete run, where
+		// skipping the release would strand leases until expiry.
+		errored3 := make(map[string]bool, len(tier3Claimed))
+		for _, it := range tier3Claimed {
+			if run.pipelineIncomplete || !succeeded[it.SourcePath] {
+				errored3[it.SourcePath] = true
+			}
+		}
+		releaseClaimed(run.itemStore, cliToken, tier3Claimed, errored3, wc.MaxAttempts)
 	}
 
 	// Check promotions/demotions
