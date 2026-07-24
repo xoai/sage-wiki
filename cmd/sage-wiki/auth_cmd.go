@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/xoai/sage-wiki/internal/auth"
@@ -83,16 +82,12 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// P2-6: backend line (design D5) + per-credential location probe.
+	fmt.Printf("backend: %s\n", store.Backend())
 	fmt.Println("Stored credentials:")
 	fmt.Println()
 	for name, cred := range creds {
-		expiry := time.Unix(cred.ExpiresAt, 0).Format(time.RFC3339)
-		if cred.ExpiresAt == 0 {
-			expiry = "unknown"
-		}
-
-		fmt.Printf("  %-16s  token: %s  source: %-6s  status: %-17s  expires: %s\n",
-			name, cred.String(), cred.Source, cred.Status(), expiry)
+		fmt.Println(auth.FormatStatusLine(name, cred, store.CredentialLocation(name)))
 	}
 
 	return nil

@@ -67,6 +67,19 @@
   go PDF library panicked on malformed input — `extractPDFGo` now
   recovers panics into logged errors.
 
+### Added
+
+- **OS-keychain credential storage (SEC-12, P2-6).** On systems with a
+  real keychain (macOS Keychain, Windows Credential Manager, Secret
+  Service), credentials store via the OS keyring instead of the
+  plaintext `~/.sage-wiki/auth.json` — automatic with a read-only probe
+  (500ms timeout; headless/containers keep today's exact file behavior,
+  no cgo anywhere). Explicit `sage-wiki auth migrate` moves existing
+  file credentials (file kept as a frozen backup; no auto-migration).
+  `auth status` reports the active backend and per-credential location.
+  Keychain-specific: rotated/refreshed tokens stay off disk; `auth
+  logout` clears both backends.
+
 ### Security
 
 - **Prompt-injection defenses for compile and query prompts (SEC-04, P1-6).**
