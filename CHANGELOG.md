@@ -56,6 +56,17 @@
   caught validation error. The empty-content actionable hint
   (finish_reason/raise-budget) is preserved on every path.
 
+### Added
+
+- **Extractor fuzzing suite (STRAT-04, SEC-08, P2-5).** Six Go native
+  fuzz targets (docx/xlsx/pptx/epub/eml/pdfGo) asserting security
+  invariants — no panics, no P1-7 budget breaches — with programmatic
+  seeds, a nightly `fuzz.yml` CI job (off the PR path, outcome
+  aggregation so a crasher always turns the job red), and crashers
+  committed as regression seeds. First two findings already landed: the
+  go PDF library panicked on malformed input — `extractPDFGo` now
+  recovers panics into logged errors.
+
 ### Security
 
 - **Prompt-injection defenses for compile and query prompts (SEC-04, P1-6).**
