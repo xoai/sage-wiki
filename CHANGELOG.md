@@ -4,6 +4,32 @@
 
 ### Added
 
+- **Housekeeping bundle (P2-7).** Four independent items:
+  - **dist drift enforcement (MAINT-02):** the frontend CI job now runs
+    in a `node:22-alpine` container (the Dockerfile builder's
+    environment — the byte-match blocker) and the dist drift check
+    hard-fails instead of reporting advisedly. Regenerate with the
+    documented docker one-liner (README web UI section).
+  - **Price-table override (PERF-04):** `compiler.price_table` points at
+    a JSON file (same shape as the built-in map) that overrides built-in
+    prices per provider/model — built-ins remain the fallback, and a
+    missing/malformed file only warns. Precedence:
+    `token_price_per_million` > table > built-in. Cost report header now
+    reads "approximate".
+  - **README translation drift (MAINT-05):** the six translated READMEs
+    carry a may-lag header, and CI fails a README.md-only change unless
+    a translation moved with it or a commit message carries
+    `translations: lag-ok` (scripts/check-readme-translations.sh,
+    locally self-testable).
+  - **ANN vector index (PERF-01 follow-on):** opt-in
+    `search.ann.enabled: true` switches vector search to an HNSW index
+    (vendored under `internal/vectors/hnsw` with a corrected ef-search —
+    upstream coder/hnsw v0.6.1's k>1 search was broken, documented in
+    VENDORED.md). Brute-force exact search stays the default; recall
+    parity ≥9/10 against exact search is test-gated.
+
+### Added
+
 - **Durable job model / compile worker (STRAT-03, P2-3).** `compile_items`
   is now a real work queue: claim columns (`status`, `lease_owner`,
   `lease_until`, `heartbeat_at`, `attempts` — sqlite migration V9,

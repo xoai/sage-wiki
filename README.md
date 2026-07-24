@@ -254,6 +254,21 @@ serve:
 A source that keeps failing is dead-lettered after `max_attempts` failures;
 `sage-wiki compile --fresh` (or editing the source) re-queues it.
 
+**ANN vector search (opt-in).** For very large vaults, enable approximate
+nearest-neighbor search (HNSW, pure Go) — brute-force exact search stays
+the default:
+
+```yaml
+search:
+  ann:
+    enabled: true
+```
+
+**Price table override.** Cost estimates use built-in per-model prices
+(which may go stale). Point `compiler.price_table` at a JSON file (same
+shape as the built-in map) to override them per provider/model; built-ins
+remain the fallback.
+
 ## Configuration
 
 `config.yaml` is created by `sage-wiki init`. Full example:
