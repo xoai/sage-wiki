@@ -7,6 +7,7 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -45,9 +46,11 @@ func (s *Store) keychainGet(provider string) (*Credential, error) {
 
 func (s *Store) keychainPut(provider string, cred *Credential) error {
 	_, kr := s.backendForStore()
-	cred.Provider = "" // never marshal Provider (rehydrated from the entry key)
-	data, err := json.Marshal(cred)
-	cred.Provider = provider
+	// Copy-then-marshal (i1: mutating the caller's Credential is a data
+	// race under concurrent Store use and visible to concurrent readers).
+	snapshot := *cred
+	snapshot.Provider = "" // never marshal Provider (rehydrated from the entry key)
+	data, err := json.Marshal(&snapshot)
 	if err != nil {
 		return err
 	}
@@ -79,7 +82,7 @@ func (s *Store) getWithBackend(provider string) (*Credential, error) {
 	if err == nil {
 		return cred, nil
 	}
-	if err == keyring.ErrNotFound {
+	if errors.Is(err, keyring.ErrNotFound) {
 		return s.fileGet(provider)
 	}
 	return nil, fmt.Errorf("auth: keychain read for %q: %w", provider, err)
@@ -113,31 +116,34 @@ func (s *Store) putWithBackend(provider string, cred *Credential) error {
 // never-migrated providers.
 func (s *Store) deleteWithBackend(provider string) error {
 	backend, _ := s.backendForStore()
+	var errs []error
 
 	// File entry (always attempted — post-migration the file holds a copy).
 	unlock, err := lockFile(s.path)
 	if err != nil {
-		return err
-	}
-	sf, err := s.read()
-	if err != nil {
+		errs = append(errs, err)
+	} else {
+		sf, rerr := s.read()
+		if rerr != nil {
+			errs = append(errs, rerr)
+		} else {
+			delete(sf.Credentials, provider)
+			if werr := s.write(sf); werr != nil {
+				errs = append(errs, werr)
+			}
+		}
 		unlock()
-		return err
-	}
-	delete(sf.Credentials, provider)
-	werr := s.write(sf)
-	unlock()
-	if werr != nil {
-		return werr
 	}
 
+	// Keychain entry (i1: attempted even when the file half fails — a
+	// surviving keychain copy would resurrect the credential on Get).
 	if backend == "keychain" {
 		_, kr := s.backendForStore()
-		if err := kr.Delete(keyringService, provider); err != nil && err != keyring.ErrNotFound {
-			return fmt.Errorf("auth: keychain delete for %q: %w", provider, err)
+		if err := kr.Delete(keyringService, provider); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+			errs = append(errs, fmt.Errorf("auth: keychain delete for %q: %w", provider, err))
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // listWithBackend implements the spec §3 List row: merged union over

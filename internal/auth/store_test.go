@@ -209,7 +209,7 @@ func TestStoreConcurrentPut(t *testing.T) {
 			defer wg.Done()
 			cred := &Credential{
 				AccessToken: "tok",
-				Source:       "login",
+				Source:      "login",
 			}
 			if err := store.Put("openai", cred); err != nil {
 				errs <- err

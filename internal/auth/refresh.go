@@ -163,11 +163,19 @@ func refreshCopilotToken(cred *Credential) (*Credential, error) {
 }
 
 func (s *Store) RefreshAndGet(providerName string) (*Credential, error) {
-	unlock, err := lockFile(s.path)
-	if err != nil {
-		return nil, err
+	// P2-6: the file lock is only needed on the file backend — on keychain
+	// machines no file write happens, and holding the flock across an
+	// unbounded keyring write would wedge all auth ops if the keyring locks.
+	backend, _ := s.backendForStore()
+	var unlock func()
+	if backend != "keychain" {
+		var err error
+		unlock, err = lockFile(s.path)
+		if err != nil {
+			return nil, err
+		}
+		defer unlock()
 	}
-	defer unlock()
 
 	cred, err := s.Get(providerName)
 	if err != nil {

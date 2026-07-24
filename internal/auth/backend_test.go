@@ -2,8 +2,8 @@ package auth
 
 import (
 	"encoding/json"
-	"strings"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/zalando/go-keyring"
@@ -49,10 +49,10 @@ func (r *recordingKeyring) Delete(service, user string) error {
 
 func newTestStore(t *testing.T, kr keyringAPI, backend string) *Store {
 	t.Helper()
-	s := NewStore(t.TempDir() + "/auth.json")
-	s.backend = backend
-	s.kr = kr
-	return s
+	// Direct construction: bypasses NewStore's maybeKeychainNotice, which
+	// would probe the REAL keyring in tests (500ms cost + prompt risk +
+	// unwanted notice output).
+	return &Store{path: t.TempDir() + "/auth.json", backend: backend, kr: kr}
 }
 
 func fullCred() *Credential {
@@ -190,6 +190,7 @@ func TestRefreshAndGetUsesBackendPut(t *testing.T) {
 	if err := s.Put("openai", cred); err != nil {
 		t.Fatal(err)
 	}
+	before := s.readFileBytes(t)
 	refreshed := fullCred()
 	refreshed.AccessToken = "sk-NEW-rotated"
 	if err := s.refreshAndStore("openai", refreshed); err != nil {
@@ -198,7 +199,6 @@ func TestRefreshAndGetUsesBackendPut(t *testing.T) {
 	if kr.sets != 2 {
 		t.Errorf("keyring sets = %d, want 2 (initial + refresh)", kr.sets)
 	}
-	before := s.readFileBytes(t)
 	after := s.readFileBytes(t)
 	if string(before) != string(after) {
 		t.Error("refresh wrote to the FILE on the keychain backend — must route through backend Put")

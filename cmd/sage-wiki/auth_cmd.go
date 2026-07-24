@@ -83,6 +83,8 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// P2-6: backend line (design D5) + per-credential location probe.
+	fmt.Printf("backend: %s\n", store.Backend())
 	fmt.Println("Stored credentials:")
 	fmt.Println()
 	for name, cred := range creds {
@@ -91,8 +93,13 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 			expiry = "unknown"
 		}
 
-		fmt.Printf("  %-16s  token: %s  source: %-6s  status: %-17s  expires: %s\n",
-			name, cred.String(), cred.Source, cred.Status(), expiry)
+		location := store.CredentialLocation(name)
+		if location != "" {
+			location = "  [" + location + "]"
+		}
+
+		fmt.Printf("  %-16s  token: %s  source: %-6s  status: %-17s  expires: %s%s\n",
+			name, cred.String(), cred.Source, cred.Status(), expiry, location)
 	}
 
 	return nil

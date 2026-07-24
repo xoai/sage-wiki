@@ -24,9 +24,9 @@ const keyringService = "sage-wiki"
 // goKeyring adapts zalando/go-keyring to keyringAPI.
 type goKeyring struct{}
 
-func (goKeyring) Get(service, user string) (string, error)      { return keyring.Get(service, user) }
-func (goKeyring) Set(service, user, value string) error         { return keyring.Set(service, user, value) }
-func (goKeyring) Delete(service, user string) error             { return keyring.Delete(service, user) }
+func (goKeyring) Get(service, user string) (string, error) { return keyring.Get(service, user) }
+func (goKeyring) Set(service, user, value string) error    { return keyring.Set(service, user, value) }
+func (goKeyring) Delete(service, user string) error        { return keyring.Delete(service, user) }
 
 // probeKeyring returns "keychain" or "file" (spec §2): a READ of the
 // dedicated probe key in a goroutine with a 500ms hard timeout (a locked

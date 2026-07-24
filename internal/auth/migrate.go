@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-
 )
 
 // Migration support (P2-6 spec §4): the explicit, only path copying file
@@ -12,8 +11,9 @@ import (
 
 // MigrateResult reports a migration pass.
 type MigrateResult struct {
-	Moved  []string
-	Failed []FailedProvider
+	Moved   []string
+	Skipped []string
+	Failed  []FailedProvider
 }
 
 // FailedProvider is one provider whose keychain write failed.
@@ -41,9 +41,16 @@ func MigrateToKeychain(s *Store) (*MigrateResult, error) {
 		if !ok {
 			continue
 		}
-		cred.Provider = ""
-		data, err := json.Marshal(cred)
-		cred.Provider = name
+		// Never overwrite an existing keychain entry (i1 CRITICAL: a
+		// re-run after refresh would revert rotated tokens to the frozen
+		// file copy). Skip and report instead.
+		if _, err := kr.Get(keyringService, name); err == nil {
+			res.Skipped = append(res.Skipped, name)
+			continue
+		}
+		snapshot := *cred // copy-then-marshal (i1: no mutation of the caller's Credential)
+		snapshot.Provider = ""
+		data, err := json.Marshal(&snapshot)
 		if err != nil {
 			res.Failed = append(res.Failed, FailedProvider{name, err})
 			continue
