@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
+	"sync"
 
 	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/compiler"
@@ -17,6 +19,19 @@ type serveDeps struct {
 	progress  *compiler.Progress
 	worker    *compiler.Worker
 	workerApp *app.App // the worker's own backend handle; nil when disabled
+	workerWG  sync.WaitGroup
+}
+
+// StartWorker launches the worker goroutine; Close waits for it.
+func (d *serveDeps) StartWorker(ctx context.Context) {
+	if d.worker == nil {
+		return
+	}
+	d.workerWG.Add(1)
+	go func() {
+		defer d.workerWG.Done()
+		d.worker.Run(ctx)
+	}()
 }
 
 // assembleServeDeps builds the shared state. The worker opens its own
@@ -44,6 +59,8 @@ func assembleServeDeps(dir string) (*serveDeps, error) {
 }
 
 func (d *serveDeps) Close() {
+	// Wait for the in-flight cycle before closing the handle under it.
+	d.workerWG.Wait()
 	if d.workerApp != nil {
 		d.workerApp.Close()
 	}

@@ -230,3 +230,73 @@ func TestCompile_ClaimErrorSurfaces(t *testing.T) {
 		t.Error("claim failures did not surface in CompileResult.Errors")
 	}
 }
+
+// Regression (independent review, CRITICAL): an item claimed at tier 3 but
+// absent from the current diff — e.g. an auto-promoted source whose file
+// is unchanged — must NOT be treated as failed. Pre-fix, every unrelated
+// compile burned one attempt until the healthy item dead-lettered.
+func TestCompile_PromotedItemNotBurned(t *testing.T) {
+	h := newWorkerHarness(t, 3, http.StatusOK)
+	h.writeSource(t, "a.md", "# Alpha\n\nAlpha content.")
+	h.writeSource(t, "b.md", "# Beta\n\nBeta content.")
+
+	// Compile both fully: manifest saved, items done.
+	if _, err := Compile(h.dir, CompileOpts{}); err != nil {
+		t.Fatalf("compile 1: %v", err)
+	}
+
+	// Simulate auto-promotion: a.md owes the tier-3 passes again but its
+	// file is unchanged (manifest hash matches → no diff for a).
+	db, _ := storage.Open(filepath.Join(h.dir, ".sage", "wiki.db"))
+	defer db.Close()
+	if _, err := db.WriteDB().Exec(`UPDATE compile_items
+		SET pass_summarized = 0, pass_extracted = 0, pass_written = 0,
+		    status = 'pending', attempts = 0
+		WHERE source_path = 'raw/a.md'`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Modify only b.md → the next compile claims a.md at tier 3 (passes
+	// owed) but never processes it (not in the diff).
+	h.writeSource(t, "b.md", "# Beta v2\n\nBeta content, edited.")
+	if _, err := Compile(h.dir, CompileOpts{}); err != nil {
+		t.Fatalf("compile 2: %v", err)
+	}
+
+	got, _ := NewCompileItemStore(db).GetByPath("raw/a.md")
+	if got.Attempts != 0 {
+		t.Errorf("attempts = %d, want 0 — unprocessed claimed item must not burn budget", got.Attempts)
+	}
+	if got.Status == "failed" {
+		t.Error("healthy promoted item dead-lettered without ever being processed")
+	}
+	if got.LeaseOwner != "" {
+		t.Errorf("lease leaked on unprocessed claimed item: %q", got.LeaseOwner)
+	}
+}
+
+// Regression (independent review, MAJOR): --fresh must revive a dead
+// letter even when nothing changed (empty diff early-return path).
+func TestCompile_FreshRevivesOnEmptyDiff(t *testing.T) {
+	h := newWorkerHarness(t, 3, http.StatusOK)
+	h.writeSource(t, "a.md", "# Alpha\n\nAlpha content.")
+	if _, err := Compile(h.dir, CompileOpts{}); err != nil {
+		t.Fatalf("compile 1: %v", err)
+	}
+
+	// Dead-letter the item by hand (file unchanged → next diff is empty).
+	db, _ := storage.Open(filepath.Join(h.dir, ".sage", "wiki.db"))
+	defer db.Close()
+	if _, err := db.WriteDB().Exec(`UPDATE compile_items
+		SET status = 'failed', attempts = 5 WHERE source_path = 'raw/a.md'`); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Compile(h.dir, CompileOpts{Fresh: true}); err != nil {
+		t.Fatalf("compile --fresh: %v", err)
+	}
+	got, _ := NewCompileItemStore(db).GetByPath("raw/a.md")
+	if got.Status != "pending" || got.Attempts != 0 {
+		t.Errorf("status = %q attempts = %d, want pending/0 — --fresh must revive on empty diff", got.Status, got.Attempts)
+	}
+}

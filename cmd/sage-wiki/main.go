@@ -617,7 +617,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		if deps.worker != nil {
-			go deps.worker.Run(ctx)
+			deps.StartWorker(ctx)
 			fmt.Fprintln(os.Stderr, "⚙️  compile worker started (serve.worker).")
 		}
 		return webSrv.Serve(ctx, addr)
@@ -633,7 +633,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if deps.worker != nil {
-		go deps.worker.Run(ctx)
+		deps.StartWorker(ctx)
 		fmt.Fprintln(os.Stderr, "⚙️  compile worker started (serve.worker).")
 	}
 

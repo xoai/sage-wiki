@@ -145,7 +145,9 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 		// Nothing to process — but the scan may have mutated the manifest
 		// (removals), which still persists (spec C3 step 8).
 		if len(diff.Removed) > 0 {
-			if err := manifest.MergeSave(orBackground(ctx), run.mfPath, run.base, run.mf); err != nil {
+			saveCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := manifest.MergeSave(saveCtx, run.mfPath, run.base, run.mf); err != nil {
 				return true, fmt.Errorf("worker: save manifest: %w", err)
 			}
 			return true, nil
@@ -310,9 +312,17 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 		}
 	}
 
-	// Systemic-failure hibernation: when every claimed item errored, back
-	// the worker off exponentially instead of hammering a dead backend.
-	if failures == len(paths) {
+	// Systemic-failure hibernation: when every claimed item errored (or
+	// its state became unreadable — a sick store), back the worker off
+	// exponentially instead of hammering a dead backend. Counting
+	// readFailed also prevents a hot re-claim loop on partial store failure.
+	unaccounted := 0
+	for p := range readFailed {
+		if !errored[p] {
+			unaccounted++
+		}
+	}
+	if failures+unaccounted == len(paths) {
 		w.failStreak++
 		log.Warn("worker cycle: all claimed items failed — backing off",
 			"items", len(paths), "streak", w.failStreak)
@@ -345,8 +355,15 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 	// the P1-2 lock; an incomplete tier-3 run discards its mutations.
 	if tier3Incomplete {
 		log.Info("worker: tier-3 pipeline incomplete — manifest not saved; sources reprocess next cycle")
-	} else if err := manifest.MergeSave(orBackground(ctx), run.mfPath, run.base, run.mf); err != nil {
-		return true, fmt.Errorf("worker: save manifest: %w", err)
+	} else {
+		// Detached ctx: a SIGINT mid-cycle must not lose a completed cycle's
+		// manifest (orBackground passes a cancelled ctx through, and the
+		// P1-2 lock wait would fail on it).
+		saveCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := manifest.MergeSave(saveCtx, run.mfPath, run.base, run.mf); err != nil {
+			return true, fmt.Errorf("worker: save manifest: %w", err)
+		}
 	}
 	return true, nil
 }

@@ -217,6 +217,19 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	}
 
 	if run.result.Added == 0 && run.result.Modified == 0 && run.result.Removed == 0 {
+		// Queue maintenance still runs on an empty diff (P2-3): --fresh
+		// must revive dead letters even when no source changed, or a
+		// dead-lettered item with an unchanged file could never recover.
+		if !run.opts.DryRun {
+			if b := run.opts.Backend; b != nil {
+				maintainQueue(run, b.CompileItems())
+			} else if sdb, err := storage.Open(filepath.Join(projectDir, ".sage", "wiki.db")); err == nil {
+				maintainQueue(run, NewCompileItemStore(sdb))
+				sdb.Close()
+			} else {
+				log.Warn("queue maintenance skipped: open db failed", "error", err)
+			}
+		}
 		fmt.Fprintln(os.Stderr, "✓ Nothing to compile — wiki is up to date.")
 		return run.result, nil
 	}
@@ -556,6 +569,27 @@ func setupStores(projectDir string, run *compileRun) error {
 	return nil
 }
 
+// maintainQueue performs the CLI's queue housekeeping (P2-3): reset dead
+// letters under --fresh (never under --dry-run) and requeue expired
+// leases. Runs on every compile — including the empty-diff early return,
+// so recovery paths don't depend on source changes.
+func maintainQueue(run *compileRun, items store.CompileItemStore) {
+	if run.opts.Fresh && !run.opts.DryRun {
+		if n, err := items.ResetFailed(); err != nil {
+			log.Error("queue reset of dead-lettered items failed", "error", err)
+			run.result.Errors++
+		} else if n > 0 {
+			log.Info("--fresh: reset dead-lettered queue items", "count", n)
+		}
+	}
+	if n, err := items.RequeueExpired(time.Now().UTC()); err != nil {
+		log.Error("queue requeue of expired leases failed", "error", err)
+		run.result.Errors++
+	} else if n > 0 {
+		log.Info("requeued expired compile leases", "count", n)
+	}
+}
+
 // runTiers executes the tiered compilation passes (Tier 0 FTS index, Tier 1
 // index+embed, Tier 3 full LLM pipeline) plus promotion/demotion checks,
 // mutating run.result and run.pipelineIncomplete exactly as the inline code
@@ -571,20 +605,7 @@ func runTiers(projectDir string, run *compileRun) {
 	// compile leaves resumable queue state exactly like the server worker.
 	cliToken := fmt.Sprintf("cli-%d-%d", os.Getpid(), time.Now().UnixNano())
 	wc := ResolveWorkerConfig(cfg.Serve.Worker)
-	if opts.Fresh && !opts.DryRun {
-		if n, err := run.itemStore.ResetFailed(); err != nil {
-			log.Error("queue reset of dead-lettered items failed", "error", err)
-			run.result.Errors++
-		} else if n > 0 {
-			log.Info("--fresh: reset dead-lettered queue items", "count", n)
-		}
-	}
-	if n, err := run.itemStore.RequeueExpired(time.Now().UTC()); err != nil {
-		log.Error("queue requeue of expired leases failed", "error", err)
-		run.result.Errors++
-	} else if n > 0 {
-		log.Info("requeued expired compile leases", "count", n)
-	}
+	maintainQueue(run, run.itemStore)
 
 	// Resolve tiers and upsert compile_items for new/modified sources
 	allSources := append(run.diff.Added, run.diff.Modified...)
@@ -614,11 +635,14 @@ func runTiers(projectDir string, run *compileRun) {
 		log.Error("queue claim failed — tier 0 sources not processed this run", "error", claimErr0)
 		run.result.Errors++
 	}
+	var indexed int
 	if len(tier0Claimed) > 0 {
 		run.progress.StartPhase("Tier 0: Index sources", len(tier0Claimed))
 		stopHB := startItemHeartbeat(run.itemStore, cliToken, tier0Claimed, cliHeartbeatInterval, cliLeaseTTL)
-		indexed := indexRawSources(projectDir, tier0Claimed, run.memStore, run.itemStore, run.exOpts...)
-		stopHB()
+		func() {
+			defer stopHB()
+			indexed = indexRawSources(projectDir, tier0Claimed, run.memStore, run.itemStore, run.exOpts...)
+		}()
 		releaseClaimed(run.itemStore, cliToken, tier0Claimed, erroredSinceClaim(run.itemStore, tier0Claimed), wc.MaxAttempts)
 		run.result.TierIndexed = indexed
 		log.Info("tier 0 indexing complete", "indexed", indexed)
@@ -631,11 +655,14 @@ func runTiers(projectDir string, run *compileRun) {
 		log.Error("queue claim failed — tier 1 sources not processed this run", "error", claimErr1)
 		run.result.Errors++
 	}
+	var embedded int
 	if len(tier1Claimed) > 0 {
 		run.progress.StartPhase("Tier 1: Index + embed sources", len(tier1Claimed))
 		stopHB := startItemHeartbeat(run.itemStore, cliToken, tier1Claimed, cliHeartbeatInterval, cliLeaseTTL)
-		indexed, embedded := indexAndEmbedSources(projectDir, tier1Claimed, run.memStore, run.vecStore, run.embedder, run.itemStore, run.bp, run.chunkStore, cfg.Search.ChunkSizeOrDefault(), run.db, run.exOpts...)
-		stopHB()
+		func() {
+			defer stopHB()
+			indexed, embedded = indexAndEmbedSources(projectDir, tier1Claimed, run.memStore, run.vecStore, run.embedder, run.itemStore, run.bp, run.chunkStore, cfg.Search.ChunkSizeOrDefault(), run.db, run.exOpts...)
+		}()
 		releaseClaimed(run.itemStore, cliToken, tier1Claimed, erroredSinceClaim(run.itemStore, tier1Claimed), wc.MaxAttempts)
 		run.result.TierIndexed += indexed
 		run.result.TierEmbedded = embedded
@@ -665,6 +692,7 @@ func runTiers(projectDir string, run *compileRun) {
 	// manifest Save at the end of Compile is skipped, discarding this run's
 	// in-memory manifest mutations (AddSource / MarkCompiled / AddConcept). The next
 	// compile's Diff then re-includes these sources and reprocesses them cleanly.
+	errored3 := make(map[string]bool, len(tier3Claimed))
 	if len(run.toProcess) > 0 {
 		cacheEnabled := cfg.Compiler.PromptCacheEnabled() && !opts.NoCache
 		if cacheEnabled && cfg.API.Auth == "subscription" && cfg.API.Provider == "gemini" {
@@ -672,8 +700,11 @@ func runTiers(projectDir string, run *compileRun) {
 			log.Info("prompt caching unavailable with Gemini subscription auth")
 			fmt.Fprintln(os.Stderr, "Prompt caching unavailable with Gemini subscription auth.")
 		}
+		var pipelineResult *FullPipelineResult
 		stopHB := startItemHeartbeat(run.itemStore, cliToken, tier3Claimed, cliHeartbeatInterval, cliLeaseTTL)
-		pipelineResult := runFullPipeline(run.toProcess, FullPipelineOpts{
+		func() {
+			defer stopHB()
+			pipelineResult = runFullPipeline(run.toProcess, FullPipelineOpts{
 			Ctx:          opts.Ctx,
 			ProjectDir:   projectDir,
 			Config:       cfg,
@@ -690,6 +721,7 @@ func runTiers(projectDir string, run *compileRun) {
 			CacheEnabled: cacheEnabled,
 			Progress:     run.progress,
 		})
+		}()
 		run.result.Summarized = pipelineResult.Summarized
 		run.result.ConceptsExtracted = pipelineResult.ConceptsExtracted
 		run.result.ArticlesWritten = pipelineResult.ArticlesWritten
@@ -703,9 +735,8 @@ func runTiers(projectDir string, run *compileRun) {
 		// saving the manifest would record half-done work — the earlier surgical
 		// rollback (RemoveSource on just the sources) left the run's concepts
 		// orphaned, since RemoveSource deletes Sources only. P1-1 / C1.
-		run.pipelineIncomplete = !pipelineResult.Pass23Completed
-		stopHB()
-		succeeded := make(map[string]bool)
+	run.pipelineIncomplete = !pipelineResult.Pass23Completed
+	succeeded := make(map[string]bool)
 		for _, p := range pipelineResult.SucceededSources {
 			succeeded[p] = true
 		}
@@ -722,17 +753,19 @@ func runTiers(projectDir string, run *compileRun) {
 				}
 			}
 		}
-		// Settle the queue leases: succeeded items release done (tier-complete
-		// decides), the rest retry — including on an incomplete run, where
-		// skipping the release would strand leases until expiry.
-		errored3 := make(map[string]bool, len(tier3Claimed))
-		for _, it := range tier3Claimed {
-			if run.pipelineIncomplete || !succeeded[it.SourcePath] {
-				errored3[it.SourcePath] = true
+		// Only PROCESSED items can fail. Items claimed but absent from the
+		// diff (e.g. auto-promoted sources, hash unchanged) are released
+		// without budget burn below — charging them would dead-letter
+		// healthy sources the CLI never compiles (independent-review CRITICAL).
+		for _, s := range run.toProcess {
+			if run.pipelineIncomplete || !succeeded[s.Path] {
+				errored3[s.Path] = true
 			}
 		}
-		releaseClaimed(run.itemStore, cliToken, tier3Claimed, errored3, wc.MaxAttempts)
 	}
+	// Settle every tier-3 lease, processed or not — even when toProcess was
+	// empty, or the claims would sit leased until expiry every run.
+	releaseClaimed(run.itemStore, cliToken, tier3Claimed, errored3, wc.MaxAttempts)
 
 	// Check promotions/demotions
 	if cfg.Compiler.AutoPromoteEnabled() {
