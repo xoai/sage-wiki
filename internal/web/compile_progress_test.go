@@ -102,20 +102,20 @@ func TestCompileProgressSSE(t *testing.T) {
 		t.Errorf("frame order = %v, want [phase item]", frames)
 	}
 
-	// Client disconnect unsubscribes (no leak — R3).
+	// Client disconnect: the stream terminates (request ctx cancellation
+	// propagates to the handler, which unsubscribes and returns — R3).
 	cancel()
-	deadline2 := time.Now().Add(2 * time.Second)
-	for {
-		progress.StartPhase("ping", 1)
-		progress.ItemDone("x", "")
-		// No direct way to count subs — assert no panic/block, which the
-		// drop-on-full design guarantees. The unsubscribe path itself is
-		// covered by the compiler tests; here we only prove the handler
-		// exits with the request context.
-		if time.Now().After(deadline2) {
-			break
-		}
-		break
+	readDone := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 64)
+		_, err := resp.Body.Read(buf)
+		readDone <- err
+	}()
+	select {
+	case <-readDone:
+		// Stream ended after cancel — the handler is not still writing.
+	case <-time.After(3 * time.Second):
+		t.Error("stream did not terminate after client cancel — handler leak")
 	}
 }
 

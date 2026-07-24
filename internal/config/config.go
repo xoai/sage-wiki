@@ -781,9 +781,15 @@ func (c *Config) Validate() error {
 	if w.PollIntervalSeconds < 0 || w.LeaseTTLSeconds < 0 || w.HeartbeatIntervalSeconds < 0 || w.MaxAttempts < 0 || w.ClaimLimit < 0 {
 		return fmt.Errorf("config: serve.worker values must be non-negative")
 	}
-	if w.LeaseTTLSeconds > 0 && w.HeartbeatIntervalSeconds >= w.LeaseTTLSeconds {
+	// Validate the RESOLVED pair: an unset TTL defaults to 120s, so a raw
+	// heartbeat of e.g. 200 must fail even with lease_ttl_seconds unset.
+	resolvedTTL := w.LeaseTTLSeconds
+	if resolvedTTL <= 0 {
+		resolvedTTL = 120
+	}
+	if w.HeartbeatIntervalSeconds >= resolvedTTL {
 		return fmt.Errorf("config: serve.worker.heartbeat_interval_seconds (%d) must be less than lease_ttl_seconds (%d)",
-			w.HeartbeatIntervalSeconds, w.LeaseTTLSeconds)
+			w.HeartbeatIntervalSeconds, resolvedTTL)
 	}
 	if c.Compiler.Mode != "" {
 		validModes := map[string]bool{"standard": true, "batch": true, "auto": true}

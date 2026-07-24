@@ -107,9 +107,19 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 	// The queue has no file to process for a removed source — drop its row
 	// BEFORE claiming (handleRemovedSources deliberately never touches
 	// compile_items; leaving the row would claim a nonexistent file every
-	// cycle until dead-letter).
-	if len(diff.Removed) > 0 {
-		if err := w.deps.Items.DeleteByPaths(diff.Removed); err != nil {
+	// cycle until dead-letter). Only delete rows for sources ACTUALLY
+	// removed from the manifest: a deferred sole-source orphan keeps its
+	// manifest entry, and deleting its row would permanently drop it from
+	// the queue if the file later returns unchanged (no diff event → no
+	// re-upsert).
+	var deletable []string
+	for _, p := range diff.Removed {
+		if _, stillKnown := run.mf.Sources[p]; !stillKnown {
+			deletable = append(deletable, p)
+		}
+	}
+	if len(deletable) > 0 {
+		if err := w.deps.Items.DeleteByPaths(deletable); err != nil {
 			log.Warn("worker: delete removed queue items failed", "error", err)
 		}
 	}
@@ -130,6 +140,8 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 		}
 	}
 	if len(paths) == 0 {
+		// No claimable work = no systemic failure — decay the backoff.
+		w.failStreak = 0
 		// Nothing to process — but the scan may have mutated the manifest
 		// (removals), which still persists (spec C3 step 8).
 		if len(diff.Removed) > 0 {
@@ -173,11 +185,14 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 				continue
 			}
 			cur, err := w.deps.Items.GetByPath(it.SourcePath)
-			if err != nil || cur == nil {
-				errored[it.SourcePath] = true
+			if err != nil {
+				// A transient store read error is NOT a processing failure:
+				// skip the release (the lease expires and requeues) rather
+				// than burning the item's attempt budget.
+				log.Warn("worker: post-pass read failed — leaving lease to expire", "path", it.SourcePath, "error", err)
 				continue
 			}
-			if cur.ErrorCount > it.ErrorCount {
+			if cur == nil || cur.ErrorCount > it.ErrorCount {
 				errored[it.SourcePath] = true
 			}
 		}
@@ -374,11 +389,18 @@ func releaseClaimed(items store.CompileItemStore, token string, claimed []Compil
 
 // erroredSinceClaim re-reads claimed items and reports which recorded a new
 // error since the claim snapshot (index passes MarkError per failed item).
+// A transient store read error is NOT a processing failure: the item is
+// left out of the errored set (its lease is released done, which the
+// tier-complete predicate turns into pending when passes are still owed).
 func erroredSinceClaim(items store.CompileItemStore, claimed []CompileItem) map[string]bool {
 	errored := map[string]bool{}
 	for _, it := range claimed {
 		cur, err := items.GetByPath(it.SourcePath)
-		if err != nil || cur == nil || cur.ErrorCount > it.ErrorCount {
+		if err != nil {
+			log.Warn("post-pass read failed", "path", it.SourcePath, "error", err)
+			continue
+		}
+		if cur == nil || cur.ErrorCount > it.ErrorCount {
 			errored[it.SourcePath] = true
 		}
 	}

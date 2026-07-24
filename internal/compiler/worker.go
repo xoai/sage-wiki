@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/config"
@@ -90,13 +91,12 @@ type Worker struct {
 
 // NewWorker constructs a Worker with a unique lease-owner token
 // (pid-counter, the manifest-lock pattern).
-var workerCounter uint64
+var workerCounter atomic.Uint64
 
 func NewWorker(deps WorkerDeps) *Worker {
-	workerCounter++
 	return &Worker{
 		deps:  deps,
-		token: fmt.Sprintf("%d-%d-%d", os.Getpid(), time.Now().UnixNano(), workerCounter),
+		token: fmt.Sprintf("%d-%d-%d", os.Getpid(), time.Now().UnixNano(), workerCounter.Add(1)),
 		hooks: defaultPassHooks(),
 	}
 }
@@ -107,8 +107,12 @@ func NewWorker(deps WorkerDeps) *Worker {
 func (w *Worker) Run(ctx context.Context) error {
 	w.requeueExpired()
 	for {
-		if _, err := w.cycle(ctx); err != nil {
+		worked, err := w.cycle(ctx)
+		if err != nil {
 			log.Error("worker cycle failed", "error", err)
+		}
+		if worked {
+			continue // drain: loop immediately while items flow (spec C3 step 9)
 		}
 		select {
 		case <-ctx.Done():

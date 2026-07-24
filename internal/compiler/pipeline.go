@@ -572,11 +572,17 @@ func runTiers(projectDir string, run *compileRun) {
 	cliToken := fmt.Sprintf("cli-%d-%d", os.Getpid(), time.Now().UnixNano())
 	wc := ResolveWorkerConfig(cfg.Serve.Worker)
 	if opts.Fresh && !opts.DryRun {
-		if n, err := run.itemStore.ResetFailed(); err == nil && n > 0 {
+		if n, err := run.itemStore.ResetFailed(); err != nil {
+			log.Error("queue reset of dead-lettered items failed", "error", err)
+			run.result.Errors++
+		} else if n > 0 {
 			log.Info("--fresh: reset dead-lettered queue items", "count", n)
 		}
 	}
-	if n, err := run.itemStore.RequeueExpired(time.Now().UTC()); err == nil && n > 0 {
+	if n, err := run.itemStore.RequeueExpired(time.Now().UTC()); err != nil {
+		log.Error("queue requeue of expired leases failed", "error", err)
+		run.result.Errors++
+	} else if n > 0 {
 		log.Info("requeued expired compile leases", "count", n)
 	}
 
@@ -603,7 +609,11 @@ func runTiers(projectDir string, run *compileRun) {
 	}
 
 	// Tier 0: FTS5 index only (no LLM, ~5ms/doc)
-	tier0Claimed, _ := run.itemStore.Claim(0, cliToken, cliLeaseTTL, claimDrainLimit)
+	tier0Claimed, claimErr0 := run.itemStore.Claim(0, cliToken, cliLeaseTTL, claimDrainLimit)
+	if claimErr0 != nil {
+		log.Error("queue claim failed — tier 0 sources not processed this run", "error", claimErr0)
+		run.result.Errors++
+	}
 	if len(tier0Claimed) > 0 {
 		run.progress.StartPhase("Tier 0: Index sources", len(tier0Claimed))
 		stopHB := startItemHeartbeat(run.itemStore, cliToken, tier0Claimed, cliHeartbeatInterval, cliLeaseTTL)
@@ -616,7 +626,11 @@ func runTiers(projectDir string, run *compileRun) {
 	}
 
 	// Tier 1: FTS5 + vector embed (~200ms/doc)
-	tier1Claimed, _ := run.itemStore.Claim(1, cliToken, cliLeaseTTL, claimDrainLimit)
+	tier1Claimed, claimErr1 := run.itemStore.Claim(1, cliToken, cliLeaseTTL, claimDrainLimit)
+	if claimErr1 != nil {
+		log.Error("queue claim failed — tier 1 sources not processed this run", "error", claimErr1)
+		run.result.Errors++
+	}
 	if len(tier1Claimed) > 0 {
 		run.progress.StartPhase("Tier 1: Index + embed sources", len(tier1Claimed))
 		stopHB := startItemHeartbeat(run.itemStore, cliToken, tier1Claimed, cliHeartbeatInterval, cliLeaseTTL)
@@ -630,7 +644,11 @@ func runTiers(projectDir string, run *compileRun) {
 	}
 
 	// Tier 3: Full LLM pipeline (Pass 1 → 2 → 3) — only for Tier 3 sources
-	tier3Claimed, _ := run.itemStore.Claim(3, cliToken, cliLeaseTTL, claimDrainLimit)
+	tier3Claimed, claimErr3 := run.itemStore.Claim(3, cliToken, cliLeaseTTL, claimDrainLimit)
+	if claimErr3 != nil {
+		log.Error("queue claim failed — tier 3 sources not processed this run", "error", claimErr3)
+		run.result.Errors++
+	}
 	tier3Set := make(map[string]bool)
 	for _, item := range tier3Claimed {
 		tier3Set[item.SourcePath] = true

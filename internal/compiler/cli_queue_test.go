@@ -1,13 +1,19 @@
 package compiler
 
 import (
+	"context"
+	"database/sql"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/memory"
+	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
 // seedFailedItem plants a dead-lettered queue row for a source that exists
@@ -132,5 +138,95 @@ func TestCompile_DryRunNoSideEffects(t *testing.T) {
 	after, _ := h.items.GetByPath("raw/a.md")
 	if *before != *after {
 		t.Errorf("dry run mutated queue state: before %+v after %+v", before, after)
+	}
+}
+
+// testBackend is the minimal store.Backend for Compile-level tests,
+// built exactly like setupStores' legacy sqlite path. Trust/OutputIndex/
+// Learnings are nil — the compile path never touches them.
+type testBackend struct {
+	db      *storage.DB
+	items   store.CompileItemStore
+	entries store.EntryStore
+	chunks  store.ChunkStore
+	vecs    store.VectorStore
+	ont     store.OntologyStore
+}
+
+func newTestBackend(db *storage.DB) *testBackend {
+	merged := ontology.MergedRelations(nil)
+	mergedTypes := ontology.MergedEntityTypes(nil)
+	return &testBackend{
+		db:      db,
+		items:   NewCompileItemStore(db),
+		entries: memory.NewStore(db),
+		chunks:  memory.NewChunkStore(db),
+		vecs:    vectors.NewStore(db),
+		ont:     ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes)),
+	}
+}
+
+func (b *testBackend) Entries() store.EntryStore         { return b.entries }
+func (b *testBackend) Chunks() store.ChunkStore          { return b.chunks }
+func (b *testBackend) Vectors() store.VectorStore        { return b.vecs }
+func (b *testBackend) Ontology() store.OntologyStore     { return b.ont }
+func (b *testBackend) Trust() store.TrustStore           { return nil }
+func (b *testBackend) CompileItems() store.CompileItemStore {
+	return b.items
+}
+func (b *testBackend) OutputIndex() store.OutputIndexStore { return nil }
+func (b *testBackend) Learnings() store.LearningStore      { return nil }
+func (b *testBackend) WriteTx(fn func(tx *sql.Tx) error) error {
+	return b.db.WriteTx(fn)
+}
+func (b *testBackend) BeginWrite() (*store.Tx, error) { return nil, errors.New("unsupported") }
+func (b *testBackend) ReadDB() *sql.DB                 { return b.db.ReadDB() }
+func (b *testBackend) WriteDB() *sql.DB                { return b.db.WriteDB() }
+func (b *testBackend) Health(context.Context) error    { return nil }
+func (b *testBackend) SchemaReady() bool               { return true }
+func (b *testBackend) Location() string                { return "test" }
+func (b *testBackend) Close() error                    { return nil }
+
+// erroringClaimStore wraps a real queue store and fails every Claim —
+// proving a broken queue store surfaces on the CLI path instead of
+// silently compiling nothing (Gate-3 review, MAJOR).
+type erroringClaimStore struct {
+	store.CompileItemStore
+	err error
+}
+
+func (e *erroringClaimStore) Claim(tier int, owner string, ttl time.Duration, limit int) ([]CompileItem, error) {
+	return nil, e.err
+}
+
+type erroringBackend struct {
+	store.Backend
+	items store.CompileItemStore
+}
+
+func (b *erroringBackend) CompileItems() store.CompileItemStore { return b.items }
+
+func TestCompile_ClaimErrorSurfaces(t *testing.T) {
+	h := newWorkerHarness(t, 1, http.StatusOK)
+	h.writeSource(t, "a.md", "# Alpha\n\nAlpha content.")
+
+	// A real sqlite backend (built like setupStores' legacy path) whose
+	// queue store fails every Claim.
+	sdb, err := storage.Open(filepath.Join(h.dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sdb.Close()
+	tb := newTestBackend(sdb)
+	backend := &erroringBackend{
+		Backend: tb,
+		items:   &erroringClaimStore{CompileItemStore: tb.items, err: errors.New("queue store down")},
+	}
+	result, err := Compile(h.dir, CompileOpts{Backend: backend})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if result.Errors == 0 {
+		t.Error("claim failures did not surface in CompileResult.Errors")
 	}
 }
