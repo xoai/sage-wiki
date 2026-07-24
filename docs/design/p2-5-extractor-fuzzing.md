@@ -2,7 +2,7 @@
 
 **Status:** draft, review iteration 2 (first commit of PR per Phase-2 spec preamble)
 
-> Iteration log: i1 found 0C/4M/4S/1cos — termination claim was mechanism-free,
+> Iteration log: i1 found 0C/4M/5S/1cos — termination claim was mechanism-free,
 > budget invariant undefined for eml/pdf, schedule-trigger semantics misread
 > (whole workflow would run nightly), seed realism (extractXMLText captures
 > ONLY `<t>` elements — seeds must enumerate exact members + `<t>` or the
@@ -40,7 +40,7 @@ normally and is invisible to fuzzing — accepted). Assertion sets:
 | Target | Invariants |
 |---|---|
 | docx / xlsx / pptx / epub (zip) | no panic; on success, `len(sc.Text) ≤ maxZipTotalBytes + slack` — slack = 64 KB for chapter/sheet header lines and filenames the writer adds on top of charged bytes (i1: strict ≤ would false-fail on headers) |
-| eml | no panic; on success, `len(sc.Text) ≤ len(input)` — MIME body text is a subset of the input; eml has no P1-7 cap (i1: the budget invariant is vacuous here) |
+| eml | no panic; on success, `len(sc.Text) ≤ len(input) + 1KB` — body bytes are copied verbatim (verified: email.go does NOT transcode; mail.Header.Get returns decoded-but-shrinking header text) and the only additions are 4 header label lines (i2: the slack covers them and any header-decode edge) |
 | pdf (extractPDFGo only) | no panic; on success, `len(sc.Text) ≤ maxZipTotalBytes` as a sanity ceiling (pdf has no P1-7 cap; the pure-Go path can inflate compressed streams) |
 
 Caps are read from the package vars at assertion time (maxZipTotalBytes /
@@ -81,9 +81,9 @@ ENTIRE matrix (3-OS build/test, lint, vuln, frontend) nightly. Instead:
 `.github/workflows/fuzz.yml` with `on: { schedule: [cron: '17 3 * * *'],
 workflow_dispatch: {} }`. One linux job, `timeout-minutes: 15`, running
 `go test -run=NONE -fuzz=FuzzExtractDocx -fuzztime=60s ./internal/extract/`
-(and 5 more targets sequentially — one shared invocation would run all
-targets but explicit per-target logs make failures attributable at a
-glance; the rebuild overhead is one compile). Never on the PR path.
+(and 5 more targets sequentially — REQUIRED, not just nicer logs: Go's
+`-fuzz` errors when one invocation matches multiple targets, so each
+target runs its own invocation; the compile happens once). Never on the PR path.
 **PDF target is `extractPDFGo`** (unexported, same package): the public
 extractPDF shells out to pdftotext when poppler is on PATH (fuzzing an
 external binary at exec-per-case cost — wrong surface).
