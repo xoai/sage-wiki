@@ -31,6 +31,12 @@ func NewStore(path string) *Store {
 	return s
 }
 
+// NewStoreNoNotice constructs without the first-run notice (used by
+// `auth migrate` itself — the notice would be self-referential).
+func NewStoreNoNotice(path string) *Store {
+	return &Store{path: path}
+}
+
 func DefaultStorePath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {

@@ -227,9 +227,10 @@ func timeUnixRFC3339(sec int64) string {
 	return time.Unix(sec, 0).Format(time.RFC3339)
 }
 
-// formatStatusLine mirrors auth_cmd.go's per-credential line format for
-// the secret-scan test (spec §7.8).
-func formatStatusLine(name string, cred *Credential, location string) string {
+// FormatStatusLine is THE per-credential status line for `auth status`
+// (spec §5/§7.8 — the command and the secret-scan test share exactly
+// this path, so the test covers the real output, not a mirror).
+func FormatStatusLine(name string, cred *Credential, location string) string {
 	expiry := "unknown"
 	if cred.ExpiresAt != 0 {
 		expiry = timeUnixRFC3339(cred.ExpiresAt)

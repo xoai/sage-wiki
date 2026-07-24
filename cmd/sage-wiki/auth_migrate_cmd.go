@@ -22,7 +22,8 @@ func init() {
 // only path that copies file credentials into the OS keychain (no
 // automatic migration — the spec's "offer to move").
 func runAuthMigrate(cmd *cobra.Command, args []string) error {
-	store := auth.NewStore(auth.DefaultStorePath())
+	// Don't print "run auth migrate" while the user is running it.
+	store := auth.NewStoreNoNotice(auth.DefaultStorePath())
 	if store.Backend() != "keychain" {
 		// Return the message as the error (cobra prints it once — no
 		// duplicate stderr+error output).

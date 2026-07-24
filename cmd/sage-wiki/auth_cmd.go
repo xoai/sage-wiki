@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/xoai/sage-wiki/internal/auth"
@@ -88,18 +87,7 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 	fmt.Println("Stored credentials:")
 	fmt.Println()
 	for name, cred := range creds {
-		expiry := time.Unix(cred.ExpiresAt, 0).Format(time.RFC3339)
-		if cred.ExpiresAt == 0 {
-			expiry = "unknown"
-		}
-
-		location := store.CredentialLocation(name)
-		if location != "" {
-			location = "  [" + location + "]"
-		}
-
-		fmt.Printf("  %-16s  token: %s  source: %-6s  status: %-17s  expires: %s%s\n",
-			name, cred.String(), cred.Source, cred.Status(), expiry, location)
+		fmt.Println(auth.FormatStatusLine(name, cred, store.CredentialLocation(name)))
 	}
 
 	return nil

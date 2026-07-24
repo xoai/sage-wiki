@@ -269,7 +269,7 @@ func mustJSON(t *testing.T, c *Credential) string {
 // token strings (the last-4 display via cred.String() is allowed).
 func TestStatusOutputNoFullSecrets(t *testing.T) {
 	cred := fullCred()
-	out := formatStatusLine("openai", cred, "keychain+file")
+	out := FormatStatusLine("openai", cred, "keychain+file")
 	if strings.Contains(out, cred.AccessToken) {
 		t.Errorf("status line leaks the FULL access token: %s", out)
 	}
@@ -278,5 +278,53 @@ func TestStatusOutputNoFullSecrets(t *testing.T) {
 	}
 	if !strings.Contains(out, cred.String()) {
 		t.Errorf("status line should include the redacted display: %s", out)
+	}
+}
+
+// TestListKeychainMergedUnion pins the spec §3 List row: file ∪ keychain
+// over auth.Providers, keychain winning on conflict.
+func TestListKeychainMergedUnion(t *testing.T) {
+	kr := newRecordingKeyring()
+	s := newTestStore(t, kr, "keychain")
+
+	fileCred := fullCred()
+	fileCred.AccessToken = "sk-FILE-stale"
+	s.writeFileOnly(t, fileCred)
+	s.writeFileOnly(t, &Credential{Provider: "gemini", AccessToken: "gem-file", Source: "file"})
+
+	kcCred := fullCred()
+	kcCred.AccessToken = "sk-KEYCHAIN-fresh"
+	if err := s.Put("openai", kcCred); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := s.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := list["openai"].AccessToken; got != "sk-KEYCHAIN-fresh" {
+		t.Errorf("keychain must win on conflict, got %q", got)
+	}
+	if got := list["gemini"].AccessToken; got != "gem-file" {
+		t.Errorf("file-only credential missing from merged list: %q", got)
+	}
+}
+
+// TestTOSOnKeychainBackend pins spec §7.9: TOS methods work on the FILE
+// regardless of the credential backend.
+func TestTOSOnKeychainBackend(t *testing.T) {
+	kr := newRecordingKeyring()
+	s := newTestStore(t, kr, "keychain")
+	if s.IsTOSAcknowledged() {
+		t.Error("TOS acknowledged on fresh store")
+	}
+	if err := s.AcknowledgeTOS(); err != nil {
+		t.Fatal(err)
+	}
+	if !s.IsTOSAcknowledged() {
+		t.Error("TOS not persisted on keychain backend")
+	}
+	if kr.sets != 0 {
+		t.Error("TOS touched the keychain (must stay file-based)")
 	}
 }

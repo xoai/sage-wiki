@@ -88,16 +88,20 @@ func (s *Store) maybeKeychainNotice() {
 	if err != nil || sf.KeychainNoticeShown || len(sf.Credentials) == 0 {
 		return
 	}
-	fmt.Fprintln(os.Stderr, "credentials found in file backup — run `sage-wiki auth migrate` to move them into the OS keychain (file fallback unchanged)")
+	// Lock + flag-write BEFORE printing (i2: two concurrent NewStore
+	// calls must not both print — the flag is the single-print guard).
 	unlock, err := lockFile(s.path)
 	if err != nil {
 		return
 	}
 	defer unlock()
 	sf, err = s.read()
-	if err != nil {
+	if err != nil || sf.KeychainNoticeShown {
 		return
 	}
 	sf.KeychainNoticeShown = true
-	_ = s.write(sf)
+	if err := s.write(sf); err != nil {
+		return
+	}
+	fmt.Fprintln(os.Stderr, "credentials found in file backup — run `sage-wiki auth migrate` to move them into the OS keychain (file fallback unchanged)")
 }
