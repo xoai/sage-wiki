@@ -439,7 +439,7 @@ func (s *itemStore) Claim(tier int, owner string, ttl time.Duration, limit int) 
 		for _, c := range candidates {
 			res, err := tx.Exec(`
 				UPDATE compile_items SET status = 'leased', lease_owner = $1,
-					lease_until = $2, heartbeat_at = $3, attempts = attempts + 1,
+					lease_until = $2, heartbeat_at = $3,
 					updated_at = now()
 				WHERE source_path = $4
 					AND (lease_until IS NULL OR lease_until < $5 OR lease_owner = $6)
@@ -454,7 +454,6 @@ func (s *itemStore) Claim(tier int, owner string, ttl time.Duration, limit int) 
 			c.LeaseOwner = owner
 			c.LeaseUntil = until.Format(time.RFC3339)
 			c.HeartbeatAt = now.Format(time.RFC3339)
-			c.Attempts++
 			claimed = append(claimed, c)
 		}
 		return nil
@@ -532,11 +531,16 @@ func (s *itemStore) Release(path string, owner string, outcome store.ReleaseOutc
 		default:
 			return fmt.Errorf("Release: unknown outcome: %d", outcome)
 		}
-		_, err := tx.Exec(`
+		// attempts counts FAILED processing attempts — see sqlite Release.
+		attemptsSQL := "attempts = 0"
+		if outcome == store.ReleaseRetry {
+			attemptsSQL = "attempts = attempts + 1"
+		}
+		_, err := tx.Exec(fmt.Sprintf(`
 			UPDATE compile_items SET status = $1, lease_owner = NULL,
-				lease_until = NULL, heartbeat_at = NULL, updated_at = now()
+				lease_until = NULL, heartbeat_at = NULL, %s, updated_at = now()
 			WHERE source_path = $2 AND lease_owner = $3
-		`, status, path, owner)
+		`, attemptsSQL), status, path, owner)
 		return err
 	})
 }

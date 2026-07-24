@@ -594,7 +594,7 @@ func (s *CompileItemStore) Claim(tier int, owner string, ttl time.Duration, limi
 		for _, c := range candidates {
 			res, err := tx.Exec(`
 				UPDATE compile_items SET status = 'leased', lease_owner = ?,
-					lease_until = ?, heartbeat_at = ?, attempts = attempts + 1,
+					lease_until = ?, heartbeat_at = ?,
 					updated_at = datetime('now')
 				WHERE source_path = ?
 					AND (lease_until IS NULL OR lease_until < ? OR lease_owner = ?)
@@ -609,7 +609,6 @@ func (s *CompileItemStore) Claim(tier int, owner string, ttl time.Duration, limi
 			c.LeaseOwner = owner
 			c.LeaseUntil = untilStr
 			c.HeartbeatAt = nowStr
-			c.Attempts++
 			claimed = append(claimed, c)
 		}
 		return nil
@@ -687,11 +686,19 @@ func (s *CompileItemStore) Release(path string, owner string, outcome store.Rele
 		default:
 			return fmt.Errorf("Release: unknown outcome: %d", outcome)
 		}
-		_, err := tx.Exec(`
+		// attempts counts FAILED processing attempts (not claims): a retry
+		// burns budget, a done-outcome (even with passes still owed = the
+		// item is progressing) resets it. Otherwise partial-progress items
+		// and systemic outages would dead-letter healthy sources.
+		attemptsSQL := "attempts = 0"
+		if outcome == store.ReleaseRetry {
+			attemptsSQL = "attempts = attempts + 1"
+		}
+		_, err := tx.Exec(fmt.Sprintf(`
 			UPDATE compile_items SET status = ?, lease_owner = NULL,
-				lease_until = NULL, heartbeat_at = NULL, updated_at = datetime('now')
+				lease_until = NULL, heartbeat_at = NULL, %s, updated_at = datetime('now')
 			WHERE source_path = ? AND lease_owner = ?
-		`, status, path, owner)
+		`, attemptsSQL), status, path, owner)
 		return err
 	})
 }

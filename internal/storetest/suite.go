@@ -591,20 +591,20 @@ func CompileItemsConformance(new BackendFactory) func(*testing.T) {
 
 // CompileItemsQueueConformance covers the durable-queue surface (P2-3,
 // spec C2): claim fencing, lease expiry, heartbeat, release outcomes,
-// attempt cap interplay, reset, and the Upsert hash-change revival.
+// attempt-budget semantics, reset, and the Upsert hash-change revival.
 func CompileItemsQueueConformance(new BackendFactory) func(*testing.T) {
 	return func(t *testing.T) {
 		b := new(t)
 		is := b.CompileItems()
 
-		// Fixture: two pending tier-1 items (indexed done, embed owed).
+		// Fixture: three pending tier-1 items (indexed done, embed owed).
 		for _, p := range []string{"q1.md", "q2.md", "q3.md"} {
 			if err := is.Upsert(store.CompileItem{SourcePath: p, Hash: "h1", Tier: 1, PassIndexed: true}); err != nil {
 				t.Fatal(err)
 			}
 		}
 
-		// Claim: basics + limit.
+		// Claim: basics + limit. Claims don't burn the attempt budget.
 		claimed, err := is.Claim(1, "w1", time.Hour, 2)
 		if err != nil {
 			t.Fatalf("Claim: %v", err)
@@ -613,8 +613,8 @@ func CompileItemsQueueConformance(new BackendFactory) func(*testing.T) {
 			t.Fatalf("Claim limit: got %d items, want 2", len(claimed))
 		}
 		for _, it := range claimed {
-			if it.Status != "leased" || it.LeaseOwner != "w1" || it.Attempts != 1 {
-				t.Errorf("claimed item %+v: want status=leased owner=w1 attempts=1", it)
+			if it.Status != "leased" || it.LeaseOwner != "w1" || it.Attempts != 0 {
+				t.Errorf("claimed item %+v: want status=leased owner=w1 attempts=0", it)
 			}
 			if it.LeaseUntil == "" || it.HeartbeatAt == "" {
 				t.Errorf("claimed item %s missing lease timestamps", it.SourcePath)
@@ -642,24 +642,24 @@ func CompileItemsQueueConformance(new BackendFactory) func(*testing.T) {
 			t.Errorf("Heartbeat did not extend lease_until (%q)", first.LeaseUntil)
 		}
 
-		// Release(retry): back to pending, lease cleared, re-claimable.
+		// Release(retry): pending again, lease cleared, attempt budget
+		// burned (attempts=1).
 		if err := is.Release("q3.md", "w2", store.ReleaseRetry); err != nil {
 			t.Fatal(err)
 		}
 		got, _ := is.GetByPath("q3.md")
-		if got.Status != "pending" || got.LeaseOwner != "" || got.LeaseUntil != "" {
-			t.Errorf("Release(retry): %+v, want pending with cleared lease", got)
+		if got.Status != "pending" || got.LeaseOwner != "" || got.LeaseUntil != "" || got.Attempts != 1 {
+			t.Errorf("Release(retry): %+v, want pending, cleared lease, attempts=1", got)
 		}
 
-		// Release(done) with incomplete tier passes → pending (q1 still
-		// owes pass_embedded); then re-claim, complete the pass, and
-		// Release(done) sticks — the real worker flow.
+		// Release(done) with owed passes → pending (progress, budget
+		// reset); complete the pass → done.
 		if err := is.Release("q1.md", "w1", store.ReleaseDone); err != nil {
 			t.Fatal(err)
 		}
 		got, _ = is.GetByPath("q1.md")
-		if got.Status != "pending" {
-			t.Errorf("Release(done) with owed passes: status=%q, want pending", got.Status)
+		if got.Status != "pending" || got.Attempts != 0 {
+			t.Errorf("Release(done) with owed passes: %+v, want pending attempts=0", got)
 		}
 		if _, err := is.Claim(1, "w1", time.Hour, 10); err != nil {
 			t.Fatal(err)
@@ -693,18 +693,23 @@ func CompileItemsQueueConformance(new BackendFactory) func(*testing.T) {
 			}
 		}
 
-		// RequeueExpired: only expired leases return to pending.
-		if _, err := is.Claim(1, "w1", -time.Hour, 10); err != nil { // expired on arrival
+		// RequeueExpired: only expired leases return to pending. Dedicated
+		// item so earlier claims don't interfere: q4 is claimed with an
+		// already-expired TTL.
+		if err := is.Upsert(store.CompileItem{SourcePath: "q4.md", Hash: "h1", Tier: 1, PassIndexed: true}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := is.Claim(1, "w3", -time.Hour, 10); err != nil {
 			t.Fatal(err)
 		}
 		n, err := is.RequeueExpired(time.Now().UTC())
 		if err != nil {
 			t.Fatalf("RequeueExpired: %v", err)
 		}
-		if n != 1 { // only q3.md (claimed with negative TTL above)
+		if n != 1 {
 			t.Errorf("RequeueExpired = %d, want 1", n)
 		}
-		got, _ = is.GetByPath("q3.md")
+		got, _ = is.GetByPath("q4.md")
 		if got.Status != "pending" || got.LeaseOwner != "" {
 			t.Errorf("requeued item: %+v, want pending with cleared lease", got)
 		}
@@ -741,7 +746,7 @@ func CompileItemsQueueConformance(new BackendFactory) func(*testing.T) {
 			t.Fatal(err)
 		}
 		got, _ = is.GetByPath("q2.md")
-		if got.Status != "leased" || got.Attempts != 1 {
+		if got.Status != "leased" {
 			t.Errorf("same-hash Upsert touched queue state: %+v", got)
 		}
 	}

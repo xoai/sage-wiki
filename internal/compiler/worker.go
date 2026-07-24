@@ -63,24 +63,28 @@ type WorkerDeps struct {
 // Worker drains the durable compile queue inside serve mode (P2-3).
 // One instance per serve process; lease ownership is fenced by token.
 type Worker struct {
-	deps  WorkerDeps
-	token string
+	deps       WorkerDeps
+	token      string
+	hooks      passHooks
+	failStreak int // consecutive all-failed cycles (hibernation backoff)
 }
 
 // NewWorker constructs a Worker with a unique lease-owner token
 // (pid-counter, the manifest-lock pattern).
 var workerCounter uint64
 
-func NewWorker(deps WorkerDeps) Worker {
+func NewWorker(deps WorkerDeps) *Worker {
 	workerCounter++
-	return Worker{
+	return &Worker{
 		deps:  deps,
 		token: fmt.Sprintf("%d-%d-%d", os.Getpid(), time.Now().UnixNano(), workerCounter),
+		hooks: defaultPassHooks(),
 	}
 }
 
 // Run drives the claim/process loop until ctx is cancelled. The expired-
 // lease sweep runs once at startup (crash recovery) and again per cycle.
+// Systemic failures hibernate the worker with exponential backoff.
 func (w *Worker) Run(ctx context.Context) error {
 	w.requeueExpired()
 	for {
@@ -90,9 +94,23 @@ func (w *Worker) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(w.deps.Config.PollInterval):
+		case <-time.After(w.cycleSleep()):
 		}
 	}
+}
+
+// cycleSleep backs off exponentially while every claimed item keeps
+// failing (a dead LLM/embedder backend must not be hammered), capped at
+// 30 minutes; any successful cycle resets to the plain poll interval.
+func (w *Worker) cycleSleep() time.Duration {
+	d := w.deps.Config.PollInterval
+	for i := 0; i < w.failStreak; i++ {
+		d *= 2
+	}
+	if d > 30*time.Minute {
+		d = 30 * time.Minute
+	}
+	return d
 }
 
 // cycle is one pass of the worker loop (spec C3 steps 1-9). The whole
@@ -107,12 +125,13 @@ func (w *Worker) cycle(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 
+	process := w.deps.Process
+	if process == nil {
+		process = w.processCycle
+	}
 	worked := false
 	ok, err := w.deps.Coord.TryCompile(func() error {
-		if w.deps.Process == nil {
-			return nil
-		}
-		didWork, err := w.deps.Process(ctx)
+		didWork, err := process(ctx)
 		worked = didWork
 		return err
 	})
