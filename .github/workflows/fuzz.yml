@@ -22,31 +22,55 @@ jobs:
 
       # REQUIRED per-target invocations: Go's -fuzz errors when one
       # invocation matches multiple targets. continue-on-error per step
-      # so one crasher never masks the other five targets that night;
-      # the job still fails overall at the end.
-      - name: FuzzExtractDocx
+      # so one crasher never masks the other five targets that night —
+      # but OUTCOME (not conclusion) is what the aggregation step reads:
+      # a failed target ends the job RED via the aggregation step below.
+      - id: docx
+        name: FuzzExtractDocx
         run: go test -run=NONE -fuzz=FuzzExtractDocx -fuzztime=60s ./internal/extract/
         continue-on-error: true
-      - name: FuzzExtractXlsx
+      - id: xlsx
+        name: FuzzExtractXlsx
         run: go test -run=NONE -fuzz=FuzzExtractXlsx -fuzztime=60s ./internal/extract/
         continue-on-error: true
-      - name: FuzzExtractPptx
+      - id: pptx
+        name: FuzzExtractPptx
         run: go test -run=NONE -fuzz=FuzzExtractPptx -fuzztime=60s ./internal/extract/
         continue-on-error: true
-      - name: FuzzExtractEpub
+      - id: epub
+        name: FuzzExtractEpub
         run: go test -run=NONE -fuzz=FuzzExtractEpub -fuzztime=60s ./internal/extract/
         continue-on-error: true
-      - name: FuzzExtractEmail
+      - id: eml
+        name: FuzzExtractEmail
         run: go test -run=NONE -fuzz=FuzzExtractEmail -fuzztime=60s ./internal/extract/
         continue-on-error: true
-      - name: FuzzExtractPdfGo
+      - id: pdf
+        name: FuzzExtractPdfGo
         run: go test -run=NONE -fuzz=FuzzExtractPdfGo -fuzztime=60s ./internal/extract/
         continue-on-error: true
 
-      - name: Upload crashers
-        if: failure()
+      - name: Upload crashers (when any target failed)
+        if: always() && (steps.docx.outcome == 'failure' || steps.xlsx.outcome == 'failure' || steps.pptx.outcome == 'failure' || steps.epub.outcome == 'failure' || steps.eml.outcome == 'failure' || steps.pdf.outcome == 'failure')
         uses: actions/upload-artifact@v4
         with:
           name: fuzz-crashers
           path: internal/extract/testdata/fuzz/
           if-no-files-found: ignore
+          retention-days: 14
+
+      # Aggregation: continue-on-error keeps all six targets running, but
+      # any failed OUTCOME must turn the job red — a crasher can never be
+      # mistaken for a pass.
+      - name: Fail if any target crashed
+        if: always()
+        run: |
+          if [ "${{ steps.docx.outcome }}" = "failure" ] || \
+             [ "${{ steps.xlsx.outcome }}" = "failure" ] || \
+             [ "${{ steps.pptx.outcome }}" = "failure" ] || \
+             [ "${{ steps.epub.outcome }}" = "failure" ] || \
+             [ "${{ steps.eml.outcome }}" = "failure" ] || \
+             [ "${{ steps.pdf.outcome }}" = "failure" ]; then
+            echo "fuzz findings — see the fuzz-crashers artifact"
+            exit 1
+          fi

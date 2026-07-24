@@ -3,6 +3,7 @@ package extract
 import (
 	"archive/zip"
 	"bytes"
+	"path/filepath"
 	"testing"
 )
 
@@ -12,49 +13,61 @@ import (
 // Empty-but-successful parses are allowed (latent epub <t> issue is
 // logged in the cycle decisions, not a fuzz failure).
 
-// headerSlackPerEntry bounds the uncharged per-entry header bytes
-// (--- Sheet: <name> --- / --- Chapter N (<name>) --- forms) the writers
-// add on top of charged content (spec §1: the bound scales with matched
-// entries so max-length member names can't inflate past it).
-const headerSlackPerEntry = 64
+// headerBound computes the EXACT uncharged header bytes the writers can
+// add for this zip (spec §1/i1 fix): xlsx `\n--- Sheet: <name> ---\n`
+// (17+len(name) per sheet), epub `\n--- Chapter N (<base>) ---\n`
+// (~20+digits+len(base) per chapter), pptx sheet analogs, docx none.
+// Name-length-aware, so >47-char member names can't slip past a flat
+// constant.
+func headerBound(data []byte, perEntry func(name string) int) int64 {
+	r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return 0
+	}
+	var n int64
+	for _, f := range r.File {
+		n += int64(perEntry(f.Name))
+	}
+	return n
+}
+
+func xlsxHeader(name string) int { return 17 + len(name) }
+func epubHeader(name string) int {
+	// "\n--- Chapter N (<base>) ---\n": 17 + digits + base, digits ≤ 8.
+	return 25 + len(filepath.Base(name))
+}
 
 type extractFn func(path string) (*SourceContent, error)
 
-func fuzzZipExtractor(f *testing.F, fn extractFn, ext string, seeds [][]byte) {
+func fuzzZipExtractor(f *testing.F, fn extractFn, ext string, seeds [][]byte, perEntryHeader func(name string) int) {
 	f.Helper()
 	for _, seed := range seeds {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, data []byte) {
 		path := writeFuzzInput(t, data, ext)
-		matched := countZipEntries(t, data)
+		slack := int64(0)
+		if perEntryHeader != nil {
+			slack = headerBound(data, perEntryHeader)
+		}
 		sc, err := fn(path)
 		if err != nil {
 			return // errors are not invariant violations
 		}
-		bound := maxZipTotalBytes + int64(matched)*headerSlackPerEntry
+		bound := maxZipTotalBytes + slack
 		if int64(len(sc.Text)) > bound {
-			t.Fatalf("budget invariant violated: output %d bytes > bound %d (entries %d)",
-				len(sc.Text), bound, matched)
+			t.Fatalf("budget invariant violated: output %d bytes > bound %d",
+				len(sc.Text), bound)
 		}
 	})
 }
 
-// countZipEntries returns the number of entries in data if it's a valid
-// zip (best-effort; the harness needs it only for the header bound).
-func countZipEntries(t *testing.T, data []byte) int {
-	t.Helper()
-	r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		return 0
-	}
-	return len(r.File)
+func FuzzExtractDocx(f *testing.F) { fuzzZipExtractor(f, extractDocx, ".docx", seedsDocx(), nil) }
+func FuzzExtractXlsx(f *testing.F) { fuzzZipExtractor(f, extractXlsx, ".xlsx", seedsXlsx(), xlsxHeader) }
+func FuzzExtractPptx(f *testing.F) {
+	fuzzZipExtractor(f, extractPptx, ".pptx", seedsPptx(), xlsxHeader)
 }
-
-func FuzzExtractDocx(f *testing.F)  { fuzzZipExtractor(f, extractDocx, ".docx", seedsDocx()) }
-func FuzzExtractXlsx(f *testing.F)  { fuzzZipExtractor(f, extractXlsx, ".xlsx", seedsXlsx()) }
-func FuzzExtractPptx(f *testing.F)  { fuzzZipExtractor(f, extractPptx, ".pptx", seedsPptx()) }
-func FuzzExtractEpub(f *testing.F)  { fuzzZipExtractor(f, extractEpub, ".epub", seedsEpub()) }
+func FuzzExtractEpub(f *testing.F) { fuzzZipExtractor(f, extractEpub, ".epub", seedsEpub(), epubHeader) }
 
 // FuzzExtractEmail asserts: no panic, and on success the output stays
 // within input + 1KB (email.go copies body bytes verbatim and adds only
