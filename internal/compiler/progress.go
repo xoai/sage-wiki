@@ -8,6 +8,21 @@ import (
 	"time"
 )
 
+// ProgressEvent is one observable progress occurrence (P2-3, spec C6).
+// Type is one of: phase, item, error, queue, done. Status qualifies item
+// events ("start"/"done"); queue events carry the transition in Detail.
+type ProgressEvent struct {
+	Type    string
+	Phase   string
+	Item    string
+	Status  string
+	Detail  string
+	Total   int
+	Done    int
+	Errors  int
+	Time    time.Time
+}
+
 // Progress tracks and displays real-time compilation progress.
 type Progress struct {
 	mu        sync.Mutex
@@ -25,6 +40,50 @@ type Progress struct {
 	concepts   []string
 	articles   []string
 	failures   []string
+
+	// Event subscribers (P2-3). Sends are non-blocking: a full subscriber
+	// buffer drops the event rather than stalling the pipeline.
+	subs map[chan ProgressEvent]struct{}
+}
+
+// Subscribe registers a buffered event channel and returns an unsubscribe
+// func. The channel is closed on unsubscribe.
+func (p *Progress) Subscribe(buffer int) (<-chan ProgressEvent, func()) {
+	if buffer <= 0 {
+		buffer = 1
+	}
+	ch := make(chan ProgressEvent, buffer)
+	p.mu.Lock()
+	if p.subs == nil {
+		p.subs = make(map[chan ProgressEvent]struct{})
+	}
+	p.subs[ch] = struct{}{}
+	p.mu.Unlock()
+	var once sync.Once
+	return ch, func() {
+		once.Do(func() {
+			p.mu.Lock()
+			delete(p.subs, ch)
+			close(ch)
+			p.mu.Unlock()
+		})
+	}
+}
+
+// emit fans an event out to subscribers without blocking the pipeline.
+// Callers hold no lock.
+func (p *Progress) emit(ev ProgressEvent) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if ev.Time.IsZero() {
+		ev.Time = time.Now()
+	}
+	for ch := range p.subs {
+		select {
+		case ch <- ev:
+		default: // slow subscriber — drop, never stall the compile
+		}
+	}
 }
 
 // spinner provides a rotating animation for long operations.
@@ -112,20 +171,27 @@ func (p *Progress) StartPhase(name string, total int) {
 			return p.progressBar()
 		})
 	}
+
+	p.emit(ProgressEvent{Type: "phase", Phase: name, Total: total})
 }
 
 // ItemStart marks the beginning of processing an item.
 func (p *Progress) ItemStart(name string) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.current = name
+	phase := p.phase
+	p.mu.Unlock()
+	p.emit(ProgressEvent{Type: "item", Phase: phase, Item: name, Status: "start"})
 }
 
 // ItemDone marks successful completion of an item.
 func (p *Progress) ItemDone(name string, detail string) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.done++
+	done, total, errs, phase := p.done, p.total, p.errors, p.phase
+	p.mu.Unlock()
+
+	p.emit(ProgressEvent{Type: "item", Phase: phase, Item: name, Status: "done", Detail: detail, Done: done, Total: total, Errors: errs})
 
 	// Clear spinner line before printing
 	if p.isTTY {
@@ -136,7 +202,7 @@ func (p *Progress) ItemDone(name string, detail string) {
 		}
 		fmt.Fprintln(os.Stderr)
 	} else {
-		fmt.Fprintf(os.Stderr, "  [%d/%d] ✓ %s", p.done, p.total, name)
+		fmt.Fprintf(os.Stderr, "  [%d/%d] ✓ %s", done, total, name)
 		if detail != "" {
 			fmt.Fprintf(os.Stderr, " → %s", detail)
 		}
@@ -147,16 +213,19 @@ func (p *Progress) ItemDone(name string, detail string) {
 // ItemError marks a failed item.
 func (p *Progress) ItemError(name string, err error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.done++
 	p.errors++
 	p.failures = append(p.failures, fmt.Sprintf("%s: %s", name, err))
+	done, total, errs, phase := p.done, p.total, p.errors, p.phase
+	p.mu.Unlock()
+
+	p.emit(ProgressEvent{Type: "error", Phase: phase, Item: name, Detail: err.Error(), Done: done, Total: total, Errors: errs})
 
 	if p.isTTY {
 		fmt.Fprintf(os.Stderr, "\r%s\r", strings.Repeat(" ", 80))
 		fmt.Fprintf(os.Stderr, "  ✗ %s — %s\n", truncatePath(name, 50), err)
 	} else {
-		fmt.Fprintf(os.Stderr, "  [%d/%d] ✗ %s — %s\n", p.done, p.total, name, err)
+		fmt.Fprintf(os.Stderr, "  [%d/%d] ✗ %s — %s\n", done, total, name, err)
 	}
 }
 
@@ -188,12 +257,15 @@ func (p *Progress) EndPhase() {
 	}
 
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	phase, done, total, errs := p.phase, p.done, p.total, p.errors
+	p.mu.Unlock()
 
-	if p.total > 0 {
-		fmt.Fprintf(os.Stderr, "  Done: %d/%d", p.done, p.total)
-		if p.errors > 0 {
-			fmt.Fprintf(os.Stderr, " (%d errors)", p.errors)
+	p.emit(ProgressEvent{Type: "done", Phase: phase, Done: done, Total: total, Errors: errs})
+
+	if total > 0 {
+		fmt.Fprintf(os.Stderr, "  Done: %d/%d", done, total)
+		if errs > 0 {
+			fmt.Fprintf(os.Stderr, " (%d errors)", errs)
 		}
 		fmt.Fprintln(os.Stderr)
 	}
