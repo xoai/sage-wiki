@@ -168,6 +168,10 @@ jobs:
           else
             BASE="${{ github.event.before }}"
             HEAD="${{ github.event.after }}"
+            if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+              echo "new branch push — nothing to check"
+              exit 0
+            fi
             RANGE="$(git merge-base "$BASE" "$HEAD" 2>/dev/null || echo "$BASE")..$HEAD"
           fi
           COMMIT_MSGS="$(git log --format=%B "$RANGE")"
