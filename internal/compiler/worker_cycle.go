@@ -92,6 +92,27 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 	defer cr.cleanup()
 	run := cr.run
 
+	// Enqueue scan (spec C3 step 4): diff sources against the manifest,
+	// upsert added/modified with resolved tiers (shared helper with the
+	// CLI), drop removed sources — always prune=false: serve mode never
+	// deletes article files from disk.
+	diff, err := Diff(w.deps.ProjectDir, run.cfg, run.mf)
+	if err != nil {
+		return false, fmt.Errorf("worker: diff: %w", err)
+	}
+	allSources := append(diff.Added, diff.Modified...)
+	upsertDiffItems(run, w.deps.ProjectDir, allSources)
+	handleRemovedSources(w.deps.ProjectDir, diff.Removed, run.mf, run.memStore, run.vecStore, run.pipelineOntStore, false)
+	// The queue has no file to process for a removed source — drop its row
+	// BEFORE claiming (handleRemovedSources deliberately never touches
+	// compile_items; leaving the row would claim a nonexistent file every
+	// cycle until dead-letter).
+	if len(diff.Removed) > 0 {
+		if err := w.deps.Items.DeleteByPaths(diff.Removed); err != nil {
+			log.Warn("worker: delete removed queue items failed", "error", err)
+		}
+	}
+
 	claimed := map[int][]CompileItem{}
 	paths := map[string]struct{}{}
 	for _, tier := range []int{0, 1, 3} {
@@ -105,6 +126,14 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 		}
 	}
 	if len(paths) == 0 {
+		// Nothing to process — but the scan may have mutated the manifest
+		// (removals), which still persists (spec C3 step 8).
+		if len(diff.Removed) > 0 {
+			if err := manifest.MergeSave(orBackground(ctx), run.mfPath, run.base, run.mf); err != nil {
+				return true, fmt.Errorf("worker: save manifest: %w", err)
+			}
+			return true, nil
+		}
 		return false, nil
 	}
 
@@ -167,6 +196,7 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 
 	// Tier 3: full LLM pipeline; per-item failure = absent from
 	// SucceededSources (mirrors runTiers' MarkPass rule).
+	tier3Incomplete := false
 	if len(claimed[3]) > 0 {
 		var toProcess []SourceInfo
 		for _, it := range claimed[3] {
@@ -226,6 +256,10 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 				errored[it.SourcePath] = true
 			}
 		}
+		// pipelineIncomplete analogue (P1-1/C1): when Pass 2/3 did not
+		// complete, the cycle's manifest mutations are discarded — the
+		// next cycle re-diffs the same work from a clean state.
+		tier3Incomplete = panicked || pipelineResult == nil || !pipelineResult.Pass23Completed
 	}
 
 	// Release each claimed item once: errored items burn attempt budget
@@ -255,6 +289,35 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 			"items", len(paths), "streak", w.failStreak)
 	} else {
 		w.failStreak = 0
+	}
+
+	// Post-pass sweeps (spec C3 step 7, runTiers parity): serve-mode
+	// items promote/demote exactly as CLI-compiled ones do.
+	if run.cfg.Compiler.AutoPromoteEnabled() {
+		if promoted, err := run.tierMgr.CheckPromotions(); err == nil && len(promoted) > 0 {
+			for _, p := range promoted {
+				if err := w.deps.Items.SetTier(p, 3, "auto-promote"); err != nil {
+					log.Warn("worker set tier failed", "path", p, "error", err)
+				}
+			}
+		}
+	}
+	if run.cfg.Compiler.AutoDemoteEnabled() {
+		if demoted, err := run.tierMgr.CheckDemotions(); err == nil && len(demoted) > 0 {
+			for _, p := range demoted {
+				if err := w.deps.Items.SetTier(p, 1, "stale"); err != nil {
+					log.Warn("worker set tier failed", "path", p, "error", err)
+				}
+			}
+		}
+	}
+
+	// Manifest persistence (spec C3 step 8): complete cycles persist under
+	// the P1-2 lock; an incomplete tier-3 run discards its mutations.
+	if tier3Incomplete {
+		log.Info("worker: tier-3 pipeline incomplete — manifest not saved; sources reprocess next cycle")
+	} else if err := manifest.MergeSave(orBackground(ctx), run.mfPath, run.base, run.mf); err != nil {
+		return true, fmt.Errorf("worker: save manifest: %w", err)
 	}
 	return true, nil
 }

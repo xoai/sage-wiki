@@ -549,20 +549,7 @@ func runTiers(projectDir string, run *compileRun) {
 
 	// Resolve tiers and upsert compile_items for new/modified sources
 	allSources := append(run.diff.Added, run.diff.Modified...)
-	run.compileID = time.Now().Format("20060102-150405")
-	for _, src := range allSources {
-		tier := run.tierMgr.ResolveTier(src.Path, projectDir, nil)
-		run.itemStore.Upsert(CompileItem{
-			SourcePath:  src.Path,
-			Hash:        src.Hash,
-			FileType:    src.Type,
-			SizeBytes:   src.Size,
-			Tier:        tier,
-			TierDefault: run.tierMgr.ConfigDefault(src.Path),
-			SourceType:  "compiler",
-			CompileID:   run.compileID,
-		})
-	}
+	upsertDiffItems(run, projectDir, allSources)
 
 	// Load external parsers if enabled and trusted
 	if cfg.Parsers.External {
@@ -698,6 +685,26 @@ func runTiers(projectDir string, run *compileRun) {
 				}
 			}
 		}
+	}
+}
+
+// upsertDiffItems registers added/modified diff sources in compile_items
+// with their resolved tiers. Shared by runTiers (CLI) and the worker's
+// enqueue scan (P2-3) so the two paths can never diverge.
+func upsertDiffItems(run *compileRun, projectDir string, allSources []SourceInfo) {
+	run.compileID = time.Now().Format("20060102-150405")
+	for _, src := range allSources {
+		tier := run.tierMgr.ResolveTier(src.Path, projectDir, nil)
+		run.itemStore.Upsert(CompileItem{
+			SourcePath:  src.Path,
+			Hash:        src.Hash,
+			FileType:    src.Type,
+			SizeBytes:   src.Size,
+			Tier:        tier,
+			TierDefault: run.tierMgr.ConfigDefault(src.Path),
+			SourceType:  "compiler",
+			CompileID:   run.compileID,
+		})
 	}
 }
 
