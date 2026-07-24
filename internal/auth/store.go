@@ -10,9 +10,10 @@ import (
 )
 
 type storeFile struct {
-	Version     int                    `json:"version"`
-	TOSAcknowledged bool              `json:"tos_acknowledged,omitempty"`
-	Credentials map[string]*Credential `json:"credentials,omitempty"`
+	Version             int                    `json:"version"`
+	TOSAcknowledged     bool                   `json:"tos_acknowledged,omitempty"`
+	KeychainNoticeShown bool                   `json:"keychain_notice_shown,omitempty"`
+	Credentials         map[string]*Credential `json:"credentials,omitempty"`
 }
 
 type Store struct {
@@ -25,7 +26,9 @@ type Store struct {
 }
 
 func NewStore(path string) *Store {
-	return &Store{path: path}
+	s := &Store{path: path}
+	s.maybeKeychainNotice()
+	return s
 }
 
 func DefaultStorePath() string {

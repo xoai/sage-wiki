@@ -1,0 +1,88 @@
+package auth
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+
+)
+
+// Migration support (P2-6 spec §4): the explicit, only path copying file
+// credentials into the OS keychain — plus the one-time first-run notice.
+
+// MigrateResult reports a migration pass.
+type MigrateResult struct {
+	Moved  []string
+	Failed []FailedProvider
+}
+
+// FailedProvider is one provider whose keychain write failed.
+type FailedProvider struct {
+	Name string
+	Err  error
+}
+
+// MigrateToKeychain copies every file credential into the keyring,
+// enumerating the closed provider set (auth.Providers keys — go-keyring
+// has no List API). The file is left intact (point-in-time backup).
+// Per-provider failures are reported, never abort.
+func MigrateToKeychain(s *Store) (*MigrateResult, error) {
+	backend, kr := s.backendForStore()
+	if backend != "keychain" {
+		return nil, fmt.Errorf("no OS keychain available")
+	}
+	sf, err := s.read()
+	if err != nil {
+		return nil, err
+	}
+	res := &MigrateResult{}
+	for name := range Providers {
+		cred, ok := sf.Credentials[name]
+		if !ok {
+			continue
+		}
+		cred.Provider = ""
+		data, err := json.Marshal(cred)
+		cred.Provider = name
+		if err != nil {
+			res.Failed = append(res.Failed, FailedProvider{name, err})
+			continue
+		}
+		if err := kr.Set(keyringService, name, string(data)); err != nil {
+			res.Failed = append(res.Failed, FailedProvider{name, err})
+			continue
+		}
+		res.Moved = append(res.Moved, name)
+	}
+	return res, nil
+}
+
+// storeFile gains the persisted notice-suppression flag (spec §4: older
+// binaries tolerate the new field — the read path is plain
+// json.Unmarshal with no DisallowUnknownFields).
+
+// maybeKeychainNotice prints the first-run notice at most once (persisted
+// via KeychainNoticeShown in the file store). Never blocks, never prints
+// secrets.
+func (s *Store) maybeKeychainNotice() {
+	backend, _ := s.backendForStore()
+	if backend != "keychain" {
+		return
+	}
+	sf, err := s.read()
+	if err != nil || sf.KeychainNoticeShown || len(sf.Credentials) == 0 {
+		return
+	}
+	fmt.Fprintln(os.Stderr, "credentials found in file backup — run `sage-wiki auth migrate` to move them into the OS keychain (file fallback unchanged)")
+	unlock, err := lockFile(s.path)
+	if err != nil {
+		return
+	}
+	defer unlock()
+	sf, err = s.read()
+	if err != nil {
+		return
+	}
+	sf.KeychainNoticeShown = true
+	_ = s.write(sf)
+}
