@@ -168,7 +168,7 @@ jobs:
           else
             BASE="${{ github.event.before }}"
             HEAD="${{ github.event.after }}"
-            RANGE="$BASE..$HEAD"
+            RANGE="$(git merge-base "$BASE" "$HEAD" 2>/dev/null || echo "$BASE")..$HEAD"
           fi
           COMMIT_MSGS="$(git log --format=%B "$RANGE")"
           export BASE HEAD COMMIT_MSGS

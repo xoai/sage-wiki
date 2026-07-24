@@ -222,10 +222,12 @@ func (ct *CostTracker) getPrice(model string) ModelPrice {
 	}
 
 	providerPrices, ok := ct.priceTable()[ct.provider]
+	lookupProvider := ct.provider
 	if !ok {
 		// Try to match openai-compatible to openai prices
 		if ct.provider == "openai-compatible" || ct.provider == "qwen" {
 			providerPrices = ct.priceTable()["openai"]
+			lookupProvider = "openai"
 		}
 	}
 
@@ -241,8 +243,8 @@ func (ct *CostTracker) getPrice(model string) ModelPrice {
 		var builtinHit *ModelPrice
 		for name, p := range providerPrices {
 			if strings.HasPrefix(model, name) || strings.HasPrefix(name, model) {
-				if ct.overlay != nil && ct.overlay[ct.provider] != nil {
-					if _, isOverlay := ct.overlay[ct.provider][name]; isOverlay {
+				if ct.overlay != nil && ct.overlay[lookupProvider] != nil {
+					if _, isOverlay := ct.overlay[lookupProvider][name]; isOverlay {
 						return p
 					}
 				}

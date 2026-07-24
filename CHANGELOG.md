@@ -47,7 +47,6 @@
   No CGO; SQLite zero-config default untouched.
   See `docs/design/p2-3-durable-jobs.md`.
 
-### Added
 
 - **Storage backend seam + optional Postgres/pgvector backend (STRAT-01,
   PERF-01, P2-1).** All persistence now flows through store interfaces
@@ -67,7 +66,6 @@
   Note: multi-writer concurrency remains P2-3 scope — the single-writer
   process model is unchanged.
 
-### Added
 
 - **Observability (STRAT-02, P2-2).** A zero-dependency metrics registry
   (`internal/metrics`, nil-safe atomic instruments, lazy series
@@ -85,7 +83,6 @@
   deliberately do not serve `/metrics`; compile-process series are
   log-snapshot-only (per-process registries).
 
-### Added
 
 - **Provider-native structured outputs (MAINT-06, P2-4).** LLM JSON
   extraction moved off fence-stripping where providers support it:
@@ -101,7 +98,6 @@
   caught validation error. The empty-content actionable hint
   (finish_reason/raise-budget) is preserved on every path.
 
-### Added
 
 - **Extractor fuzzing suite (STRAT-04, SEC-08, P2-5).** Six Go native
   fuzz targets (docx/xlsx/pptx/epub/eml/pdfGo) asserting security
@@ -112,7 +108,6 @@
   go PDF library panicked on malformed input — `extractPDFGo` now
   recovers panics into logged errors.
 
-### Added
 
 - **OS-keychain credential storage (SEC-12, P2-6).** On systems with a
   real keychain (macOS Keychain, Windows Credential Manager, Secret
@@ -259,7 +254,6 @@
   `ChatCompletionWithImageCtx` carry the context; the existing non-context methods
   are unchanged (they delegate with a background context).
 
-### Added
 
 - **Continuous-integration quality gate (P0-1).** Every push to `main` and every
   pull request now builds (including the `webui` build tag), vets, race-tests
@@ -306,7 +300,6 @@
 
 ## 0.1.10 — 2026-06-28
 
-### Added
 
 - **Automated GitHub releases.** Pushing a `vX.Y.Z` tag now builds `sage-wiki`
   binaries for 5 platforms (linux/macOS/windows × amd64/arm64, windows amd64),

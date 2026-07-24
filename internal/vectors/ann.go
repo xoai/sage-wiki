@@ -34,9 +34,10 @@ func newGraph() *hnsw.Graph[string] {
 	g := hnsw.NewGraph[string]()
 	// EfSearch raised from the library default (20): on adversarial
 	// high-dimensional data (distance concentration), ef=20 underperforms
-	// (recall@10 ≈ 6/10 vs exact); ef=100 restores ≥9/10 at still-trivial
-	// cost versus a brute scan. Rng is fixed-seed so a given corpus builds
-	// the same graph every time (reproducible behavior + stable tests).
+	// (recall@10 ≈ 6/10 vs exact, ef=50 ≈ 9.0, ef=100 ≈ 9.8); ef=200 keeps
+	// every probe ≥9/10 at still-trivial cost versus a brute scan. Rng is
+	// fixed-seed so a given corpus builds the same graph every time
+	// (reproducible behavior + stable tests).
 	g.EfSearch = 200
 	g.Rng = rand.New(rand.NewSource(1))
 	return g
