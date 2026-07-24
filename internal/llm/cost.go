@@ -80,6 +80,7 @@ type CostTracker struct {
 	provider string
 	override float64 // user config override price per 1M input tokens
 	table    map[string]map[string]ModelPrice // merged built-ins + user table; nil = built-ins
+	overlay  map[string]map[string]ModelPrice // the raw user table (nil = none) — for prefix-collision precedence
 }
 
 // priceTable returns the effective lookup map (merged or built-ins).
@@ -103,13 +104,16 @@ func NewCostTracker(provider string, priceOverride float64) *CostTracker {
 // beats everything (see getPrice).
 func NewCostTrackerWithTable(provider string, priceOverride float64, tablePath string) *CostTracker {
 	table := prices
+	var overlay map[string]map[string]ModelPrice
 	if tablePath != "" {
-		table = mergePriceTables(prices, loadPriceTable(tablePath))
+		overlay = loadPriceTable(tablePath)
+		table = mergePriceTables(prices, overlay)
 	}
 	return &CostTracker{
 		provider: provider,
 		override: priceOverride,
 		table:    table,
+		overlay:  overlay,
 	}
 }
 
@@ -230,11 +234,26 @@ func (ct *CostTracker) getPrice(model string) ModelPrice {
 		if p, ok := providerPrices[model]; ok {
 			return p
 		}
-		// Prefix match (for versioned models like claude-sonnet-4-20250514)
+		// Prefix match (for versioned models like claude-sonnet-4-20250514).
+		// Deterministic precedence on collision: user-table entries beat
+		// built-ins (Go map order is randomized; a table entry and a
+		// built-in can both prefix-match the same model).
+		var builtinHit *ModelPrice
 		for name, p := range providerPrices {
 			if strings.HasPrefix(model, name) || strings.HasPrefix(name, model) {
-				return p
+				if ct.overlay != nil && ct.overlay[ct.provider] != nil {
+					if _, isOverlay := ct.overlay[ct.provider][name]; isOverlay {
+						return p
+					}
+				}
+				if builtinHit == nil {
+					hit := p
+					builtinHit = &hit
+				}
 			}
+		}
+		if builtinHit != nil {
+			return *builtinHit
 		}
 	}
 

@@ -45,8 +45,12 @@ BASE/HEAD.
 
 ## 4. ANN vector index (PERF-01 follow-on)
 
-`VectorIndex` seam via functional options on the Store: default is the
-P1-5 brute-force cache; `search.ann.enabled: true` selects HNSW.
+Functional-option seam on the Store (deviation from the spec's original
+`VectorIndex` interface — recorded in the cycle decisions): the HNSW
+backend hangs off `vectorCache` as a derived structure mirroring the
+matrix (nil = brute-force). The brute path needs the matrix for patches
+anyway, so an interface boundary would have been artificial. Default is
+the P1-5 brute-force cache; `search.ann.enabled: true` selects HNSW.
 
 **The vendoring story (the load-bearing decision).** The program spec
 names `coder/hnsw`. v0.6.1 proved broken for k>1 search, with two

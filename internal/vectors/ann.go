@@ -62,7 +62,12 @@ func (b *hnswBackend) rebuild(ids []string, docIDs []string, mat []float32, dim 
 	b.graph = newGraph()
 	b.docByID = make(map[string]string, len(ids))
 	for i, id := range ids {
-		row := mat[i*dim : (i+1)*dim]
+		// COPY the row: graph nodes must own their vectors. Aliasing the
+		// matrix backing array lets cache.remove()'s swap-truncate + a
+		// later append overwrite a surviving node's vector with a
+		// different row's bytes (gate-review CRITICAL).
+		row := make([]float32, dim)
+		copy(row, mat[i*dim:(i+1)*dim])
 		var did string
 		if docIDs != nil {
 			did = docIDs[i]

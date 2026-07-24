@@ -100,3 +100,16 @@ func TestEstimateFromBytes_UsesTable(t *testing.T) {
 		t.Errorf("table price (10.0/20.0) should cost more than built-in (2.5/10.0): table=%f builtin=%f", withTable, builtIn)
 	}
 }
+
+func TestLoadPriceTable_PrefixCollisionOverlayWins(t *testing.T) {
+	// Table entry and built-in both prefix-match; the table must win
+	// deterministically (built-in "gpt-4o" vs table "gpt-4o-2024-x" for
+	// model "gpt-4o-2024-x-y").
+	path := writeTable(t, `{"openai": {"gpt-4o-2024-x": {"input": 9.99}}}`)
+	ct := NewCostTrackerWithTable("openai", 0, path)
+	for i := 0; i < 20; i++ { // map order varies; the result must not
+		if p := ct.getPrice("gpt-4o-2024-x-y"); p.Input != 9.99 {
+			t.Fatalf("collision resolved to built-in: %+v", p)
+		}
+	}
+}

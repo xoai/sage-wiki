@@ -12,11 +12,24 @@ so both the result set and the frontier lost good candidates arbitrarily.
 Observed effect on a 2000×64-dim corpus: recall@10 vs exact brute-force
 was 0–4/10 regardless of EfSearch — k>1 search was effectively broken.
 
-## The fix (graph.go, marked VENDORED FIX)
+## The fix
 
-Result-set and frontier eviction now scan for the TRUE maximum distance
-(O(k), k is small) and `Remove(maxIdx)` it. Everything else is verbatim:
-graph construction, layer structure, distance functions.
+`layerNode.search` was REWRITTEN as textbook HNSW ef-search (Malkov &
+Yashunin 2014, Algorithm 2): a min-heap frontier plus a sorted
+ef-capped result list, terminating when the nearest frontier candidate
+is farther than the worst kept result. This replaces BOTH upstream
+defects wholesale (the eviction bug and the hill-climbing termination)
+— the Max()/Remove(maxIdx) patch tried first is moot under the rewrite.
+Also: upper-layer descent is greedy ef=1 (upstream ran full ef-search
+per layer), and Graph.Add's replace-on-duplicate-key path was fixed
+(delete before the loop; the old mid-loop delete could nil-deref the
+elevator and panic the invariant check).
+
+## Dependency note
+
+The vendored package is NOT fully self-contained: distance.go uses
+`github.com/viterin/vek` (v0.4.2, pinned in go.mod) for SIMD cosine
+math. vek is pure Go with a noasm fallback — no CGO anywhere.
 
 ## Not vendored
 

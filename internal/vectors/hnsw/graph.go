@@ -325,6 +325,11 @@ func (g *Graph[K]) Add(nodes ...Node[K]) {
 		vec := node.Value
 
 		g.assertDims(vec)
+		// Replace-on-duplicate (vendored fix): delete the old key FIRST —
+		// deleting mid-loop invalidates the elevator (a nil searchPoint
+		// dereference) and the final invariant check (Len unchanged on
+		// replace → panic "node not added").
+		replacing := g.Delete(key)
 		insertLevel := g.randomLevel()
 		// Create layers that don't exist yet.
 		for insertLevel >= len(g.layers) {
@@ -380,9 +385,6 @@ func (g *Graph[K]) Add(nodes ...Node[K]) {
 			elevator = ptr(neighborhood[0].node.Key)
 
 			if insertLevel >= i {
-				if _, ok := layer.nodes[key]; ok {
-					g.Delete(key)
-				}
 				// Insert the new node into the layer.
 				layer.nodes[key] = newNode
 				for _, node := range neighborhood {
@@ -393,8 +395,13 @@ func (g *Graph[K]) Add(nodes ...Node[K]) {
 			}
 		}
 
-		// Invariant check: the node should have been added to the graph.
-		if g.Len() != preLen+1 {
+		// Invariant check: the node should have been added to the graph
+		// (on replace the count stays the same by design).
+		want := preLen + 1
+		if replacing {
+			want = preLen
+		}
+		if g.Len() != want {
 			panic("node not added")
 		}
 	}
@@ -419,9 +426,11 @@ func (h *Graph[K]) Search(near Vector, k int) []Node[K] {
 			searchPoint = h.layers[layer].nodes[*elevator]
 		}
 
-		// Descending hierarchies
+		// Descending hierarchies: greedy ef=1 per Malkov & Yashunin — a
+		// full ef-search per upper layer multiplies distance computations
+		// by ef for no recall gain (gate-review finding).
 		if layer > 0 {
-			nodes := searchPoint.search(1, efSearch, near, h.Distance)
+			nodes := searchPoint.search(1, 1, near, h.Distance)
 			elevator = ptr(nodes[0].node.Key)
 			continue
 		}

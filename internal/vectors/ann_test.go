@@ -215,3 +215,99 @@ func TestANN_BruteForceUnchanged(t *testing.T) {
 		t.Errorf("IndexKind = %q, want brute-force", s.IndexKind())
 	}
 }
+
+// Regression (gate review, CRITICAL): a deleted non-last row must not
+// corrupt the moved row's graph node after a later insert. Pre-fix,
+// rebuild aliased mat subslices; remove()'s swap-truncate left the moved
+// id's node pointing at the tail slot, and append overwrote it in place.
+func TestANN_DeleteThenInsertKeepsMovedRow(t *testing.T) {
+	db := annTestDB(t)
+	s := NewStore(db, WithANN(true))
+
+	vecA := []float32{1, 0, 0, 0}
+	vecB := []float32{0, 1, 0, 0}
+	vecC := []float32{0, 0, 1, 0}
+	s.Upsert("a", vecA)
+	s.Upsert("b", vecB)
+	s.Upsert("c", vecC)
+
+	// Force a rebuild from DB — the path that (pre-fix) aliased mat rows.
+	if _, err := s.Search(vecA, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	// Delete a NON-last row: c's row swap-moves into b's slot and the tail
+	// slot is freed for the next append.
+	if err := s.Delete("b"); err != nil {
+		t.Fatal(err)
+	}
+	// Append reuses the freed tail capacity — pre-fix this overwrote c's
+	// aliased graph vector with d's bytes.
+	s.Upsert("d", []float32{0, 0, 0, 1})
+
+	// c must still resolve to ITS vector.
+	res, err := s.Search(vecC, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) == 0 || res[0].ID != "c" {
+		t.Fatalf("self-query of moved row = %+v, want c first (aliasing desync)", res)
+	}
+}
+
+// Extreme selectivity (spec R3): the eligible doc's chunks all rank
+// OUTSIDE the limit*4 over-fetch window, so the filtered result may be
+// shorter than limit — the documented divergence, asserted here.
+func TestANN_FilteredSearch_ExtremeSelectivity(t *testing.T) {
+	db := annTestDB(t)
+	s := NewStore(db, WithANN(true))
+	tx, _ := db.WriteDB().Begin()
+
+	// 200 "near" chunks in doc0 and 3 "far" chunks in doc1; the query
+	// aligns with doc0's direction so doc1's chunks rank below the
+	// limit*4 = 40 window.
+	q := make([]float32, 8)
+	q[0] = 1
+	for i := 0; i < 200; i++ {
+		v := make([]float32, 8)
+		v[0] = 1
+		v[1] = float32(i) * 0.0001
+		if err := s.UpsertChunk(tx, itoa2(i), "doc0", v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		v := make([]float32, 8)
+		v[2] = 1 // orthogonal — ranks last
+		if err := s.UpsertChunk(tx, "far"+itoa2(i), "doc1", v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tx.Commit()
+	s.InvalidateChunkCache()
+
+	res, err := s.SearchChunksFiltered(q, []string{"doc1"}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) > 3 {
+		t.Errorf("filtered result = %d rows, want <= 3 (over-fetch window missed doc1)", len(res))
+	}
+	for _, r := range res {
+		if r.DocID != "doc1" {
+			t.Errorf("leaked doc %s", r.DocID)
+		}
+	}
+}
+
+func itoa2(n int) string {
+	digits := []byte{}
+	if n == 0 {
+		return "0"
+	}
+	for n > 0 {
+		digits = append([]byte{byte('0' + n%10)}, digits...)
+		n /= 10
+	}
+	return string(digits)
+}

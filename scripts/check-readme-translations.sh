@@ -16,8 +16,14 @@ set -euo pipefail
 
 check() { # BASE HEAD COMMIT_MSGS -> exit 1 on drift
 	local base="$1" head="$2" msgs="$3"
-	local changed
-	changed="$(git diff --name-only "$base" "$head")"
+	# Diff against the merge-base (three-dot semantics): two-dot would
+	# blame the branch for README.md changes that landed on main after
+	# the branch point (false block), and the caller computes COMMIT_MSGS
+	# over the same range (a stale lag-ok from before the branch point
+	# would false-pass otherwise).
+	local mb changed
+	mb="$(git merge-base "$base" "$head")"
+	changed="$(git diff --name-only "$mb" "$head")"
 	if ! grep -qx "README.md" <<< "$changed"; then
 		return 0 # English README untouched — nothing to check
 	fi
@@ -57,8 +63,8 @@ if [[ "${1:-}" == "--self-test" ]]; then
 	# case 2: README-only change → fail
 	echo z >> README.md && git add . && git commit -qm "docs: english only"
 	t "readme only" HEAD~1 HEAD "docs: english only" 1
-	# case 3: README + translation → pass
-	echo t > README_fr.md && git add . && git commit -qm "docs: with fr"
+	# case 3: README + translation in the SAME commit → pass
+	echo t2 >> README.md && echo t > README_fr.md && git add . && git commit -qm "docs: with fr"
 	t "readme + translation" HEAD~1 HEAD "docs: with fr" 0
 	# case 4: README-only with escape hatch → pass
 	echo w >> README.md && git add . && git commit -qm "docs: more

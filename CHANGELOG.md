@@ -27,9 +27,6 @@
     upstream coder/hnsw v0.6.1's k>1 search was broken, documented in
     VENDORED.md). Brute-force exact search stays the default; recall
     parity ≥9/10 against exact search is test-gated.
-
-### Added
-
 - **Durable job model / compile worker (STRAT-03, P2-3).** `compile_items`
   is now a real work queue: claim columns (`status`, `lease_owner`,
   `lease_until`, `heartbeat_at`, `attempts` — sqlite migration V9,

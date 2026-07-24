@@ -161,13 +161,15 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch origin main --depth=1 >/dev/null 2>&1 || git fetch origin main
+            git fetch origin main
             BASE="origin/main"
             HEAD="HEAD"
+            RANGE="$(git merge-base "$BASE" "$HEAD")..$HEAD"
           else
             BASE="${{ github.event.before }}"
             HEAD="${{ github.event.after }}"
+            RANGE="$BASE..$HEAD"
           fi
-          COMMIT_MSGS="$(git log --format=%B "$BASE..$HEAD")"
+          COMMIT_MSGS="$(git log --format=%B "$RANGE")"
           export BASE HEAD COMMIT_MSGS
           scripts/check-readme-translations.sh
