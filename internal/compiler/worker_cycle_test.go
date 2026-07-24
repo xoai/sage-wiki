@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -108,9 +109,7 @@ compiler:
 	return h
 }
 
-func itoa(n int) string {
-	return string(rune('0' + n))
-}
+var itoa = strconv.Itoa
 
 func (h *workerHarness) writeSource(t *testing.T, name, content string) {
 	t.Helper()
