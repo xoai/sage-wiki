@@ -46,12 +46,12 @@ var (
 
 func probeKeyring(kr keyringAPI) string {
 	probeOnce.Do(func() {
-		probeResult = probeOnce1(kr)
+		probeResult = runProbe(kr)
 	})
 	return probeResult
 }
 
-func probeOnce1(kr keyringAPI) string {
+func runProbe(kr keyringAPI) string {
 	type result struct{ err error }
 	ch := make(chan result, 1)
 	go func() {

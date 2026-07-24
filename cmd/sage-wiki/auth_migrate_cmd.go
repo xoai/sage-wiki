@@ -37,9 +37,13 @@ func runAuthMigrate(cmd *cobra.Command, args []string) error {
 	for _, p := range result.Failed {
 		fmt.Fprintf(os.Stderr, "failed to migrate %s: %v\n", p.Name, p.Err)
 	}
-	if len(result.Moved) == 0 && len(result.Failed) == 0 {
+	if len(result.Moved) == 0 && len(result.Failed) == 0 && len(result.Skipped) == 0 {
 		fmt.Println("nothing to migrate (no file credentials)")
+	} else {
+		fmt.Println("file backup kept intact (point-in-time)")
 	}
-	fmt.Println("file backup kept intact (point-in-time)")
+	for _, p := range result.Skipped {
+		fmt.Printf("skipped %s (already in keychain)\n", p)
+	}
 	return nil
 }
