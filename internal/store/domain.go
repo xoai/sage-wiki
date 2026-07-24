@@ -185,6 +185,14 @@ type CompileItem struct {
 	SourceType   string
 	QualityScore *float64
 
+	// Durable queue state (P2-3). Status: pending/leased/done/failed.
+	// Lease fields are set only while a worker holds the item.
+	Status      string
+	LeaseOwner  string
+	LeaseUntil  string
+	HeartbeatAt string
+	Attempts    int
+
 	CreatedAt string
 	UpdatedAt string
 }
@@ -196,7 +204,26 @@ type CompileStats struct {
 	FullyCompiled int // pass_written=1
 	WithErrors    int
 	AvgQuality    float64
+
+	// Queue state (P2-3): status -> count, plus the active lease holder
+	// (empty when nothing is leased).
+	ByStatus      map[string]int
+	ActiveOwner   string
+	LastHeartbeat string
 }
+
+// ReleaseOutcome is how a worker releases a claimed queue item (P2-3).
+type ReleaseOutcome int
+
+const (
+	// ReleaseDone — processing succeeded; status becomes 'done' only when
+	// every pass applicable to the item's tier is complete, else 'pending'.
+	ReleaseDone ReleaseOutcome = iota
+	// ReleaseRetry — transient failure; status 'pending', lease cleared.
+	ReleaseRetry
+	// ReleaseFailed — attempt cap hit; status 'failed' (dead letter).
+	ReleaseFailed
+)
 
 type QualityScoreRow struct {
 	SourcePath string

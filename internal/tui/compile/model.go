@@ -41,6 +41,11 @@ type fileChangeMsg struct{}
 // ScanTickMsg triggers periodic output directory scanning.
 type ScanTickMsg struct{}
 
+// compileEventMsg carries one live progress event from the running compile.
+type compileEventMsg struct {
+	ev compiler.ProgressEvent
+}
+
 type pane int
 
 const (
@@ -72,6 +77,14 @@ type Model struct {
 	sourcePaths []string // source directories to watch
 	debounce    int
 	compileOpts compiler.CompileOpts
+
+	// Live progress events (P2-3): the compile reports into this hub; the
+	// model renders per-item state instead of a bare spinner.
+	progress       *compiler.Progress
+	progressEvents <-chan compiler.ProgressEvent
+	currentItem    string
+	itemsDone      int
+	itemsTotal     int
 }
 
 // New creates a compile dashboard model.
@@ -89,6 +102,9 @@ func New(projectDir, outputDir string, sourcePaths []string, debounce int) Model
 		{Key: "ctrl+c", Help: "quit"},
 	})
 
+	progress := compiler.NewProgress()
+	events, _ := progress.Subscribe(64)
+
 	return Model{
 		spinner:     s,
 		preview:     vp,
@@ -98,6 +114,9 @@ func New(projectDir, outputDir string, sourcePaths []string, debounce int) Model
 		sourcePaths: sourcePaths,
 		debounce:    debounce,
 		focused:     paneFiles,
+		progress:    progress,
+		progressEvents: events,
+		compileOpts: compiler.CompileOpts{Progress: progress},
 	}
 }
 
@@ -160,8 +179,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		cmds = append(cmds, cmd)
 
+	case compileEventMsg:
+		switch msg.ev.Type {
+		case "phase":
+			m.itemsDone, m.itemsTotal = 0, msg.ev.Total
+		case "item":
+			m.currentItem = msg.ev.Item
+			m.itemsDone = msg.ev.Done
+		case "error":
+			m.itemsDone = msg.ev.Done
+		}
+		m.statusBar.SetInfo(m.statusInfo())
+		if m.compiling {
+			cmds = append(cmds, m.waitProgressEvent())
+		}
+
 	case CompileCompleteMsg:
 		m.compiling = false
+		m.currentItem = ""
 		m.lastResult = msg.result
 		m.lastError = msg.err
 		m.costInfo = msg.costInfo
@@ -290,6 +325,12 @@ func (m Model) renderFileList() string {
 }
 
 func (m Model) statusInfo() string {
+	if m.compiling {
+		if m.currentItem != "" {
+			return fmt.Sprintf("Compiling [%d/%d] %s", m.itemsDone, m.itemsTotal, m.currentItem)
+		}
+		return "Compiling..."
+	}
 	if m.lastResult != nil {
 		r := m.lastResult
 		info := fmt.Sprintf("%d summarized, %d concepts, %d articles",
@@ -309,6 +350,22 @@ func (m Model) statusInfo() string {
 
 func (m Model) runCompile() tea.Cmd {
 	m.compiling = true
+	return tea.Batch(m.waitProgressEvent(), m.doCompile())
+}
+
+// waitProgressEvent blocks on the next progress event and wraps it as a
+// message; re-armed by Update for each received event while compiling.
+func (m Model) waitProgressEvent() tea.Cmd {
+	return func() tea.Msg {
+		ev, ok := <-m.progressEvents
+		if !ok {
+			return nil
+		}
+		return compileEventMsg{ev: ev}
+	}
+}
+
+func (m Model) doCompile() tea.Cmd {
 	return func() tea.Msg {
 		result, err := compiler.Compile(m.projectDir, m.compileOpts)
 		var costLine string

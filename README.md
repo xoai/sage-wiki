@@ -228,6 +228,26 @@ When a token is set, open the UI as `http://host:3333/?token=<value>` — the ap
 keeps it in memory (never `localStorage`) and strips it from the URL. Exposing to
 the internet? See the [self-hosted server guide](docs/guides/self-hosted-server.md#authentication).
 
+**Compile worker.** `serve` (MCP and `--ui`) runs a durable compile worker:
+sources added while serving are discovered and compiled automatically, with
+crash recovery (lease expiry requeues interrupted items) and progress
+streaming (`GET /api/compile/status`, `GET /api/compile/progress` SSE).
+Tune or disable it:
+
+```yaml
+serve:
+  worker:
+    enabled: true              # default on; false to disable
+    poll_interval_seconds: 5
+    lease_ttl_seconds: 120
+    heartbeat_interval_seconds: 30
+    max_attempts: 5            # dead-letter after this many failures
+    claim_limit: 16
+```
+
+A source that keeps failing is dead-lettered after `max_attempts` failures;
+`sage-wiki compile --fresh` (or editing the source) re-queues it.
+
 ## Configuration
 
 `config.yaml` is created by `sage-wiki init`. Full example:

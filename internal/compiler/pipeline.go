@@ -46,6 +46,11 @@ type CompileOpts struct {
 	NoCache bool             // disable prompt caching
 	Prune   bool             // delete orphaned articles when sources removed
 	Tracker *llm.CostTracker // optional cost tracker
+
+	// Progress, when set, is the event hub the pipeline reports into (P2-3 —
+	// the TUI and the serve worker share one so subscribers see live events);
+	// nil creates a fresh stderr-only tracker.
+	Progress *Progress
 }
 
 // CompileResult summarizes what happened during compilation.
@@ -135,6 +140,15 @@ func newTrackedClient(cfg *config.Config, opts *CompileOpts) (*llm.Client, *llm.
 	return client, tracker, nil
 }
 
+// CLI queue-claim cadence (P2-3): a crashed CLI leaves leases that expire in
+// 5 minutes and requeue on the next compile; the heartbeat keeps long runs
+// from expiring their own claims.
+const (
+	cliLeaseTTL          = 5 * time.Minute
+	cliHeartbeatInterval = 30 * time.Second
+	claimDrainLimit      = 1 << 30 // drain mode: one invocation takes everything claimable
+)
+
 // Compile runs Pass 0 (diff) and Pass 1 (summarize) of the compiler pipeline.
 // compileRun carries the shared state of a single Compile execution across
 // its decomposed steps (P1-8). Field set enumerated in the P1-8 spec D3;
@@ -196,9 +210,26 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	run.result.Modified = len(diff.Modified)
 	run.result.Removed = len(diff.Removed)
 
-	run.progress = NewProgress()
+	if opts.Progress != nil {
+		run.progress = opts.Progress
+	} else {
+		run.progress = NewProgress()
+	}
 
 	if run.result.Added == 0 && run.result.Modified == 0 && run.result.Removed == 0 {
+		// Queue maintenance still runs on an empty diff (P2-3): --fresh
+		// must revive dead letters even when no source changed, or a
+		// dead-lettered item with an unchanged file could never recover.
+		if !run.opts.DryRun {
+			if b := run.opts.Backend; b != nil {
+				maintainQueue(run, b.CompileItems())
+			} else if sdb, err := storage.Open(filepath.Join(projectDir, ".sage", "wiki.db")); err == nil {
+				maintainQueue(run, NewCompileItemStore(sdb))
+				sdb.Close()
+			} else {
+				log.Warn("queue maintenance skipped: open db failed", "error", err)
+			}
+		}
 		fmt.Fprintln(os.Stderr, "✓ Nothing to compile — wiki is up to date.")
 		return run.result, nil
 	}
@@ -538,6 +569,27 @@ func setupStores(projectDir string, run *compileRun) error {
 	return nil
 }
 
+// maintainQueue performs the CLI's queue housekeeping (P2-3): reset dead
+// letters under --fresh (never under --dry-run) and requeue expired
+// leases. Runs on every compile — including the empty-diff early return,
+// so recovery paths don't depend on source changes.
+func maintainQueue(run *compileRun, items store.CompileItemStore) {
+	if run.opts.Fresh && !run.opts.DryRun {
+		if n, err := items.ResetFailed(); err != nil {
+			log.Error("queue reset of dead-lettered items failed", "error", err)
+			run.result.Errors++
+		} else if n > 0 {
+			log.Info("--fresh: reset dead-lettered queue items", "count", n)
+		}
+	}
+	if n, err := items.RequeueExpired(time.Now().UTC()); err != nil {
+		log.Error("queue requeue of expired leases failed", "error", err)
+		run.result.Errors++
+	} else if n > 0 {
+		log.Info("requeued expired compile leases", "count", n)
+	}
+}
+
 // runTiers executes the tiered compilation passes (Tier 0 FTS index, Tier 1
 // index+embed, Tier 3 full LLM pipeline) plus promotion/demotion checks,
 // mutating run.result and run.pipelineIncomplete exactly as the inline code
@@ -547,22 +599,17 @@ func runTiers(projectDir string, run *compileRun) {
 	cfg := run.cfg
 	opts := &run.opts
 
+	// Queue lifecycle (P2-3): the CLI is an in-process worker of one. It
+	// requeues crashed leases, resets dead letters under --fresh, then
+	// claims/processes/releases per tier with heartbeats, so a killed
+	// compile leaves resumable queue state exactly like the server worker.
+	cliToken := fmt.Sprintf("cli-%d-%d", os.Getpid(), time.Now().UnixNano())
+	wc := ResolveWorkerConfig(cfg.Serve.Worker)
+	maintainQueue(run, run.itemStore)
+
 	// Resolve tiers and upsert compile_items for new/modified sources
 	allSources := append(run.diff.Added, run.diff.Modified...)
-	run.compileID = time.Now().Format("20060102-150405")
-	for _, src := range allSources {
-		tier := run.tierMgr.ResolveTier(src.Path, projectDir, nil)
-		run.itemStore.Upsert(CompileItem{
-			SourcePath:  src.Path,
-			Hash:        src.Hash,
-			FileType:    src.Type,
-			SizeBytes:   src.Size,
-			Tier:        tier,
-			TierDefault: run.tierMgr.ConfigDefault(src.Path),
-			SourceType:  "compiler",
-			CompileID:   run.compileID,
-		})
-	}
+	upsertDiffItems(run, projectDir, allSources)
 
 	// Load external parsers if enabled and trusted
 	if cfg.Parsers.External {
@@ -583,20 +630,40 @@ func runTiers(projectDir string, run *compileRun) {
 	}
 
 	// Tier 0: FTS5 index only (no LLM, ~5ms/doc)
-	tier0Pending, _ := run.itemStore.ListPending(0)
-	if len(tier0Pending) > 0 {
-		run.progress.StartPhase("Tier 0: Index sources", len(tier0Pending))
-		indexed := indexRawSources(projectDir, tier0Pending, run.memStore, run.itemStore, run.exOpts...)
+	tier0Claimed, claimErr0 := run.itemStore.Claim(0, cliToken, cliLeaseTTL, claimDrainLimit)
+	if claimErr0 != nil {
+		log.Error("queue claim failed — tier 0 sources not processed this run", "error", claimErr0)
+		run.result.Errors++
+	}
+	var indexed int
+	if len(tier0Claimed) > 0 {
+		run.progress.StartPhase("Tier 0: Index sources", len(tier0Claimed))
+		stopHB := startItemHeartbeat(run.itemStore, cliToken, tier0Claimed, cliHeartbeatInterval, cliLeaseTTL)
+		func() {
+			defer stopHB()
+			indexed = indexRawSources(projectDir, tier0Claimed, run.memStore, run.itemStore, run.exOpts...)
+		}()
+		releaseClaimed(run.itemStore, cliToken, tier0Claimed, erroredSinceClaim(run.itemStore, tier0Claimed), wc.MaxAttempts)
 		run.result.TierIndexed = indexed
 		log.Info("tier 0 indexing complete", "indexed", indexed)
 		run.progress.EndPhase()
 	}
 
 	// Tier 1: FTS5 + vector embed (~200ms/doc)
-	tier1Pending, _ := run.itemStore.ListPending(1)
-	if len(tier1Pending) > 0 {
-		run.progress.StartPhase("Tier 1: Index + embed sources", len(tier1Pending))
-		indexed, embedded := indexAndEmbedSources(projectDir, tier1Pending, run.memStore, run.vecStore, run.embedder, run.itemStore, run.bp, run.chunkStore, cfg.Search.ChunkSizeOrDefault(), run.db, run.exOpts...)
+	tier1Claimed, claimErr1 := run.itemStore.Claim(1, cliToken, cliLeaseTTL, claimDrainLimit)
+	if claimErr1 != nil {
+		log.Error("queue claim failed — tier 1 sources not processed this run", "error", claimErr1)
+		run.result.Errors++
+	}
+	var embedded int
+	if len(tier1Claimed) > 0 {
+		run.progress.StartPhase("Tier 1: Index + embed sources", len(tier1Claimed))
+		stopHB := startItemHeartbeat(run.itemStore, cliToken, tier1Claimed, cliHeartbeatInterval, cliLeaseTTL)
+		func() {
+			defer stopHB()
+			indexed, embedded = indexAndEmbedSources(projectDir, tier1Claimed, run.memStore, run.vecStore, run.embedder, run.itemStore, run.bp, run.chunkStore, cfg.Search.ChunkSizeOrDefault(), run.db, run.exOpts...)
+		}()
+		releaseClaimed(run.itemStore, cliToken, tier1Claimed, erroredSinceClaim(run.itemStore, tier1Claimed), wc.MaxAttempts)
 		run.result.TierIndexed += indexed
 		run.result.TierEmbedded = embedded
 		log.Info("tier 1 indexing complete", "indexed", indexed, "embedded", embedded)
@@ -604,9 +671,13 @@ func runTiers(projectDir string, run *compileRun) {
 	}
 
 	// Tier 3: Full LLM pipeline (Pass 1 → 2 → 3) — only for Tier 3 sources
-	tier3Pending, _ := run.itemStore.ListPending(3)
+	tier3Claimed, claimErr3 := run.itemStore.Claim(3, cliToken, cliLeaseTTL, claimDrainLimit)
+	if claimErr3 != nil {
+		log.Error("queue claim failed — tier 3 sources not processed this run", "error", claimErr3)
+		run.result.Errors++
+	}
 	tier3Set := make(map[string]bool)
-	for _, item := range tier3Pending {
+	for _, item := range tier3Claimed {
 		tier3Set[item.SourcePath] = true
 	}
 	for _, s := range allSources {
@@ -621,6 +692,7 @@ func runTiers(projectDir string, run *compileRun) {
 	// manifest Save at the end of Compile is skipped, discarding this run's
 	// in-memory manifest mutations (AddSource / MarkCompiled / AddConcept). The next
 	// compile's Diff then re-includes these sources and reprocesses them cleanly.
+	errored3 := make(map[string]bool, len(tier3Claimed))
 	if len(run.toProcess) > 0 {
 		cacheEnabled := cfg.Compiler.PromptCacheEnabled() && !opts.NoCache
 		if cacheEnabled && cfg.API.Auth == "subscription" && cfg.API.Provider == "gemini" {
@@ -628,7 +700,11 @@ func runTiers(projectDir string, run *compileRun) {
 			log.Info("prompt caching unavailable with Gemini subscription auth")
 			fmt.Fprintln(os.Stderr, "Prompt caching unavailable with Gemini subscription auth.")
 		}
-		pipelineResult := runFullPipeline(run.toProcess, FullPipelineOpts{
+		var pipelineResult *FullPipelineResult
+		stopHB := startItemHeartbeat(run.itemStore, cliToken, tier3Claimed, cliHeartbeatInterval, cliLeaseTTL)
+		func() {
+			defer stopHB()
+			pipelineResult = runFullPipeline(run.toProcess, FullPipelineOpts{
 			Ctx:          opts.Ctx,
 			ProjectDir:   projectDir,
 			Config:       cfg,
@@ -645,6 +721,7 @@ func runTiers(projectDir string, run *compileRun) {
 			CacheEnabled: cacheEnabled,
 			Progress:     run.progress,
 		})
+		}()
 		run.result.Summarized = pipelineResult.Summarized
 		run.result.ConceptsExtracted = pipelineResult.ConceptsExtracted
 		run.result.ArticlesWritten = pipelineResult.ArticlesWritten
@@ -659,13 +736,13 @@ func runTiers(projectDir string, run *compileRun) {
 		// rollback (RemoveSource on just the sources) left the run's concepts
 		// orphaned, since RemoveSource deletes Sources only. P1-1 / C1.
 		run.pipelineIncomplete = !pipelineResult.Pass23Completed
+		succeeded := make(map[string]bool)
+		for _, p := range pipelineResult.SucceededSources {
+			succeeded[p] = true
+		}
 		if !run.pipelineIncomplete {
 			// Pass 2/3 completed — advance all three pass flags for the sources that
 			// summarized successfully so ListPending treats them as fully compiled.
-			succeeded := make(map[string]bool)
-			for _, p := range pipelineResult.SucceededSources {
-				succeeded[p] = true
-			}
 			for _, s := range run.toProcess {
 				if succeeded[s.Path] {
 					for _, pass := range []string{"summarized", "extracted", "written"} {
@@ -676,7 +753,19 @@ func runTiers(projectDir string, run *compileRun) {
 				}
 			}
 		}
+		// Only PROCESSED items can fail. Items claimed but absent from the
+		// diff (e.g. auto-promoted sources, hash unchanged) are released
+		// without budget burn below — charging them would dead-letter
+		// healthy sources the CLI never compiles (independent-review CRITICAL).
+		for _, s := range run.toProcess {
+			if run.pipelineIncomplete || !succeeded[s.Path] {
+				errored3[s.Path] = true
+			}
+		}
 	}
+	// Settle every tier-3 lease, processed or not — even when toProcess was
+	// empty, or the claims would sit leased until expiry every run.
+	releaseClaimed(run.itemStore, cliToken, tier3Claimed, errored3, wc.MaxAttempts)
 
 	// Check promotions/demotions
 	if cfg.Compiler.AutoPromoteEnabled() {
@@ -698,6 +787,26 @@ func runTiers(projectDir string, run *compileRun) {
 				}
 			}
 		}
+	}
+}
+
+// upsertDiffItems registers added/modified diff sources in compile_items
+// with their resolved tiers. Shared by runTiers (CLI) and the worker's
+// enqueue scan (P2-3) so the two paths can never diverge.
+func upsertDiffItems(run *compileRun, projectDir string, allSources []SourceInfo) {
+	run.compileID = time.Now().Format("20060102-150405")
+	for _, src := range allSources {
+		tier := run.tierMgr.ResolveTier(src.Path, projectDir, nil)
+		run.itemStore.Upsert(CompileItem{
+			SourcePath:  src.Path,
+			Hash:        src.Hash,
+			FileType:    src.Type,
+			SizeBytes:   src.Size,
+			Tier:        tier,
+			TierDefault: run.tierMgr.ConfigDefault(src.Path),
+			SourceType:  "compiler",
+			CompileID:   run.compileID,
+		})
 	}
 }
 

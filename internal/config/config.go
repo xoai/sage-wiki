@@ -446,6 +446,30 @@ type ServeConfig struct {
 	// beyond loopback (defeats DNS rebinding). Set this to the public hostname
 	// when exposing the server beyond localhost.
 	AllowedHost string `yaml:"allowed_host,omitempty"`
+	// Worker configures the durable compile-queue worker that runs compiles
+	// inside serve mode (P2-3). Enabled by default in serve; zero values
+	// resolve to the documented defaults (5s/120s/30s/5/16).
+	Worker WorkerConfig `yaml:"worker,omitempty"`
+}
+
+// WorkerConfig tunes the serve-mode compile worker (P2-3). Enabled is a
+// *bool so an explicit `enabled: false` is distinguishable from unset
+// (PromptCache precedent).
+type WorkerConfig struct {
+	Enabled                  *bool `yaml:"enabled,omitempty"`
+	PollIntervalSeconds      int   `yaml:"poll_interval_seconds,omitempty"`
+	LeaseTTLSeconds          int   `yaml:"lease_ttl_seconds,omitempty"`
+	HeartbeatIntervalSeconds int   `yaml:"heartbeat_interval_seconds,omitempty"`
+	MaxAttempts              int   `yaml:"max_attempts,omitempty"`
+	ClaimLimit               int   `yaml:"claim_limit,omitempty"`
+}
+
+// WorkerEnabled resolves the worker on/off flag (default: on in serve mode).
+func (c *ServeConfig) WorkerEnabled() bool {
+	if c.Worker.Enabled == nil {
+		return true
+	}
+	return *c.Worker.Enabled
 }
 
 // TypeSignal defines a content-based type detection rule.
@@ -749,6 +773,28 @@ func (c *Config) Validate() error {
 		if c.Serve.Transport != "stdio" && c.Serve.Transport != "sse" {
 			return fmt.Errorf("config: invalid transport %q (valid: stdio, sse)", c.Serve.Transport)
 		}
+	}
+	// Worker (P2-3): the heartbeat must fire well inside the lease TTL —
+	// the manifest-lock invariant (heartbeat << stale < timeout) applied to
+	// queue leases. Zero means "use the default" and passes.
+	w := c.Serve.Worker
+	if w.PollIntervalSeconds < 0 || w.LeaseTTLSeconds < 0 || w.HeartbeatIntervalSeconds < 0 || w.MaxAttempts < 0 || w.ClaimLimit < 0 {
+		return fmt.Errorf("config: serve.worker values must be non-negative")
+	}
+	// Validate the RESOLVED pair: unset TTL defaults to 120s and unset
+	// heartbeat to 30s (ResolveWorkerConfig), so raw zeros on either side
+	// must not slip the invariant past validation.
+	resolvedTTL := w.LeaseTTLSeconds
+	if resolvedTTL <= 0 {
+		resolvedTTL = 120
+	}
+	resolvedHeartbeat := w.HeartbeatIntervalSeconds
+	if resolvedHeartbeat <= 0 {
+		resolvedHeartbeat = 30
+	}
+	if resolvedHeartbeat >= resolvedTTL {
+		return fmt.Errorf("config: serve.worker.heartbeat_interval_seconds (%d) must be less than lease_ttl_seconds (%d)",
+			resolvedHeartbeat, resolvedTTL)
 	}
 	if c.Compiler.Mode != "" {
 		validModes := map[string]bool{"standard": true, "batch": true, "auto": true}

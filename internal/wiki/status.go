@@ -41,6 +41,9 @@ type StatusInfo struct {
 	WithErrors       int            `json:"with_errors,omitempty"`
 	AvgQuality       float64        `json:"avg_quality,omitempty"`
 	SourceTypes      map[string]int `json:"source_types,omitempty"` // source_type -> count
+
+	// Compile queue (P2-3): status -> count, present when the queue has rows.
+	QueueByStatus map[string]int `json:"compile_queue,omitempty"`
 }
 
 // Stores holds shared store references to avoid re-opening the DB.
@@ -118,7 +121,7 @@ func GetStatus(projectDir string, stores *Stores) (*StatusInfo, error) {
 	info.RelationCount, _ = ontStore.RelationCount()
 
 	// Tier distribution from compile_items (if table exists)
-	info.TierDistribution, info.FullyCompiled, info.WithErrors, info.AvgQuality, info.SourceTypes = queryTierStats(stores, projectDir)
+	info.TierDistribution, info.FullyCompiled, info.WithErrors, info.AvgQuality, info.SourceTypes, info.QueueByStatus = queryTierStats(stores, projectDir)
 
 	// Embedding provider
 	embedder := embed.NewFromConfig(cfg)
@@ -166,6 +169,11 @@ func FormatStatus(s *StatusInfo) string {
 		out += fmt.Sprintf("  WARNING: dimension mismatch (stored: %d-dim, provider: %d-dim) — re-embed on next compile\n", s.VectorDims, s.EmbedDims)
 	}
 
+	if len(s.QueueByStatus) > 0 {
+		out += fmt.Sprintf("Compile queue: %d pending, %d leased, %d done, %d failed\n",
+			s.QueueByStatus["pending"], s.QueueByStatus["leased"], s.QueueByStatus["done"], s.QueueByStatus["failed"])
+	}
+
 	if s.LastCommit != "" {
 		gitStatus := "clean"
 		if !s.GitClean {
@@ -201,9 +209,10 @@ func FormatStatus(s *StatusInfo) string {
 
 // queryTierStats reads compile_items table for tier distribution stats.
 // Returns zero values if the table doesn't exist yet.
-func queryTierStats(stores *Stores, projectDir string) (tierDist map[int]int, fullyCompiled, withErrors int, avgQuality float64, sourceTypes map[string]int) {
+func queryTierStats(stores *Stores, projectDir string) (tierDist map[int]int, fullyCompiled, withErrors int, avgQuality float64, sourceTypes map[string]int, queueByStatus map[string]int) {
 	tierDist = make(map[int]int)
 	sourceTypes = make(map[string]int)
+	queueByStatus = make(map[string]int)
 
 	if stores == nil || stores.DB == nil {
 		return
@@ -247,6 +256,21 @@ func queryTierStats(stores *Stores, projectDir string) (tierDist map[int]int, fu
 	if err != nil {
 		return
 	}
+	defer func() {
+		// Queue status counts (P2-3) — best-effort like the rest of this probe.
+		srows, err := db.ReadDB().Query("SELECT status, COUNT(*) FROM compile_items GROUP BY status")
+		if err != nil {
+			return
+		}
+		defer srows.Close()
+		for srows.Next() {
+			var st string
+			var count int
+			if srows.Scan(&st, &count) == nil {
+				queueByStatus[st] = count
+			}
+		}
+	}()
 	for rows.Next() {
 		var st string
 		var count int

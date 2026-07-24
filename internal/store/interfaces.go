@@ -110,6 +110,13 @@ type CompileItemStore interface {
 	ListDemotionCandidates(staleThreshold string) ([]string, error)
 	// T8 additions.
 	ListBelowQualityScore(threshold float64) ([]QualityScoreRow, error)
+	// Durable queue (P2-3). Claim fences via conditional update — an item
+	// whose lease changed underneath is skipped, never double-claimed.
+	Claim(tier int, owner string, ttl time.Duration, limit int) ([]CompileItem, error)
+	Heartbeat(owner string, paths []string, ttl time.Duration) error
+	Release(path string, owner string, outcome ReleaseOutcome) error
+	RequeueExpired(now time.Time) (int, error)
+	ResetFailed() (int, error)
 }
 
 type OutputIndexStore interface {

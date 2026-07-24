@@ -24,6 +24,7 @@ func RunConformance(t *testing.T, newBackend BackendFactory) {
 	t.Run("ontology", OntologyConformance(newBackend))
 	t.Run("trust", TrustConformance(newBackend))
 	t.Run("compile_items", CompileItemsConformance(newBackend))
+	t.Run("compile_items_queue", CompileItemsQueueConformance(newBackend))
 	t.Run("output_index", OutputIndexConformance(newBackend))
 	t.Run("learnings", LearningsConformance(newBackend))
 	t.Run("timestamps", TimestampsConformance(newBackend))
@@ -584,6 +585,169 @@ func CompileItemsConformance(new BackendFactory) func(*testing.T) {
 		}
 		if n, _ := is.Count(); n != 0 {
 			t.Errorf("Count = %d after DeleteByPaths", n)
+		}
+	}
+}
+
+// CompileItemsQueueConformance covers the durable-queue surface (P2-3,
+// spec C2): claim fencing, lease expiry, heartbeat, release outcomes,
+// attempt-budget semantics, reset, and the Upsert hash-change revival.
+func CompileItemsQueueConformance(new BackendFactory) func(*testing.T) {
+	return func(t *testing.T) {
+		b := new(t)
+		is := b.CompileItems()
+
+		// Fixture: three pending tier-1 items (indexed done, embed owed).
+		for _, p := range []string{"q1.md", "q2.md", "q3.md"} {
+			if err := is.Upsert(store.CompileItem{SourcePath: p, Hash: "h1", Tier: 1, PassIndexed: true}); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		// Claim: basics + limit. Claims don't burn the attempt budget.
+		claimed, err := is.Claim(1, "w1", time.Hour, 2)
+		if err != nil {
+			t.Fatalf("Claim: %v", err)
+		}
+		if len(claimed) != 2 {
+			t.Fatalf("Claim limit: got %d items, want 2", len(claimed))
+		}
+		for _, it := range claimed {
+			if it.Status != "leased" || it.LeaseOwner != "w1" || it.Attempts != 0 {
+				t.Errorf("claimed item %+v: want status=leased owner=w1 attempts=0", it)
+			}
+			if it.LeaseUntil == "" || it.HeartbeatAt == "" {
+				t.Errorf("claimed item %s missing lease timestamps", it.SourcePath)
+			}
+		}
+
+		// Fencing: w2 cannot claim w1's live leases; the unclaimed third
+		// item goes to w2.
+		claimed2, err := is.Claim(1, "w2", time.Hour, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(claimed2) != 1 || claimed2[0].SourcePath != "q3.md" {
+			t.Errorf("w2 claimed %+v, want only [q3.md]", claimed2)
+		}
+
+		// Heartbeat extends the lease (TTL 2h vs the claimed 1h — always
+		// distinguishable without sleeping).
+		first, _ := is.GetByPath("q1.md")
+		if err := is.Heartbeat("w1", []string{"q1.md"}, 2*time.Hour); err != nil {
+			t.Fatalf("Heartbeat: %v", err)
+		}
+		refreshed, _ := is.GetByPath("q1.md")
+		if refreshed.LeaseUntil == first.LeaseUntil {
+			t.Errorf("Heartbeat did not extend lease_until (%q)", first.LeaseUntil)
+		}
+
+		// Release(retry): pending again, lease cleared, attempt budget
+		// burned (attempts=1).
+		if err := is.Release("q3.md", "w2", store.ReleaseRetry); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := is.GetByPath("q3.md")
+		if got.Status != "pending" || got.LeaseOwner != "" || got.LeaseUntil != "" || got.Attempts != 1 {
+			t.Errorf("Release(retry): %+v, want pending, cleared lease, attempts=1", got)
+		}
+
+		// Release(done) with owed passes → pending (progress, budget
+		// reset); complete the pass → done.
+		if err := is.Release("q1.md", "w1", store.ReleaseDone); err != nil {
+			t.Fatal(err)
+		}
+		got, _ = is.GetByPath("q1.md")
+		if got.Status != "pending" || got.Attempts != 0 {
+			t.Errorf("Release(done) with owed passes: %+v, want pending attempts=0", got)
+		}
+		if _, err := is.Claim(1, "w1", time.Hour, 10); err != nil {
+			t.Fatal(err)
+		}
+		if err := is.MarkPass("q1.md", "embedded"); err != nil {
+			t.Fatal(err)
+		}
+		if err := is.Release("q1.md", "w1", store.ReleaseDone); err != nil {
+			t.Fatal(err)
+		}
+		got, _ = is.GetByPath("q1.md")
+		if got.Status != "done" {
+			t.Errorf("Release(done) tier-complete: status=%q, want done", got.Status)
+		}
+
+		// Release(failed): dead-lettered, excluded from future claims.
+		if err := is.Release("q2.md", "w1", store.ReleaseFailed); err != nil {
+			t.Fatal(err)
+		}
+		got, _ = is.GetByPath("q2.md")
+		if got.Status != "failed" {
+			t.Errorf("Release(failed): status=%q, want failed", got.Status)
+		}
+		remaining, err := is.Claim(1, "w9", time.Hour, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, it := range remaining {
+			if it.SourcePath == "q2.md" {
+				t.Error("dead-lettered item re-claimed")
+			}
+		}
+
+		// RequeueExpired: only expired leases return to pending. Dedicated
+		// item so earlier claims don't interfere: q4 is claimed with an
+		// already-expired TTL.
+		if err := is.Upsert(store.CompileItem{SourcePath: "q4.md", Hash: "h1", Tier: 1, PassIndexed: true}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := is.Claim(1, "w3", -time.Hour, 10); err != nil {
+			t.Fatal(err)
+		}
+		n, err := is.RequeueExpired(time.Now().UTC())
+		if err != nil {
+			t.Fatalf("RequeueExpired: %v", err)
+		}
+		if n != 1 {
+			t.Errorf("RequeueExpired = %d, want 1", n)
+		}
+		got, _ = is.GetByPath("q4.md")
+		if got.Status != "pending" || got.LeaseOwner != "" {
+			t.Errorf("requeued item: %+v, want pending with cleared lease", got)
+		}
+
+		// ResetFailed: dead letters rejoin the queue with a fresh budget.
+		if n, err := is.ResetFailed(); err != nil || n != 1 {
+			t.Errorf("ResetFailed = %d, %v; want 1", n, err)
+		}
+		got, _ = is.GetByPath("q2.md")
+		if got.Status != "pending" || got.Attempts != 0 {
+			t.Errorf("ResetFailed: %+v, want pending attempts=0", got)
+		}
+
+		// Upsert hash-change revival: a failed item re-upserted with new
+		// content resets to pending with a fresh budget; same-hash upsert
+		// preserves queue state.
+		if _, err := is.Claim(1, "w1", time.Hour, 10); err != nil {
+			t.Fatal(err)
+		}
+		if err := is.Release("q2.md", "w1", store.ReleaseFailed); err != nil {
+			t.Fatal(err)
+		}
+		if err := is.Upsert(store.CompileItem{SourcePath: "q2.md", Hash: "h2", Tier: 1}); err != nil {
+			t.Fatal(err)
+		}
+		got, _ = is.GetByPath("q2.md")
+		if got.Status != "pending" || got.Attempts != 0 || got.LeaseOwner != "" {
+			t.Errorf("hash-change Upsert: %+v, want pending attempts=0 lease cleared", got)
+		}
+		if _, err := is.Claim(1, "w1", time.Hour, 10); err != nil {
+			t.Fatal(err)
+		}
+		if err := is.Upsert(store.CompileItem{SourcePath: "q2.md", Hash: "h2", Tier: 1}); err != nil {
+			t.Fatal(err)
+		}
+		got, _ = is.GetByPath("q2.md")
+		if got.Status != "leased" {
+			t.Errorf("same-hash Upsert touched queue state: %+v", got)
 		}
 	}
 }

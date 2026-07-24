@@ -4,6 +4,28 @@
 
 ### Added
 
+- **Durable job model / compile worker (STRAT-03, P2-3).** `compile_items`
+  is now a real work queue: claim columns (`status`, `lease_owner`,
+  `lease_until`, `heartbeat_at`, `attempts` — sqlite migration V9,
+  postgres V2) with conditional-UPDATE lease fencing, heartbeats, and
+  crash recovery via lease-expiry requeue. A worker runs inside `serve`
+  (both MCP and `--ui` modes) and compiles autonomously — sources added
+  while serving are discovered, compiled, and promoted without any CLI
+  invocation. Progress streams to clients: `GET /api/compile/progress`
+  (SSE), `GET /api/compile/status` (queue counts + active lease), live
+  per-item rendering in the TUI compile tab, and a `compile_queue` block
+  in `wiki_status`. The CLI is an in-process worker of one — claim/
+  release is additive bookkeeping; outputs and checkpoint behavior are
+  unchanged. Config: `serve.worker.*` (`enabled` default ON — opt out
+  with `enabled: false`; poll/lease/heartbeat/attempts/claim-limit).
+  Retry semantics: failed processing attempts (not claims) are capped at
+  5; a capped item is dead-lettered (`status: failed`) until revived by
+  `--fresh` or by editing the source (hash change resets the budget).
+  No CGO; SQLite zero-config default untouched.
+  See `docs/design/p2-3-durable-jobs.md`.
+
+### Added
+
 - **Storage backend seam + optional Postgres/pgvector backend (STRAT-01,
   PERF-01, P2-1).** All persistence now flows through store interfaces
   (`internal/store`) with two backends: the existing SQLite file (default,
