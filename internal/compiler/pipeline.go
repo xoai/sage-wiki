@@ -735,8 +735,8 @@ func runTiers(projectDir string, run *compileRun) {
 		// saving the manifest would record half-done work — the earlier surgical
 		// rollback (RemoveSource on just the sources) left the run's concepts
 		// orphaned, since RemoveSource deletes Sources only. P1-1 / C1.
-	run.pipelineIncomplete = !pipelineResult.Pass23Completed
-	succeeded := make(map[string]bool)
+		run.pipelineIncomplete = !pipelineResult.Pass23Completed
+		succeeded := make(map[string]bool)
 		for _, p := range pipelineResult.SucceededSources {
 			succeeded[p] = true
 		}
