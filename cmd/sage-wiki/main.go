@@ -867,7 +867,7 @@ func maybePromptEstimate(dir string) error {
 		model = "gemini-2.5-flash"
 	}
 
-	_, cost := llm.EstimateFromBytes(totalBytes, cfg.API.Provider, model, cfg.Compiler.TokenPriceOverride)
+	_, cost := llm.EstimateFromBytes(totalBytes, cfg.API.Provider, model, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
 
 	fmt.Printf("Estimated: ~$%.4f for %d sources. Proceed? [y/n] ", cost, totalSources)
 	var answer string
@@ -917,7 +917,7 @@ func runEstimate(dir string) error {
 		model = "gemini-2.5-flash"
 	}
 
-	tokens, cost := llm.EstimateFromBytes(totalBytes, cfg.API.Provider, model, cfg.Compiler.TokenPriceOverride)
+	tokens, cost := llm.EstimateFromBytes(totalBytes, cfg.API.Provider, model, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
 
 	fmt.Printf("\n📊 Cost estimate for %d sources (%d new, %d modified)\n",
 		totalSources, len(diff.Added), len(diff.Modified))

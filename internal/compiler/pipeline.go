@@ -134,7 +134,7 @@ func newTrackedClient(cfg *config.Config, opts *CompileOpts) (*llm.Client, *llm.
 	}
 	tracker := opts.Tracker
 	if tracker == nil {
-		tracker = llm.NewCostTracker(cfg.API.Provider, cfg.Compiler.TokenPriceOverride)
+		tracker = llm.NewCostTrackerWithTable(cfg.API.Provider, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
 	}
 	client.SetTracker(tracker)
 	return client, tracker, nil

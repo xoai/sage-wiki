@@ -71,7 +71,7 @@ func TestCostTrackerOverride(t *testing.T) {
 }
 
 func TestEstimateFromBytes(t *testing.T) {
-	tokens, cost := EstimateFromBytes(4000, "gemini", "gemini-2.5-flash", 0)
+	tokens, cost := EstimateFromBytes(4000, "gemini", "gemini-2.5-flash", 0, "")
 
 	if tokens != 1000 {
 		t.Errorf("expected 1000 tokens, got %d", tokens)

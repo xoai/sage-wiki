@@ -91,3 +91,12 @@ func TestFormatReport_ApproximateLabel(t *testing.T) {
 		t.Errorf("report missing approximate label:\n%s", out)
 	}
 }
+
+func TestEstimateFromBytes_UsesTable(t *testing.T) {
+	path := writeTable(t, `{"openai": {"gpt-4o": {"input": 10.0, "output": 20.0}}}`)
+	_, withTable := EstimateFromBytes(1000000, "openai", "gpt-4o", 0, path)
+	_, builtIn := EstimateFromBytes(1000000, "openai", "gpt-4o", 0, "")
+	if withTable <= builtIn {
+		t.Errorf("table price (10.0/20.0) should cost more than built-in (2.5/10.0): table=%f builtin=%f", withTable, builtIn)
+	}
+}

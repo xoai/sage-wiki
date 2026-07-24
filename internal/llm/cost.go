@@ -271,10 +271,12 @@ func (ct *CostTracker) calculateSavings(e CostEntry, price ModelPrice) float64 {
 }
 
 // EstimateFromBytes estimates cost for a given amount of text content.
-func EstimateFromBytes(contentBytes int, provider string, model string, priceOverride float64) (inputTokens int, cost float64) {
+// tablePath is the optional price table (PERF-04; "" = built-ins) so
+// estimate-before-compile prices identically to the final report.
+func EstimateFromBytes(contentBytes int, provider string, model string, priceOverride float64, tablePath string) (inputTokens int, cost float64) {
 	inputTokens = contentBytes / 4 // ~4 chars per token heuristic
 
-	ct := &CostTracker{provider: provider, override: priceOverride}
+	ct := NewCostTrackerWithTable(provider, priceOverride, tablePath)
 	price := ct.getPrice(model)
 
 	// Estimate: input + ~25% output overhead

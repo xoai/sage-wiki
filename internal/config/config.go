@@ -694,6 +694,12 @@ func Load(path string) (*Config, error) {
 	}
 	cfg.Extends = "" // clear after merge
 
+	// Resolve the price table relative to the config file's directory
+	// (PERF-04): absolute paths pass through untouched.
+	if cfg.Compiler.PriceTable != "" && !filepath.IsAbs(cfg.Compiler.PriceTable) {
+		cfg.Compiler.PriceTable = filepath.Join(filepath.Dir(path), cfg.Compiler.PriceTable)
+	}
+
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
