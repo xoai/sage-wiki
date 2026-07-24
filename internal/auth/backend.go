@@ -195,7 +195,6 @@ func (s *Store) writeFileOnly(t fataler, cred *Credential) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cred.Provider = cred.Provider
 	sf.Credentials[cred.Provider] = cred
 	if err := s.write(sf); err != nil {
 		t.Fatal(err)
