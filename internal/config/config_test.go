@@ -920,3 +920,44 @@ compiler:
 		t.Errorf("custom list round-trip failed, got %v", got)
 	}
 }
+
+func TestWorkerConfigValidate(t *testing.T) {
+	base := func() Config {
+		cfg := Defaults()
+		cfg.Project = "test"
+		return cfg
+	}
+	// heartbeat >= lease TTL is a hard error (manifest-lock invariant).
+	cfg := base()
+	cfg.Serve.Worker.HeartbeatIntervalSeconds = 120
+	cfg.Serve.Worker.LeaseTTLSeconds = 120
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected validation error for heartbeat >= lease TTL")
+	}
+
+	// TTL set, heartbeat unset (default 30s < TTL) passes.
+	cfg = base()
+	cfg.Serve.Worker.LeaseTTLSeconds = 300
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("unexpected validation error: %v", err)
+	}
+
+	// Negative values rejected.
+	cfg = base()
+	cfg.Serve.Worker.MaxAttempts = -1
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected validation error for negative max_attempts")
+	}
+}
+
+func TestWorkerEnabled(t *testing.T) {
+	cfg := Defaults()
+	if !cfg.Serve.WorkerEnabled() {
+		t.Error("worker should default to enabled (nil *bool = true)")
+	}
+	off := false
+	cfg.Serve.Worker.Enabled = &off
+	if cfg.Serve.WorkerEnabled() {
+		t.Error("explicit enabled: false not honored")
+	}
+}

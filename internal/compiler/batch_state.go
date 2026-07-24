@@ -27,8 +27,7 @@ type BatchCheckpoint struct {
 }
 
 // batchCheckpointPath returns the canonical batch checkpoint location.
-func batchCheckpointPath(projectDir string) string {
-	return filepath.Join(projectDir, ".sage", "batch-state.json")
+func batchCheckpointPath(projectDir string) string {	return filepath.Join(projectDir, ".sage", "batch-state.json")
 }
 
 // legacyCheckpointPath returns the legacy (pre-P1-3) checkpoint location.
@@ -215,4 +214,25 @@ func loadOrMigrateBatchCheckpoint(projectDir string) (*BatchCheckpoint, error) {
 	log.Info("migrated in-flight batch from legacy checkpoint",
 		"batch_id", state.Batch.BatchID, "provider", state.Batch.Provider)
 	return bcp, nil
+}
+
+// hasPendingBatch reports whether a pending batch exists in EITHER
+// checkpoint file — the canonical .sage/batch-state.json or a legacy
+// .sage/compile-state.json with Batch != nil. Shared by watch mode and the
+// serve worker (P2-3): batch owns the pipeline until retired, so both
+// refuse/idle rather than interleave with a batch resume. Unreadable
+// checkpoints warn loudly (a corrupt checkpoint fails every compile it
+// meets) and do not count as pending.
+func hasPendingBatch(projectDir string) bool {
+	if bcp, err := loadBatchCheckpoint(projectDir); err != nil {
+		log.Warn("batch checkpoint unreadable — compiles will fail until it is fixed or removed", "error", err)
+	} else if bcp != nil && bcp.Batch != nil {
+		return true
+	}
+	if state, err := loadCompileState(legacyCheckpointPath(projectDir)); err != nil && !os.IsNotExist(err) {
+		log.Warn("legacy checkpoint unreadable — compiles will fail until it is fixed or removed", "error", err)
+	} else if state != nil && state.Batch != nil {
+		return true
+	}
+	return false
 }
