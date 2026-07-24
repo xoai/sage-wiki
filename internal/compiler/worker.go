@@ -173,5 +173,6 @@ func (w *Worker) requeueExpired() {
 	}
 	if n > 0 {
 		log.Info("worker requeued expired leases", "count", n)
+		w.deps.Progress.QueueEvent("requeued", "expired leases", n)
 	}
 }

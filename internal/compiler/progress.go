@@ -271,6 +271,13 @@ func (p *Progress) EndPhase() {
 	}
 }
 
+// QueueEvent reports a durable-queue transition (P2-3, spec C6): kind is
+// claimed/requeued/dead-lettered, detail carries context, count the items
+// affected. Emitted by the compile worker; stderr stays silent for these.
+func (p *Progress) QueueEvent(kind, detail string, count int) {
+	p.emit(ProgressEvent{Type: "queue", Status: kind, Detail: detail, Done: count})
+}
+
 // Summary prints the final compilation summary.
 func (p *Progress) Summary(result *CompileResult) {
 	if p.spinner != nil {

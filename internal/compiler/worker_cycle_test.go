@@ -407,3 +407,50 @@ func TestWorker_ClaimFencing(t *testing.T) {
 		}
 	}
 }
+
+func TestWorker_EmitsQueueEvents(t *testing.T) {
+	h := newWorkerHarness(t, 1, http.StatusOK)
+	h.writeSource(t, "a.md", "# Alpha\n\nAlpha content.")
+	progress := NewProgress()
+	events, unsub := progress.Subscribe(64)
+	defer unsub()
+
+	h.worker = NewWorker(WorkerDeps{
+		ProjectDir: h.dir,
+		Items:      h.items,
+		Coord:      NewCompileCoordinator(),
+		Progress:   progress,
+		Config: workerSettings{
+			PollInterval:      50 * time.Millisecond,
+			LeaseTTL:          5 * time.Second,
+			HeartbeatInterval: time.Second,
+			MaxAttempts:       5,
+			ClaimLimit:        16,
+		},
+	})
+	// One pending item (claim event) and one expired lease (requeue event).
+	if err := h.items.Upsert(CompileItem{SourcePath: "raw/a.md", Hash: "h1", FileType: "md", Tier: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.items.Claim(1, "dead-worker", -time.Hour, 10); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := h.worker.cycle(context.Background()); err != nil {
+		t.Fatalf("cycle: %v", err)
+	}
+	kinds := map[string]bool{}
+	for {
+		select {
+		case ev := <-events:
+			if ev.Type == "queue" {
+				kinds[ev.Status] = true
+			}
+		default:
+			if !kinds["requeued"] || !kinds["claimed"] {
+				t.Errorf("queue events = %v, want requeued+claimed", kinds)
+			}
+			return
+		}
+	}
+}

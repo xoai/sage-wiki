@@ -122,6 +122,9 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 			return false, fmt.Errorf("worker: claim tier %d: %w", tier, err)
 		}
 		claimed[tier] = items
+		if len(items) > 0 {
+			w.deps.Progress.QueueEvent("claimed", fmt.Sprintf("tier %d", tier), len(items))
+		}
 		for _, it := range items {
 			paths[it.SourcePath] = struct{}{}
 		}
@@ -274,6 +277,7 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 			failures++
 			if it.Attempts+1 >= w.deps.Config.MaxAttempts {
 				w.release(p, store.ReleaseFailed)
+				w.deps.Progress.QueueEvent("dead-lettered", p, 1)
 			} else {
 				w.release(p, store.ReleaseRetry)
 			}
