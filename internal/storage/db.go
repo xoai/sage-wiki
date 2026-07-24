@@ -151,6 +151,7 @@ var schemaMigrations = []migration{
 	{sql: migrationV6},
 	{sql: migrationV7},
 	{sql: migrationV8},
+	{sql: migrationV9},
 }
 
 // migrate runs schema migrations.
@@ -491,4 +492,28 @@ INSERT OR IGNORE INTO chunks_fts_new (chunk_id, heading, content)
 	SELECT chunk_id, heading, content FROM chunks_fts;
 DROP TABLE chunks_fts;
 ALTER TABLE chunks_fts_new RENAME TO chunks_fts;
+`
+
+// migrationV9 promotes compile_items into a durable work queue (P2-3):
+// claim columns (status/lease_owner/lease_until/heartbeat_at/attempts)
+// plus the claim index. Backfill is per-tier: only rows whose passes are
+// complete for their tier become 'done' (a tier-3 row missing
+// pass_embedded stays pending even if all three tier-3 passes are set —
+// it still owes the embed pass). Additive only; pre-V9 rows are
+// indistinguishable from new ones after backfill.
+const migrationV9 = `
+ALTER TABLE compile_items ADD COLUMN status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE compile_items ADD COLUMN lease_owner TEXT;
+ALTER TABLE compile_items ADD COLUMN lease_until TEXT;
+ALTER TABLE compile_items ADD COLUMN heartbeat_at TEXT;
+ALTER TABLE compile_items ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
+
+CREATE INDEX IF NOT EXISTS idx_ci_claim ON compile_items(status, lease_until);
+
+UPDATE compile_items SET status = 'done' WHERE
+	(tier = 0 AND pass_indexed = 1) OR
+	(tier = 1 AND pass_indexed = 1 AND pass_embedded = 1) OR
+	(tier = 2 AND pass_indexed = 1 AND pass_embedded = 1 AND pass_parsed = 1) OR
+	(tier = 3 AND pass_indexed = 1 AND pass_embedded = 1
+		AND pass_summarized = 1 AND pass_extracted = 1 AND pass_written = 1);
 `

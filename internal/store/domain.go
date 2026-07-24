@@ -185,6 +185,14 @@ type CompileItem struct {
 	SourceType   string
 	QualityScore *float64
 
+	// Durable queue state (P2-3). Status: pending/leased/done/failed.
+	// Lease fields are set only while a worker holds the item.
+	Status      string
+	LeaseOwner  string
+	LeaseUntil  string
+	HeartbeatAt string
+	Attempts    int
+
 	CreatedAt string
 	UpdatedAt string
 }

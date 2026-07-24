@@ -7,7 +7,7 @@ import (
 )
 
 // currentSchemaVersion tracks len(schemaMigrations).
-const currentSchemaVersion = 1
+const currentSchemaVersion = 2
 
 // schemaMigrations is the append-only Postgres V-series. Each entry is ONE
 // statement per Exec (pgx stdlib rejects multi-statement prepared calls).
@@ -181,6 +181,26 @@ var schemaMigrations = [][]string{
 		)`,
 
 		`INSERT INTO schema_version (version) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = 1)`,
+	},
+
+	// V2 — durable job queue columns on compile_items (P2-3), mirroring
+	// sqlite migration V9. Backfill is per-tier: only rows whose passes are
+	// complete for their tier become 'done'. ADD COLUMN IF NOT EXISTS keeps
+	// a partial V2 retryable, same idempotence contract as V1.
+	{
+		`ALTER TABLE compile_items ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'`,
+		`ALTER TABLE compile_items ADD COLUMN IF NOT EXISTS lease_owner TEXT`,
+		`ALTER TABLE compile_items ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ`,
+		`ALTER TABLE compile_items ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ`,
+		`ALTER TABLE compile_items ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0`,
+		`CREATE INDEX IF NOT EXISTS idx_ci_claim ON compile_items(status, lease_until)`,
+		`UPDATE compile_items SET status = 'done' WHERE
+			(tier = 0 AND pass_indexed = 1) OR
+			(tier = 1 AND pass_indexed = 1 AND pass_embedded = 1) OR
+			(tier = 2 AND pass_indexed = 1 AND pass_embedded = 1 AND pass_parsed = 1) OR
+			(tier = 3 AND pass_indexed = 1 AND pass_embedded = 1
+				AND pass_summarized = 1 AND pass_extracted = 1 AND pass_written = 1)`,
+		`INSERT INTO schema_version (version) SELECT 2 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = 2)`,
 	},
 }
 
