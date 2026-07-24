@@ -8,6 +8,7 @@ import (
 
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 // workerSettings is WorkerConfig with defaults resolved (spec C5:
@@ -21,7 +22,9 @@ type workerSettings struct {
 	ClaimLimit        int
 }
 
-func resolveWorkerConfig(wc config.WorkerConfig) workerSettings {
+// ResolveWorkerConfig applies the documented defaults to a raw
+// serve.worker config block (exported for serve wiring, T8).
+func ResolveWorkerConfig(wc config.WorkerConfig) workerSettings {
 	s := workerSettings{
 		PollInterval:      5 * time.Second,
 		LeaseTTL:          120 * time.Second,
@@ -50,14 +53,30 @@ func resolveWorkerConfig(wc config.WorkerConfig) workerSettings {
 // WorkerDeps are the worker's construction inputs (spec C3/C4).
 type WorkerDeps struct {
 	ProjectDir string
-	Items      *CompileItemStore
-	Coord      *CompileCoordinator
-	Progress   *Progress
-	Config     workerSettings
+	Items      store.CompileItemStore
+	// Backend, when set, is injected into each cycle's store stack (the
+	// worker shares the caller's handle instead of opening its own DB —
+	// spec C4). Must be consistent with Items.
+	Backend  store.Backend
+	Coord    *CompileCoordinator
+	Progress *Progress
+	Config   workerSettings
 	// Process is the claim→process→release body, injectable for tests.
-	// nil means "not yet wired" — cycles acquire the coordinator and do
-	// nothing (T6 installs the real one).
+	// nil installs the production processCycle.
 	Process func(ctx context.Context) (worked bool, err error)
+}
+
+// NewWorkerForServe builds a Worker for serve-mode wiring (T8): resolves
+// the raw config block, pulls the queue store from the shared backend.
+func NewWorkerForServe(projectDir string, backend store.Backend, coord *CompileCoordinator, progress *Progress, wc config.WorkerConfig) *Worker {
+	return NewWorker(WorkerDeps{
+		ProjectDir: projectDir,
+		Items:      backend.CompileItems(),
+		Backend:    backend,
+		Coord:      coord,
+		Progress:   progress,
+		Config:     ResolveWorkerConfig(wc),
+	})
 }
 
 // Worker drains the durable compile queue inside serve mode (P2-3).

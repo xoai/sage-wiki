@@ -13,7 +13,7 @@ import (
 )
 
 func TestResolveWorkerConfig_Defaults(t *testing.T) {
-	s := resolveWorkerConfig(config.WorkerConfig{})
+	s := ResolveWorkerConfig(config.WorkerConfig{})
 	if s.PollInterval != 5*time.Second {
 		t.Errorf("PollInterval = %v, want 5s", s.PollInterval)
 	}
@@ -32,7 +32,7 @@ func TestResolveWorkerConfig_Defaults(t *testing.T) {
 }
 
 func TestResolveWorkerConfig_Overrides(t *testing.T) {
-	s := resolveWorkerConfig(config.WorkerConfig{
+	s := ResolveWorkerConfig(config.WorkerConfig{
 		PollIntervalSeconds:      9,
 		LeaseTTLSeconds:          300,
 		HeartbeatIntervalSeconds: 60,
@@ -63,7 +63,7 @@ func TestWorker_IdleLoop(t *testing.T) {
 		Items:      items,
 		Coord:      coord,
 		Progress:   NewProgress(),
-		Config:     resolveWorkerConfig(config.WorkerConfig{PollIntervalSeconds: 1}),
+		Config:     ResolveWorkerConfig(config.WorkerConfig{PollIntervalSeconds: 1}),
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
@@ -96,7 +96,7 @@ func TestWorker_BatchGuardIdles(t *testing.T) {
 		Items:      items,
 		Coord:      NewCompileCoordinator(),
 		Progress:   NewProgress(),
-		Config:     resolveWorkerConfig(config.WorkerConfig{}),
+		Config:     ResolveWorkerConfig(config.WorkerConfig{}),
 		Process: func(ctx context.Context) (bool, error) {
 			processed.Add(1)
 			return false, nil
@@ -138,7 +138,7 @@ func TestWorker_RequeueExpiredOnStartup(t *testing.T) {
 		Items:      items,
 		Coord:      NewCompileCoordinator(),
 		Progress:   NewProgress(),
-		Config:     resolveWorkerConfig(config.WorkerConfig{}),
+		Config:     ResolveWorkerConfig(config.WorkerConfig{}),
 		Process:    func(ctx context.Context) (bool, error) { return false, nil },
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)

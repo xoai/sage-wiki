@@ -561,6 +561,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// means `serve --ui` (which builds both) still reconciles exactly once.
 	reconcileStartup(context.Background(), dir)
 
+	// Shared serve-mode compile state (P2-3): one coordinator + one progress
+	// hub + the queue worker (nil when serve.worker.enabled: false).
+	deps, err := assembleServeDeps(dir)
+	if err != nil {
+		return err
+	}
+	defer deps.Close()
+
 	// Web UI mode
 	ui, _ := cmd.Flags().GetBool("ui")
 	if ui {
@@ -608,15 +616,26 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// Graceful shutdown on SIGINT/SIGTERM.
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
+		if deps.worker != nil {
+			go deps.worker.Run(ctx)
+			fmt.Fprintln(os.Stderr, "⚙️  compile worker started (serve.worker).")
+		}
 		return webSrv.Serve(ctx, addr)
 	}
 
 	// MCP server mode
-	srv, err := mcppkg.NewServer(dir)
+	srv, err := mcppkg.NewServer(dir, deps.coord)
 	if err != nil {
 		return err
 	}
 	defer srv.Close() // also fires the P2-2 shutdown snapshot (D8)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if deps.worker != nil {
+		go deps.worker.Run(ctx)
+		fmt.Fprintln(os.Stderr, "⚙️  compile worker started (serve.worker).")
+	}
 
 	transport, _ := cmd.Flags().GetString("transport")
 	if transport == "sse" {

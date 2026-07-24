@@ -59,9 +59,10 @@ func (w *Worker) openCycleRun(ctx context.Context) (*cycleRun, error) {
 		return nil, fmt.Errorf("worker: create LLM client: %w", err)
 	}
 
+	opts := CompileOpts{Ctx: ctx, Backend: w.deps.Backend}
 	run := &compileRun{
 		cfg:      cfg,
-		opts:     CompileOpts{Ctx: ctx},
+		opts:     opts,
 		result:   &CompileResult{},
 		mf:       mf,
 		mfPath:   mfPath,
