@@ -89,3 +89,29 @@ func TestProgress_NoSubscribersNoPanic(t *testing.T) {
 	p.ItemError("b", errors.New("x"))
 	p.EndPhase()
 }
+
+func TestCompileUsesInjectedProgress(t *testing.T) {
+	h := newWorkerHarness(t, 1, 200)
+	h.writeSource(t, "a.md", "# Alpha\n\nAlpha content.")
+	progress := NewProgress()
+	events, unsub := progress.Subscribe(64)
+	defer unsub()
+
+	if _, err := Compile(h.dir, CompileOpts{Progress: progress}); err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	sawPhase := false
+	for {
+		select {
+		case ev := <-events:
+			if ev.Type == "phase" {
+				sawPhase = true
+			}
+		default:
+			if !sawPhase {
+				t.Error("no phase events on the injected Progress hub")
+			}
+			return
+		}
+	}
+}

@@ -46,6 +46,11 @@ type CompileOpts struct {
 	NoCache bool             // disable prompt caching
 	Prune   bool             // delete orphaned articles when sources removed
 	Tracker *llm.CostTracker // optional cost tracker
+
+	// Progress, when set, is the event hub the pipeline reports into (P2-3 —
+	// the TUI and the serve worker share one so subscribers see live events);
+	// nil creates a fresh stderr-only tracker.
+	Progress *Progress
 }
 
 // CompileResult summarizes what happened during compilation.
@@ -196,7 +201,11 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	run.result.Modified = len(diff.Modified)
 	run.result.Removed = len(diff.Removed)
 
-	run.progress = NewProgress()
+	if opts.Progress != nil {
+		run.progress = opts.Progress
+	} else {
+		run.progress = NewProgress()
+	}
 
 	if run.result.Added == 0 && run.result.Modified == 0 && run.result.Removed == 0 {
 		fmt.Fprintln(os.Stderr, "✓ Nothing to compile — wiki is up to date.")
