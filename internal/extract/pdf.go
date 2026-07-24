@@ -2,6 +2,7 @@ package extract
 
 import (
 	"context"
+	"github.com/xoai/sage-wiki/internal/log"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -45,20 +46,16 @@ func extractPDFPoppler(path string) string {
 }
 
 // extractPDFGo uses the pure Go PDF library.
-// extractPDFGo recovers LIBRARY panics into errors (P2-5 fuzz finding:
-// the ledongthuc/pdf library panics on malformed input instead of
-// erroring). Panics that don't look library-shaped (string/Go error
-// mentioning "pdf") are re-panicked — a bug in OUR code must not be
-// masked as "malformed input".
+// extractPDFGo recovers library panics into errors (P2-5 fuzz finding:
+// the ledongthuc/pdf library panics on malformed input in many shapes —
+// "malformed PDF", "unexpected keyword", EOF — so message-matching is
+// fragile). All panics are recovered AND logged at Warn (nothing is
+// silent; a bug in our own code remains visible in logs).
 func extractPDFGo(path string) (_ *SourceContent, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			msg := fmt.Sprint(r)
-			if strings.Contains(msg, "pdf") || strings.Contains(msg, "malformed") {
-				err = fmt.Errorf("extract pdf: malformed input (library panic): %v", r)
-				return
-			}
-			panic(r) // not the library — don't mask it
+			log.Warn("extract pdf: recovered library panic", "path", path, "panic", r)
+			err = fmt.Errorf("extract pdf: malformed input (library panic): %v", r)
 		}
 	}()
 
