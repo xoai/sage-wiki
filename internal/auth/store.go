@@ -17,6 +17,11 @@ type storeFile struct {
 
 type Store struct {
 	path string
+	// backend/kr are the test seam for backend selection (P2-6): empty
+	// means "probe at first use" (production path); tests set them
+	// directly and never touch a real keychain.
+	backend string
+	kr      keyringAPI
 }
 
 func NewStore(path string) *Store {
@@ -95,56 +100,19 @@ func (s *Store) checkPermissions() {
 }
 
 func (s *Store) Get(provider string) (*Credential, error) {
-	sf, err := s.read()
-	if err != nil {
-		return nil, err
-	}
-	cred, ok := sf.Credentials[provider]
-	if !ok {
-		return nil, fmt.Errorf("auth: no credentials for provider %q", provider)
-	}
-	return cred, nil
+	return s.getWithBackend(provider)
 }
 
 func (s *Store) Put(provider string, cred *Credential) error {
-	unlock, err := lockFile(s.path)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-
-	sf, err := s.read()
-	if err != nil {
-		return err
-	}
-
-	cred.Provider = provider
-	sf.Credentials[provider] = cred
-	return s.write(sf)
+	return s.putWithBackend(provider, cred)
 }
 
 func (s *Store) Delete(provider string) error {
-	unlock, err := lockFile(s.path)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-
-	sf, err := s.read()
-	if err != nil {
-		return err
-	}
-
-	delete(sf.Credentials, provider)
-	return s.write(sf)
+	return s.deleteWithBackend(provider)
 }
 
 func (s *Store) List() (map[string]*Credential, error) {
-	sf, err := s.read()
-	if err != nil {
-		return nil, err
-	}
-	return sf.Credentials, nil
+	return s.listWithBackend()
 }
 
 func (s *Store) IsTOSAcknowledged() bool {

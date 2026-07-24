@@ -179,13 +179,11 @@ func (s *Store) RefreshAndGet(providerName string) (*Credential, error) {
 		return nil, err
 	}
 
-	refreshed.Provider = providerName
-	sf, readErr := s.read()
-	if readErr != nil {
-		return refreshed, nil
+	// P2-6: rotated tokens go through the backend-aware write path
+	// (keychain-only on keychain machines — the file backup stays frozen).
+	if err := s.refreshAndStore(providerName, refreshed); err != nil {
+		return nil, err
 	}
-	sf.Credentials[providerName] = refreshed
-	s.write(sf)
 
 	return refreshed, nil
 }
