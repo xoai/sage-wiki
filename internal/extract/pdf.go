@@ -45,7 +45,16 @@ func extractPDFPoppler(path string) string {
 }
 
 // extractPDFGo uses the pure Go PDF library.
-func extractPDFGo(path string) (*SourceContent, error) {
+// extractPDFGo recovers library panics into errors (P2-5 fuzz finding:
+// the ledongthuc/pdf library panics on malformed input instead of
+// erroring — untrusted PDFs must never crash the extractor).
+func extractPDFGo(path string) (_ *SourceContent, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("extract pdf: malformed input (library panic): %v", r)
+		}
+	}()
+
 	f, r, err := pdf.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("extract pdf: open: %w", err)
