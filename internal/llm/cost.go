@@ -1,21 +1,24 @@
 package llm
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
-		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/internal/metrics"
 )
 
-// ModelPrice holds per-million-token pricing for a model.
+// ModelPrice holds per-million-token pricing for a model. The json tags
+// are the price-table file format (PERF-04).
 type ModelPrice struct {
-	Input       float64 // $ per 1M input tokens
-	Output      float64 // $ per 1M output tokens
-	CachedInput float64 // $ per 1M cached input tokens
-	BatchInput  float64 // $ per 1M batch input tokens (0 = not supported)
-	BatchOutput float64 // $ per 1M batch output tokens
+	Input       float64 `json:"input,omitempty"`        // $ per 1M input tokens
+	Output      float64 `json:"output,omitempty"`       // $ per 1M output tokens
+	CachedInput float64 `json:"cached_input,omitempty"` // $ per 1M cached input tokens
+	BatchInput  float64 `json:"batch_input,omitempty"`  // $ per 1M batch input tokens (0 = not supported)
+	BatchOutput float64 `json:"batch_output,omitempty"` // $ per 1M batch output tokens
 }
 
 // Built-in approximate prices (may go stale — shown as estimates).
@@ -76,14 +79,81 @@ type CostTracker struct {
 	entries  []CostEntry
 	provider string
 	override float64 // user config override price per 1M input tokens
+	table    map[string]map[string]ModelPrice // merged built-ins + user table; nil = built-ins
+}
+
+// priceTable returns the effective lookup map (merged or built-ins).
+func (ct *CostTracker) priceTable() map[string]map[string]ModelPrice {
+	if ct.table != nil {
+		return ct.table
+	}
+	return prices
 }
 
 // NewCostTracker creates a tracker for the given provider.
 func NewCostTracker(provider string, priceOverride float64) *CostTracker {
+	return NewCostTrackerWithTable(provider, priceOverride, "")
+}
+
+// NewCostTrackerWithTable builds a CostTracker whose price lookup starts
+// from the built-ins merged with a user price table (PERF-04): the file
+// wins per provider/model entry it names; built-ins cover the rest. A
+// missing/unreadable/malformed file warns and falls back to built-ins —
+// the table is optional, never a failure. Explicit priceOverride still
+// beats everything (see getPrice).
+func NewCostTrackerWithTable(provider string, priceOverride float64, tablePath string) *CostTracker {
+	table := prices
+	if tablePath != "" {
+		table = mergePriceTables(prices, loadPriceTable(tablePath))
+	}
 	return &CostTracker{
 		provider: provider,
 		override: priceOverride,
+		table:    table,
 	}
+}
+
+// loadPriceTable reads a JSON price table (same shape as the built-in
+// map). Errors degrade to nil (built-ins only) with a warning.
+func loadPriceTable(path string) map[string]map[string]ModelPrice {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		log.Warn("price table unreadable — using built-in prices", "path", path, "error", err)
+		return nil
+	}
+	var table map[string]map[string]ModelPrice
+	if err := json.Unmarshal(raw, &table); err != nil {
+		log.Warn("price table malformed — using built-in prices", "path", path, "error", err)
+		return nil
+	}
+	return table
+}
+
+// mergePriceTables returns built-ins with the user's entries overlaid per
+// provider/model. Nil overlay = built-ins as-is.
+func mergePriceTables(base, overlay map[string]map[string]ModelPrice) map[string]map[string]ModelPrice {
+	if len(overlay) == 0 {
+		return base
+	}
+	merged := make(map[string]map[string]ModelPrice, len(base))
+	for provider, models := range base {
+		cp := make(map[string]ModelPrice, len(models))
+		for m, p := range models {
+			cp[m] = p
+		}
+		merged[provider] = cp
+	}
+	for provider, models := range overlay {
+		dst, ok := merged[provider]
+		if !ok {
+			dst = make(map[string]ModelPrice, len(models))
+			merged[provider] = dst
+		}
+		for m, p := range models {
+			dst[m] = p
+		}
+	}
+	return merged
 }
 
 // Track records a single LLM call's usage.
@@ -147,11 +217,11 @@ func (ct *CostTracker) getPrice(model string) ModelPrice {
 		return ModelPrice{Input: ct.override, Output: ct.override * 3, CachedInput: ct.override * 0.1}
 	}
 
-	providerPrices, ok := prices[ct.provider]
+	providerPrices, ok := ct.priceTable()[ct.provider]
 	if !ok {
 		// Try to match openai-compatible to openai prices
 		if ct.provider == "openai-compatible" || ct.provider == "qwen" {
-			providerPrices = prices["openai"]
+			providerPrices = ct.priceTable()["openai"]
 		}
 	}
 
@@ -216,7 +286,7 @@ func EstimateFromBytes(contentBytes int, provider string, model string, priceOve
 // FormatReport returns a human-readable cost summary.
 func FormatReport(r *CostReport) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("\n💰 Cost report\n"))
+	b.WriteString(fmt.Sprintf("\n💰 Cost report (approximate)\n"))
 	b.WriteString(fmt.Sprintf("   Tokens: %d input, %d output", r.TotalInputTokens, r.TotalOutputTokens))
 	if r.TotalCachedTokens > 0 {
 		b.WriteString(fmt.Sprintf(" (%d cached)", r.TotalCachedTokens))
