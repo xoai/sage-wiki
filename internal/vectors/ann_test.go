@@ -311,3 +311,22 @@ func itoa2(n int) string {
 	}
 	return string(digits)
 }
+
+func TestANN_ZeroNormVectorSkipped(t *testing.T) {
+	db := annTestDB(t)
+	s := NewStore(db, WithANN(true))
+	s.Upsert("real", []float32{1, 0, 0, 0})
+	s.Upsert("zero", []float32{0, 0, 0, 0})
+	res, err := s.Search([]float32{1, 0, 0, 0}, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range res {
+		if r.ID == "zero" {
+			t.Error("zero-norm vector returned with NaN score — must be skipped")
+		}
+		if r.Score != r.Score {
+			t.Errorf("NaN score leaked for %s", r.ID)
+		}
+	}
+}

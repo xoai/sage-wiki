@@ -24,6 +24,7 @@ func TestSearch_SelfQueryRecall(t *testing.T) {
 	}
 	for attempt := 0; attempt < 20; attempt++ {
 		g := NewGraph[string]() // default ef=20 is fine for recall@1 here
+		g.Rng = rand.New(rand.NewSource(int64(attempt))) // deterministic graphs — no flaky gate
 		for i, v := range vecs {
 			g.Add(MakeNode(fmt.Sprintf("d%d", i), v))
 		}
@@ -50,5 +51,44 @@ func TestSearch_TopKOrdering(t *testing.T) {
 	nodes := g.Search(Vector{1, 0, 0, 0}, 2)
 	if len(nodes) != 2 || nodes[0].Key != "x" || nodes[1].Key != "w" {
 		t.Errorf("top-2 = %v, want [x w]", nodes)
+	}
+}
+
+// Regression (independent review, CRITICAL): Delete must not leave empty
+// layers that crash later Add/Search with nil derefs.
+func TestDelete_AddAfterEmptyNoPanic(t *testing.T) {
+	g := NewGraph[string]()
+	g.Add(MakeNode("a", Vector{1, 0, 0, 0}))
+	g.Delete("a")
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Add after emptying the graph panicked: %v", r)
+		}
+	}()
+	g.Add(MakeNode("b", Vector{0, 1, 0, 0}))
+	if g.Len() != 1 {
+		t.Errorf("Len = %d, want 1", g.Len())
+	}
+}
+
+func TestDelete_SearchWithEmptyTopLayerNoPanic(t *testing.T) {
+	g := NewGraph[string]()
+	g.Rng = rand.New(rand.NewSource(2))
+	// Add enough nodes that upper layers exist, then delete the sole
+	// occupant of the top layer.
+	for i := 0; i < 200; i++ {
+		g.Add(MakeNode(string(rune('a'+i%26))+string(rune('0'+i/26)), Vector{float32(i), float32(i % 7), 0, 0}))
+	}
+	sizes := g.DebugLayerSizes()
+	if len(sizes) < 2 {
+		t.Skip("no upper layer formed with this seed")
+	}
+	// Delete every node except a base-layer handful.
+	for i := 0; i < 197; i++ {
+		g.Delete(string(rune('a'+i%26)) + string(rune('0'+i/26)))
+	}
+	nodes := g.Search(Vector{1, 0, 0, 0}, 1)
+	if len(nodes) == 0 {
+		t.Error("search returned nothing from a non-empty base layer")
 	}
 }

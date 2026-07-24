@@ -36,6 +36,22 @@ math. vek is pure Go with a noasm fallback — no CGO anywhere.
 encode.go (Export/Import — no persistence needed, graphs rebuild at
 open), analyzer.go, SavedGraph, tests.
 
+## Later fixes (independent review, 2026-07-24)
+
+- **Delete left empty layers** → nil-pointer panics on later Add
+  (assertDims→Dims→entry().Value) and Search (empty top layer). Fixed:
+  trailing empty layers pruned in Delete, Dims()/assertDims nil-tolerant,
+  Search skips empty layers defensively.
+- **Ghost nodes after Delete.** Two resurrection paths: (1) isolate()
+  removed links and called replenish in ONE pass — replenish re-added the
+  deleted node through neighbors not yet cleaned; (2) the graph-level
+  ghost sweep made the same mistake one level up (delete+replenish per
+  node in map order). Worse, replenish() creates ONE-WAY links, which
+  isolate() cannot clean at all. Fixed: two passes everywhere (unlink
+  fully, then replenish), plus a full neighbor-map sweep in Delete.
+- Upstream's `heap.Max()`/`PopLast()` (the proven-broken API) is DELETED
+  from this copy so it can't be re-misused.
+
 ## Upstream
 
 Report-worthy: github.com/coder/hnsw — heap.Max() min-heap fallacy in

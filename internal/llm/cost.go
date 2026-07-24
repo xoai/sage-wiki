@@ -241,11 +241,23 @@ func (ct *CostTracker) getPrice(model string) ModelPrice {
 		// built-ins (Go map order is randomized; a table entry and a
 		// built-in can both prefix-match the same model).
 		var builtinHit *ModelPrice
+		var overlayHit *ModelPrice
+		var overlayName *string
 		for name, p := range providerPrices {
 			if strings.HasPrefix(model, name) || strings.HasPrefix(name, model) {
 				if ct.overlay != nil && ct.overlay[lookupProvider] != nil {
 					if _, isOverlay := ct.overlay[lookupProvider][name]; isOverlay {
-						return p
+						// Overlay-vs-overlay collisions resolve
+						// deterministically: longest (most specific) name
+						// wins, lexical order breaks ties (map order is
+						// randomized).
+						if overlayHit == nil || len(name) > len(*overlayName) ||
+							(len(name) == len(*overlayName) && name < *overlayName) {
+							hit := p
+							overlayHit = &hit
+							nameCopy := name
+							overlayName = &nameCopy
+						}
 					}
 				}
 				if builtinHit == nil {
@@ -253,6 +265,9 @@ func (ct *CostTracker) getPrice(model string) ModelPrice {
 					builtinHit = &hit
 				}
 			}
+		}
+		if overlayHit != nil {
+			return *overlayHit
 		}
 		if builtinHit != nil {
 			return *builtinHit

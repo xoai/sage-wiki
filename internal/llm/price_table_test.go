@@ -113,3 +113,15 @@ func TestLoadPriceTable_PrefixCollisionOverlayWins(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadPriceTable_OverlayVsOverlayDeterministic(t *testing.T) {
+	// Two table entries both prefix-match; the longest (most specific)
+	// name must win every time (map order is random).
+	path := writeTable(t, `{"openai": {"gpt-4o": {"input": 1.0}, "gpt-4o-2024": {"input": 2.0}}}`)
+	ct := NewCostTrackerWithTable("openai", 0, path)
+	for i := 0; i < 20; i++ {
+		if p := ct.getPrice("gpt-4o-2024-x"); p.Input != 2.0 {
+			t.Fatalf("overlay-vs-overlay resolved nondeterministically: %+v", p)
+		}
+	}
+}

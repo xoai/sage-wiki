@@ -1,6 +1,7 @@
 package vectors
 
 import (
+	"math"
 	"math/rand"
 
 	"github.com/xoai/sage-wiki/internal/vectors/hnsw"
@@ -99,6 +100,10 @@ func (b *hnswBackend) search(nq []float32, limit int, filter map[string]bool) []
 	nodes := b.graph.Search(nq, fetch)
 	out := make([]cacheResult, 0, limit)
 	for _, n := range nodes {
+		d := float64(hnsw.CosineDistance(nq, n.Value))
+		if math.IsNaN(d) {
+			continue // zero-norm row or query — brute path scores these 0 (skip, not NaN)
+		}
 		did := b.docByID[n.Key]
 		if filter != nil && !filter[did] {
 			continue
@@ -106,7 +111,7 @@ func (b *hnswBackend) search(nq []float32, limit int, filter map[string]bool) []
 		out = append(out, cacheResult{
 			id:    n.Key,
 			docID: did,
-			score: 1 - float64(hnsw.CosineDistance(nq, n.Value)),
+			score: 1 - d,
 		})
 		if len(out) == limit {
 			break

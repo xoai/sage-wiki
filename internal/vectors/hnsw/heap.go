@@ -70,10 +70,6 @@ func (h *Heap[T]) Pop() T {
 	return heap.Pop(&h.inner).(T)
 }
 
-func (h *Heap[T]) PopLast() T {
-	return h.Remove(h.Len() - 1)
-}
-
 // Remove removes and returns the element at index i from the heap.
 // The complexity is O(log n) where n = h.Len().
 func (h *Heap[T]) Remove(i int) T {
@@ -85,10 +81,9 @@ func (h *Heap[T]) Min() T {
 	return h.inner.data[0]
 }
 
-// Max returns the maximum element in the heap.
-func (h *Heap[T]) Max() T {
-	return h.inner.data[h.inner.Len()-1]
-}
+// NOTE: upstream's Max()/PopLast() were deleted here — on a min-heap they
+// returned arbitrary leaves, not the maximum (the bug that broke k>1
+// search). Nothing may re-add them.
 
 func (h *Heap[T]) Slice() []T {
 	return h.inner.data

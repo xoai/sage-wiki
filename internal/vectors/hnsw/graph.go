@@ -169,8 +169,15 @@ func (n *layerNode[K]) replenish(m int) {
 // isolates remove the node from the graph by removing all connections
 // to neighbors.
 func (n *layerNode[K]) isolate(m int) {
+	// Vendored fix: TWO passes. Single-pass isolate+replenish resurrected
+	// the deleted node as a GHOST: replenish(n₁) walked n₂'s neighbor list
+	// — which still contained the deleted node, since n₂'s cleanup hadn't
+	// run yet — and re-added it. The ghost then surfaced in searches
+	// (deleted key returned as a hit, nil-deref on elevator lookup).
 	for _, neighbor := range n.neighbors {
 		delete(neighbor.neighbors, n.Key)
+	}
+	for _, neighbor := range n.neighbors {
 		neighbor.replenish(m)
 	}
 }
@@ -295,22 +302,27 @@ func (h *Graph[K]) randomLevel() int {
 }
 
 func (g *Graph[K]) assertDims(n Vector) {
-	if len(g.layers) == 0 {
-		return
-	}
 	hasDims := g.Dims()
+	if hasDims == 0 {
+		return // empty graph (or freshly pruned) — dims set by the next insert
+	}
 	if hasDims != len(n) {
 		panic(fmt.Sprint("embedding dimension mismatch: ", hasDims, " != ", len(n)))
 	}
 }
 
 // Dims returns the number of dimensions in the graph, or
-// 0 if the graph is empty.
+// 0 if the graph is empty. Nil-tolerant for a pruned base layer
+// (vendored fix: Delete may leave the base empty until the next Add).
 func (g *Graph[K]) Dims() int {
 	if len(g.layers) == 0 {
 		return 0
 	}
-	return len(g.layers[0].entry().Value)
+	e := g.layers[0].entry()
+	if e == nil {
+		return 0
+	}
+	return len(e.Value)
 }
 
 func ptr[T any](v T) *T {
@@ -422,8 +434,12 @@ func (h *Graph[K]) Search(near Vector, k int) []Node[K] {
 
 	for layer := len(h.layers) - 1; layer >= 0; layer-- {
 		searchPoint := h.layers[layer].entry()
+		if searchPoint == nil {
+			continue // vendored fix: skip empty layers (defensive; Delete prunes)
+		}
 		if elevator != nil {
 			searchPoint = h.layers[layer].nodes[*elevator]
+
 		}
 
 		// Descending hierarchies: greedy ef=1 per Malkov & Yashunin — a
@@ -475,6 +491,33 @@ func (h *Graph[K]) Delete(key K) bool {
 		deleted = true
 	}
 
+	// Vendored fix: GHOST SWEEP in two passes. replenish() creates ONE-WAY
+	// neighbor links, so isolate() alone cannot remove every reference to
+	// the deleted node. And the sweep itself must unlink EVERYWHERE before
+	// any replenish runs — a delete+replenish single pass resurrects the
+	// deleted key through not-yet-swept neighbors (the ghost then surfaces
+	// in searches: deleted key returned as a hit, nil-deref elevator).
+	// Deletes are rare; a full sweep is cheap and total.
+	var affected []*layerNode[K]
+	for _, layer := range h.layers {
+		for _, node := range layer.nodes {
+			if _, had := node.neighbors[key]; had {
+				delete(node.neighbors, key)
+				affected = append(affected, node)
+			}
+		}
+	}
+	for _, node := range affected {
+		node.replenish(h.M)
+	}
+
+	// Vendored fix: prune empty layers from the top — a stale empty layer
+	// panics later Adds (entry() nil deref) and Searches. Only trailing
+	// layers can be empty (a node exists in every layer below its level).
+	for len(h.layers) > 0 && h.layers[len(h.layers)-1].size() == 0 {
+		h.layers = h.layers[:len(h.layers)-1]
+	}
+
 	return deleted
 }
 
@@ -502,6 +545,20 @@ func (h *Graph[K]) DebugBaseDegree(key K) (present bool, degree int) {
 		return false, 0
 	}
 	return true, len(n.neighbors)
+}
+
+// DebugInvariantViolations returns keys present in layer i but missing
+// from layer i-1 (vendored, for structure probes).
+func (h *Graph[K]) DebugInvariantViolations() []K {
+	var out []K
+	for i := 1; i < len(h.layers); i++ {
+		for key := range h.layers[i].nodes {
+			if _, ok := h.layers[i-1].nodes[key]; !ok {
+				out = append(out, key)
+			}
+		}
+	}
+	return out
 }
 
 // DebugLayerSizes returns per-layer node counts, top layer last.
