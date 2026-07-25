@@ -33,6 +33,7 @@ _Dots on the outer boundary represent summaries of all documents in the knowledg
 | [Self-Hosted Server](docs/guides/self-hosted-server.md) | Docker Compose, Syncthing, reverse proxy, VPS deployment |
 | [Configurable Relations](docs/guides/configurable-relations.md) | Custom ontology types, multilingual synonyms, type restrictions |
 | [Local Models](docs/guides/local-models.md) | Ollama setup, GPU/CPU routing, per-pass model config |
+| [Storage Backends](docs/guides/storage-backends.md) | SQLite vs PostgreSQL/pgvector setup, switching, pool sizing |
 
 ## Install
 
@@ -268,6 +269,51 @@ search:
 (which may go stale). Point `compiler.price_table` at a JSON file (same
 shape as the built-in map) to override them per provider/model; built-ins
 remain the fallback.
+
+## Storage & Reliability
+
+**Storage backends.** SQLite (zero-config, default) or PostgreSQL with
+pgvector for server-grade, multi-user deployments — pure Go drivers,
+`CGO_ENABLED=0` preserved:
+
+```yaml
+storage:
+  backend: postgres
+  dsn: postgres://user:pass@host:5432/sagewiki
+  vector_dimension: 768   # must match your embedding model
+```
+
+The schema migrates automatically on first open; the same conformance
+suite pins behavior across both backends. See
+[docs/guides/storage-backends.md](docs/guides/storage-backends.md) for
+setup, switching, and pool sizing.
+
+**Observability.** Compile passes, LLM tokens/retries, backpressure, and
+search latency are instrumented out of the box — structured-log snapshots
+at phase ends and shutdown (always on), plus an optional Prometheus
+endpoint:
+
+```yaml
+serve:
+  metrics: true   # GET /metrics on the web server (off by default)
+```
+
+See [docs/guides/metrics.md](docs/guides/metrics.md) for the full
+instrument list.
+
+**Provider-native structured outputs.** Where the provider supports it,
+JSON responses are schema-guaranteed instead of fence-stripped: Anthropic
+tool-use, OpenAI `response_format`, Gemini `responseSchema`. Backends
+without support fall back to the previous fence-strip parsing — no config
+needed, parsing failures drop measurably.
+
+**Keychain-backed credentials.** On macOS/Windows/Linux desktops, API
+tokens and OAuth credentials are stored in the OS keychain
+(pure-Go `go-keyring`, no cgo) instead of the plaintext
+`~/.sage-wiki/auth.json`. Headless machines and containers keep the file
+fallback automatically; `sage-wiki auth status` reports which backend
+holds each credential, and first run offers to migrate existing file
+credentials into the keychain.
 
 ## Configuration
 
@@ -774,6 +820,12 @@ parsers:
 ```
 
 Security: external parsers run with timeout enforcement (30s default, 120s max) and environment stripping (only PATH, HOME, LANG). They require double opt-in: `parsers.external: true` to load parser definitions, and `parsers.trust_external: true` to acknowledge that parsers execute as unsandboxed subprocesses. Packs with parsers also require `--enable-parsers` during `pack apply`.
+
+Built-in extractors are additionally hardened with decompression caps
+(per-entry and aggregate size limits against zip bombs) and covered by a
+nightly Go fuzzing job ([.github/workflows/fuzz.yml](.github/workflows/fuzz.yml))
+that feeds malformed docx/xlsx/pptx/epub/eml/pdf inputs to the parsers and
+checks the caps hold.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full parser authoring guide.
 

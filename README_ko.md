@@ -36,6 +36,7 @@ _외곽 경계의 점들은 지식 베이스에 있는 모든 문서의 요약�
 | [Self-Hosted Server](docs/guides/self-hosted-server.md) | Docker Compose, Syncthing, 리버스 프록시 |
 | [Configurable Relations](docs/guides/configurable-relations.md) | 커스텀 온톨로지, 다국어 동의어 |
 | [Local Models](docs/guides/local-models.md) | Ollama 설정, GPU/CPU 라우팅 |
+| [Storage Backends](docs/guides/storage-backends.md) | SQLite vs PostgreSQL/pgvector 설정, 전환, 풀 크기 조정 |
 
 ## 설치
 
@@ -219,6 +220,57 @@ sage-wiki serve --ui
 
 - `--port 3333` — 포트 변경 (기본값 3333)
 - `--bind 0.0.0.0` — 네트워크에 노출 (기본값은 localhost만, 인증 없음)
+
+**컴파일 워커.** `serve`(MCP 및 `--ui`)는 내구성 있는 컴파일 워커를 실행합니다. 서빙 중 추가된 소스는 자동으로 발견되어 컴파일되며, 크래시 복구(리스 만료 시 중단된 항목 재큐잉)와 진행률 스트리밍(`GET /api/compile/status`, `GET /api/compile/progress` SSE)을 제공합니다. 조정하거나 비활성화할 수 있습니다:
+
+```yaml
+serve:
+  worker:
+    enabled: true              # default on; false to disable
+    poll_interval_seconds: 5
+    lease_ttl_seconds: 120
+    heartbeat_interval_seconds: 30
+    max_attempts: 5            # dead-letter after this many failures
+    claim_limit: 16
+```
+
+계속 실패하는 소스는 `max_attempts` 회 실패 후 데드 레터 처리됩니다. `sage-wiki compile --fresh`(또는 소스 편집)로 다시 큐에 넣을 수 있습니다.
+
+**ANN 벡터 검색(옵트인).** 매우 큰 볼트의 경우 근사 최근접 이웃 검색(HNSW, 순수 Go)을 활성화하세요 — 무차별 정확 검색이 기본값으로 유지됩니다:
+
+```yaml
+search:
+  ann:
+    enabled: true
+```
+
+**가격표 재정의.** 비용 추정은 내장된 모델별 가격을 사용합니다(오래될 수 있음). `compiler.price_table`을 JSON 파일(내장 맵과 동일한 형식)로 지정하면 제공자/모델별로 재정의할 수 있습니다. 내장 가격은 fallback으로 유지됩니다.
+
+## 스토리지 및 안정성
+
+**스토리지 백엔드.** SQLite(제로 설정, 기본값) 또는 pgvector를 사용한 PostgreSQL(서버급 다중 사용자 배포용)— 순수 Go 드라이버, `CGO_ENABLED=0` 유지:
+
+```yaml
+storage:
+  backend: postgres
+  dsn: postgres://user:pass@host:5432/sagewiki
+  vector_dimension: 768   # must match your embedding model
+```
+
+첫 오픈 시 스키마가 자동으로 마이그레이션되며, 동일한 적합성 테스트 스위트가 두 백엔드의 동작을 고정합니다. 설정, 전환, 풀 크기 조정은 [docs/guides/storage-backends.md](docs/guides/storage-backends.md)를 참조하세요.
+
+**관측 가능성.** 컴파일 패스, LLM 토큰/재시도, 백프레셔, 검색 지연이 기본으로 계측됩니다 — 페이즈 종료 및 종료 시 구조화된 로그 스냅샷(항상 켜짐)과 선택적 Prometheus 엔드포인트:
+
+```yaml
+serve:
+  metrics: true   # GET /metrics on the web server (off by default)
+```
+
+전체 계측 목록은 [docs/guides/metrics.md](docs/guides/metrics.md)를 참조하세요.
+
+**프로바이더 네이티브 구조화 출력.** 프로바이더가 지원하는 경우 JSON 응답이 펜스 제거 대신 스키마로 보장됩니다: Anthropic 도구 사용, OpenAI `response_format`, Gemini `responseSchema`. 지원하지 않는 백엔드는 기존 펜스 제거 방식으로 fallback합니다 — 설정 불필요, 파싱 실패가 크게 감소합니다.
+
+**키체인 기반 자격 증명.** macOS/Windows/Linux 데스크톱에서 API 토큰과 OAuth 자격 증명은 평문 `~/.sage-wiki/auth.json` 대신 OS 키체인(순수 Go `go-keyring`, cgo 없음)에 저장됩니다. 헤드리스 머신과 컨테이너는 파일 fallback을 자동으로 유지합니다. `sage-wiki auth status`로 각 자격 증명의 백엔드를 확인할 수 있으며, 첫 실행 시 기존 파일 자격 증명을 키체인으로 마이그레이션할 것을 제안합니다.
 
 ## 설정
 
@@ -679,7 +731,9 @@ sage-wiki pack apply academic-research --mode merge
 sage-wiki pack list
 ```
 
-팩은 조합 가능합니다. 커뮤니티 팩은 [sage-wiki-packs](https://github.com/xoai/sage-wiki-packs) 레지스트리를 통해 배포됩니다. 자세한 내용은 [CONTRIBUTING.md](CONTRIBUTING.md)를 참조하세요.
+팩은 조합 가능합니다. 커뮤니티 팩은 [sage-wiki-packs](https://github.com/xoai/sage-wiki-packs) 레지스트리를 통해 배포됩니다. 내장 추출기는 추가로 압축 해제 상한(zip bomb 방지를 위한 항목별 및 총합 크기 제한)으로 강화되어 있으며, 야간 Go 퍼징 작업([.github/workflows/fuzz.yml](.github/workflows/fuzz.yml))으로 커버됩니다 — malformed docx/xlsx/pptx/epub/eml/pdf 입력을 파서에 넣어 상한이 유지되는지 검증합니다.
+
+자세한 내용은 [CONTRIBUTING.md](CONTRIBUTING.md)를 참조하세요.
 
 ## 외부 파서
 

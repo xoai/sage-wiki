@@ -36,6 +36,7 @@ _Các điểm trên đường biên ngoài đại diện cho tóm tắt của t�
 | [Self-Hosted Server](docs/guides/self-hosted-server.md) | Docker Compose, Syncthing, reverse proxy |
 | [Configurable Relations](docs/guides/configurable-relations.md) | Ontology tùy chỉnh, từ đồng nghĩa đa ngôn ngữ |
 | [Local Models](docs/guides/local-models.md) | Cài đặt Ollama, định tuyến GPU/CPU |
+| [Storage Backends](docs/guides/storage-backends.md) | Cài đặt SQLite vs PostgreSQL/pgvector, chuyển đổi, định cỡ pool |
 
 ## Cài đặt
 
@@ -219,6 +220,57 @@ Tùy chọn:
 
 - `--port 3333` — thay đổi cổng (mặc định 3333)
 - `--bind 0.0.0.0` — mở trên mạng (mặc định chỉ localhost, không có xác thực)
+
+**Compile worker.** `serve` (MCP và `--ui`) chạy một compile worker bền vững: các nguồn thêm vào khi đang phục vụ được phát hiện và biên dịch tự động, có khôi phục sau sự cố (các mục bị gián đoạn được đưa lại vào hàng đợi khi lease hết hạn) và truyền tiến trình (`GET /api/compile/status`, `GET /api/compile/progress` qua SSE). Có thể tinh chỉnh hoặc tắt:
+
+```yaml
+serve:
+  worker:
+    enabled: true              # default on; false to disable
+    poll_interval_seconds: 5
+    lease_ttl_seconds: 120
+    heartbeat_interval_seconds: 30
+    max_attempts: 5            # dead-letter after this many failures
+    claim_limit: 16
+```
+
+Nguồn liên tục thất bại sẽ bị dead-letter sau `max_attempts` lần thất bại; `sage-wiki compile --fresh` (hoặc chỉnh sửa nguồn) sẽ đưa lại vào hàng đợi.
+
+**Tìm kiếm vector ANN (tùy chọn).** Với các vault rất lớn, bật tìm kiếm lân cận gần đúng (HNSW, thuần Go) — tìm kiếm chính xác vét cạn vẫn là mặc định:
+
+```yaml
+search:
+  ann:
+    enabled: true
+```
+
+**Ghi đè bảng giá.** Ước tính chi phí dùng giá tích hợp theo mô hình (có thể lỗi thờ). Trỏ `compiler.price_table` tới một tệp JSON (cùng dạng với bản đồ tích hợp) để ghi đè theo nhà cung cấp/mô hình; giá tích hợp vẫn là dự phòng.
+
+## Lưu trữ và độ tin cậy
+
+**Backend lưu trữ.** SQLite (không cần cấu hình, mặc định) hoặc PostgreSQL với pgvector cho triển khai đa ngườ dùng cấp máy chủ — driver thuần Go, giữ `CGO_ENABLED=0`:
+
+```yaml
+storage:
+  backend: postgres
+  dsn: postgres://user:pass@host:5432/sagewiki
+  vector_dimension: 768   # must match your embedding model
+```
+
+Schema tự động migrate khi mở lần đầu; cùng một bộ kiểm tra tương thích ghim hành vi của cả hai backend. Xem [docs/guides/storage-backends.md](docs/guides/storage-backends.md) để cài đặt, chuyển đổi và định cỡ pool.
+
+**Khả năng quan sát.** Các pass biên dịch, token LLM/retry, backpressure và độ trễ tìm kiếm được đo sẵn — snapshot log có cấu trúc khi kết thúc phase và khi tắt (luôn bật), cộng thêm endpoint Prometheus tùy chọn:
+
+```yaml
+serve:
+  metrics: true   # GET /metrics on the web server (off by default)
+```
+
+Xem danh sách đầy đủ tại [docs/guides/metrics.md](docs/guides/metrics.md).
+
+**Đầu ra có cấu trúc theo provider.** Khi provider hỗ trợ, phản hồi JSON được đảm bảo bởi schema thay vì tách khỏi fence: Anthropic tool-use, OpenAI `response_format`, Gemini `responseSchema`. Backend không hỗ trợ sẽ quay lại cách tách fence cũ — không cần cấu hình, lỗi phân tích giảm đáng kể.
+
+**Thông tin xác thực trong keychain hệ điều hành.** Trên macOS/Windows/Linux desktop, token API và thông tin xác thực OAuth được lưu trong keychain của hệ điều hành (`go-keyring` thuần Go, không cgo) thay vì tệp plaintext `~/.sage-wiki/auth.json`. Máy headless và container tự động giữ phương án dự phòng bằng tệp; `sage-wiki auth status` cho biết backend nào giữ từng credential, và lần chạy đầu tiên sẽ đề xuất di chuyển credential hiện có vào keychain.
 
 ## Cấu hình
 
@@ -693,7 +745,9 @@ parsers:
     timeout: 30s
 ```
 
-Bảo mật: trình phân tích ngoài chạy với giới hạn thời gian, loại bỏ biến môi trường, và cách ly mạng trên Linux. Cần cấu hình `parsers.external: true`. Xem [CONTRIBUTING.md](CONTRIBUTING.md).
+Bảo mật: trình phân tích ngoài chạy với giới hạn thời gian, loại bỏ biến môi trường, và cách ly mạng trên Linux. Cần cấu hình `parsers.external: true`. Các extractor tích hợp còn được tăng cường bằng giới hạn giải nén (kích thước mỗi mục và tổng — chống zip bomb) và được bao phủ bởi tác vụ fuzzing Go hằng đêm ([.github/workflows/fuzz.yml](.github/workflows/fuzz.yml)) đưa các đầu vào docx/xlsx/pptx/epub/eml/pdf hỏng vào parser và kiểm tra giới hạn có được giữ không.
+
+Xem [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Tệp kỹ năng Agent
 

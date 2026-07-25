@@ -36,6 +36,7 @@ _外圈的点代表知识库中所有文档的摘要,内圈的点代表从知识
 | [Self-Hosted Server](docs/guides/self-hosted-server.md) | Docker Compose、Syncthing、反向代理 |
 | [Configurable Relations](docs/guides/configurable-relations.md) | 自定义本体、多语言同义词 |
 | [Local Models](docs/guides/local-models.md) | Ollama 设置、GPU/CPU 路由 |
+| [Storage Backends](docs/guides/storage-backends.md) | SQLite 与 PostgreSQL/pgvector 安装、切换、连接池配置 |
 
 ## 安装
 
@@ -219,6 +220,57 @@ Web UI 使用 Preact + Tailwind CSS 构建,通过 `go:embed` 嵌入 Go 二进制
 
 - `--port 3333` -- 修改端口 (默认 3333)
 - `--bind 0.0.0.0` -- 暴露到网络 (默认仅 localhost,无认证)
+
+**编译工作器。** `serve`(MCP 和 `--ui`)运行持久化编译工作器:服务期间新增的源文件会被自动发现并编译,具备崩溃恢复能力(租约过期会将被中断的条目重新排队),并通过 `GET /api/compile/status` 和 `GET /api/compile/progress`(SSE)流式传输进度。可调整或禁用:
+
+```yaml
+serve:
+  worker:
+    enabled: true              # default on; false to disable
+    poll_interval_seconds: 5
+    lease_ttl_seconds: 120
+    heartbeat_interval_seconds: 30
+    max_attempts: 5            # dead-letter after this many failures
+    claim_limit: 16
+```
+
+持续失败的源文件在 `max_attempts` 次失败后会被标记为死信(dead-letter);`sage-wiki compile --fresh`(或编辑该源文件)可将其重新加入队列。
+
+**ANN 向量搜索(可选开启)。** 对于超大型知识库,可启用近似最近邻搜索(HNSW,纯 Go 实现)— 暴力精确搜索仍为默认:
+
+```yaml
+search:
+  ann:
+    enabled: true
+```
+
+**价格表覆盖。** 成本估算使用内置的每模型价格(可能过时)。将 `compiler.price_table` 指向一个 JSON 文件(格式与内置映射相同)即可按提供商/模型覆盖;未列出的条目仍使用内置价格。
+
+## 存储与可靠性
+
+**存储后端。** SQLite(零配置,默认)或 PostgreSQL + pgvector(用于服务器级多用户部署)— 纯 Go 驱动,保持 `CGO_ENABLED=0`:
+
+```yaml
+storage:
+  backend: postgres
+  dsn: postgres://user:pass@host:5432/sagewiki
+  vector_dimension: 768   # must match your embedding model
+```
+
+首次打开时自动执行 schema 迁移;同一套一致性测试套件保证两种后端行为一致。安装、切换与连接池配置详见 [docs/guides/storage-backends.md](docs/guides/storage-backends.md)。
+
+**可观测性。** 编译各阶段、LLM token/重试、背压与搜索延迟均已内置度量 — 阶段结束与关闭时输出结构化日志快照(始终开启),另可选 Prometheus 端点:
+
+```yaml
+serve:
+  metrics: true   # GET /metrics on the web server (off by default)
+```
+
+完整指标列表见 [docs/guides/metrics.md](docs/guides/metrics.md)。
+
+**提供商原生结构化输出。** 在提供商支持的情况下,JSON 响应由 schema 保证,而非解析代码块:Anthropic tool-use、OpenAI `response_format`、Gemini `responseSchema`。不支持的后端自动回退到原有的代码块解析 — 无需配置,解析失败率显著降低。
+
+**系统钥匙串凭证。** 在 macOS/Windows/Linux 桌面环境,API 令牌和 OAuth 凭证存储在操作系统钥匙串中(纯 Go `go-keyring`,无 cgo),而非明文 `~/.sage-wiki/auth.json`。无头机器和容器自动保留文件回退;`sage-wiki auth status` 显示每个凭证所在的存储后端,首次运行时会提示将现有文件凭证迁移到钥匙串。
 
 ## 配置
 
@@ -646,7 +698,9 @@ sage-wiki pack apply academic-research --mode merge
 sage-wiki pack list
 ```
 
-包可以组合使用。社区包通过 [sage-wiki-packs](https://github.com/xoai/sage-wiki-packs) 注册表分发。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+包可以组合使用。社区包通过 [sage-wiki-packs](https://github.com/xoai/sage-wiki-packs) 注册表分发。内置提取器还通过解压上限(针对 zip 炸弹的单条目与总量大小限制)加固,并由每夜的 Go fuzzing 任务([.github/workflows/fuzz.yml](.github/workflows/fuzz.yml))覆盖 — 向解析器输入畸形的 docx/xlsx/pptx/epub/eml/pdf 文件并验证上限生效。
+
+详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 外部解析器
 
