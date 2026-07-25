@@ -252,8 +252,21 @@ func (c *Client) SetTracker(tracker *CostTracker) {
 }
 
 // SetPass sets the current compiler pass name for cost tracking.
+//
+// c.pass is unsynchronized and trackUsage reads it from request goroutines, so
+// SetPass must be called OUTSIDE a fan-out — before it starts and after it
+// joins — never from within one.
 func (c *Client) SetPass(pass string) {
 	c.pass = pass
+}
+
+// Pass returns the current cost-tracking pass name, so a pass that changes it
+// can restore the caller's value on the way out. Without this, a pass that sets
+// its own label leaks it into whatever runs next: on the re-extract path
+// nothing sets a label afterwards, so every write-pass token would be billed to
+// the previous pass.
+func (c *Client) Pass() string {
+	return c.pass
 }
 
 // trackUsage records token usage if a tracker is attached.

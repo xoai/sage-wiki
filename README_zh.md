@@ -37,6 +37,7 @@ _外圈的点代表知识库中所有文档的摘要,内圈的点代表从知识
 | [Configurable Relations](docs/guides/configurable-relations.md) | 自定义本体、多语言同义词 |
 | [Local Models](docs/guides/local-models.md) | Ollama 设置、GPU/CPU 路由 |
 | [Storage Backends](docs/guides/storage-backends.md) | SQLite 与 PostgreSQL/pgvector 安装、切换、连接池配置 |
+| [Graph Memory](docs/guides/graph-memory.md) | 带证据的关系、LLM 三元组抽取、来源溯源与成本 |
 
 ## 安装
 

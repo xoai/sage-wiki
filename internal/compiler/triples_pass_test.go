@@ -1,0 +1,317 @@
+package compiler
+
+import (
+	"context"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/storage"
+)
+
+func passStore(t *testing.T) *ontology.Store {
+	t.Helper()
+	db, err := storage.Open(filepath.Join(t.TempDir(), "pass.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return ontology.NewStore(db,
+		ontology.ValidRelationNames(ontology.MergedRelations(nil)),
+		ontology.ValidEntityTypeNames(ontology.MergedEntityTypes(nil)))
+}
+
+// countingServer replies with sampleGraph and counts requests.
+func countingServer(t *testing.T) (*httptest.Server, *atomic.Int64) {
+	t.Helper()
+	var calls atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": sampleGraph}}},
+			"model":   "m",
+			"usage":   map[string]int{"total_tokens": 10},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &calls
+}
+
+func enabledCfg() *config.Config {
+	c := &config.Config{}
+	c.Ontology.Triples.Enabled = true
+	c.Models.Extract = "m"
+	return c
+}
+
+// Default-off is the whole opt-in contract: an upgrade must cost nothing.
+func TestExtractTriplesPassDisabledMakesNoCall(t *testing.T) {
+	srv, calls := countingServer(t)
+	ont := passStore(t)
+
+	ExtractTriplesPass(context.Background(), ont,
+		[]SummaryResult{{SourcePath: "raw/a.md", Summary: "text"}}, nil,
+		&config.Config{}, triplesClient(t, srv.URL), false)
+
+	if got := calls.Load(); got != 0 {
+		t.Errorf("LLM calls = %d, want 0 when triples are disabled", got)
+	}
+	if n, _ := ont.RelationCount(); n != 0 {
+		t.Errorf("relations = %d, want 0", n)
+	}
+}
+
+// A zero-valued config must still work. Defaults() has no Ontology entry and is
+// only reached via config.Load, so a Config{} literal yields zero caps AND
+// MaxParallel 0 — and an unbuffered semaphore whose only receiver is its own
+// deferred release is a permanent hang, not a slow path. The timeout is what
+// makes that a failure instead of a wedged CI job.
+func TestExtractTriplesPassZeroValuedConfigStillExtracts(t *testing.T) {
+	srv, calls := countingServer(t)
+	ont := passStore(t)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ExtractTriplesPass(context.Background(), ont,
+			[]SummaryResult{{SourcePath: "raw/a.md", Summary: "text"}}, nil,
+			enabledCfg(), triplesClient(t, srv.URL), false)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("pass hung with a zero-valued config — MaxParallel must be floored at 1")
+	}
+
+	if got := calls.Load(); got != 1 {
+		t.Errorf("LLM calls = %d, want 1", got)
+	}
+	if n, _ := ont.RelationCount(); n != 1 {
+		t.Errorf("relations = %d, want 1 — zero caps must default, not zero the pass", n)
+	}
+}
+
+// opts.Ctx is nilable at the fullpipeline call site (fullpipeline.go proves it
+// seven lines later), and a per-document ctx.Err() on a nil interface panics.
+func TestExtractTriplesPassToleratesNilContext(t *testing.T) {
+	srv, _ := countingServer(t)
+	ont := passStore(t)
+
+	//nolint:staticcheck // deliberately nil: the call site can pass a nil ctx.
+	ExtractTriplesPass(nil, ont,
+		[]SummaryResult{{SourcePath: "raw/a.md", Summary: "text"}}, nil,
+		enabledCfg(), triplesClient(t, srv.URL), false)
+
+	if n, _ := ont.RelationCount(); n != 1 {
+		t.Errorf("relations = %d, want 1", n)
+	}
+}
+
+// A provider outage must not fail the compile: this is an additive, opt-in
+// enrichment pass, and articles must still be written.
+func TestExtractTriplesPassContainsProviderFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":{"message":"boom"}}`))
+	}))
+	defer srv.Close()
+	ont := passStore(t)
+
+	ExtractTriplesPass(context.Background(), ont,
+		[]SummaryResult{{SourcePath: "raw/a.md", Summary: "text"}}, nil,
+		enabledCfg(), triplesClient(t, srv.URL), false)
+
+	if n, _ := ont.RelationCount(); n != 0 {
+		t.Errorf("relations = %d, want 0", n)
+	}
+}
+
+// Cancellation must read as cancellation, not as one failure per remaining
+// document — the pass swallows errors, so without a distinct line a Ctrl-C is
+// indistinguishable from a provider outage.
+func TestExtractTriplesPassLogsCancellationOnce(t *testing.T) {
+	srv, _ := countingServer(t)
+	ont := passStore(t)
+
+	var buf strings.Builder
+	var mu sync.Mutex
+	restore := log.SetLoggerForTest(slog.New(slog.NewTextHandler(
+		&lockedWriter{mu: &mu, w: &buf}, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer restore()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	summaries := make([]SummaryResult, 5)
+	for i := range summaries {
+		summaries[i] = SummaryResult{SourcePath: "raw/a.md", Summary: "text"}
+	}
+	ExtractTriplesPass(ctx, ont, summaries, nil, enabledCfg(), triplesClient(t, srv.URL), false)
+
+	mu.Lock()
+	out := buf.String()
+	mu.Unlock()
+
+	cancelled := strings.Count(out, "cancel")
+	failures := strings.Count(out, "failed")
+	if cancelled != 1 {
+		t.Errorf("cancellation lines = %d, want exactly 1:\n%s", cancelled, out)
+	}
+	if failures != 0 {
+		t.Errorf("failure lines = %d, want 0 on a cancel:\n%s", failures, out)
+	}
+}
+
+// lockedWriter serializes writes from the pass's goroutines.
+type lockedWriter struct {
+	mu *sync.Mutex
+	w  *strings.Builder
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
+}
+
+// The label must be restored, or every token spent after this pass is billed to
+// it — on the re-extract path that is the entire write pass.
+func TestExtractTriplesPassRestoresCostLabel(t *testing.T) {
+	srv, _ := countingServer(t)
+	client := triplesClient(t, srv.URL)
+	client.SetPass("extract")
+
+	ExtractTriplesPass(context.Background(), passStore(t),
+		[]SummaryResult{{SourcePath: "raw/a.md", Summary: "text"}}, nil,
+		enabledCfg(), client, false)
+
+	if got := client.Pass(); got != "extract" {
+		t.Errorf("Pass() = %q after the triples pass, want the prior label restored", got)
+	}
+}
+
+// models.extract is commonly empty; stopping the chain there sends an empty
+// model string to the provider.
+func TestExtractTriplesPassModelChainFallsBackToSummarize(t *testing.T) {
+	var mu sync.Mutex
+	var models []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		models = append(models, body.Model)
+		mu.Unlock()
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": sampleGraph}}},
+			"model":   "m", "usage": map[string]int{"total_tokens": 1},
+		})
+	}))
+	defer srv.Close()
+
+	cfg := &config.Config{}
+	cfg.Ontology.Triples.Enabled = true
+	cfg.Models.Summarize = "summarize-model" // Extract deliberately empty
+
+	ExtractTriplesPass(context.Background(), passStore(t),
+		[]SummaryResult{{SourcePath: "raw/a.md", Summary: "text"}}, nil,
+		cfg, triplesClient(t, srv.URL), false)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(models) != 1 || models[0] != "summarize-model" {
+		t.Errorf("model sent = %v, want [summarize-model] via the extract->summarize fallback", models)
+	}
+}
+
+// On the re-extract path the summary carries its own frontmatter: SourceDoc
+// must come from the `source:` key, and the frontmatter must not reach the
+// model (an evidence span could otherwise be quoted out of `compiled_at:`).
+func TestExtractTriplesPassResolvesSourceDocFromFrontmatter(t *testing.T) {
+	var mu sync.Mutex
+	var prompts []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct{ Content string } `json:"messages"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		for _, m := range body.Messages {
+			prompts = append(prompts, m.Content)
+		}
+		mu.Unlock()
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": sampleGraph}}},
+			"model":   "m", "usage": map[string]int{"total_tokens": 1},
+		})
+	}))
+	defer srv.Close()
+	ont := passStore(t)
+
+	// The five-key shape summarize.go writes.
+	withFM := "---\nsource: raw/real-source.pdf\nsource_type: pdf\nsource_hash: abc\n" +
+		"compiled_at: 2026-01-01T00:00:00Z\nchunk_count: 3\n---\n\nBackpressure extends flow control.\n"
+	ExtractTriplesPass(context.Background(), ont,
+		[]SummaryResult{{SourcePath: "some-summary.md", Summary: withFM}}, nil,
+		enabledCfg(), triplesClient(t, srv.URL), true)
+
+	rels, _ := ont.GetRelations("backpressure", ontology.Outbound, "")
+	if len(rels) != 1 {
+		t.Fatalf("relations = %d, want 1", len(rels))
+	}
+	if rels[0].SourceDoc != "raw/real-source.pdf" {
+		t.Errorf("SourceDoc = %q, want the frontmatter source, not the summary filename", rels[0].SourceDoc)
+	}
+
+	mu.Lock()
+	joined := strings.Join(prompts, "\n")
+	mu.Unlock()
+	if strings.Contains(joined, "compiled_at:") || strings.Contains(joined, "source_hash:") {
+		t.Error("summary frontmatter reached the model; evidence could be quoted out of it")
+	}
+}
+
+// The batch path writes a different, three-key frontmatter.
+func TestExtractTriplesPassParsesBatchFrontmatter(t *testing.T) {
+	srv, _ := countingServer(t)
+	ont := passStore(t)
+
+	batchFM := "---\nsource: raw/batch.md\ncompiled_at: 2026-01-01T00:00:00Z\nbatch: true\n---\n\nBody.\n"
+	ExtractTriplesPass(context.Background(), ont,
+		[]SummaryResult{{SourcePath: "b.md", Summary: batchFM}}, nil,
+		enabledCfg(), triplesClient(t, srv.URL), true)
+
+	rels, _ := ont.GetRelations("backpressure", ontology.Outbound, "")
+	if len(rels) != 1 || rels[0].SourceDoc != "raw/batch.md" {
+		t.Errorf("SourceDoc from batch frontmatter: %+v", rels)
+	}
+}
+
+// On the normal path SourcePath is already correct, and a summary body that
+// merely opens with a `---` rule must not be mistaken for frontmatter.
+func TestExtractTriplesPassUsesSourcePathWithoutFrontmatterFlag(t *testing.T) {
+	srv, _ := countingServer(t)
+	ont := passStore(t)
+
+	body := "---\n\nA horizontal rule opened this summary.\n"
+	ExtractTriplesPass(context.Background(), ont,
+		[]SummaryResult{{SourcePath: "raw/normal.md", Summary: body}}, nil,
+		enabledCfg(), triplesClient(t, srv.URL), false)
+
+	rels, _ := ont.GetRelations("backpressure", ontology.Outbound, "")
+	if len(rels) != 1 || rels[0].SourceDoc != "raw/normal.md" {
+		t.Errorf("SourceDoc = %+v, want raw/normal.md", rels)
+	}
+}

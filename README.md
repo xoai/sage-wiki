@@ -34,6 +34,7 @@ _Dots on the outer boundary represent summaries of all documents in the knowledg
 | [Configurable Relations](docs/guides/configurable-relations.md) | Custom ontology types, multilingual synonyms, type restrictions |
 | [Local Models](docs/guides/local-models.md) | Ollama setup, GPU/CPU routing, per-pass model config |
 | [Storage Backends](docs/guides/storage-backends.md) | SQLite vs PostgreSQL/pgvector setup, switching, pool sizing |
+| [Graph Memory](docs/guides/graph-memory.md) | Evidenced relations, LLM triple extraction, provenance and cost |
 
 ## Install
 
@@ -484,6 +485,12 @@ serve:
 #   entity_types:
 #     - name: decision
 #       description: "A recorded decision with rationale"
+#   triples:                       # LLM triple extraction (P3-2, opt-in)
+#     enabled: true                # default false — adds 1 LLM call per Tier-3 doc
+#     model: ""                    # default: models.extract, then models.summarize
+#     max_tokens: 4096
+#     max_entities_per_doc: 40
+#     max_relations_per_doc: 60
 ```
 
 ### Multi-Provider Setup
@@ -557,6 +564,10 @@ ontology:
 ```
 
 When `valid_sources`/`valid_targets` are set, edges are only created if the source/target entity type matches. Empty = all types allowed (default).
+
+Relations can also carry **evidence, confidence and source provenance**, and an
+opt-in LLM pass can extract evidenced triples instead of relying on keyword
+proximity alone — see [Graph Memory](docs/guides/graph-memory.md).
 
 Zero config = identical to current behavior. Existing databases are migrated automatically on first open. See the [full guide](docs/guides/configurable-relations.md) for domain-specific examples, type-restricted relations, and how extraction works.
 

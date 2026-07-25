@@ -37,6 +37,7 @@ _Les points sur la bordure extérieure représentent les résumés de tous les d
 | [Configurable Relations](docs/guides/configurable-relations.md) | Ontologie personnalisée, synonymes multilingues |
 | [Local Models](docs/guides/local-models.md) | Configuration Ollama, routage GPU/CPU |
 | [Storage Backends](docs/guides/storage-backends.md) | Installation SQLite vs PostgreSQL/pgvector, bascule, dimensionnement du pool |
+| [Graph Memory](docs/guides/graph-memory.md) | Relations avec preuves, extraction de triplets par LLM, provenance et coût |
 
 ## Installation
 

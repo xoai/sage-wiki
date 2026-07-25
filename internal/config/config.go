@@ -505,6 +505,31 @@ type OntologyConfig struct {
 	Relations     []RelationConfig   `yaml:"relations,omitempty"`
 	RelationTypes []RelationConfig   `yaml:"relation_types,omitempty"` // preferred key; "relations" accepted for backwards compat
 	EntityTypes   []EntityTypeConfig `yaml:"entity_types,omitempty"`
+	Triples       TriplesConfig      `yaml:"triples,omitempty"`
+}
+
+// TriplesConfig controls LLM structured-output triple extraction (P3-2).
+//
+// Enabled defaults to false: the pass adds one LLM call per Tier-3 document, so
+// a default-on upgrade would raise every existing user's compile bill without
+// them asking. For a key that costs money, "safe default" means preserving
+// today's spend.
+//
+// A VALUE, not a pointer, and `omitempty` on the struct: yaml.v3 elides a zero
+// struct (unlike encoding/json), which is what stops `sage-wiki pack apply`
+// from writing a zeroed triples: block into the config.yaml of every user who
+// never configured one.
+//
+// The zero value of each cap is NOT usable — Defaults() has no Ontology entry
+// and is only reached via config.Load, so a Config{} literal yields zeros.
+// ExtractTriplesPass applies <= 0 fallbacks, the way the rest of the compiler
+// does (see concepts.go, fullpipeline.go).
+type TriplesConfig struct {
+	Enabled            bool   `yaml:"enabled,omitempty"`
+	Model              string `yaml:"model,omitempty"`
+	MaxTokens          int    `yaml:"max_tokens,omitempty"`
+	MaxEntitiesPerDoc  int    `yaml:"max_entities_per_doc,omitempty"`
+	MaxRelationsPerDoc int    `yaml:"max_relations_per_doc,omitempty"`
 }
 
 // RelationConfig defines a custom or extended relation type.

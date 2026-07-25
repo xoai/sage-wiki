@@ -113,6 +113,12 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 		mf.AddConcept(c.Name, filepath.ToSlash(filepath.Join(cfg.Output, "concepts", c.Name+".md")), c.Sources)
 	}
 
+	// Pass 2b: LLM triple extraction (P3-2, opt-in). summariesCarryFrontmatter
+	// is true here: this path loads summary FILES from disk, so Summary holds
+	// the frontmatter and SourcePath is the summary's filename, not the source
+	// document.
+	ExtractTriplesPass(context.Background(), ontStore, summaries, concepts, cfg, client, true)
+
 	// Pass 3: Write articles
 	if len(concepts) > 0 {
 		writeModel := cfg.Models.Write

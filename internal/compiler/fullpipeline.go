@@ -298,6 +298,12 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	progress.EndPhase()
 	client.TeardownCache(extCacheID)
 
+	// Pass 2b: LLM triple extraction (P3-2, opt-in). Runs BEFORE the
+	// zero-concept early return below — otherwise triples would silently never
+	// persist on an incremental compile where every concept dedup-merged, which
+	// is the ordinary case. Never fails the compile; see ExtractTriplesPass.
+	ExtractTriplesPass(opts.Ctx, opts.OntStore, successfulSummaries, concepts, cfg, client, false)
+
 	// Pass 3: Write articles
 	if len(concepts) == 0 {
 		// Extraction COMPLETED — it just produced no new concepts to write (e.g. an

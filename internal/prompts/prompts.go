@@ -163,6 +163,8 @@ func ScaffoldDefaults(dir string) error {
 			vars = "{{.ConceptName}}, {{.ConceptID}}, {{.Sources}}, {{.Aliases}}, {{.RelatedList}}, {{.ExistingArticle}}, {{.Learnings}}, {{.MaxTokens}}, {{.Confidence}}"
 		} else if strings.Contains(outName, "extract-concepts") {
 			vars = "{{.ExistingConcepts}}, {{.Summaries}}"
+		} else if strings.Contains(outName, "extract-triples") {
+			vars = "{{.ValidTypes}}, {{.ValidPredicates}}, {{.SourcePath}}, {{.Summary}}"
 		}
 		header := fmt.Sprintf("# %s\n# This file customizes the sage-wiki %s prompt.\n# Edit freely — sage-wiki will use this instead of the built-in default.\n# Delete this file to revert to the default.\n#\n# Available variables: %s\n# See: https://github.com/xoai/sage-wiki\n\n", outName, strings.TrimSuffix(outName, ".md"), vars)
 
@@ -202,6 +204,16 @@ type SummarizeData struct {
 type ExtractData struct {
 	ExistingConcepts string
 	Summaries        string
+}
+
+// TriplesData holds data for the triple-extraction template (P3-2).
+// Summary is the compiled summary body — NOT the raw source — so evidence
+// spans quote the summary. The pass strips any frontmatter before rendering.
+type TriplesData struct {
+	ValidTypes      string
+	ValidPredicates string
+	SourcePath      string
+	Summary         string
 }
 
 // WriteArticleData holds data for article writing template.

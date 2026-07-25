@@ -37,6 +37,7 @@ _外側の境界上のドットはナレッジベース内のすべてのドキ�
 | [Configurable Relations](docs/guides/configurable-relations.md) | カスタムオントロジー、多言語シノニム |
 | [Local Models](docs/guides/local-models.md) | Ollamaセットアップ、GPU/CPUルーティング |
 | [Storage Backends](docs/guides/storage-backends.md) | SQLite vs PostgreSQL/pgvector のセットアップ、切り替え、プールサイズ |
+| [Graph Memory](docs/guides/graph-memory.md) | 根拠付きリレーション、LLM トリプル抽出、来歴とコスト |
 
 ## インストール
 

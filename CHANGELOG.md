@@ -4,6 +4,18 @@
 
 ### Added
 
+- **LLM structured-output triple extraction (P3-2), opt-in.** With
+  `ontology.triples.enabled: true`, each Tier-3 document gets one additional
+  Pass-2 LLM call that extracts typed entities (each with a one-sentence
+  grounded description) and evidenced `(subject, predicate, object)` triples,
+  persisted as P3-1 evidenced relations. Defaults to **off**: the pass costs one
+  call per document, and an upgrade should not change anyone's bill. Model
+  resolution follows `ontology.triples.model` → `models.extract` →
+  `models.summarize`. Keyword extraction (Pass 3) is unchanged and still runs.
+  See `docs/guides/graph-memory.md`, including the cost section — `--re-extract`
+  is O(all summaries), and the `--batch` compile path does not run the pass.
+  Evidence spans are quoted from a document's compiled summary, not its raw
+  source; `source_doc` names the origin document.
 - **Evidenced, provenance-bearing relations (P3-1).** Ontology edges now carry
   `evidence` (the source span supporting the edge), `confidence` (0–1), and
   `source_doc` (the originating document), plus `valid_from`, `valid_to` and
@@ -29,6 +41,12 @@
   previously ignored `type` entirely, so a wrong type was permanent; it is now
   written on every upsert, matching Postgres. Consequently `sage-wiki scribe`
   can retype an existing entity where it previously could not.
+- **Keyword-extracted edges can appear where they previously did not** (only
+  with `ontology.triples.enabled: true`). Keyword extraction gates each pattern
+  on the *stored* entity types and skips a pattern whose target entity does not
+  exist yet. Once triple extraction populates typed entities in Pass 2, some
+  previously-skipped keyword edges start being created. No code in the keyword
+  pass changed.
 - **Article re-indexing reads the article's declared type and display name.**
   `reconcile`, `sage-wiki write` and the MCP `write_article` tool previously
   hard-coded `type: concept` and the raw slug when indexing an already-written

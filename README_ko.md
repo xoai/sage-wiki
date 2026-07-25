@@ -37,6 +37,7 @@ _외곽 경계의 점들은 지식 베이스에 있는 모든 문서의 요약�
 | [Configurable Relations](docs/guides/configurable-relations.md) | 커스텀 온톨로지, 다국어 동의어 |
 | [Local Models](docs/guides/local-models.md) | Ollama 설정, GPU/CPU 라우팅 |
 | [Storage Backends](docs/guides/storage-backends.md) | SQLite vs PostgreSQL/pgvector 설정, 전환, 풀 크기 조정 |
+| [Graph Memory](docs/guides/graph-memory.md) | 근거가 있는 관계, LLM 트리플 추출, 출처와 비용 |
 
 ## 설치
 
