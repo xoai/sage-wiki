@@ -74,6 +74,16 @@ func TestCompileProgressSSE(t *testing.T) {
 	}
 
 	// Emit events from the "worker" side; assert SSE frames arrive in order.
+	// Wait for the handler's subscription first — emitting before the
+	// handler reaches Subscribe drops the events (no replay), which flakes
+	// under -race on a loaded runner.
+	subDeadline := time.Now().Add(3 * time.Second)
+	for progress.SubscriberCount() == 0 && time.Now().Before(subDeadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if progress.SubscriberCount() == 0 {
+		t.Fatal("handler never subscribed")
+	}
 	progress.StartPhase("Tier 1: Index + embed sources", 2)
 	progress.ItemDone("raw/a.md", "a.sum.md")
 

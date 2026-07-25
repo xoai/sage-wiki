@@ -56,7 +56,7 @@ func (p *CompletenessPass) Run(ctx *LintContext) ([]Finding, error) {
 				findings = append(findings, Finding{
 					Pass:     "completeness",
 					Severity: SevWarning,
-					Path:     filepath.Join(ctx.OutputDir, "concepts", e.Name()),
+					Path:     filepath.ToSlash(filepath.Join(ctx.OutputDir, "concepts", e.Name())),
 					Message:  fmt.Sprintf("broken [[%s]] — no article exists", linkTarget),
 				})
 			}
@@ -95,7 +95,7 @@ func (p *StylePass) Run(ctx *LintContext) ([]Finding, error) {
 			findings = append(findings, Finding{
 				Pass:     "style",
 				Severity: SevWarning,
-				Path:     filepath.Join(ctx.OutputDir, "concepts", e.Name()),
+				Path:     filepath.ToSlash(filepath.Join(ctx.OutputDir, "concepts", e.Name())),
 				Message:  "missing YAML frontmatter",
 				Fix:      "add frontmatter",
 			})
@@ -106,7 +106,7 @@ func (p *StylePass) Run(ctx *LintContext) ([]Finding, error) {
 			findings = append(findings, Finding{
 				Pass:     "style",
 				Severity: SevInfo,
-				Path:     filepath.Join(ctx.OutputDir, "concepts", e.Name()),
+				Path:     filepath.ToSlash(filepath.Join(ctx.OutputDir, "concepts", e.Name())),
 				Message:  "frontmatter missing 'concept' field",
 			})
 		}
@@ -325,7 +325,7 @@ func (p *ImputePass) Run(ctx *LintContext) ([]Finding, error) {
 			findings = append(findings, Finding{
 				Pass:     "impute",
 				Severity: SevWarning,
-				Path:     filepath.Join(ctx.OutputDir, "concepts", e.Name()),
+				Path:     filepath.ToSlash(filepath.Join(ctx.OutputDir, "concepts", e.Name())),
 				Message:  fmt.Sprintf("contains %d placeholder(s): %s", len(matches), strings.Join(matches, ", ")),
 			})
 		}
@@ -342,7 +342,7 @@ func (p *ImputePass) Run(ctx *LintContext) ([]Finding, error) {
 					findings = append(findings, Finding{
 						Pass:     "impute",
 						Severity: SevInfo,
-						Path:     filepath.Join(ctx.OutputDir, "concepts", e.Name()),
+						Path:     filepath.ToSlash(filepath.Join(ctx.OutputDir, "concepts", e.Name())),
 						Message:  fmt.Sprintf("thin section: %s (< 50 chars)", line),
 					})
 				}
@@ -383,7 +383,7 @@ func (p *StalenessPass) Run(ctx *LintContext) ([]Finding, error) {
 			findings = append(findings, Finding{
 				Pass:     "staleness",
 				Severity: SevInfo,
-				Path:     filepath.Join(ctx.OutputDir, "concepts", e.Name()),
+				Path:     filepath.ToSlash(filepath.Join(ctx.OutputDir, "concepts", e.Name())),
 				Message:  fmt.Sprintf("article is %d days old", int(age.Hours()/24)),
 			})
 		}
