@@ -57,7 +57,8 @@
   article. With `type` now writable, that would have demoted a `technique` on
   every run. All three read `entity_type:` from the article's frontmatter
   (falling back to `concept`, including when the declared type is no longer
-  configured) and write the formatted display name.
+  configured) and write the formatted display name. Frontmatter is parsed on CRLF
+  checkouts as well as LF.
 
 ### Fixed
 
@@ -65,9 +66,6 @@
   `AddEntity` defaulted `UpdatedAt` only when `CreatedAt` was empty, so a caller
   supplying one but not the other bound NULL — and the upsert wrote it. The two
   now default independently, matching SQLite.
-- **Article frontmatter is parsed on CRLF checkouts.** The entity-type lookup
-  matched `---\n` only, so an article saved by a Windows editor fell back to
-  `concept` on every reconcile.
 - **`GetRelations` with `Both` and a relation filter returned the wrong edges on
   SQLite.** The query built `WHERE source_id=? OR target_id=?` and appended
   `AND relation=?`, which parses as `source_id=? OR (target_id=? AND

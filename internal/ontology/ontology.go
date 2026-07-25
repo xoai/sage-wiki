@@ -123,7 +123,7 @@ func (s *Store) AddEntity(e Entity) error {
 		_, err := tx.Exec(
 			`INSERT INTO entities (id, type, name, definition, article_path, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)
-			 			 ON CONFLICT(id) DO UPDATE SET
+			 ON CONFLICT(id) DO UPDATE SET
 				   type=excluded.type,
 				   name         = CASE WHEN COALESCE(excluded.name,'')         = '' THEN entities.name         ELSE excluded.name         END,
 				   definition   = CASE WHEN COALESCE(excluded.definition,'')   = '' THEN entities.definition   ELSE excluded.definition   END,

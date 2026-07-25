@@ -211,8 +211,7 @@ func TestRenderTriples(t *testing.T) {
 	out, err := Render("extract_triples", TriplesData{
 		ValidTypes:      "concept, technique",
 		ValidPredicates: "implements, extends",
-		SourcePath:      "raw/paper.pdf",
-		Summary:         "Backpressure extends flow control.",
+		Summary:         "### Source: raw/paper.pdf\nBackpressure extends flow control.",
 	}, "")
 	if err != nil {
 		t.Fatalf("Render: %v", err)

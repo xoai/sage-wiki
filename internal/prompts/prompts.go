@@ -164,7 +164,7 @@ func ScaffoldDefaults(dir string) error {
 		} else if strings.Contains(outName, "extract-concepts") {
 			vars = "{{.ExistingConcepts}}, {{.Summaries}}"
 		} else if strings.Contains(outName, "extract-triples") {
-			vars = "{{.ValidTypes}}, {{.ValidPredicates}}, {{.SourcePath}}, {{.Summary}}"
+			vars = "{{.ValidTypes}}, {{.ValidPredicates}}, {{.Summary}}"
 		}
 		header := fmt.Sprintf("# %s\n# This file customizes the sage-wiki %s prompt.\n# Edit freely — sage-wiki will use this instead of the built-in default.\n# Delete this file to revert to the default.\n#\n# Available variables: %s\n# See: https://github.com/xoai/sage-wiki\n\n", outName, strings.TrimSuffix(outName, ".md"), vars)
 
@@ -207,12 +207,18 @@ type ExtractData struct {
 }
 
 // TriplesData holds data for the triple-extraction template (P3-2).
-// Summary is the compiled summary body — NOT the raw source — so evidence
-// spans quote the summary. The pass strips any frontmatter before rendering.
+//
+// Summary is the compiled summary body — NOT the raw source — so evidence spans
+// quote the summary. The pass strips any frontmatter before rendering.
+//
+// There is deliberately no SourcePath field: the source path is folded INTO
+// Summary by the caller so it sits inside the untrusted_source frame, exactly
+// as concepts.go does. Rendering a filename in the prompt's trusted region
+// would let a file named to carry instructions steer the pass, and
+// NeutralizeTags only defangs the delimiters — it does not neutralize prose.
 type TriplesData struct {
 	ValidTypes      string
 	ValidPredicates string
-	SourcePath      string
 	Summary         string
 }
 

@@ -111,16 +111,18 @@ func ExtractTriples(
 ) (ExtractedGraph, error) {
 	var graph ExtractedGraph
 
-	// Neutralize spoofed delimiter tags before the summary joins the template's
-	// untrusted frame. Render does NOT neutralize — the call site must, exactly
-	// as concepts.go does for the same reason (SEC-04, second-order injection).
-	// Applied to the path too, for consistency with buildSourceContext: a
-	// filename may legally contain the opening tag on Linux.
+	// The source path is folded INTO the untrusted payload, not rendered beside
+	// it: a path in the prompt's trusted region lets a file named to carry
+	// instructions steer this pass, and NeutralizeTags defangs only the
+	// delimiters, not prose. concepts.go:154 does the same for the same reason
+	// (SEC-04, second-order injection). One NeutralizeTags over the whole
+	// payload — path included, since a filename may legally contain the opening
+	// tag on Linux — because Render does not neutralize.
+	body := prompts.NeutralizeTags(fmt.Sprintf("### Source: %s\n%s", summary.SourcePath, summary.Summary))
 	prompt, err := prompts.Render("extract_triples", prompts.TriplesData{
 		ValidTypes:      strings.Join(validTypes, ", "),
 		ValidPredicates: strings.Join(validPredicates, ", "),
-		SourcePath:      prompts.NeutralizeTags(summary.SourcePath),
-		Summary:         prompts.NeutralizeTags(summary.Summary),
+		Summary:         body,
 	}, "")
 	if err != nil {
 		return graph, fmt.Errorf("render extract_triples: %w", err)
@@ -347,6 +349,10 @@ func persistGraph(ont store.OntologyStore, g ExtractedGraph, concepts []Extracte
 		conceptTypes[c.Name] = t
 	}
 
+	// Entities that did not land: their edges would fail the foreign key with a
+	// message that gives no hint the endpoint was the cause.
+	skipped := map[string]bool{}
+
 	for _, e := range g.Entities {
 		// A lookup ERROR is not "absent". Falling through to rules 2/3 on a
 		// transient read failure (a busy database, a concurrent reader) would
@@ -355,6 +361,7 @@ func persistGraph(ont store.OntologyStore, g ExtractedGraph, concepts []Extracte
 		existing, err := ont.GetEntity(e.Name)
 		if err != nil {
 			log.Warn("triples: entity type lookup failed, skipping", "entity", e.Name, "error", err)
+			skipped[e.Name] = true
 			continue
 		}
 
@@ -377,12 +384,18 @@ func persistGraph(ont store.OntologyStore, g ExtractedGraph, concepts []Extracte
 			Definition: e.Description,
 		}); err != nil {
 			log.Warn("triples: entity write failed", "entity", e.Name, "error", err)
+			skipped[e.Name] = true
 			continue
 		}
 		entities++
 	}
 
 	for _, r := range g.Relations {
+		if skipped[r.Source] || skipped[r.Target] {
+			log.Warn("triples: relation skipped — an endpoint entity did not persist",
+				"source", r.Source, "predicate", r.Predicate, "target", r.Target)
+			continue
+		}
 		if err := ont.AddRelation(store.Relation{
 			ID:         tripleRelationID(r.Source, r.Predicate, r.Target),
 			SourceID:   r.Source,
@@ -547,19 +560,20 @@ func ExtractTriplesPass(
 	}
 	wg.Wait()
 
-	// A cancel does NOT discard work already paid for. These graphs are
-	// complete and validated, and AddRelation's upsert makes re-assertion on
-	// the next compile idempotent — unlike the manifest/compile_items
-	// checkpoint, which an incomplete run must not touch. Throwing away 98
-	// finished extractions because document 99 was interrupted would burn the
-	// spend for nothing.
-	completed := 0
-	for _, r := range results {
-		if r.ok {
-			completed++
-		}
-	}
+	// A cancel does not discard graphs that already came back. They are complete
+	// and validated, and AddRelation's upsert makes re-assertion idempotent —
+	// unlike the manifest/compile_items checkpoint, which an incomplete run must
+	// not touch. Note what this does and does not buy: the next compile still
+	// re-summarizes and re-extracts these documents (the item store was not
+	// advanced), so the spend is not saved. What is saved is having the graph
+	// available in the interim instead of throwing away finished work.
 	if cancelled {
+		completed := 0
+		for _, r := range results {
+			if r.ok {
+				completed++
+			}
+		}
 		log.Warn("triples: extraction cancelled", "documents", len(summaries), "completed", completed)
 	}
 

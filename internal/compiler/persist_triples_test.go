@@ -1,11 +1,13 @@
 package compiler
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 func persistStore(t *testing.T) *ontology.Store {
@@ -193,5 +195,43 @@ func TestPersistGraphKeepsInventedEntityType(t *testing.T) {
 	e, _ := ont.GetEntity("backpressure")
 	if e.Type != ontology.TypeTechnique {
 		t.Errorf("Type = %q, want the extracted %q", e.Type, ontology.TypeTechnique)
+	}
+}
+
+// failingLookupStore fails GetEntity and passes everything else through.
+type failingLookupStore struct {
+	store.OntologyStore
+}
+
+func (f failingLookupStore) GetEntity(string) (*store.Entity, error) {
+	return nil, errors.New("database is locked")
+}
+
+// A GetEntity ERROR is not "absent". Falling through to the model's guessed
+// type on a transient read failure would overwrite a type an article declared —
+// the exact outcome rule 1 exists to prevent, in a data-mutating path.
+func TestPersistGraphSkipsEntityOnLookupError(t *testing.T) {
+	ont := persistStore(t)
+	if err := ont.AddEntity(ontology.Entity{
+		ID: "backpressure", Type: ontology.TypeTechnique, Name: "Backpressure",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	g := twoNodeGraph()
+	g.Entities[0].Type = ontology.TypeClaim // the guess that must not land
+
+	entities, _ := persistGraph(failingLookupStore{ont}, g, nil, "raw/paper.pdf")
+	if entities != 0 {
+		t.Errorf("entities written = %d, want 0 — a lookup failure must skip, not guess", entities)
+	}
+
+	e, err := ont.GetEntity("backpressure")
+	if err != nil || e == nil {
+		t.Fatalf("GetEntity: %v %v", e, err)
+	}
+	if e.Type != ontology.TypeTechnique {
+		t.Errorf("Type = %q, want the stored %q — a read failure overwrote a declared type",
+			e.Type, ontology.TypeTechnique)
 	}
 }
