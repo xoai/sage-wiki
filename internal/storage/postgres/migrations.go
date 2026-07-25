@@ -7,7 +7,7 @@ import (
 )
 
 // currentSchemaVersion tracks len(schemaMigrations).
-const currentSchemaVersion = 2
+const currentSchemaVersion = 3
 
 // schemaMigrations is the append-only Postgres V-series. Each entry is ONE
 // statement per Exec (pgx stdlib rejects multi-statement prepared calls).
@@ -201,6 +201,24 @@ var schemaMigrations = [][]string{
 			(tier = 3 AND pass_indexed = 1 AND pass_embedded = 1
 				AND pass_summarized = 1 AND pass_extracted = 1 AND pass_written = 1)`,
 		`INSERT INTO schema_version (version) SELECT 2 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = 2)`,
+	},
+
+	// v3 — P3-1 (GRAPH-01): evidence and provenance on relations. Mirrors
+	// sqlite migrationV10 column-for-column.
+	//
+	// valid_from/valid_to/invalidated_by are TEXT, not TIMESTAMPTZ, and
+	// deliberately inconsistent with created_at: nullRFC silently converts any
+	// non-RFC3339 string to NULL, and P3-6 will populate valid_from from
+	// document frontmatter dates (commonly "2026-01-15"). TEXT keeps the two
+	// backends byte-identical until P3-6 defines the format contract.
+	{
+		`ALTER TABLE relations ADD COLUMN IF NOT EXISTS evidence TEXT`,
+		`ALTER TABLE relations ADD COLUMN IF NOT EXISTS confidence DOUBLE PRECISION`,
+		`ALTER TABLE relations ADD COLUMN IF NOT EXISTS source_doc TEXT`,
+		`ALTER TABLE relations ADD COLUMN IF NOT EXISTS valid_from TEXT`,
+		`ALTER TABLE relations ADD COLUMN IF NOT EXISTS valid_to TEXT`,
+		`ALTER TABLE relations ADD COLUMN IF NOT EXISTS invalidated_by TEXT`,
+		`INSERT INTO schema_version (version) SELECT 3 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = 3)`,
 	},
 }
 

@@ -2,7 +2,50 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Evidenced, provenance-bearing relations (P3-1).** Ontology edges now carry
+  `evidence` (the source span supporting the edge), `confidence` (0–1), and
+  `source_doc` (the originating document), plus `valid_from`, `valid_to` and
+  `invalidated_by` reserved for temporal validity. Schema addition only —
+  backward compatible: existing rows read back with zero values, and every
+  caller that does not set the new fields behaves exactly as before. SQLite
+  migration V10 and Postgres migration v3 are both plain `ADD COLUMN`, with
+  upgrade tests from the prior schema on each backend. Re-asserting an edge now
+  updates its evidence **only** when the incoming confidence is strictly higher;
+  `created_at` always keeps the earliest assertion's value. Evidence spans are
+  quoted from a document's compiled summary, not its raw source — Pass 2 sees
+  summaries — so a citation names `source_doc` as the origin while the summary
+  is what the span is verifiable against.
+
+### Changed
+
+- **`AddEntity` no longer erases a stored value with an empty one.** An empty
+  (or, on Postgres, NULL) incoming `name`, `definition` or `article_path` now
+  leaves the stored value alone; non-empty values still overwrite. Previously a
+  re-assert that omitted a field wiped it — most visibly, re-indexing an article
+  erased its entity definition.
+- **An entity's `type` is now correctable on SQLite.** The SQLite upsert
+  previously ignored `type` entirely, so a wrong type was permanent; it is now
+  written on every upsert, matching Postgres. Consequently `sage-wiki scribe`
+  can retype an existing entity where it previously could not.
+- **Article re-indexing reads the article's declared type and display name.**
+  `reconcile`, `sage-wiki write` and the MCP `write_article` tool previously
+  hard-coded `type: concept` and the raw slug when indexing an already-written
+  article. With `type` now writable, that would have demoted a `technique` on
+  every run. All three read `entity_type:` from the article's frontmatter
+  (falling back to `concept`, including when the declared type is no longer
+  configured) and write the formatted display name.
+
 ### Fixed
+
+- **`GetRelations` with `Both` and a relation filter returned the wrong edges on
+  SQLite.** The query built `WHERE source_id=? OR target_id=?` and appended
+  `AND relation=?`, which parses as `source_id=? OR (target_id=? AND
+  relation=?)` — so outbound edges of every type were returned regardless of the
+  filter. Reachable through `wiki_ontology_query` and `sage-wiki ontology`.
+  Postgres was already correct; both backends are now covered by the shared
+  conformance suite.
 
 - **CI on main (all checks green).** Frontend dist check: git
   safe.directory set in the alpine container job (dubious-ownership

@@ -47,6 +47,15 @@ const (
 // TraverseOpts configures graph traversal.
 type TraverseOpts = store.TraverseOpts
 
+// relationCols is the single relation column list for every read path (P3-1).
+// It was seven copies before; the new evidence/provenance columns made keeping
+// them in sync by hand a matter of time. COALESCE so pre-V10 rows — where the
+// six added columns are NULL — read back as zero values rather than failing the
+// scan. Every SELECT using it must scan via scanRelation/scanRelations.
+const relationCols = `COALESCE(id,''), source_id, target_id, relation, COALESCE(created_at,''),
+	COALESCE(evidence,''), COALESCE(confidence,0), COALESCE(source_doc,''),
+	COALESCE(valid_from,''), COALESCE(valid_to,''), COALESCE(invalidated_by,'')`
+
 // Store manages ontology entities and relations.
 type Store struct {
 	db               store.DBHandle
@@ -83,7 +92,22 @@ func (s *Store) IsValidType(t string) bool {
 	return s.validEntityTypes[t]
 }
 
-// AddEntity creates a new entity.
+// AddEntity creates a new entity, or updates one that already exists.
+//
+// Two upsert rules (P3-1):
+//
+//  1. An empty — or, on Postgres, NULL — incoming name/definition/article_path
+//     never clobbers a stored value. Pass 3 re-asserts concept entities without
+//     a Definition, which used to erase the descriptions Pass 2 wrote; those
+//     descriptions are what entity resolution (P3-3) disambiguates with. The
+//     COALESCE is load-bearing on Postgres, where "" binds as NULL.
+//  2. type is written unconditionally, so a wrong type stays correctable. SQLite
+//     had no type clause at all before P3-1, which made a wrong type permanent
+//     (UpdateEntity omits type on both backends). Guarding it instead — treating
+//     "concept" as "no information asserted" — would have made an explicit
+//     `ontology add --entity-type concept` a silent no-op that still reported
+//     success. Callers that index an already-written article derive the type
+//     from its frontmatter rather than hard-coding it (ArticleEntityType).
 func (s *Store) AddEntity(e Entity) error {
 	if s.validEntityTypes != nil && !s.validEntityTypes[e.Type] {
 		return fmt.Errorf("ontology: unknown entity type %q", e.Type)
@@ -99,9 +123,12 @@ func (s *Store) AddEntity(e Entity) error {
 		_, err := tx.Exec(
 			`INSERT INTO entities (id, type, name, definition, article_path, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)
-			 ON CONFLICT(id) DO UPDATE SET
-			   name=excluded.name, definition=excluded.definition,
-			   article_path=excluded.article_path, updated_at=excluded.updated_at`,
+			 			 ON CONFLICT(id) DO UPDATE SET
+				   type=excluded.type,
+				   name         = CASE WHEN COALESCE(excluded.name,'')         = '' THEN entities.name         ELSE excluded.name         END,
+				   definition   = CASE WHEN COALESCE(excluded.definition,'')   = '' THEN entities.definition   ELSE excluded.definition   END,
+				   article_path = CASE WHEN COALESCE(excluded.article_path,'') = '' THEN entities.article_path ELSE excluded.article_path END,
+				   updated_at=excluded.updated_at`,
 			e.ID, e.Type, e.Name, e.Definition, e.ArticlePath, e.CreatedAt, e.UpdatedAt,
 		)
 		return err
@@ -173,14 +200,12 @@ func (s *Store) ListRelations(relationType string, limit int) ([]Relation, error
 	var err error
 	if relationType != "" {
 		rows, err = s.db.ReadDB().Query(
-			`SELECT COALESCE(id,''), source_id, target_id, relation, COALESCE(created_at,'')
-			 FROM relations WHERE relation=? ORDER BY created_at DESC LIMIT ?`,
+			`SELECT `+relationCols+` FROM relations WHERE relation=? ORDER BY created_at DESC LIMIT ?`,
 			relationType, limit,
 		)
 	} else {
 		rows, err = s.db.ReadDB().Query(
-			`SELECT COALESCE(id,''), source_id, target_id, relation, COALESCE(created_at,'')
-			 FROM relations ORDER BY created_at DESC LIMIT ?`,
+			`SELECT `+relationCols+` FROM relations ORDER BY created_at DESC LIMIT ?`,
 			limit,
 		)
 	}
@@ -188,16 +213,7 @@ func (s *Store) ListRelations(relationType string, limit int) ([]Relation, error
 		return nil, err
 	}
 	defer rows.Close()
-
-	var rels []Relation
-	for rows.Next() {
-		var r Relation
-		if err := rows.Scan(&r.ID, &r.SourceID, &r.TargetID, &r.Relation, &r.CreatedAt); err != nil {
-			return nil, err
-		}
-		rels = append(rels, r)
-	}
-	return rels, rows.Err()
+	return scanRelations(rows)
 }
 
 // DeleteEntity removes an entity and its relations (via CASCADE).
@@ -209,7 +225,21 @@ func (s *Store) DeleteEntity(id string) error {
 }
 
 // AddRelation creates a typed edge between two entities.
-// Returns error on self-loop. Uses upsert semantics.
+// Returns error on self-loop.
+//
+// Re-assertion (P3-1): an existing edge is updated ONLY when the incoming
+// confidence is strictly higher than the stored one. created_at is never in the
+// SET list, so the earliest assertion's timestamp survives, and the stored id
+// is kept. The three temporal columns are insert-only until P3-6 — a
+// re-assertion leaves them untouched, so P3-6 must add them to the SET list
+// when it starts writing them.
+//
+// The WHERE clause is the back-compat proof: every caller that predates P3-1
+// passes Confidence 0, so `0 > COALESCE(stored, 0)` is false and the statement
+// is a no-op — bit-identical to the DO NOTHING it replaces. It also means the
+// Pass-3 keyword extractor, which re-asserts the same (source, target,
+// relation) on every compile, can never erase an LLM-extracted edge's
+// evidence.
 func (s *Store) AddRelation(r Relation) error {
 	if r.SourceID == r.TargetID {
 		return fmt.Errorf("ontology: self-loops not allowed (entity %q)", r.SourceID)
@@ -222,10 +252,18 @@ func (s *Store) AddRelation(r Relation) error {
 	}
 	return s.db.WriteTx(func(tx *sql.Tx) error {
 		_, err := tx.Exec(
-			`INSERT INTO relations (id, source_id, target_id, relation, created_at)
-			 VALUES (?, ?, ?, ?, ?)
-			 ON CONFLICT(source_id, target_id, relation) DO NOTHING`,
+			`INSERT INTO relations (id, source_id, target_id, relation, created_at,
+			                        evidence, confidence, source_doc,
+			                        valid_from, valid_to, invalidated_by)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(source_id, target_id, relation) DO UPDATE SET
+			   evidence   = excluded.evidence,
+			   confidence = excluded.confidence,
+			   source_doc = excluded.source_doc
+			 WHERE excluded.confidence > COALESCE(relations.confidence, 0)`,
 			r.ID, r.SourceID, r.TargetID, r.Relation, r.CreatedAt,
+			r.Evidence, r.Confidence, r.SourceDoc,
+			r.ValidFrom, r.ValidTo, r.InvalidatedBy,
 		)
 		return err
 	})
@@ -238,13 +276,18 @@ func (s *Store) GetRelations(entityID string, direction Direction, relationType 
 
 	switch direction {
 	case Outbound:
-		query = "SELECT COALESCE(id,''), source_id, target_id, relation, COALESCE(created_at,'') FROM relations WHERE source_id=?"
+		query = "SELECT " + relationCols + " FROM relations WHERE source_id=?"
 		args = []any{entityID}
 	case Inbound:
-		query = "SELECT COALESCE(id,''), source_id, target_id, relation, COALESCE(created_at,'') FROM relations WHERE target_id=?"
+		query = "SELECT " + relationCols + " FROM relations WHERE target_id=?"
 		args = []any{entityID}
 	case Both:
-		query = "SELECT COALESCE(id,''), source_id, target_id, relation, COALESCE(created_at,'') FROM relations WHERE source_id=? OR target_id=?"
+		// Parenthesized (P3-1/D11): AND binds tighter than OR, so the
+		// unparenthesized form made the relationType filter below apply to the
+		// target side only — a Both query with a filter returned outbound edges
+		// of every type. Postgres already parenthesized; this is the SQLite
+		// half of that parity.
+		query = "SELECT " + relationCols + " FROM relations WHERE (source_id=? OR target_id=?)"
 		args = []any{entityID, entityID}
 	}
 
@@ -258,16 +301,7 @@ func (s *Store) GetRelations(entityID string, direction Direction, relationType 
 		return nil, err
 	}
 	defer rows.Close()
-
-	var relations []Relation
-	for rows.Next() {
-		var r Relation
-		if err := rows.Scan(&r.ID, &r.SourceID, &r.TargetID, &r.Relation, &r.CreatedAt); err != nil {
-			return nil, err
-		}
-		relations = append(relations, r)
-	}
-	return relations, rows.Err()
+	return scanRelations(rows)
 }
 
 // Traverse performs BFS traversal from an entity, returning connected entities.
@@ -445,8 +479,7 @@ func (s *Store) CitedBy(entityID string) ([]Entity, error) {
 // graph view's unbounded relations dump — spec §3: full rows, not the
 // 3-column handler shape).
 func (s *Store) AllRelations() ([]Relation, error) {
-	rows, err := s.db.ReadDB().Query(
-		`SELECT COALESCE(id,''), source_id, target_id, relation, COALESCE(created_at,'') FROM relations`)
+	rows, err := s.db.ReadDB().Query(`SELECT ` + relationCols + ` FROM relations`)
 	if err != nil {
 		return nil, err
 	}
@@ -458,8 +491,7 @@ func (s *Store) AllRelations() ([]Relation, error) {
 // (P2-1: absorbs linter's contradicts-edge scan).
 func (s *Store) RelationsByType(relationType string) ([]Relation, error) {
 	rows, err := s.db.ReadDB().Query(
-		`SELECT COALESCE(id,''), source_id, target_id, relation, COALESCE(created_at,'') FROM relations WHERE relation=?`,
-		relationType)
+		`SELECT `+relationCols+` FROM relations WHERE relation=?`, relationType)
 	if err != nil {
 		return nil, err
 	}
@@ -497,11 +529,17 @@ func (s *Store) EntityConnectionCounts() (map[string]int, error) {
 	return counts, rows.Err()
 }
 
+// scanRelations is the single scan for every relationCols query. Column order
+// here and in relationCols must stay in lockstep.
 func scanRelations(rows *sql.Rows) ([]Relation, error) {
 	var rels []Relation
 	for rows.Next() {
 		var r Relation
-		if err := rows.Scan(&r.ID, &r.SourceID, &r.TargetID, &r.Relation, &r.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&r.ID, &r.SourceID, &r.TargetID, &r.Relation, &r.CreatedAt,
+			&r.Evidence, &r.Confidence, &r.SourceDoc,
+			&r.ValidFrom, &r.ValidTo, &r.InvalidatedBy,
+		); err != nil {
 			return nil, err
 		}
 		rels = append(rels, r)

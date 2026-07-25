@@ -12,7 +12,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode"
 
 		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/embed"
@@ -163,7 +162,7 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap m
 	// Build prompt. relatedNames are real, co-occurring concept slugs (issue
 	// #106) that resolve to existing article files and survive the strip pass.
 	prompt, err := prompts.Render("write_article", prompts.WriteArticleData{
-		ConceptName:     formatConceptName(concept.Name),
+		ConceptName:     ontology.FormatConceptName(concept.Name),
 		ConceptID:       concept.Name,
 		Sources:         strings.Join(concept.Sources, ", "),
 		RelatedConcepts: relatedNames,
@@ -244,7 +243,7 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap m
 	if err := opts.OntStore.AddEntity(ontology.Entity{
 		ID:          concept.Name,
 		Type:        entityType,
-		Name:        formatConceptName(concept.Name),
+		Name:        ontology.FormatConceptName(concept.Name),
 		ArticlePath: articlePath,
 	}); err != nil {
 		log.Error("failed to create ontology entity", "concept", concept.Name, "error", err)
@@ -630,7 +629,7 @@ func buildAliasMap(concepts []ExtractedConcept, allConcepts []ExtractedConcept) 
 	}
 	for _, c := range canonicalSet {
 		m[c.Name] = c.Name
-		m[formatConceptName(c.Name)] = c.Name
+		m[ontology.FormatConceptName(c.Name)] = c.Name
 	}
 	return m
 }
@@ -645,18 +644,6 @@ func quoteYAMLList(items []string) string {
 		quoted[i] = fmt.Sprintf("%q", item)
 	}
 	return "[" + strings.Join(quoted, ", ") + "]"
-}
-
-func formatConceptName(name string) string {
-	words := strings.Split(name, "-")
-	for i, w := range words {
-		runes := []rune(w)
-		if len(runes) > 0 {
-			runes[0] = unicode.ToUpper(runes[0])
-			words[i] = string(runes)
-		}
-	}
-	return strings.Join(words, " ")
 }
 
 // maxRelatedConcepts caps how many "See also" links each article is seeded
@@ -950,7 +937,7 @@ func buildSourceContext(projectDir string, concept ExtractedConcept, threshold i
 	}
 
 	var parts []string
-	terms := append([]string{concept.Name, formatConceptName(concept.Name)}, concept.Aliases...)
+	terms := append([]string{concept.Name, ontology.FormatConceptName(concept.Name)}, concept.Aliases...)
 
 	for _, srcPath := range concept.Sources {
 		absPath := filepath.Join(projectDir, srcPath)

@@ -152,6 +152,7 @@ var schemaMigrations = []migration{
 	{sql: migrationV7},
 	{sql: migrationV8},
 	{sql: migrationV9},
+	{sql: migrationV10},
 }
 
 // migrate runs schema migrations.
@@ -516,4 +517,29 @@ UPDATE compile_items SET status = 'done' WHERE
 	(tier = 2 AND pass_indexed = 1 AND pass_embedded = 1 AND pass_parsed = 1) OR
 	(tier = 3 AND pass_indexed = 1 AND pass_embedded = 1
 		AND pass_summarized = 1 AND pass_extracted = 1 AND pass_written = 1);
+`
+
+// migrationV10 gives relations evidence and provenance (P3-1, GRAPH-01):
+// the source span supporting the edge, extractor confidence, and the
+// originating document. Plain ADD COLUMN — no table rebuild, so no FK dance
+// (contrast V4). All columns are nullable: pre-V10 rows read back as zero
+// values through the COALESCE in relationCols, and the pre-V10 five-column
+// INSERT would still succeed.
+//
+// valid_from/valid_to/invalidated_by are RESERVED FOR P3-6 (temporal
+// validity). They are written on INSERT and returned by every read, but
+// nothing populates them and no query filters on them until P3-6 lands —
+// they are added now so bi-temporal edges do not need a second migration.
+// They are deliberately TEXT rather than a timestamp type on both backends:
+// P3-6 will source them from document frontmatter dates (commonly
+// "2026-01-15"), and Postgres's nullRFC silently NULLs anything that is not
+// RFC3339. Verbatim TEXT keeps the two backends byte-identical until P3-6
+// defines the format contract.
+const migrationV10 = `
+ALTER TABLE relations ADD COLUMN evidence TEXT;
+ALTER TABLE relations ADD COLUMN confidence REAL;
+ALTER TABLE relations ADD COLUMN source_doc TEXT;
+ALTER TABLE relations ADD COLUMN valid_from TEXT;
+ALTER TABLE relations ADD COLUMN valid_to TEXT;
+ALTER TABLE relations ADD COLUMN invalidated_by TEXT;
 `
