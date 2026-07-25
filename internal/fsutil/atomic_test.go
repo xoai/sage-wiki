@@ -3,6 +3,7 @@ package fsutil
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -22,8 +23,13 @@ func TestWriteFileAtomic_WritesAndCleansUp(t *testing.T) {
 	if string(got) != "# hello\n" {
 		t.Errorf("content = %q, want %q", got, "# hello\n")
 	}
-	if info, _ := os.Stat(path); info.Mode().Perm() != 0644 {
-		t.Errorf("perm = %v, want 0644", info.Mode().Perm())
+	// File-mode bits are not observable through os.Stat on Windows
+	// (write honors only the 0200 bit) — assert permissions only where
+	// they are meaningful.
+	if runtime.GOOS != "windows" {
+		if info, _ := os.Stat(path); info.Mode().Perm() != 0644 {
+			t.Errorf("perm = %v, want 0644", info.Mode().Perm())
+		}
 	}
 
 	// No temp litter left behind after a successful write.
@@ -65,7 +71,12 @@ func TestWriteFileAtomic_FailureLeavesOriginalIntact(t *testing.T) {
 		t.Fatalf("seed original: %v", err)
 	}
 
-	// Make the directory non-writable so CreateTemp fails.
+	// Make the directory non-writable so CreateTemp fails. Windows
+	// read-only attributes on directories don't block file creation, so
+	// this premise only holds on unix.
+	if runtime.GOOS == "windows" {
+		t.Skip("read-only directory attribute does not prevent writes on Windows")
+	}
 	if err := os.Chmod(dir, 0555); err != nil {
 		t.Fatalf("chmod dir: %v", err)
 	}

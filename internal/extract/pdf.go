@@ -3,6 +3,7 @@ package extract
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -59,11 +60,22 @@ func extractPDFGo(path string) (_ *SourceContent, err error) {
 		}
 	}()
 
-	f, r, err := pdf.Open(path)
+	// Open ourselves and pass the reader: pdf.Open can PANIC internally
+	// after os.Open succeeds — then our defer never ran and the handle
+	// leaked (Windows TempDir cleanup fails on the open handle).
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("extract pdf: open: %w", err)
 	}
 	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("extract pdf: stat: %w", err)
+	}
+	r, err := pdf.NewReader(f, fi.Size())
+	if err != nil {
+		return nil, fmt.Errorf("extract pdf: open: %w", err)
+	}
 
 	var text strings.Builder
 	numPages := r.NumPage()

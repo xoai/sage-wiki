@@ -1177,7 +1177,7 @@ func resumeBatch(
 			var conceptNames []string
 			for _, c := range concepts {
 				conceptNames = append(conceptNames, c.Name)
-				mf.AddConcept(c.Name, filepath.Join(cfg.Output, "concepts", c.Name+".md"), c.Sources)
+				mf.AddConcept(c.Name, filepath.ToSlash(filepath.Join(cfg.Output, "concepts", c.Name+".md")), c.Sources)
 			}
 			progress.ConceptsDiscovered(conceptNames)
 			progress.EndPhase()

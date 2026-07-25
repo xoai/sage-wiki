@@ -110,7 +110,7 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 
 	// Update manifest with concepts
 	for _, c := range concepts {
-		mf.AddConcept(c.Name, filepath.Join(cfg.Output, "concepts", c.Name+".md"), c.Sources)
+		mf.AddConcept(c.Name, filepath.ToSlash(filepath.Join(cfg.Output, "concepts", c.Name+".md")), c.Sources)
 	}
 
 	// Pass 3: Write articles
