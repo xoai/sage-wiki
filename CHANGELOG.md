@@ -45,7 +45,7 @@
   5; a capped item is dead-lettered (`status: failed`) until revived by
   `--fresh` or by editing the source (hash change resets the budget).
   No CGO; SQLite zero-config default untouched.
-  See `docs/design/p2-3-durable-jobs.md`.
+  Design: `p2-3-durable-jobs` (design briefs are process artifacts — not committed; see git history / `.sage/docs/design/`).
 
 
 - **Storage backend seam + optional Postgres/pgvector backend (STRAT-01,
@@ -62,7 +62,7 @@
   across both backends (Postgres leg runs under `TEST_DATABASE_URL`). Raw-SQL
   escape hatches across web/mcp/linter/reembed moved behind store methods;
   hub read pools are sized to not exhaust `max_connections`.
-  See `docs/storage-backends.md` for setup, switching, and pool sizing.
+  See `docs/guides/storage-backends.md` for setup, switching, and pool sizing.
   Note: multi-writer concurrency remains P2-3 scope — the single-writer
   process model is unchanged.
 
