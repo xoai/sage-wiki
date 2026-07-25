@@ -59,7 +59,7 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 		}
 		summaries = append(summaries, SummaryResult{
 			SourcePath:  e.Name(),
-			SummaryPath: filepath.Join(cfg.Output, "summaries", e.Name()),
+			SummaryPath: filepath.ToSlash(filepath.Join(cfg.Output, "summaries", e.Name())),
 			Summary:     string(data),
 		})
 	}

@@ -366,7 +366,9 @@ func TestResolvePaths(t *testing.T) {
 }
 
 func TestTypeForPath(t *testing.T) {
-	projectDir := "/home/user/project"
+	// Platform-absolute project dir: a "/home/user" literal is not absolute
+	// on Windows (no volume), which broke the absolute-path case there.
+	projectDir := t.TempDir()
 
 	tests := []struct {
 		name    string
@@ -994,14 +996,16 @@ func TestPriceTable_RelativePathResolves(t *testing.T) {
 	if cfg.Compiler.PriceTable != want {
 		t.Errorf("PriceTable = %q, want %q", cfg.Compiler.PriceTable, want)
 	}
-	// Absolute passes through.
-	cfgContent2 := "version: 1\nproject: test\ncompiler:\n  price_table: /tmp/abs.json\n"
+	// Absolute passes through (platform-absolute path, plain scalar so
+	// Windows backslashes can't be parsed as YAML escapes).
+	absPath := filepath.Join(t.TempDir(), "abs.json")
+	cfgContent2 := "version: 1\nproject: test\ncompiler:\n  price_table: " + filepath.ToSlash(absPath) + "\n"
 	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfgContent2), 0o644)
 	cfg2, err := Load(filepath.Join(dir, "config.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg2.Compiler.PriceTable != "/tmp/abs.json" {
+	if cfg2.Compiler.PriceTable != filepath.ToSlash(absPath) {
 		t.Errorf("absolute path rewritten: %q", cfg2.Compiler.PriceTable)
 	}
 }

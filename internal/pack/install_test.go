@@ -112,9 +112,9 @@ author: test
 }
 
 func TestInstalledPath(t *testing.T) {
-	cacheDir := "/tmp/test-cache"
+	cacheDir := filepath.Join(t.TempDir(), "test-cache")
 	path := InstalledPath("my-pack", cacheDir)
-	if path != "/tmp/test-cache/my-pack" {
+	if path != filepath.Join(cacheDir, "my-pack") {
 		t.Errorf("path = %q", path)
 	}
 }
