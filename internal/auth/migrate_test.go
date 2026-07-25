@@ -8,6 +8,7 @@ import (
 )
 
 func TestMigrateCopiesAllFileCreds(t *testing.T) {
+	forceFileBackend(t)
 	kr := newRecordingKeyring()
 	s := newTestStore(t, kr, "keychain")
 	s.writeFileOnly(t, fullCred())
@@ -45,6 +46,7 @@ func TestMigrateCopiesAllFileCreds(t *testing.T) {
 }
 
 func TestMigratePerProviderFailureTolerated(t *testing.T) {
+	forceFileBackend(t)
 	kr := &failingKeyring{failOn: "anthropic"}
 	s := newTestStore(t, kr, "keychain")
 	s.writeFileOnly(t, fullCred())
@@ -96,6 +98,7 @@ func (e errInjectedT) Error() string { return e.s }
 var errInjected = errInjectedT{"injected keyring failure"}
 
 func TestMigrateHeadlessFailsNonZero(t *testing.T) {
+	forceFileBackend(t)
 	s := newTestStore(t, nil, "file")
 	_, err := MigrateToKeychain(s)
 	if err == nil {
@@ -107,6 +110,7 @@ func TestMigrateHeadlessFailsNonZero(t *testing.T) {
 }
 
 func TestNoticeShownOnce(t *testing.T) {
+	forceFileBackend(t)
 	kr := newRecordingKeyring()
 	s := newTestStore(t, kr, "keychain")
 	s.writeFileOnly(t, fullCred())
@@ -131,6 +135,7 @@ func TestNoticeShownOnce(t *testing.T) {
 
 // TestNoticePrintsOnce captures stderr and pins single-print behavior.
 func TestNoticePrintsOnce(t *testing.T) {
+	forceFileBackend(t)
 	kr := newRecordingKeyring()
 	s := newTestStore(t, kr, "keychain")
 	s.writeFileOnly(t, fullCred())

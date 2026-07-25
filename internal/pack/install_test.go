@@ -179,8 +179,11 @@ func TestCopyDir_SiblingPrefixRejected(t *testing.T) {
 	if err := copyDir(evilDir, filepath.Join(packDir, "out")); err == nil {
 		t.Log("copyDir copied pack2 — but sibling escape via copyDir(pack2) is legal input here")
 	}
-	// The boundary property is tested directly:
+	// The boundary property is tested directly. Resolve BOTH sides (the
+	// production code does) — on macOS an unresolved /var base would make
+	// the assertion pass for the wrong reason.
 	absSrc, _ := filepath.Abs(packDir)
+	absSrc, _ = filepath.EvalSymlinks(absSrc)
 	realEvil, _ := filepath.EvalSymlinks(filepath.Join(evilDir, "evil.md"))
 	if containedWithin(realEvil, absSrc) {
 		t.Error("sibling /pack2 passed containment rooted at /pack — separator boundary missing")

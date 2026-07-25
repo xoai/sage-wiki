@@ -208,6 +208,11 @@ func copyDir(src, dst string) error {
 		return err
 	}
 
+	// NOTE: if the copy ROOT itself is a symlink, WalkDir Lstat's it as
+	// ModeSymlink and this function copies nothing (silent no-op). That
+	// is acceptable for pack inputs (a symlinked pack root is rejected
+	// upstream by the symlink-skip rule's design), but do not call copyDir
+	// with a symlinked src expecting content.
 	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
