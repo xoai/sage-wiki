@@ -22,6 +22,7 @@ func RunConformance(t *testing.T, newBackend BackendFactory) {
 	t.Run("chunks", ChunksConformance(newBackend))
 	t.Run("vectors", VectorsConformance(newBackend))
 	t.Run("ontology", OntologyConformance(newBackend))
+	t.Run("aliases", AliasConformance(newBackend))
 	t.Run("trust", TrustConformance(newBackend))
 	t.Run("compile_items", CompileItemsConformance(newBackend))
 	t.Run("compile_items_queue", CompileItemsQueueConformance(newBackend))
@@ -1055,5 +1056,121 @@ func WriteSerializationConformance(new BackendFactory) func(*testing.T) {
 			t.Fatalf("BeginWrite 3 after rollback: %v", err)
 		}
 		tx3.Rollback()
+	}
+}
+
+// AliasConformance exercises entity resolution (P3-3) on both backends.
+//
+// Registered in RunConformance above — an unregistered sub-test compiles and
+// silently never runs, which would leave the two-backend claim unproven while
+// looking covered.
+func AliasConformance(new BackendFactory) func(*testing.T) {
+	return func(t *testing.T) {
+		b := new(t)
+		os := b.Ontology()
+
+		mk := func(alias, canonical string, status store.AliasStatus) store.EntityAlias {
+			return store.EntityAlias{
+				Alias: alias, CanonicalID: canonical, EntityType: "concept",
+				Status: status, Confidence: 0.9, Reason: "same referent",
+				Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+			}
+		}
+
+		// Round-trip, including the audit fields.
+		if err := os.PutAlias(mk("edwin", "buzz", store.AliasApplied)); err != nil {
+			t.Fatalf("PutAlias: %v", err)
+		}
+		got, err := os.GetActiveAlias("edwin")
+		if err != nil || got == nil {
+			t.Fatalf("GetActiveAlias: %+v %v", got, err)
+		}
+		if got.CanonicalID != "buzz" || got.Status != store.AliasApplied ||
+			got.Confidence != 0.9 || got.Source != "llm" {
+			t.Errorf("alias round-trip lost fields: %+v", got)
+		}
+		// Timestamps are TEXT on both backends and must come back byte-identical
+		// — this is what the raw-string binding (not nullRFC) exists to protect.
+		if got.CreatedAt != "2026-07-26T00:00:00Z" {
+			t.Errorf("CreatedAt = %q, want byte-identical RFC3339 across backends", got.CreatedAt)
+		}
+
+		if missing, err := os.GetActiveAlias("nobody"); err != nil || missing != nil {
+			t.Errorf("GetActiveAlias(absent) = %+v, %v; want nil, nil", missing, err)
+		}
+
+		// Rejections are symmetric and are never overwritten by an auto-apply.
+		if err := os.PutAlias(mk("musician", "astronaut", store.AliasRejected)); err != nil {
+			t.Fatalf("PutAlias rejected: %v", err)
+		}
+		for _, pair := range [][2]string{{"musician", "astronaut"}, {"astronaut", "musician"}} {
+			rejected, err := os.IsRejected(pair[0], pair[1])
+			if err != nil {
+				t.Fatalf("IsRejected(%s,%s): %v", pair[0], pair[1], err)
+			}
+			if !rejected {
+				t.Errorf("IsRejected(%s,%s) = false; rejection must hold in both directions",
+					pair[0], pair[1])
+			}
+		}
+		if err := os.PutAlias(mk("musician", "astronaut", store.AliasApplied)); err != nil {
+			t.Fatalf("PutAlias over rejected must be a no-op, not an error: %v", err)
+		}
+		if act, _ := os.GetActiveAlias("musician"); act != nil {
+			t.Errorf("a rejected row was flipped to active: %+v", act)
+		}
+
+		// The sweep re-puts applied rows every compile; origin fields must survive.
+		resweep := mk("edwin", "buzz", store.AliasApplied)
+		resweep.CreatedAt = "2027-01-01T00:00:00Z"
+		resweep.Source = "manual"
+		if err := os.PutAlias(resweep); err != nil {
+			t.Fatalf("PutAlias resweep: %v", err)
+		}
+		after, _ := os.GetActiveAlias("edwin")
+		if after == nil || after.CreatedAt != "2026-07-26T00:00:00Z" || after.Source != "llm" {
+			t.Errorf("sweep rewrote the audit origin: %+v", after)
+		}
+
+		// Listing is status-filtered and deterministically ordered.
+		if err := os.PutAlias(mk("aa", "buzz", store.AliasApplied)); err != nil {
+			t.Fatal(err)
+		}
+		applied, err := os.ListAliases(store.AliasApplied)
+		if err != nil {
+			t.Fatalf("ListAliases: %v", err)
+		}
+		if len(applied) != 2 {
+			t.Fatalf("applied rows = %d, want 2", len(applied))
+		}
+		if applied[0].Alias != "aa" || applied[1].Alias != "edwin" {
+			t.Errorf("ListAliases order = [%s %s], want sorted [aa edwin]",
+				applied[0].Alias, applied[1].Alias)
+		}
+
+		// Status transition clears the active row.
+		if err := os.SetAliasStatus("aa", "buzz", store.AliasRejected, "user"); err != nil {
+			t.Fatalf("SetAliasStatus: %v", err)
+		}
+		if act, _ := os.GetActiveAlias("aa"); act != nil {
+			t.Errorf("row still active after rejection: %+v", act)
+		}
+
+		// CanonicalID follows applied chains, not pending ones.
+		if err := os.PutAlias(mk("buzz", "aldrin", store.AliasApplied)); err != nil {
+			t.Fatal(err)
+		}
+		if id, err := os.CanonicalID("edwin"); err != nil || id != "aldrin" {
+			t.Errorf("CanonicalID(edwin) = %q, %v; want aldrin (edwin->buzz->aldrin)", id, err)
+		}
+		if err := os.PutAlias(mk("pend", "target", store.AliasPending)); err != nil {
+			t.Fatal(err)
+		}
+		if id, err := os.CanonicalID("pend"); err != nil || id != "pend" {
+			t.Errorf("CanonicalID(pend) = %q, %v; a pending row must not be followed", id, err)
+		}
+		if id, err := os.CanonicalID("unknown"); err != nil || id != "unknown" {
+			t.Errorf("CanonicalID(unknown) = %q, %v; want the input id", id, err)
+		}
 	}
 }

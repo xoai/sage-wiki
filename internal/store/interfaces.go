@@ -69,6 +69,16 @@ type OntologyStore interface {
 	AllRelations() ([]Relation, error)
 	RelationsByType(relationType string) ([]Relation, error)
 	EntityConnectionCounts() (map[string]int, error)
+
+	// Entity resolution (P3-3, GRAPH-03). Alias rows key on entity IDs, never
+	// names. Nothing here mutates the semantics of the methods above: linking is
+	// additive, so every existing caller behaves exactly as before.
+	CanonicalID(id string) (string, error)
+	PutAlias(a EntityAlias) error
+	GetActiveAlias(alias string) (*EntityAlias, error)
+	ListAliases(status AliasStatus) ([]EntityAlias, error)
+	IsRejected(a, b string) (bool, error)
+	SetAliasStatus(alias, canonicalID string, status AliasStatus, decidedBy string) error
 }
 
 type TrustStore interface {
