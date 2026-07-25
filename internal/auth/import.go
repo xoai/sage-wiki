@@ -75,6 +75,13 @@ func expandPath(path string, provider string) string {
 	}
 
 	if strings.HasPrefix(path, "~/") {
+		// $HOME wins on every platform (unix already works this way via
+		// os.UserHomeDir; on Windows UserHomeDir reads USERPROFILE and
+		// ignores HOME — honoring HOME first keeps the tilde contract
+		// uniform, e.g. for git-bash users and tests).
+		if home := os.Getenv("HOME"); home != "" {
+			return filepath.Join(home, path[2:])
+		}
 		if home, err := os.UserHomeDir(); err == nil {
 			return filepath.Join(home, path[2:])
 		}

@@ -230,15 +230,21 @@ func TestImportFromCLIEmptyToken(t *testing.T) {
 func TestExpandPathWithEnvOverride(t *testing.T) {
 	t.Setenv("CODEX_HOME", "/custom/codex")
 	got := expandPath("~/.codex/auth.json", "openai")
-	if got != "/custom/codex/auth.json" {
-		t.Errorf("expandPath = %q, want /custom/codex/auth.json", got)
+	want := filepath.Join("/custom/codex", "auth.json")
+	if got != want {
+		t.Errorf("expandPath = %q, want %q", got, want)
 	}
 }
 
 func TestExpandPathTilde(t *testing.T) {
 	t.Setenv("CODEX_HOME", "")
 	got := expandPath("~/.codex/auth.json", "openai")
-	home, _ := os.UserHomeDir()
+	// Expected derives from the implemented precedence: $HOME when set,
+	// else os.UserHomeDir (identical on unix, divergent on Windows).
+	home := os.Getenv("HOME")
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
 	expected := filepath.Join(home, ".codex/auth.json")
 	if got != expected {
 		t.Errorf("expandPath = %q, want %q", got, expected)
