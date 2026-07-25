@@ -45,7 +45,7 @@
   5; a capped item is dead-lettered (`status: failed`) until revived by
   `--fresh` or by editing the source (hash change resets the budget).
   No CGO; SQLite zero-config default untouched.
-  Design: `p2-3-durable-jobs` (design briefs are process artifacts — not committed; see git history / `.sage/docs/design/`).
+  Design: `p2-3-durable-jobs` (design briefs are process artifacts, not committed — see git history).
 
 
 - **Storage backend seam + optional Postgres/pgvector backend (STRAT-01,
