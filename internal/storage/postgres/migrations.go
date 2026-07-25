@@ -7,7 +7,7 @@ import (
 )
 
 // currentSchemaVersion tracks len(schemaMigrations).
-const currentSchemaVersion = 3
+const currentSchemaVersion = 4
 
 // schemaMigrations is the append-only Postgres V-series. Each entry is ONE
 // statement per Exec (pgx stdlib rejects multi-statement prepared calls).
@@ -219,6 +219,40 @@ var schemaMigrations = [][]string{
 		`ALTER TABLE relations ADD COLUMN IF NOT EXISTS valid_to TEXT`,
 		`ALTER TABLE relations ADD COLUMN IF NOT EXISTS invalidated_by TEXT`,
 		`INSERT INTO schema_version (version) SELECT 3 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = 3)`,
+	},
+
+	// v4 — P3-3 (GRAPH-03): the entity-alias table. Mirrors sqlite
+	// migrationV11 column-for-column.
+	//
+	// REAL -> DOUBLE PRECISION, but the timestamps stay TEXT and are bound as
+	// raw strings, NOT through nullRFC/scanNullRFC: those convert via
+	// time.Time, so a TIMESTAMPTZ column would store Postgres's own rendering
+	// and read back differently from the byte-identical string SQLite keeps.
+	// Same reasoning P3-1 applied to relations.valid_from, with the binding
+	// helper named this time.
+	//
+	// The partial unique index is supported identically on both backends and is
+	// what enforces one live decision per alias while letting rejections
+	// accumulate.
+	{
+		`CREATE TABLE IF NOT EXISTS entity_aliases (
+			alias        TEXT NOT NULL,
+			canonical_id TEXT NOT NULL,
+			entity_type  TEXT NOT NULL,
+			status       TEXT NOT NULL,
+			confidence   DOUBLE PRECISION,
+			reason       TEXT,
+			source       TEXT NOT NULL,
+			created_at   TEXT NOT NULL,
+			decided_at   TEXT,
+			decided_by   TEXT,
+			PRIMARY KEY (alias, canonical_id)
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_aliases_active
+			ON entity_aliases(alias) WHERE status IN ('applied','pending')`,
+		`CREATE INDEX IF NOT EXISTS idx_entity_aliases_canonical ON entity_aliases(canonical_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_entity_aliases_status ON entity_aliases(status)`,
+		`INSERT INTO schema_version (version) SELECT 4 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = 4)`,
 	},
 }
 
