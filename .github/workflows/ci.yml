@@ -130,7 +130,13 @@ jobs:
     steps:
       - name: Install shell and git
         shell: sh
-        run: apk add --no-cache bash git
+        # safe.directory: the workspace dir is owned by the host runner uid
+        # while steps run as root in the container — git's dubious-ownership
+        # protection rejects the repo for every step except checkout (which
+        # sets it only for itself). Set it once for all later git calls.
+        run: |
+          apk add --no-cache bash git
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - uses: actions/checkout@v4
 
@@ -176,4 +182,4 @@ jobs:
           fi
           COMMIT_MSGS="$(git log --format=%B "$RANGE")"
           export BASE HEAD COMMIT_MSGS
-          scripts/check-readme-translations.sh
+          bash scripts/check-readme-translations.sh
