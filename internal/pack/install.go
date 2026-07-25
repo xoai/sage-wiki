@@ -185,6 +185,14 @@ func atomicCacheReplace(src, dest, cacheDir string) error {
 	return nil
 }
 
+// containedWithin reports whether realPath is inside absSrc, with a
+// separator boundary so a sibling like /x/pack2 never passes a check
+// rooted at /x/pack (the codebase's containment idiom).
+func containedWithin(realPath, absSrc string) bool {
+	return realPath == absSrc ||
+		strings.HasPrefix(realPath, absSrc+string(os.PathSeparator))
+}
+
 // copyDir copies a directory tree, skipping symlinks to prevent
 // symlink-based path traversal.
 func copyDir(src, dst string) error {
@@ -192,7 +200,19 @@ func copyDir(src, dst string) error {
 	if err != nil {
 		return err
 	}
+	// Resolve the base too: walk entries are EvalSymlinks-resolved below,
+	// and comparing them against an UNRESOLVED base fails whenever src
+	// sits under a symlinked parent (macOS tempdir /var -> /private/var —
+	// the macOS CI failure).
+	if absSrc, err = filepath.EvalSymlinks(absSrc); err != nil {
+		return err
+	}
 
+	// NOTE: if the copy ROOT itself is a symlink, WalkDir Lstat's it as
+	// ModeSymlink and this function copies nothing (silent no-op). That
+	// is acceptable for pack inputs (a symlinked pack root is rejected
+	// upstream by the symlink-skip rule's design), but do not call copyDir
+	// with a symlinked src expecting content.
 	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -208,7 +228,7 @@ func copyDir(src, dst string) error {
 		if err != nil {
 			return err
 		}
-		if !strings.HasPrefix(realPath, absSrc) {
+		if !containedWithin(realPath, absSrc) {
 			return fmt.Errorf("path %q resolves outside pack directory", path)
 		}
 

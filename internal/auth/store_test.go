@@ -2,14 +2,17 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
 )
 
 func TestStoreGetPutDelete(t *testing.T) {
+	forceFileBackend(t)
 	dir := t.TempDir()
 	store := NewStore(filepath.Join(dir, "auth.json"))
 
@@ -49,6 +52,7 @@ func TestStoreGetPutDelete(t *testing.T) {
 }
 
 func TestStoreGetMissing(t *testing.T) {
+	forceFileBackend(t)
 	dir := t.TempDir()
 	store := NewStore(filepath.Join(dir, "auth.json"))
 
@@ -59,6 +63,7 @@ func TestStoreGetMissing(t *testing.T) {
 }
 
 func TestStoreList(t *testing.T) {
+	forceFileBackend(t)
 	dir := t.TempDir()
 	store := NewStore(filepath.Join(dir, "auth.json"))
 
@@ -81,6 +86,7 @@ func TestStoreList(t *testing.T) {
 }
 
 func TestStoreTOSAcknowledgment(t *testing.T) {
+	forceFileBackend(t)
 	dir := t.TempDir()
 	store := NewStore(filepath.Join(dir, "auth.json"))
 
@@ -106,6 +112,7 @@ func TestStoreTOSAcknowledgment(t *testing.T) {
 }
 
 func TestStoreVersionRejection(t *testing.T) {
+	forceFileBackend(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "auth.json")
 
@@ -121,6 +128,12 @@ func TestStoreVersionRejection(t *testing.T) {
 }
 
 func TestStoreFilePermissions(t *testing.T) {
+	forceFileBackend(t)
+	// Pin the FILE backend: on platforms with a real keychain (Windows
+	// wincred, macOS Keychain) the probe would route Put to the OS store
+	// and the file would never exist (windows-latest CI failure).
+	forceFileBackend(t)
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "auth.json")
 
@@ -131,13 +144,35 @@ func TestStoreFilePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
 	}
+	if runtime.GOOS == "windows" {
+		// os.WriteFile honors only the 0200 bit on Windows; 0600 is not
+		// observable via Stat. The file's existence + content is the
+		// portable half of this contract.
+		return
+	}
 	mode := info.Mode().Perm()
 	if mode != 0600 {
 		t.Errorf("file permissions = %04o, want 0600", mode)
 	}
 }
 
+// errKeyringUnavailable makes the keyring probe choose the file backend.
+var errKeyringUnavailable = errors.New("keyring unavailable in test")
+
+// forceFileBackend pins the cached keychain probe to "unavailable" so
+// backendForStore selects the file backend for the rest of the test.
+func forceFileBackend(t *testing.T) {
+	t.Helper()
+	resetProbeCache(t)
+	probeKeyringForTest(mockKeyring{
+		getFn: func(service, user string) (string, error) { return "", errKeyringUnavailable },
+		calls: new(int32),
+	})
+}
+
 func TestStoreCreatesParentDir(t *testing.T) {
+	forceFileBackend(t)
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sub", "deep", "auth.json")
 
@@ -152,6 +187,7 @@ func TestStoreCreatesParentDir(t *testing.T) {
 }
 
 func TestLockfilePreventsDoubleLock(t *testing.T) {
+	forceFileBackend(t)
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, "auth.json")
 
@@ -175,6 +211,7 @@ func TestLockfilePreventsDoubleLock(t *testing.T) {
 }
 
 func TestLockfileStaleCleansUp(t *testing.T) {
+	forceFileBackend(t)
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, "auth.json")
 	lockFilePath := lockPath + ".lock"
@@ -197,6 +234,7 @@ func TestLockfileStaleCleansUp(t *testing.T) {
 }
 
 func TestStoreConcurrentPut(t *testing.T) {
+	forceFileBackend(t)
 	dir := t.TempDir()
 	store := NewStore(filepath.Join(dir, "auth.json"))
 

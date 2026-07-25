@@ -140,3 +140,52 @@ min_version: 1.0.0
 		t.Fatal("expected error for min_version check")
 	}
 }
+
+// Regression (macOS CI failure): a pack installed via a SYMLINKED parent
+// path (macOS tempdir /var -> /private/var) must pass containment —
+// resolved file paths were compared against an unresolved base. And the
+// sibling-prefix trap (/x/pack2 vs /x/pack) must still be rejected.
+func TestInstall_SymlinkedParentDir(t *testing.T) {
+	realParent := t.TempDir()
+	packDir := filepath.Join(realParent, "pack")
+	os.MkdirAll(filepath.Join(packDir, "prompts"), 0o755)
+	writePackYAML(t, packDir, `
+name: symlink-pack
+version: 1.0.0
+description: Pack under a symlinked parent
+author: test
+`)
+	os.WriteFile(filepath.Join(packDir, "prompts", "test.md"), []byte("# Test"), 0o644)
+
+	linkParent := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(realParent, linkParent); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	cacheDir := t.TempDir()
+
+	if _, _, err := Install(filepath.Join(linkParent, "pack"), cacheDir); err != nil {
+		t.Fatalf("install via symlinked parent: %v", err)
+	}
+}
+
+func TestCopyDir_SiblingPrefixRejected(t *testing.T) {
+	base := t.TempDir()
+	packDir := filepath.Join(base, "pack")
+	evilDir := filepath.Join(base, "pack2")
+	os.MkdirAll(packDir, 0o755)
+	os.MkdirAll(evilDir, 0o755)
+	os.WriteFile(filepath.Join(evilDir, "evil.md"), []byte("x"), 0o644)
+	// A file under pack2 must NOT pass a containment check rooted at pack.
+	if err := copyDir(evilDir, filepath.Join(packDir, "out")); err == nil {
+		t.Log("copyDir copied pack2 — but sibling escape via copyDir(pack2) is legal input here")
+	}
+	// The boundary property is tested directly. Resolve BOTH sides (the
+	// production code does) — on macOS an unresolved /var base would make
+	// the assertion pass for the wrong reason.
+	absSrc, _ := filepath.Abs(packDir)
+	absSrc, _ = filepath.EvalSymlinks(absSrc)
+	realEvil, _ := filepath.EvalSymlinks(filepath.Join(evilDir, "evil.md"))
+	if containedWithin(realEvil, absSrc) {
+		t.Error("sibling /pack2 passed containment rooted at /pack — separator boundary missing")
+	}
+}

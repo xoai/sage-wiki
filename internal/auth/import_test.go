@@ -58,6 +58,7 @@ func TestParseClaudeAuthLegacyFlat(t *testing.T) {
 }
 
 func TestImportFromCLINestedClaude(t *testing.T) {
+	forceFileBackend(t)
 	// Reproduces the VPS bug: a real Claude Code credentials file (nested) must
 	// import successfully via `auth import --provider anthropic`.
 	dir := t.TempDir()
@@ -88,6 +89,7 @@ func TestImportFromCLINestedClaude(t *testing.T) {
 }
 
 func TestImportFromCLIClaudeOAuthTokenEnv(t *testing.T) {
+	forceFileBackend(t)
 	// macOS path: Claude Code keeps creds in the Keychain (no file), so the user
 	// exports CLAUDE_CODE_OAUTH_TOKEN. Import must use it with NO file present.
 	dir := t.TempDir()
@@ -119,6 +121,7 @@ func TestImportFromCLIClaudeOAuthTokenEnv(t *testing.T) {
 }
 
 func TestImportFromCLIClaudeOAuthTokenEnvPrecedence(t *testing.T) {
+	forceFileBackend(t)
 	// When both the env var and a credentials file exist, the env var wins
 	// (documented override).
 	dir := t.TempDir()
@@ -171,6 +174,7 @@ func TestParseGeminiAuth(t *testing.T) {
 }
 
 func TestImportFromCLI(t *testing.T) {
+	forceFileBackend(t)
 	dir := t.TempDir()
 	store := NewStore(filepath.Join(dir, "auth.json"))
 
@@ -200,6 +204,7 @@ func TestImportFromCLI(t *testing.T) {
 }
 
 func TestImportFromCLIMissingFile(t *testing.T) {
+	forceFileBackend(t)
 	dir := t.TempDir()
 	store := NewStore(filepath.Join(dir, "auth.json"))
 
@@ -212,6 +217,7 @@ func TestImportFromCLIMissingFile(t *testing.T) {
 }
 
 func TestImportFromCLIEmptyToken(t *testing.T) {
+	forceFileBackend(t)
 	dir := t.TempDir()
 	store := NewStore(filepath.Join(dir, "auth.json"))
 
@@ -230,15 +236,21 @@ func TestImportFromCLIEmptyToken(t *testing.T) {
 func TestExpandPathWithEnvOverride(t *testing.T) {
 	t.Setenv("CODEX_HOME", "/custom/codex")
 	got := expandPath("~/.codex/auth.json", "openai")
-	if got != "/custom/codex/auth.json" {
-		t.Errorf("expandPath = %q, want /custom/codex/auth.json", got)
+	want := filepath.Join("/custom/codex", "auth.json")
+	if got != want {
+		t.Errorf("expandPath = %q, want %q", got, want)
 	}
 }
 
 func TestExpandPathTilde(t *testing.T) {
 	t.Setenv("CODEX_HOME", "")
 	got := expandPath("~/.codex/auth.json", "openai")
-	home, _ := os.UserHomeDir()
+	// Expected derives from the implemented precedence: $HOME when set,
+	// else os.UserHomeDir (identical on unix, divergent on Windows).
+	home := os.Getenv("HOME")
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
 	expected := filepath.Join(home, ".codex/auth.json")
 	if got != expected {
 		t.Errorf("expandPath = %q, want %q", got, expected)
