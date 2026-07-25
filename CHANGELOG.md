@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **CI on main (4 checks).** Frontend dist check: git safe.directory set
+  in the alpine container job (dubious-ownership refused the workspace).
+  Translation drift: script committed non-executable (now 100755, invoked
+  via bash). Windows auth tests: file backend pinned in file-behavior
+  tests (windows-latest keychain probe poisoned them), `~` expansion
+  honors `$HOME` before `os.UserHomeDir`, 0600 assertion GOOS-conditional.
+  macOS pack install: containment check resolves the base path too
+  (tempdir symlink rejected every install).
+
 ## 0.2.0 — 2026-07-24
 
 ### Added
