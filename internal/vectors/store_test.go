@@ -81,7 +81,7 @@ func TestDimensionMismatchSkipped(t *testing.T) {
 	_, store := setupTestDB(t)
 
 	store.Upsert("v1", []float32{1, 0, 0})       // 3-dim
-	store.Upsert("v2", []float32{1, 0, 0, 0, 0})  // 5-dim
+	store.Upsert("v2", []float32{1, 0, 0, 0, 0}) // 5-dim
 
 	// Search with 3-dim query should only match v1
 	results, _ := store.Search([]float32{1, 0, 0}, 10)

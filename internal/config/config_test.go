@@ -978,3 +978,30 @@ func TestWorkerConfigValidate_ResolvedPair(t *testing.T) {
 		t.Errorf("unexpected error for resolved 30s < 120s: %v", err)
 	}
 }
+
+func TestPriceTable_RelativePathResolves(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "sub"), 0o755)
+	cfgContent := "version: 1\nproject: test\ncompiler:\n  price_table: sub/prices.json\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfgContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(filepath.Join(dir, "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(dir, "sub", "prices.json")
+	if cfg.Compiler.PriceTable != want {
+		t.Errorf("PriceTable = %q, want %q", cfg.Compiler.PriceTable, want)
+	}
+	// Absolute passes through.
+	cfgContent2 := "version: 1\nproject: test\ncompiler:\n  price_table: /tmp/abs.json\n"
+	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfgContent2), 0o644)
+	cfg2, err := Load(filepath.Join(dir, "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg2.Compiler.PriceTable != "/tmp/abs.json" {
+		t.Errorf("absolute path rewritten: %q", cfg2.Compiler.PriceTable)
+	}
+}

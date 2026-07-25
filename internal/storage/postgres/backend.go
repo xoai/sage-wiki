@@ -197,7 +197,7 @@ func (b *backend) verifyDimension(ctx context.Context, dim int) error {
 		}
 		if typ != want {
 			return fmt.Errorf("%w: %s.embedding is %s, config wants %s — remedy: drop and recreate the "+
-				"vector tables, invalidate output_index (forces reconcile), re-embed (docs/storage-backends.md)",
+				"vector tables, invalidate output_index (forces reconcile), re-embed (docs/guides/storage-backends.md)",
 				store.ErrDimensionMismatch, table, typ, want)
 		}
 	}

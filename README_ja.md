@@ -1,5 +1,8 @@
 [English](README.md) | [中文](README_zh.md) | **日本語** | [한국어](README_ko.md) | [Tiếng Việt](README_vi.md) | [Français](README_fr.md) | [Русский](README_ru.md)
 
+<!-- translations: may-lag -->
+> ⚠️ この翻訳は README.md に遅れている場合があります — 英語版が正本です。
+
 # sage-wiki
 
 [Andrej Karpathyのアイデア](https://x.com/karpathy/status/2039805659525644595)に基づく、LLMコンパイル型パーソナルナレッジベースの実装です。[Sage Framework](https://github.com/xoai/sage)を使用して開発されました。
@@ -33,6 +36,7 @@ _外側の境界上のドットはナレッジベース内のすべてのドキ�
 | [Self-Hosted Server](docs/guides/self-hosted-server.md) | Docker Compose、Syncthing、リバースプロキシ |
 | [Configurable Relations](docs/guides/configurable-relations.md) | カスタムオントロジー、多言語シノニム |
 | [Local Models](docs/guides/local-models.md) | Ollamaセットアップ、GPU/CPUルーティング |
+| [Storage Backends](docs/guides/storage-backends.md) | SQLite vs PostgreSQL/pgvector のセットアップ、切り替え、プールサイズ |
 
 ## インストール
 
@@ -216,6 +220,57 @@ Web UIはPreact + Tailwind CSSで構築され、`go:embed`でGoバイナリに�
 
 - `--port 3333` — ポートを変更（デフォルト3333）
 - `--bind 0.0.0.0` — ネットワークに公開（デフォルトはlocalhostのみ、認証なし）
+
+**コンパイルワーカー。** `serve`(MCP と `--ui`)は永続的なコンパイルワーカーを実行します。サービス中に追加されたソースは自動的に検出・コンパイルされ、クラッシュ回復(リース期限切れで中断されたアイテムを再キュー)と進捗ストリーミング(`GET /api/compile/status`、`GET /api/compile/progress` SSE)を備えています。調整または無効化できます:
+
+```yaml
+serve:
+  worker:
+    enabled: true              # default on; false to disable
+    poll_interval_seconds: 5
+    lease_ttl_seconds: 120
+    heartbeat_interval_seconds: 30
+    max_attempts: 5            # dead-letter after this many failures
+    claim_limit: 16
+```
+
+継続して失敗するソースは `max_attempts` 回の失敗後にデッドレター化されます。`sage-wiki compile --fresh`(またはソースの編集)で再キューされます。
+
+**ANN ベクトル検索(オプトイン)。** 非常に大きなボールトでは、近似最近傍検索(HNSW、純粋 Go)を有効にできます — 総当たりの完全一致検索がデフォルトのままです:
+
+```yaml
+search:
+  ann:
+    enabled: true
+```
+
+**価格テーブルの上書き。** コスト見積もりは組み込みのモデル別価格を使用します(古くなる場合があります)。`compiler.price_table` に JSON ファイル(組み込みマップと同じ形式)を指定すると、プロバイダー/モデルごとに上書きできます。組み込み価格はフォールバックとして残ります。
+
+## ストレージと信頼性
+
+**ストレージバックエンド。** SQLite(ゼロコンフィグ、デフォルト)または pgvector 対応 PostgreSQL(サーバーグレードのマルチユーザー展開用)— 純粋 Go ドライバー、`CGO_ENABLED=0` を維持:
+
+```yaml
+storage:
+  backend: postgres
+  dsn: postgres://user:pass@host:5432/sagewiki
+  vector_dimension: 768   # must match your embedding model
+```
+
+初回オープン時にスキーマが自動マイグレーションされます。同一の適合性テストスイートが両バックエンドの動作を保証します。セットアップ・切り替え・プールサイズ調整は [docs/guides/storage-backends.md](docs/guides/storage-backends.md) を参照してください。
+
+**オブザーバビリティ。** コンパイルパス、LLM トークン/リトライ、バックプレッシャー、検索レイテンシが標準で計測されています — フェーズ終了時とシャットダウン時の構造化ログスナップショット(常時オン)に加え、オプションの Prometheus エンドポイント:
+
+```yaml
+serve:
+  metrics: true   # GET /metrics on the web server (off by default)
+```
+
+計測項目の全リストは [docs/guides/metrics.md](docs/guides/metrics.md) を参照してください。
+
+**プロバイダーネイティブ構造化出力。** プロバイダーが対応している場合、JSON レスポンスはフェンス除去ではなくスキーマで保証されます: Anthropic ツール使用、OpenAI `response_format`、Gemini `responseSchema`。非対応のバックエンドは従来のフェンス除去にフォールバック — 設定不要で、パース失敗が大幅に減少します。
+
+**キーチェーン保存の認証情報。** macOS/Windows/Linux デスクトップでは、API トークンと OAuth 認証情報は平文の `~/.sage-wiki/auth.json` ではなく OS のキーチェーン(純粋 Go `go-keyring`、cgo なし)に保存されます。ヘッドレスマシンやコンテナは自動的にファイルフォールバックを維持します。`sage-wiki auth status` で各認証情報のバックエンドを確認でき、初回実行時に既存のファイル認証情報の移行を提案します。
 
 ## 設定
 
@@ -682,7 +737,9 @@ sage-wiki pack list
 sage-wiki pack search "research"
 ```
 
-パックは組み合わせ可能です — 複数のパックを適用すると、オントロジー型はユニオンマージされます。コミュニティパックは[sage-wiki-packs](https://github.com/xoai/sage-wiki-packs)レジストリで配布されています。詳細は[CONTRIBUTING.md](CONTRIBUTING.md)をご覧ください。
+パックは組み合わせ可能です — 複数のパックを適用すると、オントロジー型はユニオンマージされます。コミュニティパックは[sage-wiki-packs](https://github.com/xoai/sage-wiki-packs)レジストリで配布されています。ビルトインのエクストラクターはさらに、解凍上限(zip ボム対策のエントリごと・合計サイズ制限)で強化され、夜間の Go ファジングジョブ([.github/workflows/fuzz.yml](.github/workflows/fuzz.yml))でカバーされています — 不正な docx/xlsx/pptx/epub/eml/pdf 入力をパーサーに与え、上限が守られることを検証します。
+
+詳細は[CONTRIBUTING.md](CONTRIBUTING.md)をご覧ください。
 
 ## 外部パーサー
 

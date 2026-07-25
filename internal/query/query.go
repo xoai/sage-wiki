@@ -143,7 +143,7 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 		memStore, vecStore, ontStore, embedder = a.Mem, a.Vec, a.Ont, a.Embedder()
 	} else {
 		memStore = memory.NewStore(db)
-		vecStore = vectors.NewStore(db)
+		vecStore = vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled()))
 		mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
 		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 		ontStore = ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
@@ -181,7 +181,7 @@ func withContextPreamble(ctx string) string {
 // the article context string. Returns ("", nil, nil, nil) if no results found.
 func buildQueryContext(projectDir string, question string, topK int, cfg *config.Config, db store.DBHandle) (string, []string, []string, error) {
 	memStore := memory.NewStore(db)
-	vecStore := vectors.NewStore(db)
+	vecStore := vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled()))
 	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
 	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
@@ -541,7 +541,7 @@ func SaveAnswer(projectDir string, question string, answer string, sources []str
 		return "", err
 	}
 	memStore := memory.NewStore(db)
-	vecStore := vectors.NewStore(db)
+	vecStore := vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled()))
 	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
 	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
@@ -808,7 +808,7 @@ func StreamQuery(ctx context.Context, projectDir string, question string, topK i
 			memStore, vecStore, ontStore, embedder = a.Mem, a.Vec, a.Ont, a.Embedder()
 		} else {
 			memStore = memory.NewStore(db)
-			vecStore = vectors.NewStore(db)
+			vecStore = vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled()))
 			mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
 			mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 			ontStore = ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))

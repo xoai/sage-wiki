@@ -4,6 +4,29 @@
 
 ### Added
 
+- **Housekeeping bundle (P2-7).** Four independent items:
+  - **dist drift enforcement (MAINT-02):** the frontend CI job now runs
+    in a `node:22-alpine` container (the Dockerfile builder's
+    environment — the byte-match blocker) and the dist drift check
+    hard-fails instead of reporting advisedly. Regenerate with the
+    documented docker one-liner (README web UI section).
+  - **Price-table override (PERF-04):** `compiler.price_table` points at
+    a JSON file (same shape as the built-in map) that overrides built-in
+    prices per provider/model — built-ins remain the fallback, and a
+    missing/malformed file only warns. Precedence:
+    `token_price_per_million` > table > built-in. Cost report header now
+    reads "approximate".
+  - **README translation drift (MAINT-05):** the six translated READMEs
+    carry a may-lag header, and CI fails a README.md-only change unless
+    a translation moved with it or a commit message carries
+    `translations: lag-ok` (scripts/check-readme-translations.sh,
+    locally self-testable).
+  - **ANN vector index (PERF-01 follow-on):** opt-in
+    `search.ann.enabled: true` switches vector search to an HNSW index
+    (vendored under `internal/vectors/hnsw` with a corrected ef-search —
+    upstream coder/hnsw v0.6.1's k>1 search was broken, documented in
+    VENDORED.md). Brute-force exact search stays the default; recall
+    parity ≥9/10 against exact search is test-gated.
 - **Durable job model / compile worker (STRAT-03, P2-3).** `compile_items`
   is now a real work queue: claim columns (`status`, `lease_owner`,
   `lease_until`, `heartbeat_at`, `attempts` — sqlite migration V9,
@@ -22,9 +45,8 @@
   5; a capped item is dead-lettered (`status: failed`) until revived by
   `--fresh` or by editing the source (hash change resets the budget).
   No CGO; SQLite zero-config default untouched.
-  See `docs/design/p2-3-durable-jobs.md`.
+  Design: `p2-3-durable-jobs` (design briefs are process artifacts, not committed — see git history).
 
-### Added
 
 - **Storage backend seam + optional Postgres/pgvector backend (STRAT-01,
   PERF-01, P2-1).** All persistence now flows through store interfaces
@@ -40,11 +62,10 @@
   across both backends (Postgres leg runs under `TEST_DATABASE_URL`). Raw-SQL
   escape hatches across web/mcp/linter/reembed moved behind store methods;
   hub read pools are sized to not exhaust `max_connections`.
-  See `docs/storage-backends.md` for setup, switching, and pool sizing.
+  See `docs/guides/storage-backends.md` for setup, switching, and pool sizing.
   Note: multi-writer concurrency remains P2-3 scope — the single-writer
   process model is unchanged.
 
-### Added
 
 - **Observability (STRAT-02, P2-2).** A zero-dependency metrics registry
   (`internal/metrics`, nil-safe atomic instruments, lazy series
@@ -62,7 +83,6 @@
   deliberately do not serve `/metrics`; compile-process series are
   log-snapshot-only (per-process registries).
 
-### Added
 
 - **Provider-native structured outputs (MAINT-06, P2-4).** LLM JSON
   extraction moved off fence-stripping where providers support it:
@@ -78,7 +98,6 @@
   caught validation error. The empty-content actionable hint
   (finish_reason/raise-budget) is preserved on every path.
 
-### Added
 
 - **Extractor fuzzing suite (STRAT-04, SEC-08, P2-5).** Six Go native
   fuzz targets (docx/xlsx/pptx/epub/eml/pdfGo) asserting security
@@ -89,7 +108,6 @@
   go PDF library panicked on malformed input — `extractPDFGo` now
   recovers panics into logged errors.
 
-### Added
 
 - **OS-keychain credential storage (SEC-12, P2-6).** On systems with a
   real keychain (macOS Keychain, Windows Credential Manager, Secret
@@ -236,7 +254,6 @@
   `ChatCompletionWithImageCtx` carry the context; the existing non-context methods
   are unchanged (they delegate with a background context).
 
-### Added
 
 - **Continuous-integration quality gate (P0-1).** Every push to `main` and every
   pull request now builds (including the `webui` build tag), vets, race-tests
@@ -283,7 +300,6 @@
 
 ## 0.1.10 — 2026-06-28
 
-### Added
 
 - **Automated GitHub releases.** Pushing a `vX.Y.Z` tag now builds `sage-wiki`
   binaries for 5 platforms (linux/macOS/windows × amd64/arm64, windows amd64),

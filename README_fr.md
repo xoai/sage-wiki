@@ -1,5 +1,8 @@
 [English](README.md) | [中文](README_zh.md) | [日本語](README_ja.md) | [한국어](README_ko.md) | [Tiếng Việt](README_vi.md) | **Français** | [Русский](README_ru.md)
 
+<!-- translations: may-lag -->
+> ⚠️ Cette traduction peut être en retard sur README.md — la version anglaise fait foi.
+
 # sage-wiki
 
 Une implémentation de [l'idée d'Andrej Karpathy](https://x.com/karpathy/status/2039805659525644595) pour une base de connaissances personnelle compilée par LLM. Développé avec le [Sage Framework](https://github.com/xoai/sage).
@@ -33,6 +36,7 @@ _Les points sur la bordure extérieure représentent les résumés de tous les d
 | [Self-Hosted Server](docs/guides/self-hosted-server.md) | Docker Compose, Syncthing, reverse proxy |
 | [Configurable Relations](docs/guides/configurable-relations.md) | Ontologie personnalisée, synonymes multilingues |
 | [Local Models](docs/guides/local-models.md) | Configuration Ollama, routage GPU/CPU |
+| [Storage Backends](docs/guides/storage-backends.md) | Installation SQLite vs PostgreSQL/pgvector, bascule, dimensionnement du pool |
 
 ## Installation
 
@@ -216,6 +220,57 @@ Options :
 
 - `--port 3333` — changer le port (par défaut 3333)
 - `--bind 0.0.0.0` — exposer sur le réseau (par défaut localhost uniquement, sans authentification)
+
+**Worker de compilation.** `serve` (MCP et `--ui`) exécute un worker de compilation durable : les sources ajoutées pendant le service sont découvertes et compilées automatiquement, avec reprise après crash (les éléments interrompus sont remis en file à l'expiration du bail) et diffusion de la progression (`GET /api/compile/status`, `GET /api/compile/progress` en SSE). Réglable ou désactivable :
+
+```yaml
+serve:
+  worker:
+    enabled: true              # default on; false to disable
+    poll_interval_seconds: 5
+    lease_ttl_seconds: 120
+    heartbeat_interval_seconds: 30
+    max_attempts: 5            # dead-letter after this many failures
+    claim_limit: 16
+```
+
+Une source qui échoue en permanence est mise en dead-letter après `max_attempts` échecs ; `sage-wiki compile --fresh` (ou modifier la source) la remet en file.
+
+**Recherche vectorielle ANN (opt-in).** Pour les très grands vaults, activez la recherche approximative du plus proche voisin (HNSW, pur Go) — la recherche exacte brute reste le défaut :
+
+```yaml
+search:
+  ann:
+    enabled: true
+```
+
+**Table de prix personnalisée.** Les estimations de coût utilisent les prix intégrés par modèle (qui peuvent vieillir). Pointez `compiler.price_table` vers un fichier JSON (même forme que la table intégrée) pour les remplacer par fournisseur/modèle ; les prix intégrés restent le repli.
+
+## Stockage et fiabilité
+
+**Backends de stockage.** SQLite (zéro config, défaut) ou PostgreSQL avec pgvector pour les déploiements multi-utilisateurs de niveau serveur — pilotes pur Go, `CGO_ENABLED=0` préservé :
+
+```yaml
+storage:
+  backend: postgres
+  dsn: postgres://user:pass@host:5432/sagewiki
+  vector_dimension: 768   # must match your embedding model
+```
+
+Le schéma migre automatiquement à la première ouverture ; la même suite de conformité épingle le comportement des deux backends. Voir [docs/guides/storage-backends.md](docs/guides/storage-backends.md) pour l'installation, le changement de backend et le dimensionnement du pool.
+
+**Observabilité.** Les passes de compilation, les tokens LLM/retries, la backpressure et la latence de recherche sont instrumentés — instantanés de logs structurés en fin de phase et à l'arrêt (toujours actifs), plus un endpoint Prometheus optionnel :
+
+```yaml
+serve:
+  metrics: true   # GET /metrics on the web server (off by default)
+```
+
+Voir [docs/guides/metrics.md](docs/guides/metrics.md) pour la liste complète des instruments.
+
+**Sorties structurées natives.** Quand le fournisseur le permet, les réponses JSON sont garanties par schéma plutôt qu'extraites de blocs de code : tool-use Anthropic, `response_format` OpenAI, `responseSchema` Gemini. Les backends sans support reviennent à l'ancienne extraction — aucune config requise, les échecs de parsing chutent.
+
+**Identifiants dans le trousseau système.** Sur macOS/Windows/Linux bureau, les tokens API et identifiants OAuth sont stockés dans le trousseau de l'OS (`go-keyring` pur Go, sans cgo) plutôt qu'en clair dans `~/.sage-wiki/auth.json`. Les machines headless et conteneurs gardent automatiquement le fichier en repli ; `sage-wiki auth status` indique quel backend détient chaque identifiant, et le premier lancement propose de migrer les identifiants existants.
 
 ## Configuration
 
@@ -692,7 +747,9 @@ parsers:
     timeout: 30s
 ```
 
-Sécurité : les parseurs externes s'exécutent avec timeout, suppression des variables d'environnement et isolation réseau sous Linux. Nécessite `parsers.external: true`. Voir [CONTRIBUTING.md](CONTRIBUTING.md).
+Sécurité : les parseurs externes s'exécutent avec timeout, suppression des variables d'environnement et isolation réseau sous Linux. Nécessite `parsers.external: true`. Les extracteurs intégrés sont en outre durcis par des limites de décompression (taille par entrée et agrégée, contre les zip bombs) et couverts par une tâche de fuzzing Go nocturne ([.github/workflows/fuzz.yml](.github/workflows/fuzz.yml)) qui soumet des docx/xlsx/pptx/epub/eml/pdf malformés aux parseurs et vérifie que les limites tiennent.
+
+Voir [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Fichiers de compétences agent
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/xoai/sage-wiki/internal/memory"
@@ -126,5 +127,20 @@ func TestUnwrap(t *testing.T) {
 	b := openWriter(t)
 	if Unwrap(b) == nil {
 		t.Error("Unwrap returned nil for sqlite backend")
+	}
+}
+
+func TestOpenOptions_ANNThreadsToStore(t *testing.T) {
+	b, err := OpenPath(filepath.Join(t.TempDir(), "wiki.db"), store.ModeWriter, Options{ANN: true})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer b.Close()
+	vec, ok := b.Vectors().(interface{ IndexKind() string })
+	if !ok {
+		t.Fatal("Vectors() does not expose IndexKind — the option plumbing is missing")
+	}
+	if vec.IndexKind() == "brute-force" {
+		t.Error("Options{ANN: true} must reach the vectors.Store construction")
 	}
 }

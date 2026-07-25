@@ -115,6 +115,10 @@ type CompilerConfig struct {
 	PromptCache        *bool    `yaml:"prompt_cache,omitempty"`            // enable prompt caching (default: true)
 	BatchThreshold     int      `yaml:"batch_threshold,omitempty"`         // min sources to auto-select batch mode
 	TokenPriceOverride float64  `yaml:"token_price_per_million,omitempty"` // override price per 1M input tokens
+	// PriceTable is an optional JSON price-table path (PERF-04): entries
+	// override built-in prices per provider/model; built-ins cover the rest.
+	// Relative paths resolve against the project dir.
+	PriceTable string `yaml:"price_table,omitempty"`
 	Timezone           string   `yaml:"timezone,omitempty"`                // IANA timezone for user-facing timestamps (default: UTC)
 	ArticleFields      []string `yaml:"article_fields,omitempty"`          // custom frontmatter fields extracted from LLM response
 
@@ -320,6 +324,20 @@ type SearchConfig struct {
 	WeightSourceOverlap  *float64 `yaml:"weight_source_overlap,omitempty"`  // graph signal weight (default: 4.0, set 0 to disable)
 	WeightCommonNeighbor *float64 `yaml:"weight_common_neighbor,omitempty"` // graph signal weight (default: 1.5, set 0 to disable)
 	WeightTypeAffinity   *float64 `yaml:"weight_type_affinity,omitempty"`   // graph signal weight (default: 1.0, set 0 to disable)
+
+	// ANN selects the approximate (HNSW) vector index for large vaults
+	// (P2-7). Default off: exact brute-force search.
+	ANN ANNConfig `yaml:"ann,omitempty"`
+}
+
+// ANNConfig toggles the approximate vector index backend.
+type ANNConfig struct {
+	Enabled *bool `yaml:"enabled,omitempty"`
+}
+
+// ANNEnabled resolves the ANN flag (default: false — brute-force).
+func (c *SearchConfig) ANNEnabled() bool {
+	return c.ANN.Enabled != nil && *c.ANN.Enabled
 }
 
 // QueryExpansionEnabled returns whether query expansion is enabled (default: true).
@@ -689,6 +707,12 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config.Load: parse error: %w", err)
 	}
 	cfg.Extends = "" // clear after merge
+
+	// Resolve the price table relative to the config file's directory
+	// (PERF-04): absolute paths pass through untouched.
+	if cfg.Compiler.PriceTable != "" && !filepath.IsAbs(cfg.Compiler.PriceTable) {
+		cfg.Compiler.PriceTable = filepath.Join(filepath.Dir(path), cfg.Compiler.PriceTable)
+	}
 
 	if err := cfg.Validate(); err != nil {
 		return nil, err

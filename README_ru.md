@@ -1,5 +1,8 @@
 [English](README.md) | [中文](README_zh.md) | [日本語](README_ja.md) | [한국어](README_ko.md) | [Tiếng Việt](README_vi.md) | [Français](README_fr.md) | **Русский**
 
+<!-- translations: may-lag -->
+> ⚠️ Этот перевод может отставать от README.md — английская версия является основной.
+
 # sage-wiki
 
 Реализация [идеи Андрея Карпати](https://x.com/karpathy/status/2039805659525644595) — персональная база знаний, компилируемая с помощью LLM. Разработано с использованием [Sage Framework](https://github.com/xoai/sage).
@@ -33,6 +36,7 @@ _Точки на внешней границе представляют резю
 | [Self-Hosted Server](docs/guides/self-hosted-server.md) | Docker Compose, Syncthing, обратный прокси |
 | [Configurable Relations](docs/guides/configurable-relations.md) | Пользовательская онтология, многоязычные синонимы |
 | [Local Models](docs/guides/local-models.md) | Настройка Ollama, маршрутизация GPU/CPU |
+| [Storage Backends](docs/guides/storage-backends.md) | Настройка SQLite vs PostgreSQL/pgvector, переключение, размеры пула |
 
 ## Установка
 
@@ -216,6 +220,57 @@ sage-wiki serve --ui
 
 - `--port 3333` — изменить порт (по умолчанию 3333)
 - `--bind 0.0.0.0` — открыть доступ в сети (по умолчанию только localhost, без аутентификации)
+
+**Воркер компиляции.** `serve` (MCP и `--ui`) запускает устойчивый воркер компиляции: источники, добавленные во время работы сервера, обнаруживаются и компилируются автоматически, с восстановлением после сбоев (прерванные элементы возвращаются в очередь по истечении аренды) и потоковой передачей прогресса (`GET /api/compile/status`, `GET /api/compile/progress` по SSE). Настраивается или отключается:
+
+```yaml
+serve:
+  worker:
+    enabled: true              # default on; false to disable
+    poll_interval_seconds: 5
+    lease_ttl_seconds: 120
+    heartbeat_interval_seconds: 30
+    max_attempts: 5            # dead-letter after this many failures
+    claim_limit: 16
+```
+
+Источник, который продолжает падать, переводится в dead-letter после `max_attempts` неудач; `sage-wiki compile --fresh` (или правка источника) возвращает его в очередь.
+
+**ANN векторный поиск (opt-in).** Для очень больших хранилищ включите приближённый поиск ближайших соседей (HNSW, чистый Go) — точный поиск перебором остаётся по умолчанию:
+
+```yaml
+search:
+  ann:
+    enabled: true
+```
+
+**Переопределение прайс-таблицы.** Оценки стоимости используют встроенные цены по моделям (могут устаревать). Укажите `compiler.price_table` на JSON-файл (той же формы, что и встроенная таблица), чтобы переопределить их по провайдеру/модели; встроенные остаются запасным вариантом.
+
+## Хранение и надёжность
+
+**Бэкенды хранения.** SQLite (нулевая конфигурация, по умолчанию) или PostgreSQL с pgvector для серверных многопользовательских развёртываний — чистые Go-драйверы, `CGO_ENABLED=0` сохранён:
+
+```yaml
+storage:
+  backend: postgres
+  dsn: postgres://user:pass@host:5432/sagewiki
+  vector_dimension: 768   # must match your embedding model
+```
+
+Схема мигрирует автоматически при первом открытии; один и тот же набор тестов соответствия фиксирует поведение обоих бэкендов. См. [docs/guides/storage-backends.md](docs/guides/storage-backends.md) — установка, переключение, размеры пула.
+
+**Наблюдаемость.** Проходы компиляции, токены LLM/ретраи, backpressure и задержки поиска инструментированы из коробки — структурированные снапшоты логов в конце фаз и при остановке (всегда включены), плюс опциональный endpoint Prometheus:
+
+```yaml
+serve:
+  metrics: true   # GET /metrics on the web server (off by default)
+```
+
+Полный список инструментов: [docs/guides/metrics.md](docs/guides/metrics.md).
+
+**Нативные структурированные ответы.** Где провайдер поддерживает, JSON-ответы гарантируются схемой, а не извлечением из fenced-блоков: Anthropic tool-use, OpenAI `response_format`, Gemini `responseSchema`. Бэкенды без поддержки возвращаются к прежнему разбору — конфигурация не требуется, ошибки парсинга заметно снижаются.
+
+**Учётные данные в системной связке ключей.** На десктопах macOS/Windows/Linux API-токены и OAuth-учётные данные хранятся в связке ключей ОС (чистый Go `go-keyring`, без cgo), а не в открытом `~/.sage-wiki/auth.json`. Headless-машины и контейнеры автоматически сохраняют файловый fallback; `sage-wiki auth status` показывает, какой бэкенд хранит каждые учётные данные, а при первом запуске предлагается миграция существующих.
 
 ## Конфигурация
 
@@ -676,7 +731,9 @@ sage-wiki pack apply academic-research --mode merge
 sage-wiki pack list
 ```
 
-Пакеты комбинируемы. Пакеты сообщества распространяются через реестр [sage-wiki-packs](https://github.com/xoai/sage-wiki-packs). См. [CONTRIBUTING.md](CONTRIBUTING.md).
+Пакеты комбинируемы. Пакеты сообщества распространяются через реестр [sage-wiki-packs](https://github.com/xoai/sage-wiki-packs). Встроенные экстракторы дополнительно усилены ограничениями на распаковку (размер на запись и суммарный — против zip-бомб) и покрываются ночной задачей Go fuzzing ([.github/workflows/fuzz.yml](.github/workflows/fuzz.yml)), которая подаёт искажённые docx/xlsx/pptx/epub/eml/pdf парсерам и проверяет, что ограничения соблюдаются.
+
+См. [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Внешние парсеры
 

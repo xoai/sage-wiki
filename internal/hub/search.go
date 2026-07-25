@@ -100,6 +100,7 @@ func searchProject(projectDir string, query string, limit int) ([]hybrid.SearchR
 			ProjectDir:  projectDir,
 			LockTimeout: lt,
 			Pool:        store.PoolConfig{MaxOpen: 4, MaxIdle: 2},
+			ANN:         cfg.Search.ANNEnabled(),
 		})
 	}
 	if b == nil {

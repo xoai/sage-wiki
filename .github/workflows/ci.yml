@@ -121,15 +121,18 @@ jobs:
   frontend:
     name: Frontend (typecheck + build)
     runs-on: ubuntu-latest
+    # P2-7 (MAINT-02): build inside the Dockerfile builder's environment so
+    # the committed dist byte-matches what CI produces — the precondition
+    # for an enforcing drift check. Alpine ships neither bash nor git while
+    # the workflow defaults to `shell: bash`, so the FIRST step installs
+    # both under `shell: sh`. setup-node is dropped (the image IS node 22).
+    container: node:22-alpine
     steps:
-      - uses: actions/checkout@v4
+      - name: Install shell and git
+        shell: sh
+        run: apk add --no-cache bash git
 
-      - uses: actions/setup-node@v4
-        with:
-          # Match the Dockerfile's builder (node:22-alpine).
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+      - uses: actions/checkout@v4
 
       # `npm run build` runs `tsc -b` first — a real typecheck — then `vite build`.
       # This is the hard gate.
@@ -139,10 +142,38 @@ jobs:
           npm ci
           npm run build
 
-      # Advisory drift report: the build above rewrites internal/web/dist. Hosted
-      # Node 22 may not byte-match the committed hash-named Vite assets (built
-      # under node:22-alpine), so this reports drift without failing the build.
-      # The enforcing dist-in-CI check is master-plan P2-7 (MAINT-02).
-      - name: Report dist drift (advisory)
-        continue-on-error: true
-        run: git diff --stat --exit-code internal/web/dist
+      # Enforcing drift check (was advisory): any byte difference between
+      # the committed dist and this build fails the job. Regenerate with
+      # the documented docker command and commit the result.
+      - name: Verify dist is current
+        run: git diff --exit-code internal/web/dist
+
+  translations:
+    name: Translation drift (MAINT-05)
+    runs-on: ubuntu-latest
+    steps:
+      # Full history: the check diffs README.md against the base ref.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check README translation drift
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin main
+            BASE="origin/main"
+            HEAD="HEAD"
+            RANGE="$(git merge-base "$BASE" "$HEAD")..$HEAD"
+          else
+            BASE="${{ github.event.before }}"
+            HEAD="${{ github.event.after }}"
+            if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+              echo "new branch push — nothing to check"
+              exit 0
+            fi
+            RANGE="$(git merge-base "$BASE" "$HEAD" 2>/dev/null || echo "$BASE")..$HEAD"
+          fi
+          COMMIT_MSGS="$(git log --format=%B "$RANGE")"
+          export BASE HEAD COMMIT_MSGS
+          scripts/check-readme-translations.sh
