@@ -185,11 +185,26 @@ func atomicCacheReplace(src, dest, cacheDir string) error {
 	return nil
 }
 
+// containedWithin reports whether realPath is inside absSrc, with a
+// separator boundary so a sibling like /x/pack2 never passes a check
+// rooted at /x/pack (the codebase's containment idiom).
+func containedWithin(realPath, absSrc string) bool {
+	return realPath == absSrc ||
+		strings.HasPrefix(realPath, absSrc+string(os.PathSeparator))
+}
+
 // copyDir copies a directory tree, skipping symlinks to prevent
 // symlink-based path traversal.
 func copyDir(src, dst string) error {
 	absSrc, err := filepath.Abs(src)
 	if err != nil {
+		return err
+	}
+	// Resolve the base too: walk entries are EvalSymlinks-resolved below,
+	// and comparing them against an UNRESOLVED base fails whenever src
+	// sits under a symlinked parent (macOS tempdir /var -> /private/var —
+	// the macOS CI failure).
+	if absSrc, err = filepath.EvalSymlinks(absSrc); err != nil {
 		return err
 	}
 
@@ -208,7 +223,7 @@ func copyDir(src, dst string) error {
 		if err != nil {
 			return err
 		}
-		if !strings.HasPrefix(realPath, absSrc) {
+		if !containedWithin(realPath, absSrc) {
 			return fmt.Errorf("path %q resolves outside pack directory", path)
 		}
 
