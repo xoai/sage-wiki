@@ -37,6 +37,7 @@ _Các điểm trên đường biên ngoài đại diện cho tóm tắt của t�
 | [Configurable Relations](docs/guides/configurable-relations.md) | Ontology tùy chỉnh, từ đồng nghĩa đa ngôn ngữ |
 | [Local Models](docs/guides/local-models.md) | Cài đặt Ollama, định tuyến GPU/CPU |
 | [Storage Backends](docs/guides/storage-backends.md) | Cài đặt SQLite vs PostgreSQL/pgvector, chuyển đổi, định cỡ pool |
+| [Graph Memory](docs/guides/graph-memory.md) | Quan hệ có bằng chứng, trích xuất bộ ba bằng LLM, nguồn gốc và chi phí |
 
 ## Cài đặt
 

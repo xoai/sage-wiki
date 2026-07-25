@@ -37,6 +37,7 @@ _Точки на внешней границе представляют резю
 | [Configurable Relations](docs/guides/configurable-relations.md) | Пользовательская онтология, многоязычные синонимы |
 | [Local Models](docs/guides/local-models.md) | Настройка Ollama, маршрутизация GPU/CPU |
 | [Storage Backends](docs/guides/storage-backends.md) | Настройка SQLite vs PostgreSQL/pgvector, переключение, размеры пула |
+| [Graph Memory](docs/guides/graph-memory.md) | Связи с доказательствами, извлечение триплетов через LLM, происхождение и стоимость |
 
 ## Установка
 

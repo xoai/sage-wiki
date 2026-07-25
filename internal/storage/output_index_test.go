@@ -44,14 +44,20 @@ func TestMigrationV7OnOldSchema(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	// Simulate an old (V6) database. The version rollback must also drop
-	// V9's queue columns (and their index first): sqlite ALTER ADD COLUMN
-	// is not re-runnable, and a faithful V6 database never had them.
+	// V9's queue columns (and their index first) and V10's evidence columns:
+	// sqlite ALTER ADD COLUMN is not re-runnable, and a faithful V6 database
+	// never had them.
 	if _, err := db.WriteDB().Exec("DROP INDEX IF EXISTS idx_ci_claim"); err != nil {
 		t.Fatalf("drop v9 index: %v", err)
 	}
 	for _, col := range []string{"status", "lease_owner", "lease_until", "heartbeat_at", "attempts"} {
 		if _, err := db.WriteDB().Exec("ALTER TABLE compile_items DROP COLUMN " + col); err != nil {
 			t.Fatalf("drop v9 column %s: %v", col, err)
+		}
+	}
+	for _, col := range []string{"evidence", "confidence", "source_doc", "valid_from", "valid_to", "invalidated_by"} {
+		if _, err := db.WriteDB().Exec("ALTER TABLE relations DROP COLUMN " + col); err != nil {
+			t.Fatalf("drop v10 column %s: %v", col, err)
 		}
 	}
 	if _, err := db.WriteDB().Exec("DROP TABLE output_index"); err != nil {

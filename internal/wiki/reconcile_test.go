@@ -442,3 +442,55 @@ func TestReconcile_Idempotent(t *testing.T) {
 		t.Errorf("second reconcile re-embedded %d times, want 0", emb.calls())
 	}
 }
+
+// A reindex must take the entity's type and display name from the article
+// itself. Before P3-1 this path hard-coded TypeConcept and the raw slug, which
+// was harmless only because AddEntity ignored `type` on sqlite. Now that
+// AddEntity writes `type` unconditionally, a constant here would demote every
+// `technique` on every reconcile run.
+func TestReconcile_ArticleTypeAndNameComeFromFrontmatter(t *testing.T) {
+	e := setupReconcile(t)
+	article := "---\nconcept: self-attention\nentity_type: technique\naliases: []\n---\n\n" +
+		"# Self Attention\n\nContent about self attention.\n"
+	rel := e.writeConceptFile(t, "self-attention", article)
+
+	m := manifest.New()
+	m.AddConcept("self-attention", rel, []string{"raw/a.md"})
+	e.saveManifest(t, m)
+
+	if _, err := Reconcile(context.Background(), e.dir, e.cfg, e.db, &countingEmbedder{}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	ent, err := e.ont.GetEntity("self-attention")
+	if err != nil || ent == nil {
+		t.Fatalf("GetEntity: %v %v", ent, err)
+	}
+	if ent.Type != ontology.TypeTechnique {
+		t.Errorf("Type = %q, want %q — the article declares entity_type: technique", ent.Type, ontology.TypeTechnique)
+	}
+	if ent.Name != "Self Attention" {
+		t.Errorf("Name = %q, want the formatted display name", ent.Name)
+	}
+}
+
+// An article with no entity_type still lands as a concept.
+func TestReconcile_ArticleWithoutEntityTypeDefaultsToConcept(t *testing.T) {
+	e := setupReconcile(t)
+	rel := e.writeConceptFile(t, "plain", "# Plain\n\nNo frontmatter here.")
+
+	m := manifest.New()
+	m.AddConcept("plain", rel, []string{"raw/a.md"})
+	e.saveManifest(t, m)
+
+	if _, err := Reconcile(context.Background(), e.dir, e.cfg, e.db, &countingEmbedder{}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	ent, err := e.ont.GetEntity("plain")
+	if err != nil || ent == nil {
+		t.Fatalf("GetEntity: %v %v", ent, err)
+	}
+	if ent.Type != ontology.TypeConcept {
+		t.Errorf("Type = %q, want %q", ent.Type, ontology.TypeConcept)
+	}
+}

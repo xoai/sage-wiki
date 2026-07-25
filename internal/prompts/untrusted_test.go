@@ -87,6 +87,7 @@ func TestTemplates_UntrustedBlockDriftGuard(t *testing.T) {
 	}{
 		{"extract_concepts.txt", "{{.Summaries}}"},
 		{"write_article.txt", "{{.SourceContext}}"},
+		{"extract_triples.txt", "{{.Summary}}"},
 	} {
 		block := extractTemplateBlock(t, tc.name, tc.slot)
 		want := strings.Replace(UntrustedBlock, "%s", tc.slot, 1)

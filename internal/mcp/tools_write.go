@@ -258,7 +258,10 @@ func (s *Server) handleWriteArticle(ctx context.Context, req mcplib.CallToolRequ
 	// Post-write index failures are logged, not returned (reconciler heals;
 	// the article file is already on disk). REL-04.
 	if err := s.ont.AddEntity(ontology.Entity{
-		ID: conceptID, Type: ontology.TypeConcept, Name: conceptID, ArticlePath: articlePath,
+		ID:          conceptID,
+		Type:        ontology.ArticleEntityType(content, s.ont),
+		Name:        ontology.FormatConceptName(conceptID),
+		ArticlePath: articlePath,
 	}); err != nil {
 		log.Warn("index article entity failed (reconciler will heal)", "concept", conceptID, "error", err)
 	}

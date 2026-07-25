@@ -250,7 +250,16 @@ func (rc *reconciler) applyReindex(eo expectedOutput, indexText, hash string, ch
 		return fmt.Errorf("reindex FTS: %w", err)
 	}
 	if eo.kind == "article" {
-		if err := rc.ont.AddEntity(ontology.Entity{ID: eo.name, Type: ontology.TypeConcept, Name: eo.name, ArticlePath: eo.path}); err != nil {
+		// Type and display name come from the article, not from a constant:
+		// AddEntity writes `type` unconditionally (P3-1), so hard-coding
+		// TypeConcept here would demote a `technique` on every reindex, and a
+		// raw-slug Name would overwrite the article's display name.
+		if err := rc.ont.AddEntity(ontology.Entity{
+			ID:          eo.name,
+			Type:        ontology.ArticleEntityType(indexText, rc.ont),
+			Name:        ontology.FormatConceptName(eo.name),
+			ArticlePath: eo.path,
+		}); err != nil {
 			return fmt.Errorf("reindex ontology: %w", err)
 		}
 	}

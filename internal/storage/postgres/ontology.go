@@ -36,17 +36,26 @@ func (s *ontologyStore) IsValidType(t string) bool {
 }
 
 func (s *ontologyStore) AddEntity(e store.Entity) error {
+	// Two INDEPENDENT defaults, mirroring the sqlite store: coupling them meant
+	// a caller supplying CreatedAt but not UpdatedAt bound nullRFC("") → NULL,
+	// and the unconditional SET below wrote that NULL over a stored timestamp.
+	now := time.Now().UTC().Format(time.RFC3339)
 	if e.CreatedAt == "" {
-		e.CreatedAt = time.Now().UTC().Format(time.RFC3339)
-		e.UpdatedAt = e.CreatedAt
+		e.CreatedAt = now
+	}
+	if e.UpdatedAt == "" {
+		e.UpdatedAt = now
 	}
 	return s.b.WriteTx(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`
 			INSERT INTO entities (id, type, name, definition, article_path, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7)
 			ON CONFLICT (id) DO UPDATE SET
-				type=excluded.type, name=excluded.name, definition=excluded.definition,
-				article_path=excluded.article_path, updated_at=excluded.updated_at`,
+				type=excluded.type,
+				name         = CASE WHEN COALESCE(excluded.name,'')         = '' THEN entities.name         ELSE excluded.name         END,
+				definition   = CASE WHEN COALESCE(excluded.definition,'')   = '' THEN entities.definition   ELSE excluded.definition   END,
+				article_path = CASE WHEN COALESCE(excluded.article_path,'') = '' THEN entities.article_path ELSE excluded.article_path END,
+				updated_at=excluded.updated_at`,
 			e.ID, e.Type, e.Name, nullStr(e.Definition), nullStr(e.ArticlePath),
 			nullRFC(e.CreatedAt), nullRFC(e.UpdatedAt))
 		return err
@@ -122,22 +131,40 @@ func (s *ontologyStore) AddRelation(r store.Relation) error {
 	}
 	return s.b.WriteTx(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`
-			INSERT INTO relations (id, source_id, target_id, relation, created_at)
-			VALUES ($1, $2, $3, $4, $5)
-			ON CONFLICT (source_id, target_id, relation) DO NOTHING`,
-			r.ID, r.SourceID, r.TargetID, r.Relation, nullRFC(r.CreatedAt))
+			INSERT INTO relations (id, source_id, target_id, relation, created_at,
+			                       evidence, confidence, source_doc,
+			                       valid_from, valid_to, invalidated_by)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			ON CONFLICT (source_id, target_id, relation) DO UPDATE SET
+			  evidence   = excluded.evidence,
+			  confidence = excluded.confidence,
+			  source_doc = excluded.source_doc
+			WHERE excluded.confidence > COALESCE(relations.confidence, 0)`,
+			r.ID, r.SourceID, r.TargetID, r.Relation, nullRFC(r.CreatedAt),
+			nullStr(r.Evidence), r.Confidence, nullStr(r.SourceDoc),
+			nullStr(r.ValidFrom), nullStr(r.ValidTo), nullStr(r.InvalidatedBy))
 		return err
 	})
 }
 
-const relationCols = "id, source_id, target_id, relation, created_at"
+// relationCols COALESCEs the P3-1 columns so pre-v3 rows — where they are
+// NULL — read back as zero values instead of failing the scan. Only ever
+// interpolated as "SELECT " + relationCols + " FROM relations", so expressions
+// are safe here. Column order must match scanRelations.
+const relationCols = `id, source_id, target_id, relation, created_at,
+	COALESCE(evidence,''), COALESCE(confidence,0), COALESCE(source_doc,''),
+	COALESCE(valid_from,''), COALESCE(valid_to,''), COALESCE(invalidated_by,'')`
 
 func scanRelations(rows *sql.Rows) ([]store.Relation, error) {
 	var out []store.Relation
 	for rows.Next() {
 		var r store.Relation
 		var ca *time.Time
-		if err := rows.Scan(&r.ID, &r.SourceID, &r.TargetID, &r.Relation, &ca); err != nil {
+		if err := rows.Scan(
+			&r.ID, &r.SourceID, &r.TargetID, &r.Relation, &ca,
+			&r.Evidence, &r.Confidence, &r.SourceDoc,
+			&r.ValidFrom, &r.ValidTo, &r.InvalidatedBy,
+		); err != nil {
 			return nil, err
 		}
 		r.CreatedAt = scanNullRFC(ca)

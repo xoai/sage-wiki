@@ -437,6 +437,12 @@ func MergeOntology(base, overlay config.OntologyConfig) config.OntologyConfig {
 	return config.OntologyConfig{
 		RelationTypes: mergeRelations(baseRelations, overlayRelations),
 		EntityTypes:   mergeEntityTypes(base.EntityTypes, overlay.EntityTypes),
+		// Base always wins: OntologyOverlay has no Triples field, so a pack
+		// structurally cannot set it. Carrying it explicitly is required
+		// because this literal — not a merge — is what mergeOntologyIntoMap
+		// writes back over the whole `ontology:` node. Any field omitted here
+		// is erased from the user's config on `pack apply`.
+		Triples: base.Triples,
 	}
 }
 

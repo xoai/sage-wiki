@@ -309,6 +309,7 @@ func OntologyConformance(new BackendFactory) func(*testing.T) {
 		if err != nil || len(rels) != 1 || rels[0].SourceID != "e2" {
 			t.Errorf("RelationsByType: %+v %v", rels, err)
 		}
+
 		all, err := os.AllRelations()
 		if err != nil || len(all) != 2 {
 			t.Errorf("AllRelations: %+v %v", all, err)
@@ -339,6 +340,130 @@ func OntologyConformance(new BackendFactory) func(*testing.T) {
 		}
 		if n, _ := os.RelationCount(); n != 0 {
 			t.Errorf("after cascade: RelationCount = %d, want 0", n)
+		}
+
+		// --- P3-1: evidenced relations (runs last; the cascade above left e1
+		// and e3 in place with no relations, so these counts stand alone).
+
+		// P3-1: evidence and provenance must round-trip identically on both
+		// backends. Postgres stores confidence as DOUBLE PRECISION and the
+		// three temporal columns as TEXT (not TIMESTAMPTZ) precisely so this
+		// comparison is byte-for-byte rather than format-dependent.
+		evidenced := store.Relation{
+			ID: "r3", SourceID: "e1", TargetID: "e3", Relation: "extends",
+			Evidence: "e1 extends e3", Confidence: 0.75, SourceDoc: "raw/doc.md",
+			ValidFrom: "2026-01-15", ValidTo: "2026-06-01", InvalidatedBy: "r9",
+		}
+		if err := os.AddRelation(evidenced); err != nil {
+			t.Fatalf("AddRelation evidenced: %v", err)
+		}
+		got, err := os.RelationsByType("extends")
+		if err != nil || len(got) != 1 {
+			t.Fatalf("RelationsByType(extends): %+v %v", got, err)
+		}
+		if g := got[0]; g.Evidence != evidenced.Evidence || g.Confidence != evidenced.Confidence ||
+			g.SourceDoc != evidenced.SourceDoc || g.ValidFrom != evidenced.ValidFrom ||
+			g.ValidTo != evidenced.ValidTo || g.InvalidatedBy != evidenced.InvalidatedBy {
+			t.Errorf("evidenced relation did not round-trip: %+v", g)
+		}
+
+		// A caller that sets none of the new fields reads back zero-valued —
+		// the pre-P3-1 shape, which every existing caller still uses.
+		if err := os.AddRelation(store.Relation{
+			ID: "r4", SourceID: "e3", TargetID: "e1", Relation: "cites",
+		}); err != nil {
+			t.Fatalf("AddRelation legacy: %v", err)
+		}
+		legacy, err := os.RelationsByType("cites")
+		if err != nil || len(legacy) != 1 {
+			t.Fatalf("RelationsByType(cites): %+v %v", legacy, err)
+		}
+		if l := legacy[0]; l.Evidence != "" || l.Confidence != 0 || l.SourceDoc != "" ||
+			l.ValidFrom != "" || l.ValidTo != "" || l.InvalidatedBy != "" {
+			t.Errorf("legacy relation read back non-zero: %+v", l)
+		}
+
+		// The upsert rule: an existing edge is updated only on strictly
+		// higher confidence, and created_at survives. Zero-confidence
+		// re-assertion — what every pre-P3-1 caller does — must be a no-op.
+		bumped := evidenced
+		bumped.Evidence = "e1 extends e3, restated"
+		bumped.Confidence = 0.9
+		bumped.CreatedAt = "2030-01-01T00:00:00Z"
+		if err := os.AddRelation(bumped); err != nil {
+			t.Fatalf("AddRelation bumped: %v", err)
+		}
+		after, err := os.RelationsByType("extends")
+		if err != nil || len(after) != 1 {
+			t.Fatalf("RelationsByType after bump: %+v %v", after, err)
+		}
+		if after[0].Evidence != bumped.Evidence || after[0].Confidence != 0.9 {
+			t.Errorf("higher confidence did not win: %+v", after[0])
+		}
+		if after[0].CreatedAt == "2030-01-01T00:00:00Z" {
+			t.Error("created_at was overwritten; the earliest assertion's timestamp must survive")
+		}
+		if err := os.AddRelation(store.Relation{
+			ID: "r3", SourceID: "e1", TargetID: "e3", Relation: "extends",
+		}); err != nil {
+			t.Fatalf("AddRelation zero-confidence: %v", err)
+		}
+		after, _ = os.RelationsByType("extends")
+		if len(after) != 1 || after[0].Evidence != bumped.Evidence {
+			t.Errorf("zero-confidence re-assertion erased evidence: %+v", after)
+		}
+
+		// AddEntity: empty fields never clobber; type is always writable.
+		if err := os.AddEntity(store.Entity{
+			ID: "e4", Type: "technique", Name: "Four",
+			Definition: "kept", ArticlePath: "wiki/four.md",
+		}); err != nil {
+			t.Fatalf("AddEntity e4: %v", err)
+		}
+		if err := os.AddEntity(store.Entity{ID: "e4", Type: "concept", Name: "Four"}); err != nil {
+			t.Fatalf("AddEntity e4 re-add: %v", err)
+		}
+		e4, err := os.GetEntity("e4")
+		if err != nil || e4 == nil {
+			t.Fatalf("GetEntity e4: %v %v", e4, err)
+		}
+		if e4.Definition != "kept" || e4.ArticlePath != "wiki/four.md" {
+			t.Errorf("empty fields clobbered stored values: %+v", e4)
+		}
+		if e4.Type != "concept" {
+			t.Errorf("type = %q, want %q — type is written unconditionally", e4.Type, "concept")
+		}
+
+		// E3: a caller that supplies CreatedAt but not UpdatedAt must not end up
+		// with a NULL updated_at. Postgres coupled the two defaults, so
+		// nullRFC("") bound NULL and the unconditional SET wrote it over a
+		// stored timestamp; sqlite defaulted them independently.
+		if err := os.AddEntity(store.Entity{
+			ID: "e5", Type: "concept", Name: "Five",
+			CreatedAt: "2026-01-01T00:00:00Z", // UpdatedAt deliberately empty
+		}); err != nil {
+			t.Fatalf("AddEntity e5: %v", err)
+		}
+		e5, err := os.GetEntity("e5")
+		if err != nil || e5 == nil {
+			t.Fatalf("GetEntity e5: %v %v", e5, err)
+		}
+		if e5.UpdatedAt == "" {
+			t.Error("updated_at empty when only CreatedAt was supplied (E3)")
+		}
+
+		// D11: `WHERE source_id=? OR target_id=?` with `AND relation=?`
+		// appended parses as `source_id=? OR (target_id=? AND relation=?)`.
+		// SQLite had the unparenthesized form; Postgres did not. The cascade
+		// above already destroyed the `implements` edge, so e1 now has an
+		// outbound `extends` (r3) and an inbound `cites` (r4) — a Both query
+		// filtered to `cites` must return exactly one.
+		filtered, err := os.GetRelations("e1", store.Both, "cites")
+		if err != nil {
+			t.Fatalf("GetRelations(Both, cites): %v", err)
+		}
+		if len(filtered) != 1 || filtered[0].Relation != "cites" {
+			t.Errorf("Both+filter returned %d relations, want exactly the cites edge: %+v", len(filtered), filtered)
 		}
 	}
 }

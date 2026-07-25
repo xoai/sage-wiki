@@ -206,3 +206,38 @@ func TestIsJSONTemplate(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderTriples(t *testing.T) {
+	out, err := Render("extract_triples", TriplesData{
+		ValidTypes:      "concept, technique",
+		ValidPredicates: "implements, extends",
+		Summary:         "### Source: raw/paper.pdf\nBackpressure extends flow control.",
+	}, "")
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	for _, want := range []string{
+		"concept, technique", "implements, extends",
+		"raw/paper.pdf", "Backpressure extends flow control.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered prompt missing %q", want)
+		}
+	}
+}
+
+// GUARD, not a driver: the template is written with the phrase in place, so
+// this passes on first implementation. It locks the load-bearing convention —
+// isJSONTemplate keys off a literal "output only a JSON" / "return only a
+// JSON", and without it a project with `language:` set gets a translation
+// instruction appended to a structured-output prompt.
+func TestRenderTriplesSuppressesLanguageInstruction(t *testing.T) {
+	out, err := Render("extract_triples", TriplesData{Summary: "x"}, "fr")
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(out, LanguageInstruction("fr")) {
+		t.Error("language instruction appended to a JSON-output template; " +
+			"the template must contain the literal \"Output ONLY a JSON\" phrase")
+	}
+}

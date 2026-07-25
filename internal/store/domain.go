@@ -93,6 +93,25 @@ type Relation struct {
 	TargetID  string `json:"target_id"`
 	Relation  string `json:"relation"`
 	CreatedAt string `json:"created_at"`
+
+	// P3-1 (GRAPH-01): evidence and provenance.
+	//
+	// Evidence is the span supporting this edge, quoted from the COMPILED
+	// SUMMARY of SourceDoc — not from SourceDoc itself. Pass 2 sees summaries,
+	// not source content, so a citation rendered as "«Evidence» — SourceDoc"
+	// names a file that does not contain those words. The verifiable artifact
+	// is the summary; SourceDoc names where the knowledge came from.
+	Evidence   string  `json:"evidence,omitempty"`
+	Confidence float64 `json:"confidence,omitempty"`
+	SourceDoc  string  `json:"source_doc,omitempty"`
+
+	// P3-1: reserved for P3-6 (temporal validity). Written on INSERT and
+	// returned by every read, but nothing populates them, no query filters on
+	// them, and they are NOT in the upsert SET list — P3-6 must add them there
+	// when it starts writing them.
+	ValidFrom     string `json:"valid_from,omitempty"`
+	ValidTo       string `json:"valid_to,omitempty"`
+	InvalidatedBy string `json:"invalidated_by,omitempty"`
 }
 
 type Direction int

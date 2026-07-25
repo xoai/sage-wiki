@@ -91,7 +91,7 @@ func TestBeginWriteReleaseOnCommitAndRollback(t *testing.T) {
 }
 
 func TestCurrentSchemaVersion(t *testing.T) {
-	if v := CurrentSchemaVersion(); v != 9 {
-		t.Errorf("CurrentSchemaVersion = %d, want 9 (V1–V9)", v)
+	if v := CurrentSchemaVersion(); v != 10 {
+		t.Errorf("CurrentSchemaVersion = %d, want 10 (V1–V10)", v)
 	}
 }

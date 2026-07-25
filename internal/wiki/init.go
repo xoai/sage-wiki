@@ -276,6 +276,11 @@ serve:
 #       description: "A dialogue or discussion"
 #     - name: decision
 #       description: "A recorded decision with rationale"
+#   triples:                      # LLM triple extraction (opt-in, costs 1 call/doc)
+#     enabled: true
+#     model: ""                   # default: models.extract, then models.summarize
+#     max_entities_per_doc: 40
+#     max_relations_per_doc: 60
 `, project, description, model, model, model, model, model)
 }
 
@@ -346,5 +351,9 @@ serve:
 #   entity_types:
 #     - name: conversation
 #     - name: decision
+#   triples:                      # LLM triple extraction (opt-in, costs 1 call/doc)
+#     enabled: true
+#     max_entities_per_doc: 40
+#     max_relations_per_doc: 60
 `, project, project, sourcesYAML, output, ignoreYAML, model, model, model, model, model)
 }
