@@ -1089,7 +1089,7 @@ func resumeBatch(
 		summaryDir := filepath.Join(projectDir, cfg.Output, "summaries")
 		os.MkdirAll(summaryDir, 0755)
 		summaryName := SummaryFilenameMode(path, resolveSourceRoot(path, batchRoots), cfg.Compiler.SummaryNamingOrDefault())
-		summaryPath := filepath.Join(cfg.Output, "summaries", summaryName)
+		summaryPath := filepath.ToSlash(filepath.Join(cfg.Output, "summaries", summaryName))
 		absOutputPath := filepath.Join(projectDir, summaryPath)
 
 		frontmatter := fmt.Sprintf("---\nsource: %s\ncompiled_at: %s\nbatch: true\n---\n\n", path, timeNow(cfg.Compiler.UserTimeLocation()))

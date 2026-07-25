@@ -2,9 +2,13 @@ package compiler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/log"
 )
@@ -91,11 +95,38 @@ func writeFileAtomicUnique(path string, data []byte) error {
 		os.Remove(tmpName)
 		return fmt.Errorf("close: %w", err)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
-		os.Remove(tmpName) // don't orphan the temp file
-		return fmt.Errorf("rename: %w", err)
+	// Windows CI taught us: renaming over a just-written destination can
+	// transiently fail (Defender/indexer/open-handle timing). Retry a
+	// bounded, jittered number of times before declaring failure; keep the
+	// temp file across attempts and remove it only on final failure.
+	var renameErr error
+	for attempt := 0; attempt < 6; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(10+rand.Intn(20)) * time.Millisecond)
+		}
+		if renameErr = os.Rename(tmpName, path); renameErr == nil {
+			return nil
+		}
+		if !isTransientRenameError(renameErr) {
+			break
+		}
 	}
-	return nil
+	os.Remove(tmpName) // don't orphan the temp file
+	return fmt.Errorf("rename: %w", renameErr)
+}
+
+// isTransientRenameError reports whether a rename failure is worth
+// retrying (sharing/access violations) vs a persistent error (read-only
+// dir, missing parent) that should fail fast.
+func isTransientRenameError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, os.ErrPermission) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "access is denied") || strings.Contains(msg, "sharing violation")
 }
 
 // stripLegacyBatch atomically rewrites the legacy compile-state.json with

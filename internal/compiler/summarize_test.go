@@ -71,7 +71,7 @@ func TestSummarizeOneReusesExistingSummaryOnHashMatch(t *testing.T) {
 	if result.Summary != longBody {
 		t.Errorf("expected reused summary body, got %q", result.Summary)
 	}
-	if result.SummaryPath != filepath.Join(outputDir, "summaries", "sources-doc.md") {
+	if result.SummaryPath != filepath.ToSlash(filepath.Join(outputDir, "summaries", "sources-doc.md")) {
 		t.Errorf("unexpected SummaryPath: %q", result.SummaryPath)
 	}
 }

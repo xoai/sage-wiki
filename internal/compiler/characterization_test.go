@@ -110,7 +110,10 @@ func captureSnapshot(t *testing.T, dir string, result *CompileResult) compileSna
 			return nil
 		}
 		rel, _ := filepath.Rel(dir, path)
-		snap.Files[rel] = hashFileNormalized(t, path)
+		// Normalize separators: file keys differ across OSes (filepath.Rel
+		// yields backslashes on Windows) but the pipeline behavior the
+		// golden gates is separator-independent.
+		snap.Files[filepath.ToSlash(rel)] = hashFileNormalized(t, path)
 		return nil
 	}); err != nil {
 		t.Fatalf("walk output files: %v", err)
@@ -131,7 +134,7 @@ func captureSnapshot(t *testing.T, dir string, result *CompileResult) compileSna
 		if err := rows.Scan(&path, &tier, &pi, &pe, &ps, &px, &pw); err != nil {
 			t.Fatal(err)
 		}
-		snap.Items[path] = fmt.Sprintf("t%d/%v%v%v%v%v", tier, pi, pe, ps, px, pw)
+		snap.Items[filepath.ToSlash(path)] = fmt.Sprintf("t%d/%v%v%v%v%v", tier, pi, pe, ps, px, pw)
 	}
 
 	for table, key := range map[string]string{

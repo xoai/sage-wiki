@@ -172,7 +172,7 @@ func summarizeOne(
 	// sources whose summaries survived are reused instead of re-billed. The
 	// source_hash field in the frontmatter guards against serving stale summaries
 	// for modified sources.
-	summaryPath := filepath.Join(outputDir, "summaries", summaryName)
+	summaryPath := filepath.ToSlash(filepath.Join(outputDir, "summaries", summaryName))
 	absSummary := filepath.Join(projectDir, summaryPath)
 	if existing, err := os.ReadFile(absSummary); err == nil {
 		body := string(existing)
@@ -312,7 +312,7 @@ func writeSummaryFile(projectDir, outputDir string, info SourceInfo, summaryName
 	summaryDir := filepath.Join(projectDir, outputDir, "summaries")
 	os.MkdirAll(summaryDir, 0755)
 
-	summaryPath := filepath.Join(outputDir, "summaries", summaryName)
+	summaryPath := filepath.ToSlash(filepath.Join(outputDir, "summaries", summaryName))
 	absOutputPath := filepath.Join(projectDir, summaryPath)
 
 	frontmatter := fmt.Sprintf(`---

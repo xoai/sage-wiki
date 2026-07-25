@@ -45,6 +45,13 @@ func ValidateRelPath(relPath string) error {
 	if filepath.IsAbs(cleaned) {
 		return fmt.Errorf("absolute path not allowed: %q", relPath)
 	}
+	// Rooted paths (leading separator) are absolute in intent even where
+	// the OS doesn't classify them as such — filepath.IsAbs("/etc/passwd")
+	// is false on Windows, but writing to the filesystem root is never a
+	// relative operation.
+	if strings.HasPrefix(cleaned, string(filepath.Separator)) || strings.HasPrefix(relPath, "/") {
+		return fmt.Errorf("absolute path not allowed: %q", relPath)
+	}
 	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("path traversal not allowed: %q", relPath)
 	}

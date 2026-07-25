@@ -150,7 +150,7 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap m
 	result := ArticleResult{ConceptName: concept.Name}
 
 	// Check for existing article
-	articlePath := filepath.Join(opts.OutputDir, "concepts", concept.Name+".md")
+	articlePath := filepath.ToSlash(filepath.Join(opts.OutputDir, "concepts", concept.Name+".md"))
 	absPath := filepath.Join(opts.ProjectDir, articlePath)
 	var existingContent string
 	if data, err := os.ReadFile(absPath); err == nil {
