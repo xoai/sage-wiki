@@ -83,3 +83,16 @@ func TestFormatConceptName(t *testing.T) {
 		}
 	}
 }
+
+// A CRLF-authored article must not lose its declared type. Because AddEntity
+// now writes `type` unconditionally, a missed frontmatter match demotes the
+// entity on EVERY reconcile — the failure this helper exists to prevent,
+// reached through line endings instead of the wrong key.
+func TestArticleEntityTypeHandlesCRLF(t *testing.T) {
+	s := typedStore(t, []string{TypeConcept, TypeTechnique})
+
+	crlf := "---\r\nconcept: self-attention\r\nentity_type: technique\r\n---\r\n\r\n# Self Attention\r\n"
+	if got := ArticleEntityType(crlf, s); got != TypeTechnique {
+		t.Errorf("CRLF article: got %q, want %q", got, TypeTechnique)
+	}
+}

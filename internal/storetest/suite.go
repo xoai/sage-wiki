@@ -434,11 +434,30 @@ func OntologyConformance(new BackendFactory) func(*testing.T) {
 			t.Errorf("type = %q, want %q — type is written unconditionally", e4.Type, "concept")
 		}
 
+		// E3: a caller that supplies CreatedAt but not UpdatedAt must not end up
+		// with a NULL updated_at. Postgres coupled the two defaults, so
+		// nullRFC("") bound NULL and the unconditional SET wrote it over a
+		// stored timestamp; sqlite defaulted them independently.
+		if err := os.AddEntity(store.Entity{
+			ID: "e5", Type: "concept", Name: "Five",
+			CreatedAt: "2026-01-01T00:00:00Z", // UpdatedAt deliberately empty
+		}); err != nil {
+			t.Fatalf("AddEntity e5: %v", err)
+		}
+		e5, err := os.GetEntity("e5")
+		if err != nil || e5 == nil {
+			t.Fatalf("GetEntity e5: %v %v", e5, err)
+		}
+		if e5.UpdatedAt == "" {
+			t.Error("updated_at empty when only CreatedAt was supplied (E3)")
+		}
+
 		// D11: `WHERE source_id=? OR target_id=?` with `AND relation=?`
 		// appended parses as `source_id=? OR (target_id=? AND relation=?)`.
-		// SQLite had the unparenthesized form; Postgres did not. e1 has an
-		// outbound `implements` and an outbound `extends`, plus an inbound
-		// `cites` — a Both query filtered to `cites` must return exactly one.
+		// SQLite had the unparenthesized form; Postgres did not. The cascade
+		// above already destroyed the `implements` edge, so e1 now has an
+		// outbound `extends` (r3) and an inbound `cites` (r4) — a Both query
+		// filtered to `cites` must return exactly one.
 		filtered, err := os.GetRelations("e1", store.Both, "cites")
 		if err != nil {
 			t.Fatalf("GetRelations(Both, cites): %v", err)

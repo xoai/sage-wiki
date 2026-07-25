@@ -218,6 +218,9 @@ func normalizeGraph(
 		r.Source = strings.TrimSpace(r.Source)
 		r.Target = strings.TrimSpace(r.Target)
 
+		// Self-loop before endpoint check (spec §5.4 lists them the other way).
+		// Behaviourally identical — both drop the edge — this only decides
+		// which counter an edge that is both increments.
 		if r.Source == r.Target {
 			selfLoops++
 			continue
@@ -334,7 +337,7 @@ func tripleRelationID(source, predicate, target string) string {
 // Persistence is sequential by contract: GetEntity reads outside the write
 // mutex, so concurrent callers would both observe "absent" and race on the
 // type. ExtractTriplesPass fans out extraction and joins before calling this.
-func persistGraph(ont store.OntologyStore, g ExtractedGraph, concepts []ExtractedConcept, sourceDoc string) error {
+func persistGraph(ont store.OntologyStore, g ExtractedGraph, concepts []ExtractedConcept, sourceDoc string) (entities, relations int) {
 	conceptTypes := make(map[string]string, len(concepts))
 	for _, c := range concepts {
 		t := c.Type
@@ -345,8 +348,18 @@ func persistGraph(ont store.OntologyStore, g ExtractedGraph, concepts []Extracte
 	}
 
 	for _, e := range g.Entities {
+		// A lookup ERROR is not "absent". Falling through to rules 2/3 on a
+		// transient read failure (a busy database, a concurrent reader) would
+		// write the model's guessed type over a type an article declared —
+		// exactly what rule 1 exists to prevent. Skip the entity instead.
+		existing, err := ont.GetEntity(e.Name)
+		if err != nil {
+			log.Warn("triples: entity type lookup failed, skipping", "entity", e.Name, "error", err)
+			continue
+		}
+
 		resolved := e.Type
-		if existing, err := ont.GetEntity(e.Name); err == nil && existing != nil {
+		if existing != nil {
 			resolved = existing.Type
 			if resolved == "" || !ont.IsValidType(resolved) {
 				resolved = ontology.TypeConcept
@@ -364,7 +377,9 @@ func persistGraph(ont store.OntologyStore, g ExtractedGraph, concepts []Extracte
 			Definition: e.Description,
 		}); err != nil {
 			log.Warn("triples: entity write failed", "entity", e.Name, "error", err)
+			continue
 		}
+		entities++
 	}
 
 	for _, r := range g.Relations {
@@ -379,9 +394,11 @@ func persistGraph(ont store.OntologyStore, g ExtractedGraph, concepts []Extracte
 		}); err != nil {
 			log.Warn("triples: relation write failed",
 				"source", r.Source, "predicate", r.Predicate, "target", r.Target, "error", err)
+			continue
 		}
+		relations++
 	}
-	return nil
+	return entities, relations
 }
 
 // Per-document caps and fan-out defaults. Applied in-function because
@@ -500,6 +517,13 @@ func ExtractTriplesPass(
 			}
 
 			body, sourceDoc := resolveSourceDoc(s, summariesCarryFrontmatter)
+			// The re-extract path loads every .md in summaries/ with no
+			// validity check, unlike ExtractConcepts and filterSuccessful — so
+			// a frontmatter-only file would arrive here as an empty body and
+			// buy a paid call that can only return an empty graph.
+			if strings.TrimSpace(body) == "" {
+				return
+			}
 			doc := s
 			doc.Summary = body
 
@@ -523,9 +547,20 @@ func ExtractTriplesPass(
 	}
 	wg.Wait()
 
+	// A cancel does NOT discard work already paid for. These graphs are
+	// complete and validated, and AddRelation's upsert makes re-assertion on
+	// the next compile idempotent — unlike the manifest/compile_items
+	// checkpoint, which an incomplete run must not touch. Throwing away 98
+	// finished extractions because document 99 was interrupted would burn the
+	// spend for nothing.
+	completed := 0
+	for _, r := range results {
+		if r.ok {
+			completed++
+		}
+	}
 	if cancelled {
-		log.Warn("triples: extraction cancelled", "documents", len(summaries))
-		return
+		log.Warn("triples: extraction cancelled", "documents", len(summaries), "completed", completed)
 	}
 
 	entities, relations := 0, 0
@@ -537,12 +572,11 @@ func ExtractTriplesPass(
 		if len(g.Entities) == 0 && len(g.Relations) == 0 {
 			continue
 		}
-		if err := persistGraph(ont, g, concepts, r.sourceDoc); err != nil {
-			log.Warn("triples: persist failed", "source", r.sourceDoc, "error", err)
-			continue
-		}
-		entities += len(g.Entities)
-		relations += len(g.Relations)
+		// Counts are what actually landed, not what was attempted: a failed
+		// write must not be reported as an extracted entity.
+		e, rel := persistGraph(ont, g, concepts, r.sourceDoc)
+		entities += e
+		relations += rel
 	}
 
 	if failures > 0 {
@@ -568,7 +602,10 @@ func resolveSourceDoc(s SummaryResult, carriesFrontmatter bool) (body, sourceDoc
 	if !carriesFrontmatter {
 		return s.Summary, s.SourcePath
 	}
-	rest, ok := strings.CutPrefix(s.Summary, "---\n")
+	// Normalize line endings first: a summary written or edited on Windows has
+	// "---\r\n", which a \n-only prefix match misses entirely.
+	summary := strings.ReplaceAll(s.Summary, "\r\n", "\n")
+	rest, ok := strings.CutPrefix(summary, "---\n")
 	if !ok {
 		return s.Summary, s.SourcePath
 	}

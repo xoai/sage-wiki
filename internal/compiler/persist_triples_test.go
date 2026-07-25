@@ -35,8 +35,8 @@ func twoNodeGraph() ExtractedGraph {
 
 func TestPersistGraphWritesEntitiesAndEvidencedRelations(t *testing.T) {
 	ont := persistStore(t)
-	if err := persistGraph(ont, twoNodeGraph(), nil, "raw/paper.pdf"); err != nil {
-		t.Fatalf("persistGraph: %v", err)
+	if e, r := persistGraph(ont, twoNodeGraph(), nil, "raw/paper.pdf"); e != 2 || r != 1 {
+		t.Fatalf("persistGraph wrote %d entities / %d relations, want 2/1", e, r)
 	}
 
 	e, err := ont.GetEntity("backpressure")
@@ -92,8 +92,8 @@ func TestPersistGraphRelationIDsAreCollisionFree(t *testing.T) {
 			{Source: "a-extends-b", Predicate: ontology.RelExtends, Target: "c", Evidence: "e2", Confidence: 0.8},
 		},
 	}
-	if err := persistGraph(ont, g, nil, "raw/a.md"); err != nil {
-		t.Fatalf("persistGraph: %v", err)
+	if _, r := persistGraph(ont, g, nil, "raw/a.md"); r != 2 {
+		t.Fatalf("persistGraph wrote %d relations, want 2 — both triples must persist", r)
 	}
 	n, err := ont.RelationCount()
 	if err != nil {
@@ -124,8 +124,8 @@ func TestPersistGraphUpsertsOverKeywordEdge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := persistGraph(ont, twoNodeGraph(), nil, "raw/paper.pdf"); err != nil {
-		t.Fatalf("persistGraph: %v", err)
+	if e, r := persistGraph(ont, twoNodeGraph(), nil, "raw/paper.pdf"); e != 2 || r != 1 {
+		t.Fatalf("persistGraph wrote %d entities / %d relations, want 2/1", e, r)
 	}
 	rels, _ := ont.GetRelations("backpressure", ontology.Outbound, "")
 	if len(rels) != 1 {
@@ -153,9 +153,7 @@ func TestPersistGraphNeverRetypesAnExistingEntity(t *testing.T) {
 
 	g := twoNodeGraph()
 	g.Entities[0].Type = ontology.TypeClaim // the model's guess, which must lose
-	if err := persistGraph(ont, g, nil, "raw/paper.pdf"); err != nil {
-		t.Fatalf("persistGraph: %v", err)
-	}
+	persistGraph(ont, g, nil, "raw/paper.pdf")
 
 	e, _ := ont.GetEntity("backpressure")
 	if e.Type != ontology.TypeTechnique {
@@ -179,9 +177,7 @@ func TestPersistGraphUsesConceptTypeForThisRunsConcepts(t *testing.T) {
 	g := twoNodeGraph()
 	g.Entities[0].Type = ontology.TypeClaim // model guess, overridden by the concept
 
-	if err := persistGraph(ont, g, concepts, "raw/paper.pdf"); err != nil {
-		t.Fatalf("persistGraph: %v", err)
-	}
+	persistGraph(ont, g, concepts, "raw/paper.pdf")
 	e, _ := ont.GetEntity("backpressure")
 	if e.Type != ontology.TypeTechnique {
 		t.Errorf("Type = %q, want Pass 3's derivation %q", e.Type, ontology.TypeTechnique)
@@ -191,8 +187,8 @@ func TestPersistGraphUsesConceptTypeForThisRunsConcepts(t *testing.T) {
 // Type precedence rule 3: an entity the pass invented keeps its normalized type.
 func TestPersistGraphKeepsInventedEntityType(t *testing.T) {
 	ont := persistStore(t)
-	if err := persistGraph(ont, twoNodeGraph(), nil, "raw/paper.pdf"); err != nil {
-		t.Fatalf("persistGraph: %v", err)
+	if e, r := persistGraph(ont, twoNodeGraph(), nil, "raw/paper.pdf"); e != 2 || r != 1 {
+		t.Fatalf("persistGraph wrote %d entities / %d relations, want 2/1", e, r)
 	}
 	e, _ := ont.GetEntity("backpressure")
 	if e.Type != ontology.TypeTechnique {

@@ -315,3 +315,175 @@ func TestExtractTriplesPassUsesSourcePathWithoutFrontmatterFlag(t *testing.T) {
 		t.Errorf("SourceDoc = %+v, want raw/normal.md", rels)
 	}
 }
+
+// The fan-out is only meaningful if a test actually runs it concurrently:
+// every other pass test uses one summary and a zero MaxParallel (floored to 1),
+// so -race never sees two goroutines in this pass.
+func TestExtractTriplesPassFansOutConcurrently(t *testing.T) {
+	var inFlight, peak atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := inFlight.Add(1)
+		for {
+			old := peak.Load()
+			if n <= old || peak.CompareAndSwap(old, n) {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+		defer inFlight.Add(-1)
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": sampleGraph}}},
+			"model":   "m", "usage": map[string]int{"total_tokens": 1},
+		})
+	}))
+	defer srv.Close()
+
+	cfg := enabledCfg()
+	cfg.Compiler.MaxParallel = 8
+
+	summaries := make([]SummaryResult, 24)
+	for i := range summaries {
+		summaries[i] = SummaryResult{SourcePath: "raw/a.md", Summary: "Backpressure extends flow control."}
+	}
+	ont := passStore(t)
+	ExtractTriplesPass(context.Background(), ont, summaries, nil, cfg, triplesClient(t, srv.URL), false)
+
+	if peak.Load() < 2 {
+		t.Errorf("peak concurrent requests = %d, want >1 — the fan-out never ran in parallel", peak.Load())
+	}
+	if got := peak.Load(); got > 8 {
+		t.Errorf("peak concurrent requests = %d, want <= MaxParallel (8)", got)
+	}
+	// All 24 documents assert the same edge; the upsert collapses them to one.
+	if n, _ := ont.RelationCount(); n != 1 {
+		t.Errorf("RelationCount = %d, want 1", n)
+	}
+}
+
+// Cancellation MID-FLIGHT: the pre-check catches a ctx cancelled before the
+// call, but the branch that classifies an in-flight provider error as
+// cancellation rather than a per-document failure is only reachable this way.
+func TestExtractTriplesPassClassifiesMidFlightCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cancel()
+		time.Sleep(50 * time.Millisecond)
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": sampleGraph}}},
+			"model":   "m", "usage": map[string]int{"total_tokens": 1},
+		})
+	}))
+	defer srv.Close()
+
+	var buf strings.Builder
+	var mu sync.Mutex
+	restore := log.SetLoggerForTest(slog.New(slog.NewTextHandler(
+		&lockedWriter{mu: &mu, w: &buf}, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer restore()
+
+	ExtractTriplesPass(ctx, passStore(t),
+		[]SummaryResult{{SourcePath: "raw/a.md", Summary: "text"}}, nil,
+		enabledCfg(), triplesClient(t, srv.URL), false)
+
+	mu.Lock()
+	out := buf.String()
+	mu.Unlock()
+	if !strings.Contains(out, "cancel") {
+		t.Errorf("a mid-flight cancel was not reported as cancellation:\n%s", out)
+	}
+	if strings.Contains(out, "extraction failed") {
+		t.Errorf("a mid-flight cancel was misreported as a per-document failure:\n%s", out)
+	}
+}
+
+// Cancellation must not throw away extractions already paid for.
+func TestExtractTriplesPassKeepsCompletedWorkOnCancel(t *testing.T) {
+	var calls atomic.Int64
+	ctx, cancel := context.WithCancel(context.Background())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{"message": map[string]string{"content": sampleGraph}}},
+				"model":   "m", "usage": map[string]int{"total_tokens": 1},
+			})
+			return
+		}
+		cancel()
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	cfg := enabledCfg()
+	cfg.Compiler.MaxParallel = 1 // deterministic ordering: doc 1 completes, then cancel
+
+	ont := passStore(t)
+	ExtractTriplesPass(ctx, ont, []SummaryResult{
+		{SourcePath: "raw/a.md", Summary: "Backpressure extends flow control."},
+		{SourcePath: "raw/b.md", Summary: "text"},
+	}, nil, cfg, triplesClient(t, srv.URL), false)
+
+	if n, _ := ont.RelationCount(); n != 1 {
+		t.Errorf("RelationCount = %d, want 1 — the completed extraction was discarded on cancel", n)
+	}
+}
+
+// A provider outage must be reported, not merely survived: asserting only
+// "no relations written" is also true of a pass that never ran.
+func TestExtractTriplesPassReportsProviderFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":{"message":"boom"}}`))
+	}))
+	defer srv.Close()
+
+	var buf strings.Builder
+	var mu sync.Mutex
+	restore := log.SetLoggerForTest(slog.New(slog.NewTextHandler(
+		&lockedWriter{mu: &mu, w: &buf}, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer restore()
+
+	ExtractTriplesPass(context.Background(), passStore(t),
+		[]SummaryResult{{SourcePath: "raw/a.md", Summary: "text"}}, nil,
+		enabledCfg(), triplesClient(t, srv.URL), false)
+
+	mu.Lock()
+	out := buf.String()
+	mu.Unlock()
+	if !strings.Contains(out, "extraction failed") {
+		t.Errorf("provider failure not logged per document:\n%s", out)
+	}
+	if !strings.Contains(out, "some documents failed extraction") {
+		t.Errorf("failure count not summarized:\n%s", out)
+	}
+}
+
+// A summary that is only frontmatter must not buy an LLM call.
+func TestExtractTriplesPassSkipsEmptyBodies(t *testing.T) {
+	srv, calls := countingServer(t)
+	onlyFrontmatter := "---\nsource: raw/a.md\ncompiled_at: 2026-01-01T00:00:00Z\nbatch: true\n---\n\n\n"
+
+	ExtractTriplesPass(context.Background(), passStore(t),
+		[]SummaryResult{{SourcePath: "s.md", Summary: onlyFrontmatter}}, nil,
+		enabledCfg(), triplesClient(t, srv.URL), true)
+
+	if got := calls.Load(); got != 0 {
+		t.Errorf("LLM calls = %d, want 0 for a frontmatter-only summary", got)
+	}
+}
+
+// CRLF summaries must parse: a Windows-authored summary would otherwise miss
+// the frontmatter and stamp the summary filename as SourceDoc.
+func TestExtractTriplesPassParsesCRLFFrontmatter(t *testing.T) {
+	srv, _ := countingServer(t)
+	ont := passStore(t)
+	crlf := "---\r\nsource: raw/windows.md\r\ncompiled_at: 2026-01-01T00:00:00Z\r\nbatch: true\r\n---\r\n\r\nBody.\r\n"
+
+	ExtractTriplesPass(context.Background(), ont,
+		[]SummaryResult{{SourcePath: "s.md", Summary: crlf}}, nil,
+		enabledCfg(), triplesClient(t, srv.URL), true)
+
+	rels, _ := ont.GetRelations("backpressure", ontology.Outbound, "")
+	if len(rels) != 1 || rels[0].SourceDoc != "raw/windows.md" {
+		t.Errorf("CRLF frontmatter not parsed: %+v", rels)
+	}
+}

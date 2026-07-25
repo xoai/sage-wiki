@@ -54,6 +54,12 @@ func ArticleEntityType(articleContent string, ont store.OntologyStore) string {
 // frontmatterEntityType extracts `entity_type` from a leading `---` block.
 // Returns "" when there is no frontmatter or no such key.
 func frontmatterEntityType(content string) string {
+	// Normalize line endings first. Without this, an article saved by a CRLF
+	// editor misses the prefix match, falls back to TypeConcept, and — because
+	// AddEntity now writes `type` unconditionally — is demoted from its
+	// declared type on EVERY reconcile. That is the failure this function
+	// exists to prevent, reached by another route.
+	content = strings.ReplaceAll(content, "\r\n", "\n")
 	rest, ok := strings.CutPrefix(content, "---\n")
 	if !ok {
 		return ""

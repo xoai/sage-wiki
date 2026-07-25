@@ -41,6 +41,10 @@
   previously ignored `type` entirely, so a wrong type was permanent; it is now
   written on every upsert, matching Postgres. Consequently `sage-wiki scribe`
   can retype an existing entity where it previously could not.
+- **`sage-wiki pack apply` no longer resets `ontology.triples`.** The ontology
+  merge rebuilt the `ontology:` node from a literal carrying only relation and
+  entity types, so any other key under it was erased. A pack cannot set
+  `triples` itself; the user's value is now preserved.
 - **Keyword-extracted edges can appear where they previously did not** (only
   with `ontology.triples.enabled: true`). Keyword extraction gates each pattern
   on the *stored* entity types and skips a pattern whose target entity does not
@@ -57,6 +61,13 @@
 
 ### Fixed
 
+- **Postgres could write a NULL `updated_at` over a stored timestamp.**
+  `AddEntity` defaulted `UpdatedAt` only when `CreatedAt` was empty, so a caller
+  supplying one but not the other bound NULL — and the upsert wrote it. The two
+  now default independently, matching SQLite.
+- **Article frontmatter is parsed on CRLF checkouts.** The entity-type lookup
+  matched `---\n` only, so an article saved by a Windows editor fell back to
+  `concept` on every reconcile.
 - **`GetRelations` with `Both` and a relation filter returned the wrong edges on
   SQLite.** The query built `WHERE source_id=? OR target_id=?` and appended
   `AND relation=?`, which parses as `source_id=? OR (target_id=? AND
