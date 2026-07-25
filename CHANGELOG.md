@@ -4,14 +4,25 @@
 
 ### Fixed
 
-- **CI on main (4 checks).** Frontend dist check: git safe.directory set
-  in the alpine container job (dubious-ownership refused the workspace).
-  Translation drift: script committed non-executable (now 100755, invoked
-  via bash). Windows auth tests: file backend pinned in file-behavior
-  tests (windows-latest keychain probe poisoned them), `~` expansion
-  honors `$HOME` before `os.UserHomeDir`, 0600 assertion GOOS-conditional.
-  macOS pack install: containment check resolves the base path too
-  (tempdir symlink rejected every install).
+- **CI on main (all checks green).** Frontend dist check: git
+  safe.directory set in the alpine container job (dubious-ownership
+  refused the workspace). Translation drift: script committed
+  non-executable (now 100755, invoked via bash). Windows auth tests: file
+  backend pinned in file-behavior tests (windows-latest keychain probe
+  poisoned them), `~` expansion honors `$HOME` before `os.UserHomeDir`,
+  0600 assertion GOOS-conditional. macOS pack install: containment check
+  resolves the base path too (tempdir symlink rejected every install).
+- **Windows portability sweep.** Atomic rename retries transient Windows
+  file-lock failures (Defender/indexer timing); manifest summary/article
+  paths and linter finding paths emit forward slashes on every OS;
+  `ValidateRelPath` rejects rooted paths on Windows too; PDF extraction
+  owns its file handle across library panics; prompt templates pinned to
+  LF line endings (.gitattributes) so the byte-exact drift guard holds on
+  Windows checkouts; SSE progress test synchronized on subscriber
+  readiness.
+- **Dependencies.** golang.org/x/text → v0.40.0 (GO-2026-5970, infinite
+  loop) and github.com/yuin/goldmark → v1.7.17 (GO-2026-5320, XSS) —
+  govulncheck clean.
 
 ## 0.2.0 — 2026-07-24
 
