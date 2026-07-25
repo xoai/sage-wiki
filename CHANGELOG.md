@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## 0.2.0 — 2026-07-24
+
 ### Added
 
 - **Housekeeping bundle (P2-7).** Four independent items:
