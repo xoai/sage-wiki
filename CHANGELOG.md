@@ -9,8 +9,10 @@
   variants of one entity — "NASA" and "National Aeronautics and Space
   Administration" — so the canonical carries the union of the cluster's edges.
   It **links; it does not collapse**: both entity rows survive and the canonical
-  gains *copies* of the alias's edges, so nothing is ever deleted and a link is
-  reversible. Defaults to **off**, and pairs with `ontology.triples.enabled`:
+  gains *copies* of the alias's edges, so nothing is ever deleted. Note that this
+  is **not** the same as reversible — there is no un-link command yet, and
+  rejecting an already-applied link stops it being re-applied without removing
+  the edges already copied (they carry an `alias:` id prefix). Defaults to **off**, and pairs with `ontology.triples.enabled`:
   auto-linking requires a description on at least one side, and triple
   extraction is the only *compile-path* writer of entity descriptions, so with
   `resolve` on and `triples` off most proposals are queued for review rather

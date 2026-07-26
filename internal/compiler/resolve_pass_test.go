@@ -1104,38 +1104,118 @@ func TestResolvePassPendingWrittenThisRunIsHonoured(t *testing.T) {
 	}
 }
 
-// GATE-3 R7 MAJOR. touchedSet is frozen from the seed list, but a seed can
-// BECOME an alias in an earlier block — after which a later block's
-// chain-resolved target is an entity this compile never touched, while
-// touched[canonical.ID] is still true. The pair check then passes for a pair
-// neither side of which was touched.
+// GATE-3 R7/R8. touchedSet is frozen from the seed list, but a seed can BECOME
+// an alias in an earlier block — after which a later block's chain-resolved
+// target was never touched by this compile, while touched[canonical.ID] is still
+// true. The pre-R7 predicate then writes an APPLIED row for a pair neither side
+// of which this compile looked at, copying its edges with no un-link command and
+// freezing it out of future resolution.
+//
+// My first attempt at this test was VACUOUS — one seed, therefore one block, so
+// the "seed becomes an alias" mechanism never occurred, and the assertion held
+// by construction. This fixture (from the Gate-3 round-8 reviewer) produces TWO
+// blocks and is mutation-verified below to fail under the pre-R7 predicate.
+//
+//	block 1 (seed a): cluster {a,b} -> b elected (article) -> applied a -> b
+//	                  ... so seed `a` is now an alias
+//	block 2 (seed z): cluster {a,c} -> a elected -> target = CanonicalID(a) = b
+//	                  touched[a] is true but touched[b] is NOT
 func TestResolvePassDoesNotLeakThroughAWithinRunChain(t *testing.T) {
 	srv, _, _ := resolveServer(t, twoMemberCluster)
 	ont := passStore(t)
-	// Untouched, and the eventual terminal.
-	addEnt(t, ont, "c-canon", "Buzz Aldrin", "an astronaut", "wiki/c.md")
-	// Untouched.
-	addEnt(t, ont, "a-row", "Buzz Aldrin", "an astronaut", "")
-	// Touched this compile.
-	addEnt(t, ont, "b-seed", "Buzz Aldrin", "an astronaut", "")
-	addEnt(t, ont, "tgt", "Apollo", "", "")
-	if err := ont.AddRelation(ontology.Relation{
-		ID: "r", SourceID: "a-row", TargetID: "tgt",
-		Relation: ontology.RelExtends, Confidence: 0.7}); err != nil {
-		t.Fatal(err)
-	}
+	addEnt(t, ont, "a", "Alpha Bravo", "", "")
+	addEnt(t, ont, "b", "Alpha Golf", "the described canonical", "wiki/b.md")
+	addEnt(t, ont, "c", "Delta Foxtrot", "", "")
+	addEnt(t, ont, "z", "Bravo Delta", "", "")
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"b-seed"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+		[]string{"a", "z"}, resolveCfg(), triplesClient(t, srv.URL), nil)
 
 	for _, st := range []store.AliasStatus{store.AliasApplied, store.AliasPending} {
 		rows, _ := ont.ListAliases(st)
 		for _, r := range rows {
-			if r.Alias == "a-row" {
+			if r.Alias == "c" {
 				t.Errorf("wrote %s -> %s (%s): neither endpoint was touched by this "+
-					"compile, and a-row is now frozen out of future resolution",
-					r.Alias, r.CanonicalID, r.Status)
+					"compile — c is now frozen out of future resolution and its edges "+
+					"were copied with no way to undo them", r.Alias, r.CanonicalID, r.Status)
 			}
 		}
+	}
+	// The primary use case must still land in the same run: the guard narrows
+	// only the leak, not legitimate linking.
+	applied, _ := ont.ListAliases(store.AliasApplied)
+	found := false
+	for _, r := range applied {
+		if r.Alias == "a" && r.CanonicalID == "b" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the legitimate link a -> b did not happen; the guard over-blocks: %+v", applied)
+	}
+}
+
+// GATE-3 R8 MAJOR. A candidate whose pair is already decided cannot produce a
+// row — applyClusters discards it at the active-alias guard — so sending it to
+// the model buys a call that is structurally incapable of returning anything.
+// For an applied link that repeats on every compile, forever.
+func TestResolvePassDoesNotArbitrateAlreadyDecidedPairs(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status store.AliasStatus
+	}{
+		{"applied", store.AliasApplied},
+		{"pending", store.AliasPending},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, calls, _ := resolveServer(t, twoMemberCluster)
+			ont := passStore(t)
+			addEnt(t, ont, "seed", "Buzz Aldrin", "an astronaut", "wiki/s.md")
+			addEnt(t, ont, "alias-row", "Buzz Aldrin", "an astronaut", "")
+			if err := ont.PutAlias(store.EntityAlias{
+				Alias: "alias-row", CanonicalID: "seed", EntityType: ontology.TypeConcept,
+				Status: tc.status, Confidence: 0.9, Source: "llm",
+				CreatedAt: "2026-07-26T00:00:00Z",
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			ResolveEntitiesPass(context.Background(), ont,
+				[]string{"seed"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+
+			if got := calls.Load(); got != 0 {
+				t.Errorf("%d paid arbitration call(s) for a pair already %s — the only "+
+					"candidate can never produce a row", got, tc.status)
+			}
+		})
+	}
+}
+
+// GATE-3 R8. The exported entry point must normalise nil ctx/store the way the
+// pass does; without it the first non-rejected applied row panics at ctx.Err().
+func TestSweepAliasesNormalisesNilArguments(t *testing.T) {
+	ont := passStore(t)
+	addEnt(t, ont, "alias", "Alias", "", "")
+	addEnt(t, ont, "canon", "Canon", "", "")
+	addEnt(t, ont, "tgt", "Target", "", "")
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ont.AddRelation(ontology.Relation{
+		ID: "e", SourceID: "alias", TargetID: "tgt",
+		Relation: ontology.RelExtends, Confidence: 0.5}); err != nil {
+		t.Fatal(err)
+	}
+
+	//nolint:staticcheck // deliberately passing a nil Context: this is the guard.
+	res := SweepAliases(nil, ont)
+	if res.Copied != 1 {
+		t.Errorf("Copied = %d, want 1 — a nil ctx must be normalised, not panic", res.Copied)
+	}
+	if got := SweepAliases(context.Background(), nil); got != (SweepResult{}) {
+		t.Errorf("a nil store must return a zero result, got %+v", got)
 	}
 }

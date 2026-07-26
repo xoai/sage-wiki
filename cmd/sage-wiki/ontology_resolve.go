@@ -117,6 +117,9 @@ func resolveReview(ont store.OntologyStore) error {
 		return cli.CLIError(outputFormat, err)
 	}
 	if outputFormat == "json" {
+		if pending == nil {
+			pending = []store.EntityAlias{} // emit [], not null, for `jq '.data[]'`
+		}
 		fmt.Println(cli.FormatJSON(true, pending, ""))
 		return nil
 	}
@@ -271,6 +274,12 @@ func resolveReject(ont store.OntologyStore, alias string) error {
 		}
 		if alsoRejected {
 			payload["reverse_link_rejected"] = true
+		}
+		// The residue fact belongs on the machine-readable path too: a scripted
+		// consumer told only "rejected" has no way to learn that the canonical
+		// permanently holds copied edges, and there is no un-link command.
+		if wasApplied {
+			payload["edges_remain_on"] = residueOn
 		}
 		fmt.Println(cli.FormatJSON(true, payload, ""))
 		return nil

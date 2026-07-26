@@ -631,7 +631,19 @@ func ResolveEntitiesPass(
 	tokens := discriminatingTokens(pool, rcfg.MaxTokenDF, rcfg.MinTokenDFFloor)
 	vecs := embedForBlocking(ctx, embedder, seeds, pool, rcfg)
 
-	blocks := buildBlocks(seeds, pool, tokens, vecs, rcfg, rej.is)
+	// A candidate whose pair is already DECIDED — applied or pending — can never
+	// produce a row: applyClusters discards it at the active-alias guard. Letting
+	// it through buys an arbitration call per compile that is structurally
+	// incapable of returning anything (forever for an applied link, until a human
+	// acts for a pending one), and it consumes a max_block_size slot ahead of
+	// genuinely new candidates. Both sets are already in memory.
+	decided := func(a, b string) bool {
+		if rej.is(a, b) || rej.awaitingReview(a, b) {
+			return true
+		}
+		return graph.canonicalOf[a] == b || graph.canonicalOf[b] == a
+	}
+	blocks := buildBlocks(seeds, pool, tokens, vecs, rcfg, decided)
 	if len(blocks) == 0 {
 		log.Info("resolve: no candidate blocks", "seeds", len(seeds))
 		return
@@ -692,9 +704,11 @@ type resolveStats struct {
 // Ungated on purpose (see ResolveEntitiesPass). For anyone who never enabled
 // resolution this is one indexed query returning nothing.
 // SweepAliases re-applies every approved link, skipping any pair the user has
-// since rejected. Exported so `ontology resolve --sweep` runs the identical
-// logic as the compile pass — the CLI having its own copy is how the rejection
-// filter came to exist on one path and not the other.
+// since rejected.
+//
+// Exported so `ontology resolve --sweep` runs the identical logic as the compile
+// pass — the CLI having its own copy is how the rejection filter came to exist
+// on one path and not the other.
 func SweepAliases(ctx context.Context, ont store.OntologyStore) SweepResult {
 	// ResolveEntitiesPass normalises these before anything touches them; a
 	// public entry point that skips the normalisation panics on ctx.Err() at the
@@ -727,6 +741,15 @@ func sweepAliases(ctx context.Context, ont store.OntologyStore) SweepResult {
 	// PENDING row does not remove an applied row in the reverse direction. The
 	// sweep would otherwise keep copying edges across a pair the user has
 	// explicitly separated, on every compile, forever.
+	//
+	// This is a DIRECT-pair check while every other path uses pairConflict's
+	// transitive cross product. That is sufficient, and the reason is an emergent
+	// invariant worth stating because it spans three files: the applied graph is
+	// a FOREST. Out-degree is at most 1 (idx_entity_aliases_active), and neither
+	// the pass nor --apply will close a cycle, so rejecting an edge always splits
+	// a tree and pairConflict then prevents the two halves rejoining. A
+	// transitively-rejected pair therefore cannot both be applied. If any of
+	// those three properties changes, this check must become pairConflict.
 	rej, err := newRejectionIndex(ont)
 	if err != nil {
 		log.Warn("resolve: alias sweep skipped, cannot read rejections "+
@@ -940,9 +963,13 @@ func (r *rejectionIndex) is(a, b string) bool { return r.partners[a][b] }
 // folded together after two rounds of narrower fixes.
 type aliasGraph struct {
 	canonicalOf map[string]string
-	// memo caches terminal() per pass. cluster() is called once per candidate
-	// pair and walks every applied row, so without this a vault with thousands
-	// of links pays a full scan per pair.
+	// memo caches terminal(). NOTE, corrected in Gate 3 round 8: this is NOT the
+	// hot path. terminal() is called only from the two exported wrappers, once
+	// each on a freshly built graph, so in production it is always a cold miss.
+	// cluster() — which IS called per candidate pair — rebuilds the adjacency map
+	// each time and is deliberately not memoized, because add() would have to
+	// invalidate it and the component sets are small in practice. Kept because
+	// terminal() is also used by tests and the cost is one map.
 	memo map[string]string
 }
 

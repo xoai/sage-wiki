@@ -690,3 +690,56 @@ func TestResolveCLIRejectNamesTheEntityHoldingTheResidue(t *testing.T) {
 			"A -> B, so the copies are on B:\n%s", out)
 	}
 }
+
+// GATE-3 R8. The residue fact must reach the machine-readable path too: a
+// scripted consumer told only "rejected" has no way to learn that the canonical
+// permanently holds copied edges, and there is no un-link command.
+func TestResolveCLIRejectJSONCarriesResidue(t *testing.T) {
+	dir := resolveVault(t, "config.yaml")
+	withProject(t, dir, "config.yaml")
+
+	b, ont, err := openResolveStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"A", "B"} {
+		if err := ont.AddEntity(store.Entity{ID: id, Type: ontology.TypeConcept, Name: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "A", CanonicalID: "B", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	b.Close()
+
+	oldFormat := outputFormat
+	outputFormat = "json"
+	t.Cleanup(func() { outputFormat = oldFormat })
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	runErr := runResolve(t, map[string]string{"reject": "A"})
+	w.Close()
+	os.Stdout = orig
+	if runErr != nil {
+		t.Fatalf("--reject: %v", runErr)
+	}
+	buf := make([]byte, 8192)
+	n, _ := r.Read(buf)
+	r.Close()
+	out := string(buf[:n])
+
+	if !json.Valid([]byte(out)) {
+		t.Fatalf("--reject --format json is not valid JSON:\n%s", out)
+	}
+	if !strings.Contains(out, "edges_remain_on") || !strings.Contains(out, `"B"`) {
+		t.Errorf("the JSON payload does not say which entity keeps the copied edges:\n%s", out)
+	}
+}
