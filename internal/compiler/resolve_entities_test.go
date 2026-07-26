@@ -633,8 +633,29 @@ func TestAliasGraphTerminalTerminatesOnCycle(t *testing.T) {
 	done := make(chan string, 1)
 	go func() { done <- g.terminal("a") }()
 	select {
-	case <-done:
+	case got := <-done:
+		// The same answer ontology.CanonicalID gives. Returning an
+		// entry-point-dependent node instead makes the two resolvers disagree
+		// about the same graph.
+		if got != "a" {
+			t.Errorf("terminal on a cycle = %q, want the input id (parity with CanonicalID)", got)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("terminal looped forever on a cycle")
+	}
+}
+
+// A cycle must not split the component: terminal-keying puts a and b in separate
+// singletons and hides a rejection between their two sides.
+func TestAliasGraphClusterIsCycleProof(t *testing.T) {
+	g := graphOf([2]string{"a", "b"}, [2]string{"b", "a"}, [2]string{"x", "a"})
+	got := map[string]bool{}
+	for _, m := range g.cluster("b") {
+		got[m] = true
+	}
+	for _, want := range []string{"a", "b", "x"} {
+		if !got[want] {
+			t.Errorf("cluster(b) missing %q on a cycle: %v", want, got)
+		}
 	}
 }

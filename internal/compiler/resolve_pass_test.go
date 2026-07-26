@@ -895,9 +895,134 @@ func TestResolvePassUnloadableTargetGoesToReview(t *testing.T) {
 			if r.Status == store.AliasApplied {
 				t.Errorf("auto-applied against an unloadable target: %+v", r)
 			}
+			// The row must name an entity that EXISTS. A row naming the pruned
+			// ghost can never be applied (--apply always errors) while its
+			// active status permanently freezes the alias out of resolution.
+			if r.CanonicalID == "c-gone" {
+				t.Errorf("queued against the pruned ghost %q: the row is unapplicable "+
+					"and freezes %q out of future resolution", r.CanonicalID, r.Alias)
+			}
+			if e, _ := ont.GetEntity(r.CanonicalID); e == nil {
+				t.Errorf("queued against %q, which does not exist", r.CanonicalID)
+			}
 		}
 	}
 	if !found {
 		t.Error("the proposal was silently lost; the call will be re-billed every compile")
+	}
+}
+
+// GATE-3 R5 CRITICAL. A pair awaiting human review must not be auto-applied by
+// re-rolling the direction. Run 1 queues a -> b (no description, so it fails the
+// auto-apply bar); run 2 gives `a` an article so it wins the election, making
+// the alias `b`, which has no row of its own — every guard passes and the pass
+// links the very pair a human was asked about.
+func TestResolvePassDoesNotAutoApplyAPairAwaitingReview(t *testing.T) {
+	srv, _, _ := resolveServer(t, twoMemberCluster)
+	ont := passStore(t)
+	addEnt(t, ont, "a-row", "Buzz Aldrin", "", "")
+	addEnt(t, ont, "b-row", "Buzz Aldrin", "a described astronaut", "")
+
+	// Run 1 already queued the pair for a human.
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "a-row", CanonicalID: "b-row", EntityType: ontology.TypeConcept,
+		Status: store.AliasPending, Confidence: 0.95, Source: "llm",
+		CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Run 2: a-row acquires an article, so it now wins electCanonical.
+	if err := ont.AddEntity(ontology.Entity{
+		ID: "a-row", Type: ontology.TypeConcept, Name: "Buzz Aldrin",
+		ArticlePath: "wiki/a.md"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// b-row is the seed: it has no active row, so resolvableSeeds keeps it.
+	ResolveEntitiesPass(context.Background(), ont,
+		[]string{"b-row"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+
+	applied, _ := ont.ListAliases(store.AliasApplied)
+	for _, r := range applied {
+		if r.Alias == "b-row" && r.CanonicalID == "a-row" {
+			t.Errorf("auto-applied %s -> %s, the reverse of a pair already queued "+
+				"for human review — the review bar was bypassed by re-rolling the direction",
+				r.Alias, r.CanonicalID)
+		}
+	}
+}
+
+// GATE-3 R5. The sweep must not keep copying edges across a pair the user has
+// rejected. It lists applied rows and re-links them unconditionally.
+func TestResolveSweepHonoursRejections(t *testing.T) {
+	srv, _, _ := resolveServer(t, twoMemberCluster)
+	ont := passStore(t)
+	addEnt(t, ont, "alias", "Alias", "", "")
+	addEnt(t, ont, "canon", "Canon", "", "")
+	addEnt(t, ont, "tgt", "Target", "", "")
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The user then rejects the pair in the other direction.
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "canon", CanonicalID: "alias", EntityType: ontology.TypeConcept,
+		Status: store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		DecidedBy: "user",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A new edge lands on the alias afterwards.
+	if err := ont.AddRelation(ontology.Relation{
+		ID: "late", SourceID: "alias", TargetID: "tgt",
+		Relation: ontology.RelExtends, Confidence: 0.5}); err != nil {
+		t.Fatal(err)
+	}
+
+	ResolveEntitiesPass(context.Background(), ont, nil, &config.Config{},
+		triplesClient(t, srv.URL), nil)
+
+	canon, _ := ont.GetRelations("canon", ontology.Outbound, "")
+	if len(canon) != 0 {
+		t.Errorf("the sweep copied an edge across a rejected pair: %+v", canon)
+	}
+}
+
+// No cycle is created when the elected canonical resolves back to the alias.
+//
+// Reachable state: Y is an applied alias of X but Y holds the ArticlePath, so Y
+// wins electCanonical while resolving back to X. X is a legal seed (a canonical
+// has no alias row of its own).
+//
+// Honest note on the mechanism, verified by mutation: LinkAlias's own
+// self-alias guard (aliases.go) is what enforces this — removing the pass's
+// target==alias check leaves the end state identical, because LinkAlias refuses
+// the write and the pass logs an error instead. The pass check is
+// defence-in-depth that avoids a spurious failure per run. This test pins the
+// INVARIANT; the store guard is what would break it.
+func TestResolvePassDoesNotCreateACycle(t *testing.T) {
+	srv, _, _ := resolveServer(t, twoMemberCluster)
+	ont := passStore(t)
+	addEnt(t, ont, "x-canon", "Buzz Aldrin", "an astronaut", "")
+	addEnt(t, ont, "y-alias", "Buzz Aldrin", "an astronaut", "wiki/y.md")
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "y-alias", CanonicalID: "x-canon", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ResolveEntitiesPass(context.Background(), ont,
+		[]string{"x-canon"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+
+	applied, _ := ont.ListAliases(store.AliasApplied)
+	for _, r := range applied {
+		if r.Alias == "x-canon" {
+			t.Errorf("wrote %s -> %s, but %s already resolves to %s — neither entity "+
+				"is canonical and the sweep copies edges both ways forever",
+				r.Alias, r.CanonicalID, r.CanonicalID, r.Alias)
+		}
 	}
 }

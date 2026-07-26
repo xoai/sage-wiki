@@ -698,8 +698,22 @@ func sweepAliases(ctx context.Context, ont store.OntologyStore) {
 	if len(rows) == 0 {
 		return
 	}
-	copied, missing, failed := 0, 0, 0
+	// A user can reject a pair whose applied row still exists — --reject on a
+	// PENDING row does not remove an applied row in the reverse direction. The
+	// sweep would otherwise keep copying edges across a pair the user has
+	// explicitly separated, on every compile, forever.
+	rej, err := newRejectionIndex(ont)
+	if err != nil {
+		log.Warn("resolve: alias sweep skipped, cannot read rejections "+
+			"(sweeping without them could re-copy across a rejected pair)", "error", err)
+		return
+	}
+	copied, missing, failed, blocked := 0, 0, 0, 0
 	for i, a := range rows {
+		if rej.is(a.Alias, a.CanonicalID) {
+			blocked++
+			continue
+		}
 		// The pass is registered with defer, so a Ctrl-C during compile still
 		// reaches this loop. Without the check it would run one write
 		// transaction per applied row to completion.
@@ -724,9 +738,10 @@ func sweepAliases(ctx context.Context, ont store.OntologyStore) {
 		}
 		copied += res.Copied
 	}
-	if missing > 0 || failed > 0 || copied > 0 {
+	if missing > 0 || failed > 0 || copied > 0 || blocked > 0 {
 		log.Info("resolve: alias sweep", "rows", len(rows),
-			"edges_copied", copied, "endpoint_missing", missing, "failed", failed)
+			"edges_copied", copied, "endpoint_missing", missing, "failed", failed,
+			"rejected_skipped", blocked)
 	}
 }
 
@@ -830,27 +845,51 @@ func arbitrateBlock(
 // it treated a transient read failure as "rejected", which logged a co-absorption
 // conflict naming a pair nobody had rejected. A snapshot has neither problem —
 // the pass never creates rejections, so it cannot go stale mid-run.
-type rejectionIndex struct{ partners map[string]map[string]bool }
+type rejectionIndex struct {
+	partners map[string]map[string]bool
+	// awaiting holds pairs a human has been asked about but has not decided.
+	// Auto-applying such a pair in the REVERSE direction bypasses the review bar
+	// entirely: the election flips as soon as one side gains an ArticlePath, and
+	// the other side has no row of its own, so every per-alias guard passes.
+	awaiting map[string]map[string]bool
+}
 
 func newRejectionIndex(ont store.OntologyStore) (*rejectionIndex, error) {
-	rows, err := ont.ListAliases(store.AliasRejected)
+	rejected, err := ont.ListAliases(store.AliasRejected)
 	if err != nil {
 		return nil, err
 	}
-	idx := &rejectionIndex{partners: map[string]map[string]bool{}}
-	for _, r := range rows {
+	pending, err := ont.ListAliases(store.AliasPending)
+	if err != nil {
+		return nil, err
+	}
+	idx := &rejectionIndex{
+		partners: map[string]map[string]bool{},
+		awaiting: map[string]map[string]bool{},
+	}
+	for _, r := range rejected {
 		idx.mark(r.Alias, r.CanonicalID)
 		idx.mark(r.CanonicalID, r.Alias) // symmetric
+	}
+	for _, p := range pending {
+		mark(idx.awaiting, p.Alias, p.CanonicalID)
+		mark(idx.awaiting, p.CanonicalID, p.Alias) // symmetric
 	}
 	return idx, nil
 }
 
-func (r *rejectionIndex) mark(a, b string) {
-	if r.partners[a] == nil {
-		r.partners[a] = map[string]bool{}
+func mark(m map[string]map[string]bool, a, b string) {
+	if m[a] == nil {
+		m[a] = map[string]bool{}
 	}
-	r.partners[a][b] = true
+	m[a][b] = true
 }
+
+// awaitingReview reports whether this pair is already queued for a human, in
+// either direction.
+func (r *rejectionIndex) awaitingReview(a, b string) bool { return r.awaiting[a][b] }
+
+func (r *rejectionIndex) mark(a, b string) { mark(r.partners, a, b) }
 
 func (r *rejectionIndex) is(a, b string) bool { return r.partners[a][b] }
 
@@ -920,14 +959,33 @@ func (g *aliasGraph) add(alias, canonical string) {
 	g.memo = map[string]string{}
 }
 
-// cluster returns every entity that resolves to the same terminal as id,
-// including the terminal itself.
+// cluster returns every entity transitively linked to id — the weakly-connected
+// component of the alias graph containing it.
+//
+// A component, not "everything sharing a terminal". On an applied CYCLE, walk()
+// returns the input id (to agree with ontology.CanonicalID), so terminal-keying
+// would split a 2-cycle into two singletons and hide a rejection between the two
+// sides. A component is cycle-proof, and it is the right semantic anyway:
+// anything transitively linked is unified, whichever direction the edges point.
 func (g *aliasGraph) cluster(id string) []string {
-	t := g.terminal(id)
-	out := []string{t}
-	for alias := range g.canonicalOf {
-		if alias != t && g.terminal(alias) == t {
-			out = append(out, alias)
+	adj := map[string][]string{}
+	for a, c := range g.canonicalOf {
+		adj[a] = append(adj[a], c)
+		adj[c] = append(adj[c], a)
+	}
+	seen := map[string]bool{id: true}
+	queue := []string{id}
+	out := []string{id}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, n := range adj[cur] {
+			if seen[n] {
+				continue
+			}
+			seen[n] = true
+			out = append(out, n)
+			queue = append(queue, n)
 		}
 	}
 	sort.Strings(out)
@@ -1029,6 +1087,18 @@ func applyClusters(
 				stats.skipped++
 				continue
 			}
+			// A pair a human is already deciding must not be auto-applied by
+			// re-rolling the direction. Which side is "alias" is decided by
+			// electCanonical, and that flips the moment one side gains an
+			// ArticlePath — so without this the review bar is bypassed by the
+			// ordinary act of writing an article.
+			if rej.awaitingReview(alias.ID, target) {
+				log.Warn("resolve: skipped, this pair is already awaiting review",
+					"alias", alias.ID, "canonical", target)
+				stats.skipped++
+				continue
+			}
+
 			// The single rejection gate. It subsumes the direct pair and the
 			// elected canonical — cluster(target) always contains target, and
 			// contains the elected canonical whenever it differs — so separate
@@ -1087,7 +1157,9 @@ func applyClusters(
 				// columns NULL so a review cannot read as already-decided.
 			}
 
-			if mustReview || !canAutoApply(c.raw, alias, judged, rcfg.AutoApplyThreshold) {
+			judgedCluster := c.raw
+			judgedCluster.Confidence = c.confidence // the clamped value the row records
+			if mustReview || !canAutoApply(judgedCluster, alias, judged, rcfg.AutoApplyThreshold) {
 				row.Status = store.AliasPending
 				if err := ont.PutAlias(row); err != nil {
 					log.Warn("resolve: pending proposal write failed", "alias", alias.ID, "error", err)
@@ -1149,16 +1221,26 @@ func embedForBlocking(
 		wanted[s.Type] = true
 	}
 
+	// Seeds first, then candidates — each sorted for determinism. Sorting the
+	// combined set would let a seed whose id sorts past the cap go un-embedded,
+	// so every one of its pairs fails the cosine test and the whole embedding
+	// budget buys nothing for it.
 	var targets []store.Entity
 	seen := map[string]bool{}
-	for _, e := range append(append([]store.Entity{}, seeds...), pool...) {
-		if seen[e.ID] || !wanted[e.Type] {
-			continue
+	appendUnique := func(es []store.Entity) {
+		var batch []store.Entity
+		for _, e := range es {
+			if seen[e.ID] || !wanted[e.Type] {
+				continue
+			}
+			seen[e.ID] = true
+			batch = append(batch, e)
 		}
-		seen[e.ID] = true
-		targets = append(targets, e)
+		sort.Slice(batch, func(i, j int) bool { return batch[i].ID < batch[j].ID })
+		targets = append(targets, batch...)
 	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].ID < targets[j].ID })
+	appendUnique(seeds)
+	appendUnique(pool)
 	if len(targets) > rcfg.MaxEmbedCandidates {
 		log.Warn("resolve: embed cap reached, blocking the tail lexically only",
 			"cap", rcfg.MaxEmbedCandidates, "dropped", len(targets)-rcfg.MaxEmbedCandidates)

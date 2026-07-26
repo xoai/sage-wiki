@@ -428,3 +428,54 @@ func TestResolveCLIApplyRefusesCycle(t *testing.T) {
 			"leaves neither entity canonical")
 	}
 }
+
+// GATE-3 R5. "will not be proposed again, in either direction" must be true of
+// the CURRENT state too: a pending row can coexist with an applied row for the
+// same pair pointing the other way, and rejecting only the pending half leaves
+// the applied link live with the sweep copying across it forever.
+func TestResolveCLIRejectAlsoClearsTheReverseAppliedLink(t *testing.T) {
+	dir := resolveVault(t, "config.yaml")
+	withProject(t, dir, "config.yaml")
+
+	b, ont, err := openResolveStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"A", "B"} {
+		if err := ont.AddEntity(store.Entity{ID: id, Type: ontology.TypeConcept, Name: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Pending A -> B awaiting a human; applied B -> A already in force.
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "A", CanonicalID: "B", EntityType: ontology.TypeConcept,
+		Status: store.AliasPending, Confidence: 0.9, Source: "llm",
+		CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "B", CanonicalID: "A", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	b.Close()
+
+	if err := runResolve(t, map[string]string{"reject": "A"}); err != nil {
+		t.Fatalf("--reject: %v", err)
+	}
+
+	b2, ont2, err := openResolveStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b2.Close()
+	applied, _ := ont2.ListAliases(store.AliasApplied)
+	for _, r := range applied {
+		if r.Alias == "B" && r.CanonicalID == "A" {
+			t.Error("the reverse APPLIED link survived a rejection that promised " +
+				"the pair would not be linked in either direction")
+		}
+	}
+}

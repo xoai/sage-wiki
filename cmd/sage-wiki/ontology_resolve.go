@@ -234,14 +234,40 @@ func resolveReject(ont store.OntologyStore, alias string) error {
 	if err := ont.SetAliasStatus(row.Alias, row.CanonicalID, store.AliasRejected, "user"); err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
+	// "in either direction" has to be true of the CURRENT state, not only of
+	// future proposals. A pending row can coexist with an applied row for the
+	// same pair pointing the other way — the election flips as soon as one side
+	// gains an article — and rejecting only the pending half would leave the
+	// applied link live, with the sweep copying across it on every compile,
+	// under a message promising the opposite.
+	reverse, err := ont.GetActiveAlias(row.CanonicalID)
+	if err != nil {
+		return cli.CLIError(outputFormat, err)
+	}
+	alsoRejected := false
+	if reverse != nil && reverse.CanonicalID == row.Alias && reverse.Status == store.AliasApplied {
+		if err := ont.SetAliasStatus(reverse.Alias, reverse.CanonicalID, store.AliasRejected, "user"); err != nil {
+			return cli.CLIError(outputFormat, err)
+		}
+		alsoRejected = true
+		wasApplied = true
+	}
 	if outputFormat == "json" {
-		fmt.Println(cli.FormatJSON(true, map[string]string{
+		payload := map[string]any{
 			"alias": row.Alias, "canonical_id": row.CanonicalID, "status": "rejected",
-		}, ""))
+		}
+		if alsoRejected {
+			payload["reverse_link_rejected"] = true
+		}
+		fmt.Println(cli.FormatJSON(true, payload, ""))
 		return nil
 	}
 	fmt.Printf("Rejected %s → %s. This pair will not be proposed again, in either direction.\n",
 		row.Alias, row.CanonicalID)
+	if alsoRejected {
+		fmt.Printf("Also rejected the applied link %s → %s, which pointed the other way.\n",
+			row.CanonicalID, row.Alias)
+	}
 	if wasApplied {
 		// Rejecting is not an undo: linking copied edges onto the canonical and
 		// those rows are still there. Saying "rejected" without this reads as a
