@@ -87,7 +87,6 @@ func EntriesConformance(new BackendFactory) func(*testing.T) {
 			t.Fatalf("ListAll: %v %v", all, err)
 		}
 
-
 		// Stopword fallback (spec §5 pinned mitigation): stopword-only
 		// queries must not error and must return docs containing the words.
 		es.Add(store.Entry{ID: "src:stop.md", Content: "the and of"})
@@ -1203,10 +1202,47 @@ func AliasConformance(new BackendFactory) func(*testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		beforeLink++ // the gemini edge added just below
+
+		// A third entity the canonical does NOT already point at, so the insert
+		// branch actually executes. Without it Copied is 0 on both backends and
+		// the Postgres INSERT path — nullRFC binding, RowsAffected on a real
+		// insert, the alias: id — is never exercised.
+		if err := lo.AddEntity(store.Entity{ID: "gemini", Type: "concept", Name: "gemini"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := lo.AddRelation(store.Relation{ID: "only-alias", SourceID: "edwin", TargetID: "gemini",
+			Relation: "extends", Evidence: "edwin extends gemini", Confidence: 0.55,
+			SourceDoc: "raw/edwin.md"}); err != nil {
+			t.Fatal(err)
+		}
 
 		res, err := lo.LinkAlias(mk("edwin", "buzz", store.AliasApplied))
 		if err != nil {
 			t.Fatalf("LinkAlias: %v", err)
+		}
+		if res.Copied != 1 {
+			t.Errorf("Copied = %d, want 1 (the edge only the alias had)", res.Copied)
+		}
+		// The copy landed with the alias's provenance and a derived id.
+		copied, err := lo.GetRelations("buzz", store.Outbound, "extends")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var found bool
+		for _, r := range copied {
+			if r.TargetID == "gemini" {
+				found = true
+				if r.Evidence != "edwin extends gemini" || r.SourceDoc != "raw/edwin.md" {
+					t.Errorf("copy lost provenance: %+v", r)
+				}
+				if len(r.ID) != len("alias:")+16 {
+					t.Errorf("copied id = %q, want alias: + 16 hex chars", r.ID)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("the copied edge is missing from the canonical: %+v", copied)
 		}
 		if res.Skipped != 1 {
 			t.Errorf("Skipped = %d, want 1 (the canonical already asserted that edge)", res.Skipped)
@@ -1219,12 +1255,21 @@ func AliasConformance(new BackendFactory) func(*testing.T) {
 		// native assertion — the confidence-guarded upsert is sound only when
 		// both sides assert the same edge, which a copy does not.
 		canon, err := lo.GetRelations("buzz", store.Outbound, "extends")
-		if err != nil || len(canon) != 1 {
-			t.Fatalf("GetRelations: %+v %v", canon, err)
+		if err != nil {
+			t.Fatalf("GetRelations: %v", err)
 		}
-		if canon[0].Evidence != "buzz extends apollo" || canon[0].Confidence != 0.6 ||
-			canon[0].SourceDoc != "raw/buzz.md" {
-			t.Errorf("canonical's own edge was overwritten by the copy: %+v", canon[0])
+		var own *store.Relation
+		for i := range canon {
+			if canon[i].TargetID == "apollo" {
+				own = &canon[i]
+			}
+		}
+		if own == nil {
+			t.Fatalf("the canonical's own edge disappeared: %+v", canon)
+		}
+		if own.Evidence != "buzz extends apollo" || own.Confidence != 0.6 ||
+			own.SourceDoc != "raw/buzz.md" {
+			t.Errorf("canonical's own edge was overwritten by the copy: %+v", own)
 		}
 
 		// Nothing was deleted: the alias keeps every edge it had.
@@ -1232,16 +1277,17 @@ func AliasConformance(new BackendFactory) func(*testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if afterLink != beforeLink {
-			t.Errorf("relation count %d -> %d; nothing should have been added or removed here",
+		// One copy ADDED (the gemini edge); nothing removed.
+		if afterLink != beforeLink+1 {
+			t.Errorf("relation count %d -> %d, want +1 (one copy added, nothing removed)",
 				beforeLink, afterLink)
 		}
 		aliasEdges, err := lo.GetRelations("edwin", store.Both, "")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(aliasEdges) != 2 {
-			t.Errorf("alias edges = %d, want 2 retained (linking deletes nothing)", len(aliasEdges))
+		if len(aliasEdges) != 3 {
+			t.Errorf("alias edges = %d, want 3 retained (linking deletes nothing)", len(aliasEdges))
 		}
 
 		// Idempotent: the sweep re-runs this on every compile.
@@ -1264,6 +1310,44 @@ func AliasConformance(new BackendFactory) func(*testing.T) {
 		miss, err = lo.LinkAlias(mk("apollo", "ghost", store.AliasApplied))
 		if err != nil || !miss.CanonicalMissing {
 			t.Errorf("missing canonical: %+v %v; want CanonicalMissing, no error", miss, err)
+		}
+
+		// The partial unique index is the real enforcement of one live decision
+		// per alias, and it must behave identically on both backends.
+		ib := new(t)
+		io := ib.Ontology()
+		if err := io.PutAlias(mk("dup", "c1", store.AliasApplied)); err != nil {
+			t.Fatalf("first active row: %v", err)
+		}
+		if err := io.PutAlias(mk("dup", "c2", store.AliasPending)); err == nil {
+			t.Error("a SECOND active row for one alias was accepted; the partial unique index is not enforcing")
+		}
+		// Rejections are exempt and may accumulate — that is why the key is the
+		// pair and the index is partial.
+		for _, c := range []string{"c3", "c4"} {
+			if err := io.PutAlias(mk("dup", c, store.AliasRejected)); err != nil {
+				t.Errorf("rejected row %s must be allowed alongside an active one: %v", c, err)
+			}
+		}
+
+		// CanonicalID must terminate on a cycle rather than loop.
+		cb := new(t)
+		co := cb.Ontology()
+		if err := co.PutAlias(mk("x", "y", store.AliasApplied)); err != nil {
+			t.Fatal(err)
+		}
+		if err := co.PutAlias(mk("y", "x", store.AliasApplied)); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan string, 1)
+		go func() { id, _ := co.CanonicalID("x"); done <- id }()
+		select {
+		case id := <-done:
+			if id != "x" {
+				t.Errorf("CanonicalID on a cycle = %q, want the input id", id)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("CanonicalID looped forever on a cycle")
 		}
 	}
 }

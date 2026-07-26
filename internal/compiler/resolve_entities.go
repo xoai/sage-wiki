@@ -175,31 +175,43 @@ func normalizeNameTokens(name string) []string {
 // over a 5% threshold, so a percentage-only filter discards exactly the token
 // that identifies a small cluster and the pass silently links nothing. The
 // percentage is what keeps a large vault from blocking on "model" or "data".
-func discriminatingTokens(pool []store.Entity, maxDF float64, floor int) map[string]bool {
-	df := map[string]int{}
+func discriminatingTokens(pool []store.Entity, maxDF float64, floor int) map[string]map[string]bool {
+	byType := map[string][]store.Entity{}
 	for _, e := range pool {
-		seen := map[string]bool{}
-		for _, tok := range normalizeNameTokens(e.Name) {
-			if seen[tok] {
-				continue
+		byType[e.Type] = append(byType[e.Type], e)
+	}
+
+	out := make(map[string]map[string]bool, len(byType))
+	for typ, entities := range byType {
+		df := map[string]int{}
+		for _, e := range entities {
+			seen := map[string]bool{}
+			for _, tok := range normalizeNameTokens(e.Name) {
+				if seen[tok] {
+					continue
+				}
+				seen[tok] = true
+				df[tok]++
 			}
-			seen[tok] = true
-			df[tok]++
 		}
-	}
-
-	limit := int(maxDF * float64(len(pool)))
-	if limit < floor {
-		limit = floor
-	}
-
-	ok := make(map[string]bool, len(df))
-	for tok, n := range df {
-		if n <= limit {
-			ok[tok] = true
+		// Per TYPE, not over the merged pool: 400 techniques named "attention
+		// variant N" would otherwise push "attention" over the limit and stop
+		// three concepts named "Self Attention" from ever blocking — the exact
+		// failure the floor was added to prevent, reintroduced across type
+		// boundaries.
+		limit := int(maxDF * float64(len(entities)))
+		if limit < floor {
+			limit = floor
 		}
+		ok := make(map[string]bool, len(df))
+		for tok, n := range df {
+			if n <= limit {
+				ok[tok] = true
+			}
+		}
+		out[typ] = ok
 	}
-	return ok
+	return out
 }
 
 // electCanonical picks the entity that will accumulate the cluster's edges.
@@ -279,13 +291,17 @@ type normalizedCluster struct {
 // A label the model omits entirely is simply never seen again — the pass acts
 // only on what the model placed, so an omitted entity cannot be affected. That
 // is the dropped-name guarantee, and it needs no code beyond not inventing work.
-func normalizeClusters(raw []resolvedCluster, labels map[string]store.Entity) []normalizedCluster {
+func normalizeClusters(raw []resolvedCluster, labels map[string]store.Entity, stats *resolveStats) []normalizedCluster {
+	if stats == nil {
+		stats = &resolveStats{}
+	}
 	var out []normalizedCluster
 	claimed := map[string]bool{} // label -> already in an earlier cluster
 
 	for _, c := range raw {
 		// A cluster the model did not vouch for is not a proposal.
 		if !c.SameReferent {
+			stats.droppedNotReferent++
 			continue
 		}
 
@@ -293,16 +309,24 @@ func normalizeClusters(raw []resolvedCluster, labels map[string]store.Entity) []
 		seen := map[string]bool{}
 		for _, label := range c.Members {
 			e, ok := labels[label]
-			if !ok || seen[label] || claimed[label] {
-				// Unknown label (hallucinated), repeated within this cluster, or
-				// already claimed by an earlier one. First cluster wins, by the
-				// order the model returned, so a re-run is deterministic.
+			if !ok {
+				// Hallucinated label — the model returned something outside the
+				// block it was given.
+				stats.droppedUnknownLabel++
+				continue
+			}
+			if seen[label] || claimed[label] {
+				// Repeated within this cluster, or already claimed by an earlier
+				// one. First cluster wins, by the order the model returned, so a
+				// re-run is deterministic.
+				stats.droppedDuplicate++
 				continue
 			}
 			seen[label] = true
 			members = append(members, e)
 		}
 		if len(members) < 2 {
+			stats.droppedSingleton++
 			continue
 		}
 		for label := range seen {
@@ -328,6 +352,21 @@ func normalizeClusters(raw []resolvedCluster, labels map[string]store.Entity) []
 			reason:     strings.TrimSpace(c.Reason),
 			raw:        c,
 		})
+	}
+
+	// Labels the model never placed in a surviving cluster. Nothing acts on
+	// them — that IS the dropped-name guarantee — but they are counted so the
+	// run's log accounts for every candidate offered.
+	placed := map[string]bool{}
+	for _, c := range out {
+		for _, e := range c.entities {
+			placed[e.ID] = true
+		}
+	}
+	for _, e := range labels {
+		if !placed[e.ID] {
+			stats.unplacedLabels++
+		}
 	}
 	return out
 }
@@ -357,7 +396,7 @@ type resolveBlock struct {
 // stand on their own.
 func buildBlocks(
 	touched, pool []store.Entity,
-	tokens map[string]bool,
+	tokens map[string]map[string]bool,
 	vecs map[string][]float32,
 	cfg config.ResolveConfig,
 	rejected func(a, b string) bool,
@@ -383,12 +422,20 @@ func buildBlocks(
 	for _, seed := range seeds {
 		var candidates []store.Entity
 		for _, c := range byType[seed.Type] {
-			if c.ID == seed.ID || rejected(seed.ID, c.ID) {
+			if c.ID == seed.ID {
 				continue
 			}
-			if candidateMatches(seed, c, norm, full, tokens, vecs, cfg) {
-				candidates = append(candidates, c)
+			// candidateMatches is pure and in-memory; rejected() is a database
+			// round-trip. Testing the cheap predicate FIRST turns an
+			// O(seeds x type_size) query storm — ~50k lookups for 50 seeds over
+			// a 1000-entity pool — into one lookup per actual candidate.
+			if !candidateMatches(seed, c, norm, full, tokens[seed.Type], vecs, cfg) {
+				continue
 			}
+			if rejected(seed.ID, c.ID) {
+				continue
+			}
+			candidates = append(candidates, c)
 		}
 		// Nothing to arbitrate: this is the incremental-cost property — a new,
 		// unambiguous entity costs zero LLM calls.
@@ -512,7 +559,7 @@ func ResolveEntitiesPass(
 		ctx = context.Background()
 	}
 
-	sweepAliases(ont)
+	sweepAliases(ctx, ont)
 
 	rcfg := applyResolveDefaults(cfg.Ontology.Resolve)
 	if !cfg.Ontology.Resolve.Enabled || client == nil || len(touched) == 0 {
@@ -575,6 +622,10 @@ func ResolveEntitiesPass(
 	}
 
 	model := resolveModel(cfg, rcfg)
+	touchedSet := make(map[string]bool, len(seeds))
+	for _, s := range seeds {
+		touchedSet[s.ID] = true
+	}
 	stats := resolveStats{blocks: len(blocks)}
 	proposed := map[string]bool{} // per-run: one proposal per alias
 
@@ -584,25 +635,39 @@ func ResolveEntitiesPass(
 				"blocks_done", stats.calls, "blocks", len(blocks))
 			break
 		}
-		clusters, err := arbitrateBlock(ctx, b, rcfg, model, client)
+		clusters, err := arbitrateBlock(ctx, b, rcfg, model, client, &stats)
 		stats.calls++
 		if err != nil {
 			stats.failed++
 			log.Warn("resolve: arbitration failed", "seed", b.seed.ID, "error", err)
 			continue
 		}
-		applyClusters(ont, clusters, rcfg, proposed, rejected, &stats)
+		applyClusters(ont, clusters, rcfg, touchedSet, proposed, rejected, &stats)
 	}
 
 	log.Info("resolve complete",
 		"blocks", stats.blocks, "calls", stats.calls, "failed", stats.failed,
-		"linked", stats.linked, "pending", stats.pending, "skipped", stats.skipped)
+		"linked", stats.linked, "pending", stats.pending, "skipped", stats.skipped,
+		"link_errors", stats.linkErrors,
+		"dropped_unknown_label", stats.droppedUnknownLabel,
+		"dropped_singleton", stats.droppedSingleton,
+		"dropped_not_same_referent", stats.droppedNotReferent,
+		"dropped_duplicate_member", stats.droppedDuplicate,
+		"unplaced_labels", stats.unplacedLabels)
 }
 
 type resolveStats struct {
 	blocks, calls, failed int
 	linked, pending       int
 	skipped               int // proposals dropped by a guard
+	linkErrors            int // LinkAlias errored or reported a missing endpoint
+	// Response-normalization drops, counted so the log accounts for everything
+	// the model returned rather than only what survived.
+	droppedUnknownLabel int
+	droppedSingleton    int
+	droppedNotReferent  int
+	droppedDuplicate    int
+	unplacedLabels      int
 }
 
 // sweepAliases re-applies every approved link, copying forward any edge that
@@ -610,7 +675,7 @@ type resolveStats struct {
 //
 // Ungated on purpose (see ResolveEntitiesPass). For anyone who never enabled
 // resolution this is one indexed query returning nothing.
-func sweepAliases(ont store.OntologyStore) {
+func sweepAliases(ctx context.Context, ont store.OntologyStore) {
 	rows, err := ont.ListAliases(store.AliasApplied)
 	if err != nil {
 		log.Warn("resolve: alias sweep skipped, list failed", "error", err)
@@ -619,8 +684,16 @@ func sweepAliases(ont store.OntologyStore) {
 	if len(rows) == 0 {
 		return
 	}
-	copied, missing, failed := 0, 0, 0
+	copied, missing, failed, cancelled := 0, 0, 0, 0
 	for _, a := range rows {
+		// The pass is registered with defer, so a Ctrl-C during compile still
+		// reaches this loop. Without the check it would run one write
+		// transaction per applied row to completion.
+		if ctx.Err() != nil {
+			cancelled = len(rows) - (copied + missing + failed)
+			log.Warn("resolve: alias sweep cancelled", "remaining", cancelled)
+			break
+		}
 		res, err := ont.LinkAlias(a)
 		if err != nil {
 			failed++
@@ -708,6 +781,7 @@ func arbitrateBlock(
 	rcfg config.ResolveConfig,
 	model string,
 	client *llm.Client,
+	stats *resolveStats,
 ) ([]normalizedCluster, error) {
 	// NeutralizeTags over the whole rendered block: names and descriptions are
 	// model-generated text derived from arbitrary source documents, i.e.
@@ -730,7 +804,7 @@ func arbitrateBlock(
 	if err := json.Unmarshal(payload, &resp); err != nil {
 		return nil, fmt.Errorf("parse clusters: %w", err)
 	}
-	return normalizeClusters(resp.Clusters, b.labels), nil
+	return normalizeClusters(resp.Clusters, b.labels, stats), nil
 }
 
 // applyClusters turns normalized clusters into links or pending proposals.
@@ -738,16 +812,48 @@ func applyClusters(
 	ont store.OntologyStore,
 	clusters []normalizedCluster,
 	rcfg config.ResolveConfig,
+	touched map[string]bool,
 	proposed map[string]bool,
 	rejected func(a, b string) bool,
 	stats *resolveStats,
 ) {
 	now := time.Now().UTC().Format(time.RFC3339)
+	// canonical id -> aliases already absorbed into it during this run, so a
+	// pair the user rejected cannot be reunited under a third entity.
+	absorbed := map[string][]string{}
 
+	// Canonical-first: a cluster whose elected canonical is itself absorbed as
+	// an alias elsewhere in this run is applied LAST, so the far canonical
+	// receives the edges within the same run rather than waiting for the next
+	// sweep.
+	aliasThisRun := map[string]bool{}
 	for _, c := range clusters {
+		canon := electCanonical(c.entities)
+		for _, e := range c.entities {
+			if e.ID != canon.ID {
+				aliasThisRun[e.ID] = true
+			}
+		}
+	}
+	ordered := append([]normalizedCluster(nil), clusters...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return !aliasThisRun[electCanonical(ordered[i].entities).ID] &&
+			aliasThisRun[electCanonical(ordered[j].entities).ID]
+	})
+
+	for _, c := range ordered {
 		canonical := electCanonical(c.entities)
 		for _, alias := range c.entities {
 			if alias.ID == canonical.ID {
+				continue
+			}
+			// Only an entity THIS run touched may be absorbed. A block is seeded
+			// by a touched entity but its candidates are ordinary pool rows, so a
+			// cluster can name two entities neither of which this compile wrote —
+			// absorbing them would let an incremental run modify entities it never
+			// looked at, breaking the guarantee that existing rows are stable.
+			if !touched[alias.ID] {
+				stats.skipped++
 				continue
 			}
 			// Per-run guard: blocks may overlap, and two proposals for one alias
@@ -761,7 +867,13 @@ func applyClusters(
 			// again. A second active row is a non-target unique violation that
 			// the upsert does not absorb — it would abort the whole transaction
 			// and lose this run's edge copies with it.
-			if active, err := ont.GetActiveAlias(alias.ID); err != nil || active != nil {
+			active, err := ont.GetActiveAlias(alias.ID)
+			if err != nil {
+				log.Warn("resolve: active-alias lookup failed, skipping", "alias", alias.ID, "error", err)
+				stats.skipped++
+				continue
+			}
+			if active != nil {
 				stats.skipped++
 				continue
 			}
@@ -780,6 +892,36 @@ func applyClusters(
 			if target == alias.ID {
 				stats.skipped++
 				continue
+			}
+			// Re-check against the CHAIN-RESOLVED target, not just the elected
+			// canonical. When the canonical is itself an applied alias the link
+			// lands on a different entity than the one just checked — and since
+			// putAliasTx suppresses writes over a rejected row, the edges would
+			// be copied with NO audit row, leaving the alias to be re-seeded and
+			// re-copied on every later compile with nothing recording it.
+			if target != canonical.ID && rejected(alias.ID, target) {
+				log.Warn("resolve: skipped, the pair is rejected once the canonical chain is followed",
+					"alias", alias.ID, "elected", canonical.ID, "target", target)
+				stats.skipped++
+				continue
+			}
+			// A rejection between two entities is also a rejection of folding
+			// both into one canonical: absorbing them together reconstructs
+			// exactly the merge the user refused.
+			if co, ok := absorbed[target]; ok {
+				conflict := ""
+				for _, other := range co {
+					if rejected(alias.ID, other) {
+						conflict = other
+						break
+					}
+				}
+				if conflict != "" {
+					log.Warn("resolve: skipped, co-absorbing a rejected pair into one canonical",
+						"alias", alias.ID, "with", conflict, "canonical", target)
+					stats.skipped++
+					continue
+				}
 			}
 
 			row := store.EntityAlias{
@@ -809,14 +951,17 @@ func applyClusters(
 			res, err := ont.LinkAlias(row)
 			if err != nil {
 				log.Warn("resolve: link failed", "alias", alias.ID, "canonical", target, "error", err)
+				stats.linkErrors++
 				continue
 			}
 			if res.AliasMissing || res.CanonicalMissing {
 				log.Warn("resolve: link skipped, endpoint missing",
 					"alias", alias.ID, "canonical", target)
+				stats.linkErrors++
 				continue
 			}
 			proposed[alias.ID] = true
+			absorbed[target] = append(absorbed[target], alias.ID)
 			stats.linked++
 		}
 	}

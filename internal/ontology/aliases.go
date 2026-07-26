@@ -70,15 +70,20 @@ func (s *Store) PutAlias(a store.EntityAlias) error {
 	if a.Source == "" {
 		a.Source = "llm"
 	}
-	return s.db.WriteTx(func(tx *sql.Tx) error { return putAliasTx(tx, a) })
+	return s.db.WriteTx(func(tx *sql.Tx) error {
+		// A suppressed write here is the designed no-op: the guard exists so an
+		// auto-applied re-proposal cannot overwrite a human's rejection.
+		_, err := putAliasTx(tx, a)
+		return err
+	})
 }
 
 // putAliasTx is the single alias-upsert statement, shared by PutAlias and
 // LinkAlias so the audit row is written exactly one way. LinkAlias cannot call
 // PutAlias: WriteTx's mutex is not reentrant (storage/db.go), so a nested call
 // would deadlock.
-func putAliasTx(tx *sql.Tx, a store.EntityAlias) error {
-	_, err := tx.Exec(
+func putAliasTx(tx *sql.Tx, a store.EntityAlias) (written bool, err error) {
+	res, err := tx.Exec(
 		`INSERT INTO entity_aliases
 		   (alias, canonical_id, entity_type, status, confidence, reason,
 		    source, created_at, decided_at, decided_by)
@@ -93,7 +98,14 @@ func putAliasTx(tx *sql.Tx, a store.EntityAlias) error {
 		a.Alias, a.CanonicalID, a.EntityType, string(a.Status), a.Confidence,
 		a.Reason, a.Source, a.CreatedAt, nullText(a.DecidedAt), nullText(a.DecidedBy),
 	)
-	return err
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // nullText keeps "" out of the nullable audit columns so a never-decided row
@@ -167,11 +179,21 @@ func (s *Store) IsRejected(a, b string) (bool, error) {
 func (s *Store) SetAliasStatus(alias, canonicalID string, status store.AliasStatus, decidedBy string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	return s.db.WriteTx(func(tx *sql.Tx) error {
-		_, err := tx.Exec(
+		res, err := tx.Exec(
 			`UPDATE entity_aliases SET status=?, decided_at=?, decided_by=?
 			 WHERE alias=? AND canonical_id=?`,
 			string(status), now, decidedBy, alias, canonicalID)
-		return err
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return fmt.Errorf("ontology: no alias row %q -> %q", alias, canonicalID)
+		}
+		return nil
 	})
 }
 
@@ -343,7 +365,21 @@ func (s *Store) LinkAlias(a store.EntityAlias) (store.LinkResult, error) {
 
 		// The audit row lands in the SAME transaction as the copies — a
 		// caller-side second write could fail after the copies committed.
-		return putAliasTx(tx, a)
+		//
+		// A SUPPRESSED write (the rejected-row guard) must abort: copying edges
+		// with nothing recording the link mutates the graph invisibly, and the
+		// alias would be re-seeded and re-copied on every later run. Returning
+		// an error rolls the copies back with it.
+		written, err := putAliasTx(tx, a)
+		if err != nil {
+			return err
+		}
+		if !written {
+			return fmt.Errorf(
+				"ontology: refusing to link %q -> %q: the pair is rejected, so the link cannot be recorded",
+				a.Alias, a.CanonicalID)
+		}
+		return nil
 	})
 	if err != nil {
 		return store.LinkResult{}, err

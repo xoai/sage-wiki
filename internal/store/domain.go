@@ -134,23 +134,23 @@ const (
 // Alias and CanonicalID hold entity IDs, not names: Entity.ID != Entity.Name for
 // every entity the compiler writes, and two rows can share a Name.
 type EntityAlias struct {
-	Alias       string
-	CanonicalID string
+	Alias       string `json:"alias"`
+	CanonicalID string `json:"canonical_id"`
 	// EntityType is recorded at proposal time so a review stays readable.
-	EntityType string
-	Status     AliasStatus
-	Confidence float64
+	EntityType string      `json:"entity_type"`
+	Status     AliasStatus `json:"status"`
+	Confidence float64     `json:"confidence"`
 	// Reason is the model's one-line justification, or manual provenance.
-	Reason string
+	Reason string `json:"reason,omitempty"`
 	// Source is "llm" or "manual".
-	Source string
+	Source string `json:"source"`
 	// CreatedAt is the proposal time and is NEVER rewritten — the sweep
 	// re-runs the upsert on every compile, and an audit trail whose origin
 	// timestamp moves each run cannot explain a link after the fact.
-	CreatedAt string
-	DecidedAt string
+	CreatedAt string `json:"created_at"`
+	DecidedAt string `json:"decided_at,omitempty"`
 	// DecidedBy is "auto" or "user".
-	DecidedBy string
+	DecidedBy string `json:"decided_by,omitempty"`
 }
 
 // LinkResult reports what one alias link copied onto the canonical.
@@ -159,21 +159,21 @@ type EntityAlias struct {
 // alias keeps every one of its own edges, and nothing existing is overwritten.
 type LinkResult struct {
 	// Copied — edges newly created on the canonical.
-	Copied int
+	Copied int `json:"copied"`
 	// Skipped — the canonical already asserted this edge, so its own row was
 	// left untouched. A copy must never overwrite a native assertion: the
 	// confidence-guarded upsert AddRelation uses is sound only when both sides
 	// assert the SAME edge, which is not the case here.
-	Skipped int
+	Skipped int `json:"skipped"`
 	// SelfLoops — not copied because the other endpoint IS the canonical. The
 	// original alias-to-canonical edge is retained, not deleted.
-	SelfLoops int
+	SelfLoops int `json:"self_loops"`
 	// AliasMissing / CanonicalMissing are typed rather than errors: a zero
 	// LinkResult is otherwise indistinguishable from a successful link of an
 	// edgeless entity, and both the sweep and the CLI must tell those apart
 	// without matching on error strings.
-	AliasMissing     bool
-	CanonicalMissing bool
+	AliasMissing     bool `json:"alias_missing,omitempty"`
+	CanonicalMissing bool `json:"canonical_missing,omitempty"`
 }
 
 type Direction int

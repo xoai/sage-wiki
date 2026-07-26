@@ -122,7 +122,7 @@ func TestDiscriminatingTokensDropsHighDF(t *testing.T) {
 	}
 	pool = append(pool, ent("x", "aldrin buzz", "", "", ""))
 
-	ok := discriminatingTokens(pool, defaultResolveMaxTokenDF, defaultResolveMinTokenDFFloor)
+	ok := discriminatingTokens(pool, defaultResolveMaxTokenDF, defaultResolveMinTokenDFFloor)["concept"]
 	if ok["model"] {
 		t.Error(`"model" survived the DF filter; it appears in 480 of 481 entities`)
 	}
@@ -146,7 +146,7 @@ func TestDiscriminatingTokensFloorKeepsSmallCluster(t *testing.T) {
 		ent("a3", "Aldrin Jr", "", "", ""),
 	)
 
-	ok := discriminatingTokens(pool, defaultResolveMaxTokenDF, defaultResolveMinTokenDFFloor)
+	ok := discriminatingTokens(pool, defaultResolveMaxTokenDF, defaultResolveMinTokenDFFloor)["concept"]
 	if !ok["aldrin"] {
 		t.Error(`"aldrin" (3 of 45 = 6.7%, over the 5% threshold) was discarded; ` +
 			`the absolute floor must keep it`)
@@ -244,7 +244,7 @@ func TestNormalizeClustersDropsUnknownLabels(t *testing.T) {
 	labels := labelled("a", "b")
 	got := normalizeClusters([]resolvedCluster{
 		{Members: []string{"E1", "E2", "E99"}, SameReferent: true, Confidence: 0.9},
-	}, labels)
+	}, labels, nil)
 
 	if len(got) != 1 {
 		t.Fatalf("clusters = %d, want 1", len(got))
@@ -259,7 +259,7 @@ func TestNormalizeClustersDropsSingletonAndNonReferent(t *testing.T) {
 	got := normalizeClusters([]resolvedCluster{
 		{Members: []string{"E1"}, SameReferent: true, Confidence: 0.9},
 		{Members: []string{"E1", "E2"}, SameReferent: false, Confidence: 0.9},
-	}, labels)
+	}, labels, nil)
 	if len(got) != 0 {
 		t.Errorf("clusters = %d, want 0 (one singleton, one not-same-referent)", len(got))
 	}
@@ -271,7 +271,7 @@ func TestNormalizeClustersFirstClusterWinsDuplicateMember(t *testing.T) {
 	got := normalizeClusters([]resolvedCluster{
 		{Members: []string{"E1", "E2"}, SameReferent: true, Confidence: 0.9},
 		{Members: []string{"E1", "E3"}, SameReferent: true, Confidence: 0.9},
-	}, labels)
+	}, labels, nil)
 
 	if len(got) != 1 {
 		t.Fatalf("clusters = %d, want 1 (second dropped to a singleton after dedup)", len(got))
@@ -289,7 +289,7 @@ func TestNormalizeClustersClampsConfidence(t *testing.T) {
 	labels := labelled("a", "b")
 	got := normalizeClusters([]resolvedCluster{
 		{Members: []string{"E1", "E2"}, SameReferent: true, Confidence: 3.7},
-	}, labels)
+	}, labels, nil)
 	if len(got) != 1 || got[0].confidence != 1 {
 		t.Errorf("confidence = %v, want clamped to 1", got)
 	}
@@ -367,7 +367,7 @@ func TestBuildBlocksRespectsMaxBlockSize(t *testing.T) {
 	}
 	cfg := applyResolveDefaults(config.ResolveConfig{MaxBlockSize: 10})
 	// Force "aldrin" to count as discriminating so the block would be huge.
-	tokens := map[string]bool{"aldrin": true}
+	tokens := map[string]map[string]bool{"concept": {"aldrin": true}}
 
 	blocks := buildBlocks([]store.Entity{pool[0]}, pool, tokens, nil, cfg, noneRejected)
 	if len(blocks) != 1 {
@@ -395,7 +395,7 @@ func TestBuildBlocksExcludesRejectedPairs(t *testing.T) {
 		ent("armstrong-astronaut", "Neil Armstrong", "", "", ""),
 		ent("armstrong-musician", "Louis Armstrong", "", "", ""),
 	}
-	tokens := map[string]bool{"armstrong": true, "neil": true, "louis": true}
+	tokens := map[string]map[string]bool{"concept": {"armstrong": true, "neil": true, "louis": true}}
 	cfg := applyResolveDefaults(config.ResolveConfig{})
 
 	rejected := func(a, b string) bool {
@@ -448,7 +448,7 @@ func TestBuildBlocksEmbeddingDimensionMismatchSkips(t *testing.T) {
 		"nyc":           {1, 0, 0},
 		"new-york-city": {1, 0}, // different dimension
 	}
-	blocks := buildBlocks([]store.Entity{pool[0]}, pool, map[string]bool{}, vecs, cfg, noneRejected)
+	blocks := buildBlocks([]store.Entity{pool[0]}, pool, map[string]map[string]bool{}, vecs, cfg, noneRejected)
 	if len(blocks) != 0 {
 		t.Errorf("blocks = %d, want 0 — a dimension mismatch must skip, not match", len(blocks))
 	}
@@ -461,7 +461,7 @@ func TestBlockLabelsAreTotalAndUnique(t *testing.T) {
 		ent("a", "Shared Name", "", "", ""),
 		ent("b", "Shared Name", "", "", ""),
 	}
-	tokens := map[string]bool{"shared": true, "name": true}
+	tokens := map[string]map[string]bool{"concept": {"shared": true, "name": true}}
 	cfg := applyResolveDefaults(config.ResolveConfig{})
 
 	blocks := buildBlocks([]store.Entity{pool[0]}, pool, tokens, nil, cfg, noneRejected)
@@ -491,5 +491,32 @@ func TestBlockLabelsAreTotalAndUnique(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("rendered block missing %q:\n%s", want, rendered)
 		}
+	}
+}
+
+// GATE-3 regression. Document frequency must be computed PER TYPE, as the spec
+// and both docs state. Over the merged pool, a large type swamps a small one:
+// 400 techniques sharing "attention" would push the token over the limit and
+// stop three concepts named "Self Attention" from ever blocking — the exact
+// failure min_token_df_floor exists to prevent, reintroduced across types.
+func TestDiscriminatingTokensAreScopedPerType(t *testing.T) {
+	var pool []store.Entity
+	for i := 0; i < 400; i++ {
+		e := ent(fmt.Sprintf("t%d", i), fmt.Sprintf("attention variant %d", i), "", "", "")
+		e.Type = "technique"
+		pool = append(pool, e)
+	}
+	for i := 0; i < 3; i++ {
+		pool = append(pool, ent(fmt.Sprintf("c%d", i), fmt.Sprintf("Self Attention %d", i), "", "", ""))
+	}
+
+	byType := discriminatingTokens(pool, defaultResolveMaxTokenDF, defaultResolveMinTokenDFFloor)
+
+	if byType["technique"]["attention"] {
+		t.Error(`"attention" should be discarded for technique (400 of 400)`)
+	}
+	if !byType["concept"]["attention"] {
+		t.Error(`"attention" was discarded for concept (3 of 3) because a larger ` +
+			`type swamped it — DF must be per type`)
 	}
 }

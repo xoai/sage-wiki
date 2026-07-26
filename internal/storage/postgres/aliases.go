@@ -60,14 +60,19 @@ func (s *ontologyStore) PutAlias(a store.EntityAlias) error {
 	if a.Source == "" {
 		a.Source = "llm"
 	}
-	return s.b.WriteTx(func(tx *sql.Tx) error { return putAliasTx(tx, a) })
+	return s.b.WriteTx(func(tx *sql.Tx) error {
+		// A suppressed write here is the designed no-op: the guard exists so an
+		// auto-applied re-proposal cannot overwrite a human's rejection.
+		_, err := putAliasTx(tx, a)
+		return err
+	})
 }
 
 // putAliasTx is the single alias-upsert statement, shared by PutAlias and
 // LinkAlias so the audit row is written exactly one way. LinkAlias cannot call
 // PutAlias: WriteTx's mutex is not reentrant, so a nested call would deadlock.
-func putAliasTx(tx *sql.Tx, a store.EntityAlias) error {
-	_, err := tx.Exec(
+func putAliasTx(tx *sql.Tx, a store.EntityAlias) (written bool, err error) {
+	res, err := tx.Exec(
 		`INSERT INTO entity_aliases
 		   (alias, canonical_id, entity_type, status, confidence, reason,
 		    source, created_at, decided_at, decided_by)
@@ -80,10 +85,17 @@ func putAliasTx(tx *sql.Tx, a store.EntityAlias) error {
 		   decided_by = excluded.decided_by
 		 WHERE entity_aliases.status <> 'rejected'`,
 		a.Alias, a.CanonicalID, a.EntityType, string(a.Status), a.Confidence,
-		nullStr(a.Reason), a.Source, a.CreatedAt,
+		a.Reason, a.Source, a.CreatedAt,
 		nullStr(a.DecidedAt), nullStr(a.DecidedBy),
 	)
-	return err
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // GetActiveAlias returns the live ('applied' or 'pending') decision, or
@@ -135,11 +147,21 @@ func (s *ontologyStore) IsRejected(a, b string) (bool, error) {
 func (s *ontologyStore) SetAliasStatus(alias, canonicalID string, status store.AliasStatus, decidedBy string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	return s.b.WriteTx(func(tx *sql.Tx) error {
-		_, err := tx.Exec(
+		res, err := tx.Exec(
 			`UPDATE entity_aliases SET status=$3, decided_at=$4, decided_by=$5
 			 WHERE alias=$1 AND canonical_id=$2`,
 			alias, canonicalID, string(status), now, decidedBy)
-		return err
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return fmt.Errorf("ontology: no alias row %q -> %q", alias, canonicalID)
+		}
+		return nil
 	})
 }
 
@@ -273,7 +295,16 @@ func (s *ontologyStore) LinkAlias(a store.EntityAlias) (store.LinkResult, error)
 			}
 		}
 
-		return putAliasTx(tx, a)
+		written, err := putAliasTx(tx, a)
+		if err != nil {
+			return err
+		}
+		if !written {
+			return fmt.Errorf(
+				"ontology: refusing to link %q -> %q: the pair is rejected, so the link cannot be recorded",
+				a.Alias, a.CanonicalID)
+		}
+		return nil
 	})
 	if err != nil {
 		return store.LinkResult{}, err

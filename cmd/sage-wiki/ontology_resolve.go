@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -146,6 +147,11 @@ func resolveApply(ont store.OntologyStore, alias string) error {
 
 	row.Status = store.AliasApplied
 	row.DecidedBy = "user"
+	// Refreshed: the pending row carries the model's proposal time, and an
+	// applied row that reads decided_by=user with a timestamp from before the
+	// user saw it is a misleading audit trail. --reject stamps via
+	// SetAliasStatus; this is the matching half.
+	row.DecidedAt = time.Now().UTC().Format(time.RFC3339)
 	res, err := ont.LinkAlias(*row)
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
@@ -183,6 +189,12 @@ func resolveReject(ont store.OntologyStore, alias string) error {
 	if err := ont.SetAliasStatus(row.Alias, row.CanonicalID, store.AliasRejected, "user"); err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
+	if outputFormat == "json" {
+		fmt.Println(cli.FormatJSON(true, map[string]string{
+			"alias": row.Alias, "canonical_id": row.CanonicalID, "status": "rejected",
+		}, ""))
+		return nil
+	}
 	fmt.Printf("Rejected %s → %s. This pair will not be proposed again, in either direction.\n",
 		row.Alias, row.CanonicalID)
 	return nil
@@ -199,21 +211,33 @@ func resolveSweep(ont store.OntologyStore) error {
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
+	jsonOut := outputFormat == "json"
 	copied, skipped, missing, failed := 0, 0, 0, 0
 	for _, a := range rows {
 		res, err := ont.LinkAlias(a)
 		if err != nil {
 			failed++
-			fmt.Printf("  ! %s → %s: %v\n", a.Alias, a.CanonicalID, err)
+			if !jsonOut {
+				fmt.Printf("  ! %s → %s: %v\n", a.Alias, a.CanonicalID, err)
+			}
 			continue
 		}
 		if res.AliasMissing || res.CanonicalMissing {
 			missing++
-			fmt.Printf("  · %s → %s: endpoint missing (link retained)\n", a.Alias, a.CanonicalID)
+			if !jsonOut {
+				fmt.Printf("  · %s → %s: endpoint missing (link retained)\n", a.Alias, a.CanonicalID)
+			}
 			continue
 		}
 		copied += res.Copied
 		skipped += res.Skipped
+	}
+	if jsonOut {
+		fmt.Println(cli.FormatJSON(true, map[string]int{
+			"links": len(rows), "copied": copied, "already_present": skipped,
+			"endpoint_missing": missing, "failed": failed,
+		}, ""))
+		return nil
 	}
 	fmt.Printf("Swept %d link(s): %d edge(s) copied, %d already present, %d with a missing endpoint, %d failed.\n",
 		len(rows), copied, skipped, missing, failed)

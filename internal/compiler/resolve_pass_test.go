@@ -3,6 +3,7 @@ package compiler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -349,29 +350,69 @@ func TestResolvePassRejectedPairNotRelinked(t *testing.T) {
 // that ON CONFLICT (alias, canonical_id) does not absorb — it aborts the whole
 // transaction and loses that run's edge copies, every run.
 func TestResolvePassCrossRunActiveAliasNotReproposed(t *testing.T) {
+	// The invariant: one alias keeps exactly ONE active row, and an earlier
+	// link is never disturbed by a later run.
+	//
+	// Honest note on what enforces this. The partial unique index
+	// idx_entity_aliases_active is the real mechanism — it rejects a second
+	// active row for one alias, so the end state holds even if the Go guard in
+	// applyClusters is removed (verified by mutation: the state assertions below
+	// still pass, because the write is refused at the database and LinkAlias's
+	// transaction rolls back). The Go guard is an optimisation: it avoids
+	// attempting a doomed transaction and logging a failure per run. This test
+	// therefore pins the INVARIANT, not the guard; dropping the index is what
+	// would break it.
+	//
+	// The fixture is built so the cluster is genuinely {moved, seed} with a
+	// DIFFERENT canonical than "moved" already has — "seed" holds the
+	// ArticlePath, so it wins the election.
 	srv, _, _ := resolveServer(t, twoMemberCluster)
 	ont := passStore(t)
-	addEnt(t, ont, "canon-1", "Buzz Aldrin", "an astronaut", "wiki/c1.md")
+	// Deliberately shares no name tokens, so it stays OUT of the block and
+	// the cluster is genuinely {moved, seed} with seed elected.
+	addEnt(t, ont, "canon-1", "Unrelated Original", "an astronaut", "")
 	addEnt(t, ont, "moved", "Buzz Aldrin", "an astronaut", "")
+	addEnt(t, ont, "seed", "Buzz Aldrin", "an astronaut", "wiki/seed.md")
+	addEnt(t, ont, "tgt", "Apollo", "", "")
+	if err := ont.AddRelation(ontology.Relation{
+		ID: "r", SourceID: "seed", TargetID: "tgt",
+		Relation: ontology.RelExtends, Confidence: 0.7}); err != nil {
+		t.Fatal(err)
+	}
 	if err := ont.PutAlias(store.EntityAlias{
 		Alias: "moved", CanonicalID: "canon-1", EntityType: ontology.TypeConcept,
 		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// A new seed that blocks with the already-linked entity.
-	addEnt(t, ont, "seed", "Buzz Aldrin", "an astronaut", "")
 
 	ResolveEntitiesPass(context.Background(), ont,
 		[]string{"seed"}, resolveCfg(), triplesClient(t, srv.URL), nil)
 
-	// "moved" keeps exactly one active row, pointing where it did.
+	// "moved" keeps exactly one active row, still pointing at canon-1. Without
+	// the guard this attempts a SECOND active row (moved -> seed), which is a
+	// non-target unique-index violation that aborts the whole WriteTx.
 	act, err := ont.GetActiveAlias("moved")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if act == nil || act.CanonicalID != "canon-1" {
-		t.Errorf("existing link disturbed: %+v", act)
+		t.Fatalf("existing link disturbed: %+v", act)
+	}
+	// Exactly one active row for "moved" — the index would have rejected a
+	// second, taking the transaction with it.
+	applied, err := ont.ListAliases(store.AliasApplied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, a := range applied {
+		if a.Alias == "moved" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("active rows for 'moved' = %d, want 1", n)
 	}
 }
 
@@ -433,6 +474,247 @@ func TestResolvePassSeesPass3Entities(t *testing.T) {
 	for _, id := range []string{"Self Attention", "self-attention"} {
 		if e, _ := ont.GetEntity(id); e == nil {
 			t.Errorf("entity %q deleted", id)
+		}
+	}
+}
+
+// GATE-3 CRITICAL regression. The rejection check ran against the ELECTED
+// canonical, but the link is made to the CHAIN-RESOLVED target. When the
+// elected canonical is itself an applied alias, the pair that actually gets
+// linked was never checked — and because putAliasTx suppresses writes over a
+// rejected row, the edges were copied with NO audit row, so the alias was
+// re-seeded and re-copied on every subsequent compile, forever.
+func TestResolvePassRejectionSurvivesChainResolution(t *testing.T) {
+	srv, _, _ := resolveServer(t, twoMemberCluster)
+	ont := passStore(t)
+	addEnt(t, ont, "a-row", "Buzz Aldrin", "an astronaut", "")
+	addEnt(t, ont, "b-row", "Buzz Aldrin", "an astronaut", "wiki/b.md")
+	addEnt(t, ont, "c-row", "Buzz Aldrin", "an astronaut", "")
+	addEnt(t, ont, "edge-target", "Apollo", "", "")
+	if err := ont.AddRelation(ontology.Relation{
+		ID: "r", SourceID: "a-row", TargetID: "edge-target",
+		Relation: ontology.RelExtends, Confidence: 0.7}); err != nil {
+		t.Fatal(err)
+	}
+
+	// b-row is itself an alias of c-row.
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "b-row", CanonicalID: "c-row", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The user rejected a-row <-> c-row specifically.
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "a-row", CanonicalID: "c-row", EntityType: ontology.TypeConcept,
+		Status: store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		DecidedBy: "user",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ResolveEntitiesPass(context.Background(), ont,
+		[]string{"a-row"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+
+	// c-row must NOT have acquired the rejected entity's edge.
+	got, err := ont.GetRelations("c-row", ontology.Outbound, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("the rejected pair was linked through the chain: c-row gained %+v", got)
+	}
+	// And the rejection record is intact.
+	rej, _ := ont.ListAliases(store.AliasRejected)
+	if len(rej) != 1 || rej[0].DecidedBy != "user" {
+		t.Errorf("rejection record altered: %+v", rej)
+	}
+}
+
+// GATE-3 MAJOR regression. A suppressed audit write must not be reported as a
+// successful link: the graph would mutate with nothing recording it.
+func TestLinkAliasFailsWhenAuditWriteSuppressed(t *testing.T) {
+	ont := passStore(t)
+	addEnt(t, ont, "alias", "Alias", "", "")
+	addEnt(t, ont, "canon", "Canon", "", "")
+	addEnt(t, ont, "tgt", "Target", "", "")
+	if err := ont.AddRelation(ontology.Relation{
+		ID: "r", SourceID: "alias", TargetID: "tgt",
+		Relation: ontology.RelExtends, Confidence: 0.7}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
+		Status: store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := ont.LinkAlias(store.EntityAlias{
+		Alias: "alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+	})
+	if err == nil {
+		t.Fatal("LinkAlias over a rejected row returned nil; the audit write was suppressed")
+	}
+	// And the whole transaction rolled back — no orphan copy.
+	canon, _ := ont.GetRelations("canon", ontology.Outbound, "")
+	if len(canon) != 0 {
+		t.Errorf("edges were copied despite the suppressed audit row: %+v", canon)
+	}
+}
+
+// --- GATE-3: coverage the reviewer found missing ---
+
+type stubEmbedder struct {
+	calls int
+	fail  bool
+	vec   map[string][]float32
+}
+
+func (s *stubEmbedder) Embed(text string) ([]float32, error) {
+	s.calls++
+	if s.fail {
+		return nil, fmt.Errorf("embed outage")
+	}
+	for k, v := range s.vec {
+		if strings.Contains(text, k) {
+			return v, nil
+		}
+	}
+	return []float32{0, 0, 1}, nil
+}
+func (s *stubEmbedder) Dimensions() int { return 3 }
+func (s *stubEmbedder) Name() string    { return "stub" }
+
+// An embedding outage must not cost the vault its resolution: lexical blocking
+// stands on its own.
+func TestResolvePassEmbeddingFailureFallsBackToLexical(t *testing.T) {
+	srv, calls, _ := resolveServer(t, twoMemberCluster)
+	ont := passStore(t)
+	addEnt(t, ont, "aldrin-a", "Buzz Aldrin", "an astronaut", "wiki/a.md")
+	addEnt(t, ont, "aldrin-b", "Buzz Aldrin", "an astronaut", "")
+
+	cfg := resolveCfg()
+	cfg.Ontology.Resolve.UseEmbeddings = true
+	emb := &stubEmbedder{fail: true}
+
+	ResolveEntitiesPass(context.Background(), ont,
+		[]string{"aldrin-b"}, cfg, triplesClient(t, srv.URL), emb)
+
+	if emb.calls == 0 {
+		t.Error("the embedder was never called despite use_embeddings")
+	}
+	// Lexical blocking still found the pair, so arbitration still happened.
+	if calls.Load() != 1 {
+		t.Errorf("LLM calls = %d, want 1 — lexical blocking must survive an embed outage", calls.Load())
+	}
+	if applied, _ := ont.ListAliases(store.AliasApplied); len(applied) != 1 {
+		t.Errorf("applied = %d, want 1", len(applied))
+	}
+}
+
+// The global per-run embed cap bounds spend; embed.Embedder has no batch method,
+// so every vector is one HTTP call.
+func TestResolvePassEmbedCapIsGlobal(t *testing.T) {
+	srv, _, _ := resolveServer(t, twoMemberCluster)
+	ont := passStore(t)
+	for i := 0; i < 30; i++ {
+		addEnt(t, ont, fmt.Sprintf("e%d", i), fmt.Sprintf("Buzz Aldrin %d", i), "an astronaut", "")
+	}
+
+	cfg := resolveCfg()
+	cfg.Ontology.Resolve.UseEmbeddings = true
+	cfg.Ontology.Resolve.MaxEmbedCandidates = 5
+	emb := &stubEmbedder{}
+
+	ResolveEntitiesPass(context.Background(), ont,
+		[]string{"e0"}, cfg, triplesClient(t, srv.URL), emb)
+
+	if emb.calls > 5 {
+		t.Errorf("embed calls = %d, want <= the global cap of 5", emb.calls)
+	}
+}
+
+// A cancelled context stops the embed loop rather than paying for every vector.
+func TestResolvePassEmbedLoopChecksContext(t *testing.T) {
+	srv, _, _ := resolveServer(t, twoMemberCluster)
+	ont := passStore(t)
+	for i := 0; i < 20; i++ {
+		addEnt(t, ont, fmt.Sprintf("e%d", i), fmt.Sprintf("Buzz Aldrin %d", i), "an astronaut", "")
+	}
+	cfg := resolveCfg()
+	cfg.Ontology.Resolve.UseEmbeddings = true
+	emb := &stubEmbedder{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ResolveEntitiesPass(ctx, ont, []string{"e0"}, cfg, triplesClient(t, srv.URL), emb)
+
+	if emb.calls != 0 {
+		t.Errorf("embed calls = %d on a cancelled context, want 0", emb.calls)
+	}
+}
+
+// Two source entities with the same basename are indistinguishable and must
+// never be linked — doing so would re-point one document's citations at another.
+func TestResolvePassSourceTypeExcluded(t *testing.T) {
+	srv, calls, _ := resolveServer(t, twoMemberCluster)
+	ont := passStore(t)
+	for _, id := range []string{"raw/2024/notes.md", "raw/2025/notes.md"} {
+		if err := ont.AddEntity(ontology.Entity{
+			ID: id, Type: ontology.TypeSource, Name: "notes.md",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ResolveEntitiesPass(context.Background(), ont,
+		[]string{"raw/2025/notes.md"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+
+	if calls.Load() != 0 {
+		t.Errorf("LLM calls = %d, want 0 — source entities are never resolved", calls.Load())
+	}
+	for _, st := range []store.AliasStatus{store.AliasApplied, store.AliasPending} {
+		if rows, _ := ont.ListAliases(st); len(rows) != 0 {
+			t.Errorf("%s rows = %d, want 0", st, len(rows))
+		}
+	}
+}
+
+// An incremental run must never modify an entity it did not touch.
+func TestResolvePassIncrementalLeavesUntouchedRowsAlone(t *testing.T) {
+	srv, _, _ := resolveServer(t, twoMemberCluster)
+	ont := passStore(t)
+	addEnt(t, ont, "aldrin-a", "Buzz Aldrin", "an astronaut", "wiki/a.md")
+	addEnt(t, ont, "aldrin-b", "Buzz Aldrin", "an astronaut", "")
+	addEnt(t, ont, "aldrin-c", "Buzz Aldrin", "an astronaut", "")
+
+	before := map[string]ontology.Entity{}
+	for _, id := range []string{"aldrin-a", "aldrin-b", "aldrin-c"} {
+		e, err := ont.GetEntity(id)
+		if err != nil || e == nil {
+			t.Fatal(err)
+		}
+		before[id] = *e
+	}
+
+	// Only aldrin-c is touched.
+	ResolveEntitiesPass(context.Background(), ont,
+		[]string{"aldrin-c"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+
+	// Whatever was linked, only the TOUCHED entity may have acquired an alias
+	// row, and no untouched entity row may have changed.
+	for _, id := range []string{"aldrin-a", "aldrin-b"} {
+		after, err := ont.GetEntity(id)
+		if err != nil || after == nil {
+			t.Fatalf("untouched entity %q vanished", id)
+		}
+		if *after != before[id] {
+			t.Errorf("untouched entity %q was modified:\n before %+v\n after  %+v", id, before[id], *after)
+		}
+		if act, _ := ont.GetActiveAlias(id); act != nil {
+			t.Errorf("untouched entity %q was absorbed as an alias: %+v", id, act)
 		}
 	}
 }
