@@ -144,6 +144,19 @@ func resolveApply(ont store.OntologyStore, alias string) error {
 		fmt.Printf("%s is already linked to %s.\n", row.Alias, row.CanonicalID)
 		return nil
 	}
+	// The partial unique index is keyed on `alias` alone, so an active A->B row
+	// can coexist with a rejected B->A row. Without this check --apply would
+	// link a pair the user rejected in the other direction, which the guide
+	// promises cannot happen.
+	rejected, err := ont.IsRejected(row.Alias, row.CanonicalID)
+	if err != nil {
+		return cli.CLIError(outputFormat, err)
+	}
+	if rejected {
+		return cli.CLIError(outputFormat, fmt.Errorf(
+			"%q and %q were rejected as different entities — reject/apply is symmetric, "+
+				"so this pair cannot be linked in either direction", row.Alias, row.CanonicalID))
+	}
 
 	row.Status = store.AliasApplied
 	row.DecidedBy = "user"
@@ -186,6 +199,7 @@ func resolveReject(ont store.OntologyStore, alias string) error {
 	if row == nil {
 		return cli.CLIError(outputFormat, fmt.Errorf("no active proposal for %q", alias))
 	}
+	wasApplied := row.Status == store.AliasApplied
 	if err := ont.SetAliasStatus(row.Alias, row.CanonicalID, store.AliasRejected, "user"); err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
@@ -197,6 +211,14 @@ func resolveReject(ont store.OntologyStore, alias string) error {
 	}
 	fmt.Printf("Rejected %s → %s. This pair will not be proposed again, in either direction.\n",
 		row.Alias, row.CanonicalID)
+	if wasApplied {
+		// Rejecting is not an undo: linking copied edges onto the canonical and
+		// those rows are still there. Saying "rejected" without this reads as a
+		// rollback that did not happen.
+		fmt.Printf("Note: this link had already been APPLIED. Edges copied onto %s remain "+
+			"(they carry an \"alias:\" id prefix); rejecting only stops it being re-applied.\n",
+			row.CanonicalID)
+	}
 	return nil
 }
 

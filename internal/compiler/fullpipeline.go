@@ -314,7 +314,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	// zero-concept early return below — otherwise triples would silently never
 	// persist on an incremental compile where every concept dedup-merged, which
 	// is the ordinary case. Never fails the compile; see ExtractTriplesPass.
-	touched := ExtractTriplesPass(opts.Ctx, opts.OntStore, successfulSummaries, concepts, cfg, client, false)
+	touched := ExtractTriplesPass(opts.Ctx, writeOntStore, successfulSummaries, concepts, cfg, client, false)
 
 	// Pass 4: entity resolution (P3-3, opt-in). Deferred rather than called
 	// inline because it must run AFTER Pass 3 — WriteArticles is what creates
@@ -380,11 +380,12 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		AllConcepts:        manifestConceptRefs(mf.Concepts),
 	}, concepts)
 
-	// Pass 3's contribution to the resolution set. concept.Name IS the entity
-	// id WriteArticles wrote (write.go), and only successful articles produced
-	// a row — a failed one must not be arbitrated over, since it is not in the
-	// graph. The deferred pass reads `touched` at return time, so appending
-	// here lands before it runs.
+	// Pass 3's contribution to the resolution set. concept.Name IS the entity id
+	// WriteArticles wrote (write.go). ar.Error == nil does not strictly prove the
+	// entity landed — writeOneArticle logs an AddEntity failure without failing
+	// the article — so resolvableSeeds re-checks membership in the pool and drops
+	// anything absent. The deferred pass reads `touched` at return time, so
+	// appending here lands before it runs.
 	for _, ar := range articles {
 		if ar.Error == nil {
 			touched = append(touched, ar.ConceptName)

@@ -105,7 +105,10 @@ func applyResolveDefaults(c config.ResolveConfig) config.ResolveConfig {
 	if c.MaxTokens <= 0 {
 		c.MaxTokens = defaultResolveMaxTokens
 	}
-	if c.MaxBlockSize <= 0 {
+	// Floored at 2, not 1: a block of one cannot produce a cluster
+	// (normalizeClusters requires two members), so max_block_size: 1 would buy a
+	// paid arbitration call per seed that can never return anything.
+	if c.MaxBlockSize < 2 {
 		c.MaxBlockSize = defaultResolveMaxBlockSize
 	}
 	// Falls BACK rather than clamping. Clamping a configured 0 to some small
@@ -444,10 +447,10 @@ func buildBlocks(
 		}
 
 		sort.Slice(candidates, func(i, j int) bool { return candidates[i].ID < candidates[j].ID })
-		if cap := cfg.MaxBlockSize - 1; len(candidates) > cap {
+		if limit := cfg.MaxBlockSize - 1; len(candidates) > limit {
 			log.Warn("resolve: candidate cap reached, dropping the tail",
-				"seed", seed.ID, "kept", cap, "dropped", len(candidates)-cap)
-			candidates = candidates[:cap]
+				"seed", seed.ID, "kept", limit, "dropped", len(candidates)-limit)
+			candidates = candidates[:limit]
 		}
 
 		members := append([]store.Entity{seed}, candidates...)
@@ -628,6 +631,7 @@ func ResolveEntitiesPass(
 	}
 	stats := resolveStats{blocks: len(blocks)}
 	proposed := map[string]bool{} // per-run: one proposal per alias
+	siblings := newSiblingIndex(ont)
 
 	for _, b := range blocks {
 		if ctx.Err() != nil {
@@ -642,7 +646,7 @@ func ResolveEntitiesPass(
 			log.Warn("resolve: arbitration failed", "seed", b.seed.ID, "error", err)
 			continue
 		}
-		applyClusters(ont, clusters, rcfg, touchedSet, proposed, rejected, &stats)
+		applyClusters(ont, clusters, rcfg, touchedSet, proposed, siblings, rejected, &stats)
 	}
 
 	log.Info("resolve complete",
@@ -684,14 +688,15 @@ func sweepAliases(ctx context.Context, ont store.OntologyStore) {
 	if len(rows) == 0 {
 		return
 	}
-	copied, missing, failed, cancelled := 0, 0, 0, 0
-	for _, a := range rows {
+	copied, missing, failed := 0, 0, 0
+	for i, a := range rows {
 		// The pass is registered with defer, so a Ctrl-C during compile still
 		// reaches this loop. Without the check it would run one write
 		// transaction per applied row to completion.
 		if ctx.Err() != nil {
-			cancelled = len(rows) - (copied + missing + failed)
-			log.Warn("resolve: alias sweep cancelled", "remaining", cancelled)
+			// Rows, not edges: copied counts EDGES, so subtracting it from a row
+			// count can go negative.
+			log.Warn("resolve: alias sweep cancelled", "done", i, "remaining", len(rows)-i)
 			break
 		}
 		res, err := ont.LinkAlias(a)
@@ -808,52 +813,87 @@ func arbitrateBlock(
 }
 
 // applyClusters turns normalized clusters into links or pending proposals.
+// siblingIndex maps a canonical to every alias already linked into it, seeded
+// from the store so it spans previous runs as well as earlier blocks in this one.
+type siblingIndex struct{ byCanonical map[string][]string }
+
+func newSiblingIndex(ont store.OntologyStore) *siblingIndex {
+	idx := &siblingIndex{byCanonical: map[string][]string{}}
+	rows, err := ont.ListAliases(store.AliasApplied)
+	if err != nil {
+		// Not fatal, but say so: without the seed the co-absorption guard only
+		// covers links made in this run.
+		log.Warn("resolve: could not load applied aliases; the co-absorption guard "+
+			"will not see links from previous runs", "error", err)
+		return idx
+	}
+	for _, a := range rows {
+		idx.byCanonical[a.CanonicalID] = append(idx.byCanonical[a.CanonicalID], a.Alias)
+	}
+	return idx
+}
+
+func (s *siblingIndex) add(canonical, alias string) {
+	s.byCanonical[canonical] = append(s.byCanonical[canonical], alias)
+}
+
+// conflict returns the sibling that alias must not join under canonical, or "".
+func (s *siblingIndex) conflict(alias, canonical string, rejected func(a, b string) bool) string {
+	for _, other := range s.byCanonical[canonical] {
+		if other != alias && rejected(alias, other) {
+			return other
+		}
+	}
+	return ""
+}
+
 func applyClusters(
 	ont store.OntologyStore,
 	clusters []normalizedCluster,
 	rcfg config.ResolveConfig,
 	touched map[string]bool,
 	proposed map[string]bool,
+	siblings *siblingIndex,
 	rejected func(a, b string) bool,
 	stats *resolveStats,
 ) {
 	now := time.Now().UTC().Format(time.RFC3339)
-	// canonical id -> aliases already absorbed into it during this run, so a
-	// pair the user rejected cannot be reunited under a third entity.
-	absorbed := map[string][]string{}
 
-	// Canonical-first: a cluster whose elected canonical is itself absorbed as
-	// an alias elsewhere in this run is applied LAST, so the far canonical
-	// receives the edges within the same run rather than waiting for the next
-	// sweep.
-	aliasThisRun := map[string]bool{}
+	// No canonical-first reordering here, deliberately. normalizeClusters'
+	// `claimed` map makes surviving clusters disjoint, so within one call no
+	// cluster's elected canonical can be another cluster's alias — a sort on
+	// that predicate is a guaranteed no-op, and dead code that looks like a
+	// guarantee is worse than none. Chains that span BLOCKS converge through the
+	// sweep, which replays every applied link on the next pass.
 	for _, c := range clusters {
-		canon := electCanonical(c.entities)
+		// The cluster must involve something THIS compile touched. A block is
+		// seeded by a touched entity but its candidates are ordinary pool rows,
+		// so the model can return a cluster naming two entities neither of which
+		// this compile wrote — acting on that would let an incremental run
+		// decide about entities it never looked at.
+		//
+		// The check is per CLUSTER, not per alias. Per alias it would break the
+		// primary use case: the article row written this compile wins the
+		// election (ArticlePath beats everything), so the alias is the triples
+		// row from an EARLIER compile — skipping it links nothing, queues
+		// nothing, and re-bills the same arbitration call forever. Absorbing an
+		// untouched entity is safe here precisely because linking is
+		// non-destructive: its row and its own edges are never modified.
+		relevant := false
 		for _, e := range c.entities {
-			if e.ID != canon.ID {
-				aliasThisRun[e.ID] = true
+			if touched[e.ID] {
+				relevant = true
+				break
 			}
 		}
-	}
-	ordered := append([]normalizedCluster(nil), clusters...)
-	sort.SliceStable(ordered, func(i, j int) bool {
-		return !aliasThisRun[electCanonical(ordered[i].entities).ID] &&
-			aliasThisRun[electCanonical(ordered[j].entities).ID]
-	})
+		if !relevant {
+			stats.skipped += len(c.entities)
+			continue
+		}
 
-	for _, c := range ordered {
 		canonical := electCanonical(c.entities)
 		for _, alias := range c.entities {
 			if alias.ID == canonical.ID {
-				continue
-			}
-			// Only an entity THIS run touched may be absorbed. A block is seeded
-			// by a touched entity but its candidates are ordinary pool rows, so a
-			// cluster can name two entities neither of which this compile wrote —
-			// absorbing them would let an incremental run modify entities it never
-			// looked at, breaking the guarantee that existing rows are stable.
-			if !touched[alias.ID] {
-				stats.skipped++
 				continue
 			}
 			// Per-run guard: blocks may overlap, and two proposals for one alias
@@ -908,19 +948,32 @@ func applyClusters(
 			// A rejection between two entities is also a rejection of folding
 			// both into one canonical: absorbing them together reconstructs
 			// exactly the merge the user refused.
-			if co, ok := absorbed[target]; ok {
-				conflict := ""
-				for _, other := range co {
-					if rejected(alias.ID, other) {
-						conflict = other
-						break
-					}
-				}
-				if conflict != "" {
-					log.Warn("resolve: skipped, co-absorbing a rejected pair into one canonical",
-						"alias", alias.ID, "with", conflict, "canonical", target)
-					stats.skipped++
-					continue
+			//
+			// Checked against everything already absorbed into `target` — by an
+			// earlier block in this run OR by a previous compile. An in-memory
+			// per-call map cannot see either: applyClusters runs once per block,
+			// so two halves of a rejected pair land in separate calls, and a link
+			// from a previous run is not in memory at all.
+			if conflict := siblings.conflict(alias.ID, target, rejected); conflict != "" {
+				log.Warn("resolve: skipped, co-absorbing a rejected pair into one canonical",
+					"alias", alias.ID, "with", conflict, "canonical", target)
+				stats.skipped++
+				continue
+			}
+
+			// The guard must judge the pair that will ACTUALLY be linked. When
+			// the elected canonical is itself an alias, `target` is a different
+			// entity — evaluating against `canonical` could auto-apply a link
+			// where neither linked entity has a description, which is the one
+			// thing the description rule exists to prevent.
+			judged := canonical
+			if target != canonical.ID {
+				if te, err := ont.GetEntity(target); err == nil && te != nil {
+					judged = *te
+				} else {
+					log.Warn("resolve: could not load the chain-resolved canonical; queuing for review",
+						"target", target, "error", err)
+					judged = store.Entity{ID: target} // no description -> cannot auto-apply
 				}
 			}
 
@@ -932,11 +985,12 @@ func applyClusters(
 				Reason:      c.reason,
 				Source:      "llm",
 				CreatedAt:   now,
-				DecidedAt:   now,
-				DecidedBy:   "auto",
+				// DecidedAt/DecidedBy are stamped only on the applied branch: a
+				// pending row has NOT been decided, and nullText keeps those
+				// columns NULL so a review cannot read as already-decided.
 			}
 
-			if !canAutoApply(c.raw, alias, canonical, rcfg.AutoApplyThreshold) {
+			if !canAutoApply(c.raw, alias, judged, rcfg.AutoApplyThreshold) {
 				row.Status = store.AliasPending
 				if err := ont.PutAlias(row); err != nil {
 					log.Warn("resolve: pending proposal write failed", "alias", alias.ID, "error", err)
@@ -948,6 +1002,8 @@ func applyClusters(
 			}
 
 			row.Status = store.AliasApplied
+			row.DecidedAt = now
+			row.DecidedBy = "auto"
 			res, err := ont.LinkAlias(row)
 			if err != nil {
 				log.Warn("resolve: link failed", "alias", alias.ID, "canonical", target, "error", err)
@@ -961,7 +1017,7 @@ func applyClusters(
 				continue
 			}
 			proposed[alias.ID] = true
-			absorbed[target] = append(absorbed[target], alias.ID)
+			siblings.add(target, alias.ID)
 			stats.linked++
 		}
 	}

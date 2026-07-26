@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -237,9 +238,6 @@ func TestResolveCLIHonoursConfigFlag(t *testing.T) {
 	err := runResolve(t, map[string]string{"review": "true"})
 	if err == nil {
 		t.Error("expected an error when the named config is absent")
-	} else if !strings.Contains(strings.ToLower(err.Error()), "config") &&
-		!strings.Contains(strings.ToLower(err.Error()), "no such file") {
-		t.Logf("open failed as expected: %v", err)
 	}
 }
 
@@ -265,5 +263,68 @@ func TestResolveCLIUsesBackendAgnosticSeam(t *testing.T) {
 		Status: store.AliasPending, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Errorf("store opened read-only — --apply and --sweep would fail: %v", err)
+	}
+}
+
+// --format json must emit parseable snake_case on EVERY resolve path — the json
+// tags on EntityAlias/LinkResult are otherwise unverified.
+func TestResolveCLIJSONOutput(t *testing.T) {
+	dir := resolveVault(t, "config.yaml")
+	seedResolveStore(t, dir, "config.yaml")
+	withProject(t, dir, "config.yaml")
+
+	oldFormat := outputFormat
+	outputFormat = "json"
+	t.Cleanup(func() { outputFormat = oldFormat })
+
+	capture := func(t *testing.T, fn func() error) string {
+		t.Helper()
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		orig := os.Stdout
+		os.Stdout = w
+		runErr := fn()
+		w.Close()
+		os.Stdout = orig
+		if runErr != nil {
+			t.Fatalf("command failed: %v", runErr)
+		}
+		buf := make([]byte, 8192)
+		n, _ := r.Read(buf)
+		r.Close()
+		return string(buf[:n])
+	}
+
+	// --review emits the alias payload with snake_case keys.
+	out := capture(t, func() error { return runResolve(t, map[string]string{"review": "true"}) })
+	if !json.Valid([]byte(out)) {
+		t.Fatalf("--review --format json is not valid JSON:\n%s", out)
+	}
+	for _, key := range []string{"canonical_id", "entity_type", "created_at"} {
+		if !strings.Contains(out, key) {
+			t.Errorf("--review json missing snake_case key %q:\n%s", key, out)
+		}
+	}
+	if strings.Contains(out, "CanonicalID") {
+		t.Errorf("--review json emitted Go field names instead of json tags:\n%s", out)
+	}
+
+	// --apply emits the LinkResult payload.
+	out = capture(t, func() error { return runResolve(t, map[string]string{"apply": "Buzz Aldrin"}) })
+	if !json.Valid([]byte(out)) {
+		t.Fatalf("--apply --format json is not valid JSON:\n%s", out)
+	}
+	for _, key := range []string{"copied", "skipped", "self_loops"} {
+		if !strings.Contains(out, key) {
+			t.Errorf("--apply json missing key %q:\n%s", key, out)
+		}
+	}
+
+	// --sweep emits counts.
+	out = capture(t, func() error { return runResolve(t, map[string]string{"sweep": "true"}) })
+	if !json.Valid([]byte(out)) {
+		t.Fatalf("--sweep --format json is not valid JSON:\n%s", out)
 	}
 }

@@ -171,23 +171,91 @@ func TestMigrationV11ActiveIndexRejectsSecondActiveRow(t *testing.T) {
 }
 
 // Pre-V11 data is untouched: V11 creates a table and rebuilds nothing.
+// Pre-V11 rows must survive the migration. The data has to be written BEFORE
+// Open runs the migration — inserting afterwards only proves that INSERT then
+// SELECT works, which is not what this is for.
 func TestMigrationV11PreservesExistingData(t *testing.T) {
-	db := buildV10Fixture(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "v10-with-data.db")
 
-	if err := db.WriteTx(func(tx *sql.Tx) error {
-		_, err := tx.Exec(
-			`INSERT INTO entities (id, type, name, created_at, updated_at)
-			 VALUES ('alpha', 'concept', 'Alpha', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`)
-		return err
-	}); err != nil {
-		t.Fatalf("insert entity: %v", err)
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("raw open: %v", err)
+	}
+	if _, err := raw.Exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"); err != nil {
+		t.Fatal(err)
+	}
+	consts := []string{
+		migrationV1, migrationV2, migrationV3, migrationV4, migrationV5,
+		migrationV6, migrationV7, migrationV8, migrationV9, migrationV10,
+	}
+	for i, sqlText := range consts {
+		if i == 3 {
+			if _, err := raw.Exec("PRAGMA foreign_keys = OFF"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := raw.Exec(sqlText); err != nil {
+			t.Fatalf("fixture migration v%d: %v", i+1, err)
+		}
+		if _, err := raw.Exec("INSERT INTO schema_version (version) VALUES (?)", i+1); err != nil {
+			t.Fatal(err)
+		}
+		if i == 3 {
+			if _, err := raw.Exec("PRAGMA foreign_keys = ON"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// Pre-V11 data, written at V10.
+	if _, err := raw.Exec(
+		`INSERT INTO entities (id, type, name, definition, article_path, created_at, updated_at)
+		 VALUES ('alpha','concept','Alpha','a definition','wiki/alpha.md','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z'),
+		        ('beta','technique','Beta','','','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z')`); err != nil {
+		t.Fatalf("seed entities: %v", err)
+	}
+	if _, err := raw.Exec(
+		`INSERT INTO relations (id, source_id, target_id, relation, created_at, evidence, confidence)
+		 VALUES ('a-ext-b','alpha','beta','extends','2026-01-03T00:00:00Z','alpha extends beta',0.7)`); err != nil {
+		t.Fatalf("seed relation: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := Open(path) // migrates V10 -> V11
+	if err != nil {
+		t.Fatalf("open (migrates): %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	var id, typ, name, def, ap string
+	if err := db.ReadDB().QueryRow(
+		`SELECT id, type, name, COALESCE(definition,''), COALESCE(article_path,'')
+		 FROM entities WHERE id='alpha'`).Scan(&id, &typ, &name, &def, &ap); err != nil {
+		t.Fatalf("read pre-V11 entity: %v", err)
+	}
+	if typ != "concept" || name != "Alpha" || def != "a definition" || ap != "wiki/alpha.md" {
+		t.Errorf("pre-V11 entity altered by the migration: %s/%s/%s/%s", typ, name, def, ap)
+	}
+
+	var src, tgt, rel, evidence string
+	var conf float64
+	if err := db.ReadDB().QueryRow(
+		`SELECT source_id, target_id, relation, COALESCE(evidence,''), COALESCE(confidence,0)
+		 FROM relations WHERE id='a-ext-b'`).Scan(&src, &tgt, &rel, &evidence, &conf); err != nil {
+		t.Fatalf("read pre-V11 relation: %v", err)
+	}
+	if src != "alpha" || tgt != "beta" || rel != "extends" ||
+		evidence != "alpha extends beta" || conf != 0.7 {
+		t.Errorf("pre-V11 relation altered: %s -[%s]-> %s ev=%q conf=%v", src, rel, tgt, evidence, conf)
 	}
 
 	var n int
-	if err := db.ReadDB().QueryRow("SELECT COUNT(*) FROM entities WHERE id='alpha'").Scan(&n); err != nil {
-		t.Fatalf("count entities: %v", err)
+	if err := db.ReadDB().QueryRow("SELECT COUNT(*) FROM entities").Scan(&n); err != nil {
+		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Errorf("entities = %d, want 1", n)
+	if n != 2 {
+		t.Errorf("entities = %d, want 2 preserved", n)
 	}
 }

@@ -718,3 +718,73 @@ func TestResolvePassIncrementalLeavesUntouchedRowsAlone(t *testing.T) {
 		}
 	}
 }
+
+// GATE-3 R2 MAJOR. The primary use case: an article row written THIS compile and
+// a triples row written by an EARLIER one. The article row wins the election
+// (ArticlePath beats everything), so the alias is the untouched triples row —
+// and a per-alias touched guard would skip it, linking nothing, queuing nothing,
+// and re-billing an arbitration call on every subsequent compile.
+func TestResolvePassLinksAgainstEntityFromAnEarlierCompile(t *testing.T) {
+	srv, calls, _ := resolveServer(t, twoMemberCluster)
+	ont := passStore(t)
+	// Written by an earlier compile — NOT in touched.
+	addEnt(t, ont, "Self Attention", "Self Attention", "an attention mechanism", "")
+	addEnt(t, ont, "tgt", "Transformers", "", "")
+	if err := ont.AddRelation(ontology.Relation{
+		ID: "old", SourceID: "Self Attention", TargetID: "tgt",
+		Relation: ontology.RelExtends, Confidence: 0.6}); err != nil {
+		t.Fatal(err)
+	}
+	// Written by THIS compile.
+	addEnt(t, ont, "self-attention", "Self Attention", "", "wiki/concepts/self-attention.md")
+
+	ResolveEntitiesPass(context.Background(), ont,
+		[]string{"self-attention"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+
+	applied, _ := ont.ListAliases(store.AliasApplied)
+	pending, _ := ont.ListAliases(store.AliasPending)
+	if len(applied)+len(pending) == 0 {
+		t.Fatalf("the pair was neither linked nor queued: applied=%d pending=%d, "+
+			"and the arbitration call (%d) will be repeated every compile",
+			len(applied), len(pending), calls.Load())
+	}
+	if len(applied) == 1 {
+		// The canonical must have gained the older row's edge.
+		canon, _ := ont.GetRelations("self-attention", ontology.Outbound, "")
+		if len(canon) != 1 || canon[0].TargetID != "tgt" {
+			t.Errorf("canonical did not gain the earlier row's edge: %+v", canon)
+		}
+	}
+}
+
+// GATE-3 R2 CRITICAL. Both halves of a user-rejected pair must not be folded
+// into one canonical, even across separate blocks in the same run — that
+// reconstructs exactly the merge the user refused.
+func TestResolvePassRejectedPairNotCoAbsorbedAcrossBlocks(t *testing.T) {
+	srv, _, _ := resolveServer(t, twoMemberCluster)
+	ont := passStore(t)
+	addEnt(t, ont, "a-row", "Buzz Aldrin", "an astronaut", "")
+	addEnt(t, ont, "b-row", "Buzz Aldrin", "a jazz musician", "")
+	addEnt(t, ont, "c-canon", "Buzz Aldrin", "an astronaut", "wiki/c.md")
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "a-row", CanonicalID: "b-row", EntityType: ontology.TypeConcept,
+		Status: store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		DecidedBy: "user",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ResolveEntitiesPass(context.Background(), ont,
+		[]string{"a-row", "b-row"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+
+	applied, _ := ont.ListAliases(store.AliasApplied)
+	intoC := 0
+	for _, a := range applied {
+		if a.CanonicalID == "c-canon" && (a.Alias == "a-row" || a.Alias == "b-row") {
+			intoC++
+		}
+	}
+	if intoC > 1 {
+		t.Errorf("both halves of a rejected pair were folded into %q: %+v", "c-canon", applied)
+	}
+}
