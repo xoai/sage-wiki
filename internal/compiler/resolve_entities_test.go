@@ -32,6 +32,12 @@ func TestApplyResolveDefaults(t *testing.T) {
 		t.Errorf("AutoApplyThreshold = %v, want %v",
 			got.AutoApplyThreshold, defaultResolveAutoApplyThreshold)
 	}
+	// The LITERAL value, not just the symbol: comparing the constant to itself
+	// holds for any value, so it cannot pin the review-only default.
+	if got.AutoApplyThreshold != 1.0 {
+		t.Errorf("default AutoApplyThreshold = %v, want 1.0 (review-only)",
+			got.AutoApplyThreshold)
+	}
 	if got.MaxTokenDF != defaultResolveMaxTokenDF {
 		t.Errorf("MaxTokenDF = %v, want %v", got.MaxTokenDF, defaultResolveMaxTokenDF)
 	}
@@ -225,7 +231,7 @@ func TestCanAutoApply(t *testing.T) {
 		{"no description on either side", resolvedCluster{SameReferent: true, Confidence: 0.99}, bare, bare, false},
 		{"description on the other side", resolvedCluster{SameReferent: true, Confidence: 0.99}, bare, described, true},
 	} {
-		got := canAutoApply(tc.cluster, tc.x, tc.y, defaultResolveAutoApplyThreshold)
+		got := canAutoApply(tc.cluster, tc.x, tc.y, 0.85)
 		if got != tc.want {
 			t.Errorf("%s: canAutoApply = %v, want %v", tc.name, got, tc.want)
 		}
@@ -765,4 +771,31 @@ func keysOf(m map[string][]float32) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// 1.0 means NEVER, exactly — not "practically never". normalizeClusters clamps
+// confidence to [0,1], so a model returning 1.0 is legal and would otherwise
+// satisfy `confidence >= threshold`. A safety default a model can defeat by
+// being confident is not a safety default.
+func TestCanAutoApplyNeverAtThresholdOne(t *testing.T) {
+	both := resolvedCluster{SameReferent: true, Broader: false, Confidence: 1.0}
+	x := ent("a", "A", "a description", "", "")
+	y := ent("b", "B", "another description", "", "")
+	if canAutoApply(both, x, y, 1.0) {
+		t.Error("canAutoApply = true at threshold 1.0 with confidence 1.0; " +
+			"1.0 must mean never, by an explicit branch rather than float luck")
+	}
+}
+
+// The opt-in is intact: a lowered threshold behaves exactly as before. One side
+// described, because the description requirement is an OR — two bare entities
+// would return false and this test would pass for the wrong reason.
+func TestCanAutoApplyStillWorksBelowOne(t *testing.T) {
+	c := resolvedCluster{SameReferent: true, Broader: false, Confidence: 0.9}
+	x := ent("a", "A", "a description", "", "")
+	y := ent("b", "B", "", "", "")
+	if !canAutoApply(c, x, y, 0.85) {
+		t.Error("canAutoApply = false at threshold 0.85 with confidence 0.9; " +
+			"lowering the threshold must still opt in")
+	}
 }
