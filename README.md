@@ -496,7 +496,7 @@ serve:
 #     model: ""                    # default: models.extract, then models.summarize
 #     max_tokens: 4096
 #     max_block_size: 60           # candidates per arbitration call
-#     auto_apply_threshold: 0.85   # below this, a proposal waits for review
+#     auto_apply_threshold: 1.0    # DEFAULT. 1.0 = never auto-apply; lower to opt in
 #     max_token_df: 0.05           # ignore name tokens shared by >5% of a type
 #     min_token_df_floor: 20       # ...but never ignore one seen fewer than 20 times
 #     use_embeddings: false        # widen candidates to names sharing no tokens
@@ -504,12 +504,18 @@ serve:
 #     max_embed_candidates: 500    # global per-run cap on embedding calls
 ```
 
-`resolve` and `triples` belong together. Auto-linking requires a description on
-at least one side of a pair, and triple extraction is the only *compile-path*
-writer of entity descriptions — so with `resolve` on and `triples` off, most
-proposals are queued for review. Not all: `sage-wiki scribe` also writes
-descriptions, so a scribe-described entity can still auto-link. Set
-`auto_apply_threshold: 1.0` if you want review-only as a hard rule.
+**Nothing is linked automatically by default.** `auto_apply_threshold` defaults
+to `1.0`, which means *never* — every proposal is queued for you to decide with
+`sage-wiki ontology resolve --review`. That is deliberate: a link is not
+reversible (there is no un-link command), so it should not happen without a
+human. The pass warns when proposals are waiting.
+
+Lower the threshold to opt in — `0.85` is the old default and a reasonable
+starting point. Once you do, `resolve` and `triples` belong together:
+auto-linking also requires a description on at least one side of a pair, and
+triple extraction is the only *compile-path* writer of entity descriptions. (Not
+the only writer at all: `sage-wiki scribe` writes them too, so a scribe-described
+entity can auto-link even with `triples` off.)
 
 ### Multi-Provider Setup
 

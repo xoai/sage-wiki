@@ -108,9 +108,13 @@ were previously skipped will start being created.
 
 ## Entity resolution
 
-`ontology.resolve.enabled: true` adds a pass that links surface-form variants of
-one entity, so that "NASA" and "National Aeronautics and Space Administration"
-stop being two disconnected nodes with half the graph each.
+`ontology.resolve.enabled: true` adds a pass that finds surface-form variants of
+one entity — "NASA" and "National Aeronautics and Space Administration" — which
+would otherwise stay two disconnected nodes with half the graph each.
+
+**It proposes; by default it does not apply.** `auto_apply_threshold` defaults to
+`1.0`, which means never auto-apply, so every proposal waits for you. See
+"Review-only by default" below.
 
 It **links; it does not collapse.** Both entity rows survive, and the canonical
 gains *copies* of the alias's edges — so traversal from the canonical sees the
@@ -119,10 +123,35 @@ shows both rows, and traversal from the alias still shows only its own edges.
 Collapsing into a single node needs alias-aware prune, reconcile and manifest
 handling first, and is deliberately left to a later cycle.
 
-### Pair it with triple extraction
+### Review-only by default
 
-Auto-linking requires a description on at least one side of a pair. Triple
-extraction is the only compile-path writer of entity descriptions, so
+Enabling resolution links nothing on its own:
+
+```yaml
+ontology:
+  resolve:
+    enabled: true
+    # auto_apply_threshold defaults to 1.0 — never auto-apply
+```
+
+Every proposal is queued for you to decide. The reason is that a link is **not
+reversible**: there is no un-link command, and rejecting an already-applied link
+stops it being re-proposed without removing the edges already copied. Something
+that cannot be undone should not happen without a human.
+
+So that the queue is not invisible, the pass warns at the normal log level —
+no `-v` needed — whenever proposals are standing, on every exit path and in
+every configuration:
+
+```
+WARN resolve: entity-resolution proposals are waiting for review —
+     run `sage-wiki ontology resolve --review` to decide them  pending=12
+```
+
+### Opting in to automatic linking
+
+Lower the threshold. `0.85` was the previous default and is a reasonable
+starting point:
 
 ```yaml
 ontology:
@@ -130,19 +159,19 @@ ontology:
     enabled: true
   resolve:
     enabled: true
+    auto_apply_threshold: 0.85
 ```
 
-is the combination that links automatically, because triple extraction is the
-only **compile-path** writer of entity descriptions.
+`triples` is in that block because once you have lowered the threshold,
+auto-apply *also* requires a description on at least one side of the pair, and
+triple extraction is the only **compile-path** writer of entity descriptions.
 
-With `resolve` on and `triples` off, most proposals are queued for review rather
-than applied. That is not a guarantee, and it is worth being precise about why:
-auto-apply needs a description on **at least one** side, and `sage-wiki scribe`
-writes descriptions outside the compile path. So an entity you described via
-scribe can auto-link against a bare Pass-3 concept even with `triples: false`.
-If you want review-only behaviour as a hard rule, raise
-`auto_apply_threshold` to `1.0` — that is the only setting that makes it one.
-The pass warns once per run when it sees `resolve` without `triples`.
+That pairing is not itself a guarantee — `sage-wiki scribe` writes descriptions
+outside the compile path, so a scribe-described entity can auto-link against a
+bare Pass-3 concept even with `triples: false`. The threshold is what guarantees
+review-only; the description is a second condition on top of it. The pass warns
+once per run when it sees `resolve` without `triples`, because that combination
+usually means descriptions will be missing.
 
 ### Reviewing and deciding
 
@@ -153,9 +182,11 @@ sage-wiki ontology resolve --reject <alias-id>   # reject; never re-proposed
 sage-wiki ontology resolve --sweep               # re-apply approved links (free)
 ```
 
-A proposal goes to review rather than applying automatically when its confidence
-is below `auto_apply_threshold`, when the model flags one member as a strictly
-*broader* concept than the others, or when neither side has a description.
+A proposal goes to review rather than applying automatically when
+`auto_apply_threshold` is at its default of `1.0` (which forbids auto-apply
+outright), when its confidence is below a lowered threshold, when the model flags
+one member as a strictly *broader* concept than the others, or when neither side
+has a description.
 Rejection is symmetric: rejecting A→B also blocks B→A, so re-rolling the
 direction cannot bypass your decision.
 
