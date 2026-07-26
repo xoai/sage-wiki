@@ -298,11 +298,35 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	progress.EndPhase()
 	client.TeardownCache(extCacheID)
 
+	// Hoisted from below (was immediately before Pass 3) so the deferred
+	// resolution pass can capture the store Pass 3 actually writes through.
+	// Capturing opts.OntStore instead would hand resolution a nil store on
+	// exactly the path where Pass 3 built its own — and the pass would silently
+	// return. Moved as a unit: the fallback references merged/mergedTypes.
+	merged := ontology.MergedRelations(cfg.Ontology.Relations)
+	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+	writeOntStore := opts.OntStore
+	if writeOntStore == nil {
+		writeOntStore = ontology.NewStore(opts.DB, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
+	}
+
 	// Pass 2b: LLM triple extraction (P3-2, opt-in). Runs BEFORE the
 	// zero-concept early return below — otherwise triples would silently never
 	// persist on an incremental compile where every concept dedup-merged, which
 	// is the ordinary case. Never fails the compile; see ExtractTriplesPass.
-	ExtractTriplesPass(opts.Ctx, opts.OntStore, successfulSummaries, concepts, cfg, client, false)
+	touched := ExtractTriplesPass(opts.Ctx, opts.OntStore, successfulSummaries, concepts, cfg, client, false)
+
+	// Pass 4: entity resolution (P3-3, opt-in). Deferred rather than called
+	// inline because it must run AFTER Pass 3 — WriteArticles is what creates
+	// concept entity rows and their cites edges — while still covering the
+	// zero-concept early return below, which skips Pass 3 entirely but has
+	// triple entities to resolve. One registration, every exit path; the
+	// alternative is duplicating the call at two returns, where the next edit
+	// adds a third. The closure reads `touched` at return time, so Pass 3's
+	// contribution is included.
+	defer func() {
+		ResolveEntitiesPass(opts.Ctx, writeOntStore, touched, cfg, client, opts.Embedder)
+	}()
 
 	// Pass 3: Write articles
 	if len(concepts) == 0 {
@@ -322,13 +346,6 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	articleMaxTokens := cfg.Compiler.ArticleMaxTokens
 	if articleMaxTokens <= 0 {
 		articleMaxTokens = 4000
-	}
-
-	merged := ontology.MergedRelations(cfg.Ontology.Relations)
-	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-	writeOntStore := opts.OntStore
-	if writeOntStore == nil {
-		writeOntStore = ontology.NewStore(opts.DB, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
 	}
 
 	client.SetPass("write")
@@ -362,6 +379,17 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		AntiPatternPhrases: cfg.Compiler.AntiPatternPhrasesOrDefault(),
 		AllConcepts:        manifestConceptRefs(mf.Concepts),
 	}, concepts)
+
+	// Pass 3's contribution to the resolution set. concept.Name IS the entity
+	// id WriteArticles wrote (write.go), and only successful articles produced
+	// a row — a failed one must not be arbitrated over, since it is not in the
+	// graph. The deferred pass reads `touched` at return time, so appending
+	// here lands before it runs.
+	for _, ar := range articles {
+		if ar.Error == nil {
+			touched = append(touched, ar.ConceptName)
+		}
+	}
 
 	// Quality scoring config (issue #97): weights + warning threshold.
 	wf, wg, wc, ww, wa := cfg.Compiler.QualityWeights()

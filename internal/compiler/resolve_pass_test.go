@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -389,5 +390,49 @@ func TestResolvePassRestoresCostAttribution(t *testing.T) {
 
 	if got := client.Pass(); got != "write" {
 		t.Errorf("client pass = %q after the run, want the prior value restored", got)
+	}
+}
+
+// The ordering guard. WriteArticles (Pass 3) is what creates concept entity
+// rows, so a resolution pass placed before it sees a pool without them and
+// drops every touched id as "absent". This asserts the touched set carries a
+// Pass-3 id and that the pass resolves against a pool containing it.
+func TestResolvePassSeesPass3Entities(t *testing.T) {
+	srv, calls, prompts := resolveServer(t, twoMemberCluster)
+	ont := passStore(t)
+
+	// The two rows the compiler really produces for one concept: the triples
+	// form (description, no article) and the Pass-3 form (article, no
+	// description, hyphen-slug id).
+	addEnt(t, ont, "Self Attention", "Self Attention", "an attention mechanism", "")
+	addEnt(t, ont, "self-attention", "Self Attention", "", "wiki/concepts/self-attention.md")
+
+	// touched carries BOTH, as fullpipeline builds it: triples ids from Pass 2b
+	// plus successful article concept names from Pass 3.
+	ResolveEntitiesPass(context.Background(), ont,
+		[]string{"Self Attention", "self-attention"},
+		resolveCfg(), triplesClient(t, srv.URL), nil)
+
+	if got := calls.Load(); got == 0 {
+		t.Fatal("no arbitration call — the Pass-3 entity was not in the pool")
+	}
+	// The prompt must have carried both rows.
+	joined := strings.Join(*prompts, "\n")
+	if !strings.Contains(joined, "an attention mechanism") {
+		t.Errorf("the described row was not offered to the model:\n%s", joined)
+	}
+
+	applied, _ := ont.ListAliases(store.AliasApplied)
+	if len(applied) != 1 {
+		t.Fatalf("applied = %d, want 1", len(applied))
+	}
+	// The article-bearing row wins the election.
+	if applied[0].CanonicalID != "self-attention" {
+		t.Errorf("canonical = %q, want the article-bearing row", applied[0].CanonicalID)
+	}
+	for _, id := range []string{"Self Attention", "self-attention"} {
+		if e, _ := ont.GetEntity(id); e == nil {
+			t.Errorf("entity %q deleted", id)
+		}
 	}
 }

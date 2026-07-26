@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -339,7 +340,7 @@ func tripleRelationID(source, predicate, target string) string {
 // Persistence is sequential by contract: GetEntity reads outside the write
 // mutex, so concurrent callers would both observe "absent" and race on the
 // type. ExtractTriplesPass fans out extraction and joins before calling this.
-func persistGraph(ont store.OntologyStore, g ExtractedGraph, concepts []ExtractedConcept, sourceDoc string) (entities, relations int) {
+func persistGraph(ont store.OntologyStore, g ExtractedGraph, concepts []ExtractedConcept, sourceDoc string) (entities, relations int, persisted []string) {
 	conceptTypes := make(map[string]string, len(concepts))
 	for _, c := range concepts {
 		t := c.Type
@@ -388,6 +389,10 @@ func persistGraph(ont store.OntologyStore, g ExtractedGraph, concepts []Extracte
 			continue
 		}
 		entities++
+		// The id this pass actually LANDED, for P3-3's touched set. Attempted
+		// writes are deliberately excluded: resolution must not arbitrate over
+		// an entity that is not in the graph.
+		persisted = append(persisted, e.Name)
 	}
 
 	for _, r := range g.Relations {
@@ -411,7 +416,7 @@ func persistGraph(ont store.OntologyStore, g ExtractedGraph, concepts []Extracte
 		}
 		relations++
 	}
-	return entities, relations
+	return entities, relations, persisted
 }
 
 // Per-document caps and fan-out defaults. Applied in-function because
@@ -447,9 +452,9 @@ func ExtractTriplesPass(
 	cfg *config.Config,
 	client *llm.Client,
 	summariesCarryFrontmatter bool,
-) {
+) []string {
 	if cfg == nil || !cfg.Ontology.Triples.Enabled || ont == nil || client == nil || len(summaries) == 0 {
-		return
+		return nil
 	}
 	// opts.Ctx is nilable at the fullpipeline call site; a per-document
 	// ctx.Err() on a nil interface panics.
@@ -578,6 +583,7 @@ func ExtractTriplesPass(
 	}
 
 	entities, relations := 0, 0
+	var persisted []string
 	for _, r := range results {
 		if !r.ok {
 			continue
@@ -588,9 +594,10 @@ func ExtractTriplesPass(
 		}
 		// Counts are what actually landed, not what was attempted: a failed
 		// write must not be reported as an extracted entity.
-		e, rel := persistGraph(ont, g, concepts, r.sourceDoc)
+		e, rel, ids := persistGraph(ont, g, concepts, r.sourceDoc)
 		entities += e
 		relations += rel
+		persisted = append(persisted, ids...)
 	}
 
 	if failures > 0 {
@@ -598,6 +605,26 @@ func ExtractTriplesPass(
 			"failed", failures, "of", len(summaries))
 	}
 	log.Info("triples extracted", "entities", entities, "relations", relations, "documents", len(summaries))
+	return dedupeIDs(persisted)
+}
+
+// dedupeIDs collapses the per-document id lists into one stable set. The same
+// entity is routinely extracted from several documents in a run.
+func dedupeIDs(ids []string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // resolveSourceDoc returns the summary body and the document the triples came
