@@ -4,6 +4,33 @@
 
 ### Added
 
+- **Claude-driven entity resolution (P3-3), opt-in.** With
+  `ontology.resolve.enabled: true`, a new compile pass links surface-form
+  variants of one entity — "NASA" and "National Aeronautics and Space
+  Administration" — so the canonical carries the union of the cluster's edges.
+  It **links; it does not collapse**: both entity rows survive and the canonical
+  gains *copies* of the alias's edges, so nothing is ever deleted. Note that this
+  is **not** the same as reversible — there is no un-link command yet, and
+  rejecting an already-applied link stops it being re-applied without removing
+  the edges already copied (they carry an `alias:` id prefix). Defaults to **off**, and pairs with `ontology.triples.enabled`:
+  auto-linking requires a description on at least one side, and triple
+  extraction is the only *compile-path* writer of entity descriptions, so with
+  `resolve` on and `triples` off most proposals are queued for review rather
+  than applied — though `sage-wiki scribe` also writes descriptions, so that is
+  a strong tendency and not a guarantee; `auto_apply_threshold: 1.0` is the
+  hard rule. Ambiguous pairs — low confidence, a model-flagged "broader"
+  member, or no description — go to review instead of applying; decide them with
+  `sage-wiki ontology resolve --review|--apply|--reject`. Rejection is symmetric,
+  so re-rolling the direction cannot bypass it. Candidate blocking is seeded only
+  by entities the compile touched (a new unmatched entity costs zero LLM calls)
+  and discards name tokens shared by more than 5% of a type, with an absolute
+  floor so a rare name in a small vault survives. `use_embeddings` optionally
+  widens candidates to names sharing no tokens, in memory and globally capped.
+  `sage-wiki ontology resolve --sweep` re-applies approved links with no LLM
+  calls — the remedy for edges added outside a compile. SQLite migration V11 and
+  Postgres migration v4 add the `entity_aliases` table on both backends. See
+  `docs/guides/graph-memory.md`, including the cost section and the notes on
+  derived-edge provenance and the partial prune contract.
 - **LLM structured-output triple extraction (P3-2), opt-in.** With
   `ontology.triples.enabled: true`, each Tier-3 document gets one additional
   Pass-2 LLM call that extracts typed entities (each with a one-sentence

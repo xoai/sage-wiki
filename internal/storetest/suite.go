@@ -22,6 +22,7 @@ func RunConformance(t *testing.T, newBackend BackendFactory) {
 	t.Run("chunks", ChunksConformance(newBackend))
 	t.Run("vectors", VectorsConformance(newBackend))
 	t.Run("ontology", OntologyConformance(newBackend))
+	t.Run("aliases", AliasConformance(newBackend))
 	t.Run("trust", TrustConformance(newBackend))
 	t.Run("compile_items", CompileItemsConformance(newBackend))
 	t.Run("compile_items_queue", CompileItemsQueueConformance(newBackend))
@@ -85,7 +86,6 @@ func EntriesConformance(new BackendFactory) func(*testing.T) {
 		if err != nil || len(all) != 2 {
 			t.Fatalf("ListAll: %v %v", all, err)
 		}
-
 
 		// Stopword fallback (spec §5 pinned mitigation): stopword-only
 		// queries must not error and must return docs containing the words.
@@ -1055,5 +1055,299 @@ func WriteSerializationConformance(new BackendFactory) func(*testing.T) {
 			t.Fatalf("BeginWrite 3 after rollback: %v", err)
 		}
 		tx3.Rollback()
+	}
+}
+
+// AliasConformance exercises entity resolution (P3-3) on both backends.
+//
+// Registered in RunConformance above — an unregistered sub-test compiles and
+// silently never runs, which would leave the two-backend claim unproven while
+// looking covered.
+func AliasConformance(new BackendFactory) func(*testing.T) {
+	return func(t *testing.T) {
+		b := new(t)
+		os := b.Ontology()
+
+		mk := func(alias, canonical string, status store.AliasStatus) store.EntityAlias {
+			return store.EntityAlias{
+				Alias: alias, CanonicalID: canonical, EntityType: "concept",
+				Status: status, Confidence: 0.9, Reason: "same referent",
+				Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+			}
+		}
+
+		// Round-trip, including the audit fields.
+		if err := os.PutAlias(mk("edwin", "buzz", store.AliasApplied)); err != nil {
+			t.Fatalf("PutAlias: %v", err)
+		}
+		got, err := os.GetActiveAlias("edwin")
+		if err != nil || got == nil {
+			t.Fatalf("GetActiveAlias: %+v %v", got, err)
+		}
+		if got.CanonicalID != "buzz" || got.Status != store.AliasApplied ||
+			got.Confidence != 0.9 || got.Source != "llm" {
+			t.Errorf("alias round-trip lost fields: %+v", got)
+		}
+		// Timestamps are TEXT on both backends and must come back byte-identical
+		// — this is what the raw-string binding (not nullRFC) exists to protect.
+		if got.CreatedAt != "2026-07-26T00:00:00Z" {
+			t.Errorf("CreatedAt = %q, want byte-identical RFC3339 across backends", got.CreatedAt)
+		}
+
+		if missing, err := os.GetActiveAlias("nobody"); err != nil || missing != nil {
+			t.Errorf("GetActiveAlias(absent) = %+v, %v; want nil, nil", missing, err)
+		}
+
+		// Rejections are symmetric and are never overwritten by an auto-apply.
+		if err := os.PutAlias(mk("musician", "astronaut", store.AliasRejected)); err != nil {
+			t.Fatalf("PutAlias rejected: %v", err)
+		}
+		for _, pair := range [][2]string{{"musician", "astronaut"}, {"astronaut", "musician"}} {
+			rejected, err := os.IsRejected(pair[0], pair[1])
+			if err != nil {
+				t.Fatalf("IsRejected(%s,%s): %v", pair[0], pair[1], err)
+			}
+			if !rejected {
+				t.Errorf("IsRejected(%s,%s) = false; rejection must hold in both directions",
+					pair[0], pair[1])
+			}
+		}
+		if err := os.PutAlias(mk("musician", "astronaut", store.AliasApplied)); err != nil {
+			t.Fatalf("PutAlias over rejected must be a no-op, not an error: %v", err)
+		}
+		if act, _ := os.GetActiveAlias("musician"); act != nil {
+			t.Errorf("a rejected row was flipped to active: %+v", act)
+		}
+
+		// The sweep re-puts applied rows every compile; origin fields must survive.
+		resweep := mk("edwin", "buzz", store.AliasApplied)
+		resweep.CreatedAt = "2027-01-01T00:00:00Z"
+		resweep.Source = "manual"
+		if err := os.PutAlias(resweep); err != nil {
+			t.Fatalf("PutAlias resweep: %v", err)
+		}
+		after, _ := os.GetActiveAlias("edwin")
+		if after == nil || after.CreatedAt != "2026-07-26T00:00:00Z" || after.Source != "llm" {
+			t.Errorf("sweep rewrote the audit origin: %+v", after)
+		}
+
+		// Listing is status-filtered and deterministically ordered.
+		if err := os.PutAlias(mk("aa", "buzz", store.AliasApplied)); err != nil {
+			t.Fatal(err)
+		}
+		applied, err := os.ListAliases(store.AliasApplied)
+		if err != nil {
+			t.Fatalf("ListAliases: %v", err)
+		}
+		if len(applied) != 2 {
+			t.Fatalf("applied rows = %d, want 2", len(applied))
+		}
+		if applied[0].Alias != "aa" || applied[1].Alias != "edwin" {
+			t.Errorf("ListAliases order = [%s %s], want sorted [aa edwin]",
+				applied[0].Alias, applied[1].Alias)
+		}
+
+		// Status transition clears the active row.
+		if err := os.SetAliasStatus("aa", "buzz", store.AliasRejected, "user"); err != nil {
+			t.Fatalf("SetAliasStatus: %v", err)
+		}
+		if act, _ := os.GetActiveAlias("aa"); act != nil {
+			t.Errorf("row still active after rejection: %+v", act)
+		}
+
+		// CanonicalID follows applied chains, not pending ones.
+		if err := os.PutAlias(mk("buzz", "aldrin", store.AliasApplied)); err != nil {
+			t.Fatal(err)
+		}
+		if id, err := os.CanonicalID("edwin"); err != nil || id != "aldrin" {
+			t.Errorf("CanonicalID(edwin) = %q, %v; want aldrin (edwin->buzz->aldrin)", id, err)
+		}
+		if err := os.PutAlias(mk("pend", "target", store.AliasPending)); err != nil {
+			t.Fatal(err)
+		}
+		if id, err := os.CanonicalID("pend"); err != nil || id != "pend" {
+			t.Errorf("CanonicalID(pend) = %q, %v; a pending row must not be followed", id, err)
+		}
+		if id, err := os.CanonicalID("unknown"); err != nil || id != "unknown" {
+			t.Errorf("CanonicalID(unknown) = %q, %v; want the input id", id, err)
+		}
+
+		// --- LinkAlias: non-destructive edge union, both backends ---
+		lb := new(t)
+		lo := lb.Ontology()
+		for _, id := range []string{"edwin", "buzz", "apollo"} {
+			if err := lo.AddEntity(store.Entity{ID: id, Type: "concept", Name: id}); err != nil {
+				t.Fatalf("AddEntity %s: %v", id, err)
+			}
+		}
+		// The canonical asserts an edge itself, at LOWER confidence than the
+		// alias's competing assertion of the same (target, relation).
+		if err := lo.AddRelation(store.Relation{ID: "own", SourceID: "buzz", TargetID: "apollo",
+			Relation: "extends", Evidence: "buzz extends apollo", Confidence: 0.6,
+			SourceDoc: "raw/buzz.md"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := lo.AddRelation(store.Relation{ID: "aliased", SourceID: "edwin", TargetID: "apollo",
+			Relation: "extends", Evidence: "edwin extends apollo", Confidence: 0.9,
+			SourceDoc: "raw/edwin.md"}); err != nil {
+			t.Fatal(err)
+		}
+		// An alias<->canonical edge: cannot be copied without becoming a
+		// self-loop, and must be RETAINED rather than deleted.
+		if err := lo.AddRelation(store.Relation{ID: "loop", SourceID: "edwin", TargetID: "buzz",
+			Relation: "contradicts", Confidence: 0.4}); err != nil {
+			t.Fatal(err)
+		}
+		beforeLink, err := lo.RelationCount()
+		if err != nil {
+			t.Fatal(err)
+		}
+		beforeLink++ // the gemini edge added just below
+
+		// A third entity the canonical does NOT already point at, so the insert
+		// branch actually executes. Without it Copied is 0 on both backends and
+		// the Postgres INSERT path — nullRFC binding, RowsAffected on a real
+		// insert, the alias: id — is never exercised.
+		if err := lo.AddEntity(store.Entity{ID: "gemini", Type: "concept", Name: "gemini"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := lo.AddRelation(store.Relation{ID: "only-alias", SourceID: "edwin", TargetID: "gemini",
+			Relation: "extends", Evidence: "edwin extends gemini", Confidence: 0.55,
+			SourceDoc: "raw/edwin.md"}); err != nil {
+			t.Fatal(err)
+		}
+
+		res, err := lo.LinkAlias(mk("edwin", "buzz", store.AliasApplied))
+		if err != nil {
+			t.Fatalf("LinkAlias: %v", err)
+		}
+		if res.Copied != 1 {
+			t.Errorf("Copied = %d, want 1 (the edge only the alias had)", res.Copied)
+		}
+		// The copy landed with the alias's provenance and a derived id.
+		copied, err := lo.GetRelations("buzz", store.Outbound, "extends")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var found bool
+		for _, r := range copied {
+			if r.TargetID == "gemini" {
+				found = true
+				if r.Evidence != "edwin extends gemini" || r.SourceDoc != "raw/edwin.md" {
+					t.Errorf("copy lost provenance: %+v", r)
+				}
+				if len(r.ID) != len("alias:")+16 {
+					t.Errorf("copied id = %q, want alias: + 16 hex chars", r.ID)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("the copied edge is missing from the canonical: %+v", copied)
+		}
+		if res.Skipped != 1 {
+			t.Errorf("Skipped = %d, want 1 (the canonical already asserted that edge)", res.Skipped)
+		}
+		if res.SelfLoops != 1 {
+			t.Errorf("SelfLoops = %d, want 1", res.SelfLoops)
+		}
+
+		// The canonical's OWN evidence survives. A copy must never overwrite a
+		// native assertion — the confidence-guarded upsert is sound only when
+		// both sides assert the same edge, which a copy does not.
+		canon, err := lo.GetRelations("buzz", store.Outbound, "extends")
+		if err != nil {
+			t.Fatalf("GetRelations: %v", err)
+		}
+		var own *store.Relation
+		for i := range canon {
+			if canon[i].TargetID == "apollo" {
+				own = &canon[i]
+			}
+		}
+		if own == nil {
+			t.Fatalf("the canonical's own edge disappeared: %+v", canon)
+		}
+		if own.Evidence != "buzz extends apollo" || own.Confidence != 0.6 ||
+			own.SourceDoc != "raw/buzz.md" {
+			t.Errorf("canonical's own edge was overwritten by the copy: %+v", own)
+		}
+
+		// Nothing was deleted: the alias keeps every edge it had.
+		afterLink, err := lo.RelationCount()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// One copy ADDED (the gemini edge); nothing removed.
+		if afterLink != beforeLink+1 {
+			t.Errorf("relation count %d -> %d, want +1 (one copy added, nothing removed)",
+				beforeLink, afterLink)
+		}
+		aliasEdges, err := lo.GetRelations("edwin", store.Both, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(aliasEdges) != 3 {
+			t.Errorf("alias edges = %d, want 3 retained (linking deletes nothing)", len(aliasEdges))
+		}
+
+		// Idempotent: the sweep re-runs this on every compile.
+		again, err := lo.LinkAlias(mk("edwin", "buzz", store.AliasApplied))
+		if err != nil {
+			t.Fatalf("LinkAlias re-run: %v", err)
+		}
+		if again.Copied != 0 {
+			t.Errorf("re-link Copied = %d, want 0", again.Copied)
+		}
+
+		// Missing endpoints are typed facts, not errors, and write no alias row.
+		miss, err := lo.LinkAlias(mk("ghost", "buzz", store.AliasApplied))
+		if err != nil || !miss.AliasMissing {
+			t.Errorf("missing alias: %+v %v; want AliasMissing, no error", miss, err)
+		}
+		if act, _ := lo.GetActiveAlias("ghost"); act != nil {
+			t.Errorf("alias row written for a missing alias: %+v", act)
+		}
+		miss, err = lo.LinkAlias(mk("apollo", "ghost", store.AliasApplied))
+		if err != nil || !miss.CanonicalMissing {
+			t.Errorf("missing canonical: %+v %v; want CanonicalMissing, no error", miss, err)
+		}
+
+		// The partial unique index is the real enforcement of one live decision
+		// per alias, and it must behave identically on both backends.
+		ib := new(t)
+		io := ib.Ontology()
+		if err := io.PutAlias(mk("dup", "c1", store.AliasApplied)); err != nil {
+			t.Fatalf("first active row: %v", err)
+		}
+		if err := io.PutAlias(mk("dup", "c2", store.AliasPending)); err == nil {
+			t.Error("a SECOND active row for one alias was accepted; the partial unique index is not enforcing")
+		}
+		// Rejections are exempt and may accumulate — that is why the key is the
+		// pair and the index is partial.
+		for _, c := range []string{"c3", "c4"} {
+			if err := io.PutAlias(mk("dup", c, store.AliasRejected)); err != nil {
+				t.Errorf("rejected row %s must be allowed alongside an active one: %v", c, err)
+			}
+		}
+
+		// CanonicalID must terminate on a cycle rather than loop.
+		cb := new(t)
+		co := cb.Ontology()
+		if err := co.PutAlias(mk("x", "y", store.AliasApplied)); err != nil {
+			t.Fatal(err)
+		}
+		if err := co.PutAlias(mk("y", "x", store.AliasApplied)); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan string, 1)
+		go func() { id, _ := co.CanonicalID("x"); done <- id }()
+		select {
+		case id := <-done:
+			if id != "x" {
+				t.Errorf("CanonicalID on a cycle = %q, want the input id", id)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("CanonicalID looped forever on a cycle")
+		}
 	}
 }

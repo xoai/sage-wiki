@@ -153,6 +153,7 @@ var schemaMigrations = []migration{
 	{sql: migrationV8},
 	{sql: migrationV9},
 	{sql: migrationV10},
+	{sql: migrationV11},
 }
 
 // migrate runs schema migrations.
@@ -542,4 +543,50 @@ ALTER TABLE relations ADD COLUMN source_doc TEXT;
 ALTER TABLE relations ADD COLUMN valid_from TEXT;
 ALTER TABLE relations ADD COLUMN valid_to TEXT;
 ALTER TABLE relations ADD COLUMN invalidated_by TEXT;
+`
+
+// migrationV11 adds the entity-alias table for entity resolution (P3-3,
+// GRAPH-03). Pure addition — a new table and three indexes, no rebuild, so no
+// FK dance (contrast V4).
+//
+// The key is (alias, canonical_id), NOT (alias) as the upstream spec proposed.
+// A single-column key cannot hold rejections: rejecting
+// "Armstrong (musician) -> Armstrong (astronaut)" would occupy the alias's only
+// row and block it from ever resolving to "Louis Armstrong". Rejections must
+// accumulate freely, so they are keyed by pair.
+//
+// idx_entity_aliases_active is what enforces "at most one live decision per
+// alias" — partial on status, so any number of 'rejected' rows may coexist with
+// the one 'applied'/'pending' row. It is a HARD constraint: a second active row
+// is a non-target unique violation, which an ON CONFLICT (alias, canonical_id)
+// clause does NOT absorb, so it aborts the enclosing transaction. Callers guard
+// against reaching it rather than relying on the upsert to swallow it.
+//
+// No foreign keys, deliberately. --prune (compiler/pipeline.go) and reconcile
+// delete entity rows without consulting this table; an FK would either block
+// them or CASCADE the audit trail away. A row whose endpoints no longer exist is
+// a fact to report, not one to erase.
+//
+// Timestamps are TEXT on both backends and bound as raw strings — see the
+// Postgres v4 note; nullRFC would round-trip them through time.Time and break
+// byte parity.
+const migrationV11 = `
+CREATE TABLE IF NOT EXISTS entity_aliases (
+	alias        TEXT NOT NULL,
+	canonical_id TEXT NOT NULL,
+	entity_type  TEXT NOT NULL,
+	status       TEXT NOT NULL,
+	confidence   REAL,
+	reason       TEXT,
+	source       TEXT NOT NULL,
+	created_at   TEXT NOT NULL,
+	decided_at   TEXT,
+	decided_by   TEXT,
+	PRIMARY KEY (alias, canonical_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_aliases_active
+	ON entity_aliases(alias) WHERE status IN ('applied','pending');
+CREATE INDEX IF NOT EXISTS idx_entity_aliases_canonical ON entity_aliases(canonical_id);
+CREATE INDEX IF NOT EXISTS idx_entity_aliases_status    ON entity_aliases(status);
 `

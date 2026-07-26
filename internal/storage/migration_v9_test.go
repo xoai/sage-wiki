@@ -83,8 +83,8 @@ func TestMigrationV9_Upgrade(t *testing.T) {
 	if err := db.ReadDB().QueryRow("SELECT COALESCE(MAX(version),0) FROM schema_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 10 {
-		t.Errorf("MAX(version) = %d, want 10", version)
+	if version != 11 {
+		t.Errorf("MAX(version) = %d, want 11", version)
 	}
 
 	// Queue columns exist with the right defaults.
@@ -144,8 +144,8 @@ func TestMigrationV9_FreshDB(t *testing.T) {
 	if err := db.ReadDB().QueryRow("SELECT COALESCE(MAX(version),0) FROM schema_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 10 {
-		t.Errorf("fresh DB MAX(version) = %d, want 10", version)
+	if version != 11 {
+		t.Errorf("fresh DB MAX(version) = %d, want 11", version)
 	}
 	var idxCount int
 	if err := db.ReadDB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE name='idx_ci_claim'").Scan(&idxCount); err != nil {

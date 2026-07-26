@@ -24,24 +24,33 @@ func migrationTestDSN(t *testing.T) string {
 	return dsn
 }
 
+// swapDB replaces the database name in the DSN path, preserving any query.
+//
+// The query is split off FIRST. A unix-socket DSN carries the socket directory
+// as a query parameter — "postgres://u@/db?host=/var/run/postgresql" — so
+// splitting on "/" without stripping the query reads "postgresql" as the
+// database name. These two helpers now match storetest's swapDBName/
+// templateDBName, which already handled it.
 func swapDB(dsn, dbName string) string {
-	parts := strings.Split(dsn, "/")
-	last := parts[len(parts)-1]
-	if idx := strings.Index(last, "?"); idx >= 0 {
-		parts[len(parts)-1] = dbName + last[idx:]
-	} else {
-		parts[len(parts)-1] = dbName
+	suffix, path := "", dsn
+	if j := strings.Index(path, "?"); j >= 0 {
+		suffix, path = path[j:], path[:j]
 	}
-	return strings.Join(parts, "/")
+	if i := strings.LastIndex(path, "/"); i >= 0 {
+		return path[:i+1] + dbName + suffix
+	}
+	return dsn
 }
 
 func dsnDB(dsn string) string {
-	parts := strings.Split(dsn, "/")
-	last := parts[len(parts)-1]
-	if idx := strings.Index(last, "?"); idx >= 0 {
-		return last[:idx]
+	path := dsn
+	if j := strings.Index(path, "?"); j >= 0 {
+		path = path[:j]
 	}
-	return last
+	if i := strings.LastIndex(path, "/"); i >= 0 && i+1 < len(path) {
+		return path[i+1:]
+	}
+	return "postgres"
 }
 
 // TestMigrationV2QueueColumns proves the V2 migration (queue columns +

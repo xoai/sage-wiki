@@ -506,6 +506,60 @@ type OntologyConfig struct {
 	RelationTypes []RelationConfig   `yaml:"relation_types,omitempty"` // preferred key; "relations" accepted for backwards compat
 	EntityTypes   []EntityTypeConfig `yaml:"entity_types,omitempty"`
 	Triples       TriplesConfig      `yaml:"triples,omitempty"`
+	Resolve       ResolveConfig      `yaml:"resolve,omitempty"`
+}
+
+// ResolveConfig controls Claude-driven entity resolution (P3-3).
+//
+// Enabled defaults to false for the same reason TriplesConfig does: the pass
+// adds LLM calls, and an upgrade must not raise anyone's bill unasked.
+//
+// It PAIRS with Triples. Auto-apply requires a description on at least one side
+// of a proposed link, and the only COMPILE-PATH writer of entity descriptions is
+// the triple-extraction pass — so `resolve.enabled` alone surfaces most
+// proposals for review rather than linking them. Not a guarantee:
+// internal/scribe also writes Definition, so a scribe-described entity can
+// auto-link with triples off. AutoApplyThreshold 1.0 is the only setting that
+// makes review-only a hard rule. The pass warns once per run.
+//
+// A VALUE, not a pointer, with `omitempty` on the field: yaml.v3 elides a zero
+// struct (unlike encoding/json), which is what stops `sage-wiki pack apply` from
+// writing a zeroed resolve: block into the config.yaml of every user who never
+// configured one.
+//
+// The zero value of each numeric key is NOT usable — Defaults() has no Ontology
+// entry and is only reached through config.Load, so a Config{} literal yields
+// zeros. applyResolveDefaults (internal/compiler) supplies the fallbacks; a zero
+// MaxBlockSize would otherwise make the candidate cap negative and every block
+// empty, and a zero AutoApplyThreshold would auto-apply every proposal.
+type ResolveConfig struct {
+	Enabled bool   `yaml:"enabled,omitempty"`
+	Model   string `yaml:"model,omitempty"`
+
+	MaxTokens    int `yaml:"max_tokens,omitempty"`
+	MaxBlockSize int `yaml:"max_block_size,omitempty"`
+
+	// AutoApplyThreshold is the confidence at or above which a link is applied
+	// without review. Outside (0,1] it falls back to the default rather than
+	// clamping: a configured 0 would auto-apply every proposal including
+	// zero-confidence ones, which is the worst outcome this pass can produce.
+	AutoApplyThreshold float64 `yaml:"auto_apply_threshold,omitempty"`
+
+	// MaxTokenDF and MinTokenDFFloor together decide which name tokens are
+	// discriminating enough to block on. BOTH are required: a percentage alone
+	// discards the very token that identifies a small cluster (three "aldrin"
+	// rows among 45 concepts is 6.7%, over a 5% threshold), while a floor alone
+	// does not scale to a large vault.
+	MaxTokenDF      float64 `yaml:"max_token_df,omitempty"`
+	MinTokenDFFloor int     `yaml:"min_token_df_floor,omitempty"`
+
+	// UseEmbeddings widens candidate generation to names sharing no tokens
+	// ("NYC" / "New York City"). Off by default: embed.Embedder has no batch
+	// method, so every vector is one HTTP call, and vectors are held in memory
+	// for the pass and discarded rather than persisted.
+	UseEmbeddings      bool    `yaml:"use_embeddings,omitempty"`
+	EmbedThreshold     float64 `yaml:"embed_threshold,omitempty"`
+	MaxEmbedCandidates int     `yaml:"max_embed_candidates,omitempty"`
 }
 
 // TriplesConfig controls LLM structured-output triple extraction (P3-2).

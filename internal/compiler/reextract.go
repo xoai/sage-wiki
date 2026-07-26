@@ -117,7 +117,7 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	// is true here: this path loads summary FILES from disk, so Summary holds
 	// the frontmatter and SourcePath is the summary's filename, not the source
 	// document.
-	ExtractTriplesPass(context.Background(), ontStore, summaries, concepts, cfg, client, true)
+	touched := ExtractTriplesPass(context.Background(), ontStore, summaries, concepts, cfg, client, true)
 
 	// Pass 3: Write articles
 	if len(concepts) > 0 {
@@ -159,9 +159,19 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 				result.Errors++
 			} else {
 				result.ArticlesWritten++
+				// concept.Name IS the entity id WriteArticles wrote; only
+				// successful articles produced a row.
+				touched = append(touched, ar.ConceptName)
 			}
 		}
 	}
+
+	// Pass 4: entity resolution (P3-3, opt-in). Placed after the Pass 3 block
+	// rather than deferred: unlike runFullPipeline this path has no early
+	// return between here and Pass 3, so one call covers both branches.
+	// ReExtract has no cancellation context of its own, matching the calls
+	// above.
+	ResolveEntitiesPass(context.Background(), ontStore, touched, cfg, client, embedder)
 
 	// Post-compile sweep: strip [[wikilinks]] pointing at concepts that don't
 	// exist on disk. Re-extract rewrites articles via Pass 3 and would

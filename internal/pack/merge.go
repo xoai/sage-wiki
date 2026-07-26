@@ -443,6 +443,10 @@ func MergeOntology(base, overlay config.OntologyConfig) config.OntologyConfig {
 		// writes back over the whole `ontology:` node. Any field omitted here
 		// is erased from the user's config on `pack apply`.
 		Triples: base.Triples,
+		// Same reason as Triples, and the same trap: OntologyOverlay has no
+		// Resolve field, so a pack cannot set it — but omitting it here would
+		// erase a user's tuned resolve block on every pack apply.
+		Resolve: base.Resolve,
 	}
 }
 
