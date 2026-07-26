@@ -514,13 +514,17 @@ type OntologyConfig struct {
 // Enabled defaults to false for the same reason TriplesConfig does: the pass
 // adds LLM calls, and an upgrade must not raise anyone's bill unasked.
 //
-// It PAIRS with Triples. Auto-apply requires a description on at least one side
-// of a proposed link, and the only COMPILE-PATH writer of entity descriptions is
-// the triple-extraction pass — so `resolve.enabled` alone surfaces most
-// proposals for review rather than linking them. Not a guarantee:
-// internal/scribe also writes Definition, so a scribe-described entity can
-// auto-link with triples off. AutoApplyThreshold 1.0 is the only setting that
-// makes review-only a hard rule. The pass warns once per run.
+// Enabling it links NOTHING on its own: AutoApplyThreshold defaults to 1.0,
+// which means never auto-apply, so every proposal is queued for a human. A link
+// is not reversible, so it must not happen without one. The pass warns at WARN
+// level whenever proposals are standing, on every exit path.
+//
+// Lower the threshold to opt in. Once lowered, auto-apply ALSO requires a
+// description on at least one side, and the only COMPILE-PATH writer of entity
+// descriptions is the triple-extraction pass — so Resolve pairs with Triples.
+// That pairing is not itself a guarantee: internal/scribe writes Definition too,
+// so a scribe-described entity can auto-link with triples off. The threshold is
+// the guarantee; the description is a second condition on top of it.
 //
 // A VALUE, not a pointer, with `omitempty` on the field: yaml.v3 elides a zero
 // struct (unlike encoding/json), which is what stops `sage-wiki pack apply` from
@@ -540,9 +544,15 @@ type ResolveConfig struct {
 	MaxBlockSize int `yaml:"max_block_size,omitempty"`
 
 	// AutoApplyThreshold is the confidence at or above which a link is applied
-	// without review. Outside (0,1] it falls back to the default rather than
-	// clamping: a configured 0 would auto-apply every proposal including
-	// zero-confidence ones, which is the worst outcome this pass can produce.
+	// without review — EXCEPT at 1.0, which means never, by an explicit branch in
+	// canAutoApply. normalizeClusters clamps confidence to [0,1], so without that
+	// branch a model returning 1.0 would defeat a 1.0 threshold.
+	//
+	// 1.0 is the DEFAULT: review-only, because a link cannot be undone.
+	//
+	// Outside (0,1] it falls back to the default rather than clamping: a
+	// configured 0 would auto-apply every proposal including zero-confidence
+	// ones, which is the worst outcome this pass can produce.
 	AutoApplyThreshold float64 `yaml:"auto_apply_threshold,omitempty"`
 
 	// MaxTokenDF and MinTokenDFFloor together decide which name tokens are

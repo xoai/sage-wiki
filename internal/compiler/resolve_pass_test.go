@@ -3,7 +3,9 @@ package compiler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/store"
 )
@@ -46,8 +49,18 @@ func resolveServer(t *testing.T, payload string) (*httptest.Server, *atomic.Int6
 	return srv, &calls, &prompts
 }
 
-func resolveCfg() *config.Config {
+// resolveCfg takes the threshold as a PARAMETER, deliberately. The package
+// default is the "never auto-apply" value, so a test that inherited it would
+// return false on canAutoApply's first line and assert nothing about the guards
+// below — every "no applied row" assertion would hold vacuously. Every caller
+// here states the threshold it depends on.
+//
+// The one test that SHOULD inherit the default is
+// TestResolvePassQueuesRatherThanLinksByDefault, which builds its own config
+// omitting the key: it exercises the default itself, not a guard.
+func resolveCfg(threshold float64) *config.Config {
 	c := &config.Config{}
+	c.Ontology.Resolve.AutoApplyThreshold = threshold
 	c.Ontology.Resolve.Enabled = true
 	c.Ontology.Triples.Enabled = true
 	c.Models.Extract = "m"
@@ -67,6 +80,15 @@ func addEnt(t *testing.T, s *ontology.Store, id, name, def, article string) {
 const twoMemberCluster = `{"clusters":[
   {"members":["E1","E2"],"same_referent":true,"broader":false,
    "confidence":0.95,"reason":"same astronaut"}
+]}`
+
+// Confidence 1.0 is deliberate and load-bearing: it is the exact input the
+// never-branch exists to defend against, and the ONLY value at which removing
+// that branch makes TestResolvePassQueuesRatherThanLinksByDefault fail. At 0.95
+// the mutation survives, because 0.95 < 1.0 queues anyway.
+const certainCluster = `{"clusters":[
+  {"members":["E1","E2"],"same_referent":true,"broader":false,
+   "confidence":1.0,"reason":"same astronaut"}
 ]}`
 
 // Default-off is the opt-in contract: an upgrade must cost nothing.
@@ -108,7 +130,7 @@ func TestResolvePassCancelledContextMakesNoCall(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	ResolveEntitiesPass(ctx, ont, []string{"Buzz Aldrin"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+	ResolveEntitiesPass(ctx, ont, []string{"Buzz Aldrin"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	if got := calls.Load(); got != 0 {
 		t.Errorf("LLM calls = %d, want 0 on a cancelled context", got)
@@ -130,7 +152,7 @@ func TestResolvePassLinksVariants(t *testing.T) {
 	}
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"Buzz Aldrin"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+		[]string{"Buzz Aldrin"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("LLM calls = %d, want 1", got)
@@ -175,7 +197,7 @@ func TestResolvePassBroaderGoesToReview(t *testing.T) {
 	addEnt(t, ont, "project-gemini", "Project Gemini", "a spaceflight programme", "wiki/pg.md")
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"gemini-12"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+		[]string{"gemini-12"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	if applied, _ := ont.ListAliases(store.AliasApplied); len(applied) != 0 {
 		t.Errorf("applied = %d, want 0 — broader must not auto-link", len(applied))
@@ -197,7 +219,7 @@ func TestResolvePassRequiresDescription(t *testing.T) {
 	addEnt(t, ont, "aldrin-b", "Buzz Aldrin", "", "")
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"aldrin-b"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+		[]string{"aldrin-b"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	if applied, _ := ont.ListAliases(store.AliasApplied); len(applied) != 0 {
 		t.Errorf("applied = %d, want 0 — no description on either side", len(applied))
@@ -218,7 +240,7 @@ func TestResolvePassDistinctEntitiesProduceNothing(t *testing.T) {
 	addEnt(t, ont, "armstrong-musician", "Louis Armstrong", "a trumpeter", "")
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"armstrong-musician"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+		[]string{"armstrong-musician"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	for _, st := range []store.AliasStatus{store.AliasApplied, store.AliasPending} {
 		if rows, _ := ont.ListAliases(st); len(rows) != 0 {
@@ -240,7 +262,7 @@ func TestResolvePassUnplacedLabelUntouched(t *testing.T) {
 	addEnt(t, ont, "aldrin-c", "Aldrin Jr", "someone else entirely", "")
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"aldrin-b", "aldrin-c"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+		[]string{"aldrin-b", "aldrin-c"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	// aldrin-c may appear in a block, but the model placed only E1/E2 in each
 	// response, so it must never acquire an alias row.
@@ -334,7 +356,7 @@ func TestResolvePassRejectedPairNotRelinked(t *testing.T) {
 	}
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"armstrong-b"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+		[]string{"armstrong-b"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	if applied, _ := ont.ListAliases(store.AliasApplied); len(applied) != 0 {
 		t.Errorf("applied = %d, want 0 — the pair was rejected", len(applied))
@@ -387,7 +409,7 @@ func TestResolvePassCrossRunActiveAliasNotReproposed(t *testing.T) {
 	}
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"seed"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+		[]string{"seed"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	// "moved" keeps exactly one active row, still pointing at canon-1. Without
 	// the guard this attempts a SECOND active row (moved -> seed), which is a
@@ -427,7 +449,7 @@ func TestResolvePassRestoresCostAttribution(t *testing.T) {
 	client := triplesClient(t, srv.URL)
 	client.SetPass("write")
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"b"}, resolveCfg(), client, nil)
+		[]string{"b"}, resolveCfg(0.85), client, nil)
 
 	if got := client.Pass(); got != "write" {
 		t.Errorf("client pass = %q after the run, want the prior value restored", got)
@@ -452,7 +474,7 @@ func TestResolvePassSeesPass3Entities(t *testing.T) {
 	// plus successful article concept names from Pass 3.
 	ResolveEntitiesPass(context.Background(), ont,
 		[]string{"Self Attention", "self-attention"},
-		resolveCfg(), triplesClient(t, srv.URL), nil)
+		resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	if got := calls.Load(); got == 0 {
 		t.Fatal("no arbitration call — the Pass-3 entity was not in the pool")
@@ -514,7 +536,7 @@ func TestResolvePassRejectionSurvivesChainResolution(t *testing.T) {
 	}
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"a-row"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+		[]string{"a-row"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	// c-row must NOT have acquired the rejected entity's edge.
 	got, err := ont.GetRelations("c-row", ontology.Outbound, "")
@@ -595,7 +617,7 @@ func TestResolvePassEmbeddingFailureFallsBackToLexical(t *testing.T) {
 	addEnt(t, ont, "aldrin-a", "Buzz Aldrin", "an astronaut", "wiki/a.md")
 	addEnt(t, ont, "aldrin-b", "Buzz Aldrin", "an astronaut", "")
 
-	cfg := resolveCfg()
+	cfg := resolveCfg(0.85)
 	cfg.Ontology.Resolve.UseEmbeddings = true
 	emb := &stubEmbedder{fail: true}
 
@@ -623,7 +645,7 @@ func TestResolvePassEmbedCapIsGlobal(t *testing.T) {
 		addEnt(t, ont, fmt.Sprintf("e%d", i), fmt.Sprintf("Buzz Aldrin %d", i), "an astronaut", "")
 	}
 
-	cfg := resolveCfg()
+	cfg := resolveCfg(0.85)
 	cfg.Ontology.Resolve.UseEmbeddings = true
 	cfg.Ontology.Resolve.MaxEmbedCandidates = 5
 	emb := &stubEmbedder{}
@@ -643,7 +665,7 @@ func TestResolvePassEmbedLoopChecksContext(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		addEnt(t, ont, fmt.Sprintf("e%d", i), fmt.Sprintf("Buzz Aldrin %d", i), "an astronaut", "")
 	}
-	cfg := resolveCfg()
+	cfg := resolveCfg(0.85)
 	cfg.Ontology.Resolve.UseEmbeddings = true
 	emb := &stubEmbedder{}
 
@@ -670,7 +692,7 @@ func TestResolvePassSourceTypeExcluded(t *testing.T) {
 	}
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"raw/2025/notes.md"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+		[]string{"raw/2025/notes.md"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	if calls.Load() != 0 {
 		t.Errorf("LLM calls = %d, want 0 — source entities are never resolved", calls.Load())
@@ -701,7 +723,7 @@ func TestResolvePassIncrementalLeavesUntouchedRowsAlone(t *testing.T) {
 
 	// Only aldrin-c is touched.
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"aldrin-c"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+		[]string{"aldrin-c"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	// Whatever was linked, only the TOUCHED entity may have acquired an alias
 	// row, and no untouched entity row may have changed.
@@ -739,7 +761,7 @@ func TestResolvePassLinksAgainstEntityFromAnEarlierCompile(t *testing.T) {
 	addEnt(t, ont, "self-attention", "Self Attention", "", "wiki/concepts/self-attention.md")
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"self-attention"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+		[]string{"self-attention"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	applied, _ := ont.ListAliases(store.AliasApplied)
 	pending, _ := ont.ListAliases(store.AliasPending)
@@ -775,7 +797,7 @@ func TestResolvePassRejectedPairNotCoAbsorbedAcrossBlocks(t *testing.T) {
 	}
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"a-row", "b-row"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+		[]string{"a-row", "b-row"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	applied, _ := ont.ListAliases(store.AliasApplied)
 	intoC := 0
@@ -824,7 +846,7 @@ func TestResolvePassRejectedPairNotCoAbsorbedThroughAChain(t *testing.T) {
 	}
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"a-row"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+		[]string{"a-row"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	applied, _ := ont.ListAliases(store.AliasApplied)
 	for _, a := range applied {
@@ -849,7 +871,7 @@ func TestResolvePassDoesNotDecideAboutTwoUntouchedEntities(t *testing.T) {
 	addEnt(t, ont, "aldrin-u2", "Buzz Aldrin", "an astronaut", "")
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"aldrin-t"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+		[]string{"aldrin-t"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	for _, st := range []store.AliasStatus{store.AliasApplied, store.AliasPending} {
 		rows, _ := ont.ListAliases(st)
@@ -884,7 +906,7 @@ func TestResolvePassUnloadableTargetGoesToReview(t *testing.T) {
 	}
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"a-row"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+		[]string{"a-row"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	applied, _ := ont.ListAliases(store.AliasApplied)
 	pending, _ := ont.ListAliases(store.AliasPending)
@@ -940,7 +962,7 @@ func TestResolvePassDoesNotAutoApplyAPairAwaitingReview(t *testing.T) {
 
 	// b-row is the seed: it has no active row, so resolvableSeeds keeps it.
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"b-row"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+		[]string{"b-row"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	applied, _ := ont.ListAliases(store.AliasApplied)
 	for _, r := range applied {
@@ -1015,7 +1037,7 @@ func TestResolvePassDoesNotCreateACycle(t *testing.T) {
 	}
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"x-canon"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+		[]string{"x-canon"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	applied, _ := ont.ListAliases(store.AliasApplied)
 	for _, r := range applied {
@@ -1062,7 +1084,7 @@ func TestResolvePassPendingPairNotConsummatedTransitively(t *testing.T) {
 	// Seed T: cluster {T, A}. The direct pair (T, A) is not the pending pair,
 	// but B sits in T's component, so linking T -> A merges A with B.
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"T"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+		[]string{"T"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	applied, _ := ont.ListAliases(store.AliasApplied)
 	for _, r := range applied {
@@ -1088,7 +1110,7 @@ func TestResolvePassPendingWrittenThisRunIsHonoured(t *testing.T) {
 	addEnt(t, ont, "b-row", "Buzz Aldrin", "", "wiki/b.md")
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"a-row", "b-row"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+		[]string{"a-row", "b-row"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	pending, _ := ont.ListAliases(store.AliasPending)
 	applied, _ := ont.ListAliases(store.AliasApplied)
@@ -1129,7 +1151,7 @@ func TestResolvePassDoesNotLeakThroughAWithinRunChain(t *testing.T) {
 	addEnt(t, ont, "z", "Bravo Delta", "", "")
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"a", "z"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+		[]string{"a", "z"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 	for _, st := range []store.AliasStatus{store.AliasApplied, store.AliasPending} {
 		rows, _ := ont.ListAliases(st)
@@ -1181,7 +1203,7 @@ func TestResolvePassDoesNotArbitrateAlreadyDecidedPairs(t *testing.T) {
 			}
 
 			ResolveEntitiesPass(context.Background(), ont,
-				[]string{"seed"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+				[]string{"seed"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
 
 			if got := calls.Load(); got != 0 {
 				t.Errorf("%d paid arbitration call(s) for a pair already %s — the only "+
@@ -1217,5 +1239,248 @@ func TestSweepAliasesNormalisesNilArguments(t *testing.T) {
 	}
 	if got := SweepAliases(context.Background(), nil); got != (SweepResult{}) {
 		t.Errorf("a nil store must return a zero result, got %+v", got)
+	}
+}
+
+// TestResolvePassQueuesRatherThanLinksByDefault is the ONE test that inherits the
+// package default, and it does so on purpose: it exercises the DEFAULT, not a
+// guard, so §3.1's "no test may inherit" rule does not apply to it. Every other
+// test states its threshold via resolveCfg.
+//
+// Without it the cycle's whole property is silently revertible — a later "compat
+// branch" that restores 0.85 for users who never set the key leaves the rest of
+// the suite green.
+//
+// The fixture would auto-apply under EVERY other guard: described on both sides,
+// same_referent, broader false, confidence 1.0. Only the new default stops it.
+// The outbound edge and Errorf (not Fatalf) are what make RelationCount() a live
+// assertion — it catches a pending proposal that copies edges anyway.
+func TestResolvePassQueuesRatherThanLinksByDefault(t *testing.T) {
+	srv, calls, _ := resolveServer(t, certainCluster)
+	ont := passStore(t)
+	addEnt(t, ont, "buzz-aldrin", "Buzz Aldrin", "Apollo 11 pilot", "wiki/concepts/buzz-aldrin.md")
+	addEnt(t, ont, "Buzz Aldrin", "Buzz Aldrin", "Apollo 11 lunar module pilot", "")
+	addEnt(t, ont, "apollo-11", "Apollo 11", "", "")
+	if err := ont.AddRelation(ontology.Relation{
+		ID: "r1", SourceID: "Buzz Aldrin", TargetID: "apollo-11",
+		Relation: ontology.RelExtends, Confidence: 0.8}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A config that OMITS auto_apply_threshold entirely — the whole point.
+	cfg := &config.Config{}
+	cfg.Ontology.Resolve.Enabled = true
+	cfg.Ontology.Triples.Enabled = true
+	cfg.Models.Extract = "m"
+
+	ResolveEntitiesPass(context.Background(), ont,
+		[]string{"Buzz Aldrin"}, cfg, triplesClient(t, srv.URL), nil)
+
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("LLM calls = %d, want 1", got)
+	}
+
+	applied, err := ont.ListAliases(store.AliasApplied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(applied) != 0 {
+		t.Errorf("applied = %d, want 0 — the default must never auto-apply: %+v",
+			len(applied), applied)
+	}
+
+	pending, err := ont.ListAliases(store.AliasPending)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 {
+		t.Errorf("pending = %d, want 1 — the proposal must be queued for review", len(pending))
+	}
+
+	// Errorf above, so this runs: a queued proposal must not have copied edges.
+	n, err := ont.RelationCount()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("relations = %d, want 1 — a pending proposal must not copy edges", n)
+	}
+}
+
+// --- T3: the backlog warning -------------------------------------------------
+//
+// A silent safety default is not a safety default. The pending count lives only
+// in log.Info and internal/log defaults to LevelWarn, so without this warning a
+// user upgrades, compiles, sees byte-identical output, and their graph stops
+// linking.
+
+// captureWarns swaps in a WARN-level logger and returns the accumulated output.
+// Warn, not Debug, deliberately: the whole point is that the message reaches a
+// user who did not pass -v.
+func captureWarns(t *testing.T) func() string {
+	t.Helper()
+	var buf strings.Builder
+	var mu sync.Mutex
+	restore := log.SetLoggerForTest(slog.New(slog.NewTextHandler(
+		&lockedWriter{mu: &mu, w: &buf}, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(restore)
+	return func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return buf.String()
+	}
+}
+
+// seedPending puts a pending row in the store WITHOUT the pass having created
+// it — a standing backlog, which is the level the warning must report.
+func seedPending(t *testing.T, ont store.OntologyStore, alias, canonical string) {
+	t.Helper()
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: alias, CanonicalID: canonical, EntityType: "concept",
+		Status: store.AliasPending, Source: "llm",
+		CreatedAt: "2026-07-01T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("seed pending alias: %v", err)
+	}
+}
+
+// errPendingStore fails ONLY the pending read. The sweep's AliasApplied read
+// still works, so the test isolates the backlog query's error path.
+type errPendingStore struct {
+	store.OntologyStore
+	err error
+}
+
+func (e errPendingStore) ListAliases(s store.AliasStatus) ([]store.EntityAlias, error) {
+	if s == store.AliasPending {
+		return nil, e.err
+	}
+	return e.OntologyStore.ListAliases(s)
+}
+
+// panicAppliedStore panics on the sweep's first statement.
+type panicAppliedStore struct {
+	store.OntologyStore
+}
+
+func (p panicAppliedStore) ListAliases(s store.AliasStatus) ([]store.EntityAlias, error) {
+	if s == store.AliasApplied {
+		panic("sweep exploded")
+	}
+	return p.OntologyStore.ListAliases(s)
+}
+
+// Row 5. The backlog is one THIS RUN DID NOT CREATE, and the run queues nothing.
+// The qualifier is the test: a run that queues its own row passes under a
+// per-run delta too, so without it nothing distinguishes the standing-backlog
+// query from the stats.pending counter it replaced.
+func TestResolvePassWarnsWhenProposalsPend(t *testing.T) {
+	out := captureWarns(t)
+	ont := passStore(t)
+	seedPending(t, ont, "Old Alias", "old-canonical")
+
+	ResolveEntitiesPass(context.Background(), ont, nil, resolveCfg(0.85), nil, nil)
+
+	got := out()
+	if !strings.Contains(got, "--review") {
+		t.Errorf("warning must name the command that drains the queue:\n%s", got)
+	}
+	if !strings.Contains(got, "pending=1") {
+		t.Errorf("warning must report the standing count:\n%s", got)
+	}
+	// The message states what it CAN know. warnPendingBacklog takes only the
+	// store — it cannot know what the run did, and under a lowered threshold a
+	// run that auto-links would make this claim false.
+	if strings.Contains(got, "nothing was linked") {
+		t.Errorf("warning must not characterize what the run did:\n%s", got)
+	}
+}
+
+// Row 6. The silent direction. Without it, `> 0` -> `>= 0` is green and the
+// warning fires on every compile — the fastest way to make the default log
+// level stop being the place a user reliably looks.
+func TestResolvePassSilentWhenNothingPends(t *testing.T) {
+	out := captureWarns(t)
+	srv, _, _ := resolveServer(t, twoMemberCluster)
+	ont := passStore(t)
+	addEnt(t, ont, "buzz-aldrin", "Buzz Aldrin", "", "wiki/concepts/buzz-aldrin.md")
+	addEnt(t, ont, "Buzz Aldrin", "Buzz Aldrin", "Apollo 11 lunar module pilot", "")
+
+	ResolveEntitiesPass(context.Background(), ont,
+		[]string{"Buzz Aldrin"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+
+	if got := out(); strings.Contains(got, "--review") {
+		t.Errorf("no proposals pend, so nothing should ask for review:\n%s", got)
+	}
+}
+
+// Row 7a. The exit that is silent PERMANENTLY if the defer sits below the
+// Resolve.Enabled gate: a user turns resolve off with proposals standing, and
+// those aliases stay frozen out of resolution with no signal ever again.
+func TestResolvePassWarnsWhenResolveDisabled(t *testing.T) {
+	out := captureWarns(t)
+	ont := passStore(t)
+	seedPending(t, ont, "Old Alias", "old-canonical")
+
+	ResolveEntitiesPass(context.Background(), ont,
+		[]string{"Buzz Aldrin"}, &config.Config{}, nil, nil)
+
+	if got := out(); !strings.Contains(got, "--review") {
+		t.Errorf("disabling resolve must not silence a standing backlog:\n%s", got)
+	}
+}
+
+// Row 7b. The ORDINARY case under `resolve: on, triples: off` —
+// ExtractTriplesPass returns nil when triples is off, so touched comes only from
+// Pass-3 articles, and an incremental compile where every concept dedup-merged
+// writes none. Shares the single `if` at resolve_entities.go:576 with
+// client == nil, so it covers that exit too.
+func TestResolvePassWarnsWhenNothingTouched(t *testing.T) {
+	out := captureWarns(t)
+	ont := passStore(t)
+	seedPending(t, ont, "Old Alias", "old-canonical")
+
+	ResolveEntitiesPass(context.Background(), ont, nil, resolveCfg(0.85), nil, nil)
+
+	if got := out(); !strings.Contains(got, "--review") {
+		t.Errorf("an empty touched set must not silence a standing backlog:\n%s", got)
+	}
+}
+
+// Row 7c. The error path. Swallowing it with `pending, _ :=` makes a failed read
+// indistinguishable from an empty queue — exactly the silence this whole item
+// exists to prevent, and the constitution's principle 2 is no silent failures.
+func TestResolvePassWarnsWhenBacklogQueryFails(t *testing.T) {
+	out := captureWarns(t)
+	ont := errPendingStore{OntologyStore: passStore(t), err: errors.New("boom")}
+
+	ResolveEntitiesPass(context.Background(), ont, nil, resolveCfg(0.85), nil, nil)
+
+	got := out()
+	if !strings.Contains(got, "boom") {
+		t.Errorf("a failed backlog read must be reported, not swallowed:\n%s", got)
+	}
+}
+
+// Row 7d. The detector for registering the defer BEFORE sweepAliases rather than
+// after. sweepAliases' first statement is the AliasApplied read, so a panic
+// there unwinds through the defer only if it was registered first.
+func TestResolvePassWarnsWhenSweepPanics(t *testing.T) {
+	out := captureWarns(t)
+	base := passStore(t)
+	seedPending(t, base, "Old Alias", "old-canonical")
+	ont := panicAppliedStore{OntologyStore: base}
+
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("fixture did not panic — the test would be vacuous")
+			}
+		}()
+		ResolveEntitiesPass(context.Background(), ont, nil, resolveCfg(0.85), nil, nil)
+	}()
+
+	if got := out(); !strings.Contains(got, "--review") {
+		t.Errorf("a panic in the sweep must not lose the backlog warning:\n%s", got)
 	}
 }

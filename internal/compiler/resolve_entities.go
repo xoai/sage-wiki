@@ -96,7 +96,7 @@ const maxResolveChain = 32
 const (
 	defaultResolveMaxTokens          = 4096
 	defaultResolveMaxBlockSize       = 60
-	defaultResolveAutoApplyThreshold = 0.85
+	defaultResolveAutoApplyThreshold = 1.0
 	defaultResolveMaxTokenDF         = 0.05
 	defaultResolveMinTokenDFFloor    = 20
 	defaultResolveEmbedThreshold     = 0.82
@@ -258,19 +258,62 @@ func betterCanonical(a, b store.Entity) bool {
 	return a.ID < b.ID
 }
 
+// warnPendingBacklog reports the STANDING queue — not this run's delta.
+//
+// stats is fresh per run, so a delta would fire exactly once, on the run that
+// queued the row, and stay silent forever after while the backlog stands. The
+// user who most needs the message is the one with proposals queued weeks ago
+// compiling in CI, and a delta gives them nothing.
+//
+// The message says only what this function can know: the count and the command.
+// It has no access to what the run did, and under a lowered threshold a run that
+// auto-links would make any such claim false.
+func warnPendingBacklog(ont store.OntologyStore) {
+	pending, err := ont.ListAliases(store.AliasPending)
+	if err != nil {
+		// Never `pending, _ :=`: a failed read would be indistinguishable from an
+		// empty queue, which is the precise silence this warning exists to break.
+		log.Warn("resolve: cannot read pending proposals, backlog unknown", "error", err)
+		return
+	}
+	if len(pending) == 0 {
+		return
+	}
+	log.Warn("resolve: entity-resolution proposals are waiting for review — "+
+		"run `sage-wiki ontology resolve --review` to decide them",
+		"pending", len(pending))
+}
+
 // canAutoApply decides whether a proposed link is applied without review.
 //
-// The description requirement is the guard that matters in practice. Under the
-// DEFAULT configuration concept entities carry no Definition (write.go), and the
-// only compile-path writer of one is the triple-extraction pass, which defaults
-// off — so without this, enabling resolution alone would link entities on
-// surface-name similarity with no grounded evidence at all.
+// Under the DEFAULT configuration this returns false on its first line: the
+// threshold defaults to 1.0, which means never. The guards below matter once an
+// operator has lowered it deliberately.
+//
+// The description requirement is the one that matters most among them. Concept
+// entities carry no Definition (write.go) unless the triple-extraction pass ran,
+// so without it a lowered threshold would link entities on surface-name
+// similarity with no grounded evidence at all.
 //
 // ONE description suffices, not two: no writer in this codebase puts both an
 // ArticlePath and a Definition on the same row, and the described row and the
 // article-bearing row are exactly the pair this pass links. Requiring both would
 // make auto-apply a branch that can never fire.
+// threshold: a test passing the package default asserts nothing about the
+// guards below this line — see resolveCfg in resolve_pass_test.go.
 func canAutoApply(c resolvedCluster, x, y store.Entity, threshold float64) bool {
+	// 1.0 means NEVER, exactly. normalizeClusters clamps confidence to [0,1], so
+	// a model returning 1.0 would otherwise satisfy `confidence >= threshold` and
+	// defeat the review-only default — a safety default a model can beat by being
+	// confident is not a safety default.
+	//
+	// >= 1.0, not an epsilon form: applyResolveDefaults guarantees (0,1], 1.0 is
+	// exactly representable, and an epsilon would silently disarm a deliberate
+	// 0.99. This branch cannot move to applyResolveDefaults, which has no way to
+	// express "never" without a sentinel outside (0,1] that it rejects.
+	if threshold >= 1.0 {
+		return false
+	}
 	if !c.SameReferent || c.Broader {
 		return false
 	}
@@ -564,6 +607,21 @@ func ResolveEntitiesPass(
 		ctx = context.Background()
 	}
 
+	// Registered HERE — above the Resolve.Enabled gate and BEFORE the sweep —
+	// and the placement is the item, not a detail:
+	//   - above the gate, because a user who turns resolve OFF with proposals
+	//     standing would otherwise be silenced permanently while those aliases
+	//     stay frozen out of resolution; and because len(touched) == 0 is the
+	//     ORDINARY case under `resolve: on, triples: off`. sweepAliases sits
+	//     above the same gate for the same reason (see the doc comment above).
+	//   - before the sweep, so a panic in it still unwinds through this.
+	//   - as a DEFER, because the pass has a dozen exits and a backlog forces
+	//     several of them: resolvableSeeds skips entities holding a pending row,
+	//     so a standing queue guarantees len(seeds) == 0. Calling it inline at
+	//     the end reaches none of those; calling it early reads the backlog
+	//     before this run's own writes land.
+	defer warnPendingBacklog(ont)
+
 	// Registered before the sweep so the duration series covers it. Previously
 	// it sat after the disabled/cancelled returns, so a vault with resolution
 	// OFF — where the sweep is the only work done — recorded nothing at all.
@@ -587,9 +645,7 @@ func ResolveEntitiesPass(
 		// descriptions are what auto-apply requires, and the triples pass is
 		// their only compile-path writer.
 		log.Warn("resolve: ontology.triples is disabled — most entities will have no " +
-			"description, so proposals are usually queued for review. Not guaranteed: " +
-			"scribe also writes descriptions. Set ontology.resolve.auto_apply_threshold " +
-			"to 1.0 for review-only as a hard rule.")
+			"description, and auto-apply requires one on at least one side.")
 	}
 
 	// Cost attribution. Without this the spend bills to whatever pass ran last —
@@ -720,6 +776,7 @@ func SweepAliases(ctx context.Context, ont store.OntologyStore) SweepResult {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+
 	return sweepAliases(ctx, ont)
 }
 
