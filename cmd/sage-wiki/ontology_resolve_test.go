@@ -328,3 +328,103 @@ func TestResolveCLIJSONOutput(t *testing.T) {
 		t.Fatalf("--sweep --format json is not valid JSON:\n%s", out)
 	}
 }
+
+// GATE-3 R4. The exported guard had NO test at all, and it is the reason the
+// check was exported: without it a human completes, via --apply, a merge the
+// compile pass refused.
+func TestResolveCLIApplyRefusesCoAbsorptionThroughAChain(t *testing.T) {
+	dir := resolveVault(t, "config.yaml")
+	withProject(t, dir, "config.yaml")
+
+	b, ont, err := openResolveStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"a-row", "x-row", "y-row", "z-row"} {
+		if err := ont.AddEntity(store.Entity{ID: id, Type: ontology.TypeConcept, Name: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// x -> y -> z applied; rows are never rewritten to the terminal.
+	for _, p := range [][2]string{{"x-row", "y-row"}, {"y-row", "z-row"}} {
+		if err := ont.PutAlias(store.EntityAlias{
+			Alias: p[0], CanonicalID: p[1], EntityType: ontology.TypeConcept,
+			Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The user separated a-row from x-row, which now sits two hops under z-row.
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "a-row", CanonicalID: "x-row", EntityType: ontology.TypeConcept,
+		Status: store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		DecidedBy: "user",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "a-row", CanonicalID: "z-row", EntityType: ontology.TypeConcept,
+		Status: store.AliasPending, Confidence: 0.95, Source: "llm",
+		CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	b.Close()
+
+	err = runResolve(t, map[string]string{"apply": "a-row"})
+	if err == nil {
+		t.Fatal("--apply completed a merge the pass refuses: a-row joins x-row " +
+			"transitively under z-row despite the user separating them")
+	}
+	if !strings.Contains(err.Error(), "x-row") {
+		t.Errorf("the error should name the conflicting entity, got: %v", err)
+	}
+
+	// Nothing was written.
+	b2, ont2, err := openResolveStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b2.Close()
+	act, _ := ont2.GetActiveAlias("a-row")
+	if act == nil || act.Status != store.AliasPending {
+		t.Errorf("the pending row should be left in place, got %+v", act)
+	}
+}
+
+// GATE-3 R4. Applying a stale pending row after the reverse link was applied
+// would create a 2-cycle in which neither entity is canonical.
+func TestResolveCLIApplyRefusesCycle(t *testing.T) {
+	dir := resolveVault(t, "config.yaml")
+	withProject(t, dir, "config.yaml")
+
+	b, ont, err := openResolveStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"A", "B"} {
+		if err := ont.AddEntity(store.Entity{ID: id, Type: ontology.TypeConcept, Name: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// B -> A already applied; a stale pending A -> B remains.
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "B", CanonicalID: "A", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "A", CanonicalID: "B", EntityType: ontology.TypeConcept,
+		Status: store.AliasPending, Confidence: 0.95, Source: "llm",
+		CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	b.Close()
+
+	if err := runResolve(t, map[string]string{"apply": "A"}); err == nil {
+		t.Fatal("--apply created a cycle: B already resolves to A, so linking A -> B " +
+			"leaves neither entity canonical")
+	}
+}

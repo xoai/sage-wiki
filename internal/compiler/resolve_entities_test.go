@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/store"
@@ -518,5 +519,122 @@ func TestDiscriminatingTokensAreScopedPerType(t *testing.T) {
 	if !byType["concept"]["attention"] {
 		t.Error(`"attention" was discarded for concept (3 of 3) because a larger ` +
 			`type swamped it — DF must be per type`)
+	}
+}
+
+// --- GATE-3 R4: the co-absorption closure, pinned by construction ---
+//
+// Round 4 mutation-proved the previous tests did not pin this: regressing
+// cluster() to round 2's direct-canonical keying failed ZERO tests. These
+// exercise the graph directly so a topology regression cannot hide behind the
+// pass's earlier guards (GetActiveAlias, buildBlocks) firing first.
+
+func graphOf(pairs ...[2]string) *aliasGraph {
+	g := &aliasGraph{canonicalOf: map[string]string{}, memo: map[string]string{}}
+	for _, p := range pairs {
+		g.canonicalOf[p[0]] = p[1]
+	}
+	return g
+}
+
+func rejectionsOf(pairs ...[2]string) *rejectionIndex {
+	r := &rejectionIndex{partners: map[string]map[string]bool{}}
+	for _, p := range pairs {
+		r.mark(p[0], p[1])
+		r.mark(p[1], p[0])
+	}
+	return r
+}
+
+// Terminal keying, not direct keying. x sits TWO hops under z; a guard keyed on
+// the direct canonical_id sees only y when asked about z and lets the link
+// through. LinkAlias never rewrites rows to the terminal, so this is the steady
+// state, not an edge case.
+func TestCoAbsorptionSeesThroughMultipleHops(t *testing.T) {
+	g := graphOf([2]string{"x", "y"}, [2]string{"y", "z"})
+	rej := rejectionsOf([2]string{"a", "x"})
+
+	if got := coAbsorptionConflict(g, rej, "a", "z"); got == "" {
+		t.Error("linking a -> z was allowed although x, which the user separated " +
+			"from a, resolves to z through two hops")
+	}
+	// An unrelated rejection must not block.
+	if got := coAbsorptionConflict(g, rejectionsOf([2]string{"p", "q"}), "a", "z"); got != "" {
+		t.Errorf("false positive: %q", got)
+	}
+}
+
+// The check must be SYMMETRIC. Linking does not move one entity — everything
+// already resolving to the alias follows it under the target. An entity that is
+// a canonical rather than an alias is a perfectly legal seed.
+func TestCoAbsorptionSeesTheAliasSideCluster(t *testing.T) {
+	// x resolves to a; the user separated x from t.
+	g := graphOf([2]string{"x", "a"})
+	rej := rejectionsOf([2]string{"x", "t"})
+
+	if got := coAbsorptionConflict(g, rej, "a", "t"); got == "" {
+		t.Error("linking a -> t was allowed although x resolves to a and the user " +
+			"separated x from t; linking drags x under t as well")
+	}
+}
+
+// Both sides at once, each several hops deep.
+func TestCoAbsorptionCrossProductBothSides(t *testing.T) {
+	g := graphOf(
+		[2]string{"m1", "m2"}, [2]string{"m2", "alias"}, // m1 -> m2 -> alias
+		[2]string{"l1", "l2"}, [2]string{"l2", "target"}, // l1 -> l2 -> target
+	)
+	rej := rejectionsOf([2]string{"m1", "l1"})
+
+	if got := coAbsorptionConflict(g, rej, "alias", "target"); got == "" {
+		t.Error("a rejection between the deepest member of each side was missed")
+	}
+}
+
+func TestAliasGraphTerminalAndCluster(t *testing.T) {
+	g := graphOf([2]string{"x", "y"}, [2]string{"y", "z"}, [2]string{"w", "z"})
+
+	if got := g.terminal("x"); got != "z" {
+		t.Errorf("terminal(x) = %q, want z", got)
+	}
+	if got := g.terminal("z"); got != "z" {
+		t.Errorf("terminal(z) = %q, want z", got)
+	}
+	if got := g.terminal("unknown"); got != "unknown" {
+		t.Errorf("terminal(unknown) = %q, want itself", got)
+	}
+
+	members := map[string]bool{}
+	for _, m := range g.cluster("z") {
+		members[m] = true
+	}
+	for _, want := range []string{"z", "x", "y", "w"} {
+		if !members[want] {
+			t.Errorf("cluster(z) missing %q: %v", want, members)
+		}
+	}
+}
+
+// add() must invalidate the memo: a new edge changes the terminal of everything
+// upstream of the alias, and a stale memo answers with the pre-link topology.
+func TestAliasGraphAddInvalidatesMemo(t *testing.T) {
+	g := graphOf([2]string{"x", "a"})
+	if got := g.terminal("x"); got != "a" { // populates the memo
+		t.Fatalf("terminal(x) = %q, want a", got)
+	}
+	g.add("a", "b")
+	if got := g.terminal("x"); got != "b" {
+		t.Errorf("terminal(x) = %q after a -> b was added, want b — the memo is stale", got)
+	}
+}
+
+func TestAliasGraphTerminalTerminatesOnCycle(t *testing.T) {
+	g := graphOf([2]string{"a", "b"}, [2]string{"b", "a"})
+	done := make(chan string, 1)
+	go func() { done <- g.terminal("a") }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("terminal looped forever on a cycle")
 	}
 }

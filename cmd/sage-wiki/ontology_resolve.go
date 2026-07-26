@@ -158,6 +158,21 @@ func resolveApply(ont store.OntologyStore, alias string) error {
 			"%q and %q were rejected as different entities — reject/apply is symmetric, "+
 				"so this pair cannot be linked in either direction", row.Alias, row.CanonicalID))
 	}
+	// The pass refuses a link whose chain-resolved target IS the alias; without
+	// the same check here, applying a stale pending row after the reverse link
+	// was auto-applied creates a 2-cycle in which neither row is canonical,
+	// CanonicalID logs "alias cycle detected" forever, and the sweep copies
+	// edges both ways on every compile.
+	terminal, err := compiler.TerminalCanonical(ont, row.CanonicalID)
+	if err != nil {
+		return cli.CLIError(outputFormat, err)
+	}
+	if terminal == row.Alias {
+		return cli.CLIError(outputFormat, fmt.Errorf(
+			"cannot link %q into %q: %q already resolves back to %q, so this would "+
+				"create a cycle in which neither entity is canonical",
+			row.Alias, row.CanonicalID, row.CanonicalID, row.Alias))
+	}
 	// The same co-absorption rule the compile pass applies. Without it, a
 	// proposal the pass queued (rather than applied) could be completed here,
 	// folding both halves of a rejected pair under one canonical — the exact

@@ -564,6 +564,12 @@ func ResolveEntitiesPass(
 		ctx = context.Background()
 	}
 
+	// Registered before the sweep so the duration series covers it. Previously
+	// it sat after the disabled/cancelled returns, so a vault with resolution
+	// OFF — where the sweep is the only work done — recorded nothing at all.
+	defer metrics.ObserveDuration(metrics.HistogramNamed(
+		"compile_pass_duration_seconds", metrics.CompileBuckets(), "pass", "resolve"), time.Now())
+
 	sweepAliases(ctx, ont)
 
 	rcfg := applyResolveDefaults(cfg.Ontology.Resolve)
@@ -583,9 +589,6 @@ func ResolveEntitiesPass(
 		log.Warn("resolve: ontology.triples is disabled — entities have no descriptions, " +
 			"so proposals will be queued for review rather than applied automatically")
 	}
-
-	defer metrics.ObserveDuration(metrics.HistogramNamed(
-		"compile_pass_duration_seconds", metrics.CompileBuckets(), "pass", "resolve"), time.Now())
 
 	// Cost attribution. Without this the spend bills to whatever pass ran last —
 	// "write", since this is deferred to the end of runFullPipeline.
@@ -858,14 +861,20 @@ func (r *rejectionIndex) is(a, b string) bool { return r.partners[a][b] }
 // x->y->z are the normal steady state — an index keyed on the direct canonical
 // cannot see x when asked about z, which is how a rejected pair was still being
 // folded together after two rounds of narrower fixes.
-type aliasGraph struct{ canonicalOf map[string]string }
+type aliasGraph struct {
+	canonicalOf map[string]string
+	// memo caches terminal() per pass. cluster() is called once per candidate
+	// pair and walks every applied row, so without this a vault with thousands
+	// of links pays a full scan per pair.
+	memo map[string]string
+}
 
 func newAliasGraph(ont store.OntologyStore) (*aliasGraph, error) {
 	rows, err := ont.ListAliases(store.AliasApplied)
 	if err != nil {
 		return nil, err
 	}
-	g := &aliasGraph{canonicalOf: map[string]string{}}
+	g := &aliasGraph{canonicalOf: map[string]string{}, memo: map[string]string{}}
 	for _, a := range rows {
 		g.canonicalOf[a.Alias] = a.CanonicalID
 	}
@@ -874,12 +883,28 @@ func newAliasGraph(ont store.OntologyStore) (*aliasGraph, error) {
 
 // terminal follows the applied chain to its end, bounded and cycle-guarded.
 func (g *aliasGraph) terminal(id string) string {
+	if t, ok := g.memo[id]; ok {
+		return t
+	}
+	t := g.walk(id)
+	g.memo[id] = t
+	return t
+}
+
+func (g *aliasGraph) walk(id string) string {
 	seen := map[string]bool{id: true}
 	cur := id
 	for i := 0; i < maxResolveChain; i++ {
 		next, ok := g.canonicalOf[cur]
-		if !ok || seen[next] {
+		if !ok {
 			return cur
+		}
+		if seen[next] {
+			// Same answer ontology.CanonicalID gives: the input id. Returning an
+			// entry-point-dependent node instead would make terminal(a) and
+			// terminal(b) disagree for a 2-cycle, so the two resolvers would
+			// answer differently about the same graph.
+			return id
 		}
 		seen[next] = true
 		cur = next
@@ -887,7 +912,13 @@ func (g *aliasGraph) terminal(id string) string {
 	return cur
 }
 
-func (g *aliasGraph) add(alias, canonical string) { g.canonicalOf[alias] = canonical }
+// add records a new link. The memo is dropped rather than patched: a new edge
+// can change the terminal of any entity upstream of `alias`, and a stale memo
+// would silently answer with the pre-link topology.
+func (g *aliasGraph) add(alias, canonical string) {
+	g.canonicalOf[alias] = canonical
+	g.memo = map[string]string{}
+}
 
 // cluster returns every entity that resolves to the same terminal as id,
 // including the terminal itself.
@@ -903,21 +934,29 @@ func (g *aliasGraph) cluster(id string) []string {
 	return out
 }
 
-// coAbsorptionConflict reports the entity that alias must not join under target,
-// or "".
+// coAbsorptionConflict reports a rejected pair that linking alias -> target
+// would reunite, as "a / b", or "".
 //
-// A rejection says two entities are different. Folding both under one canonical
-// unifies them just as surely as linking them directly, so the check is against
-// the whole TRANSITIVE cluster of target — every entity already resolving to it,
-// through any number of hops, from this run or any earlier one.
+// The check is the CROSS PRODUCT of both transitive clusters, not alias against
+// target's cluster. Linking does not move one entity: everything already
+// resolving to `alias` follows it under `target`. Checking only
+// {alias} x cluster(target) misses a rejection between one of the alias's own
+// dependents and anything on the target side — and an entity that is a
+// canonical, not an alias, is a perfectly legal seed (resolvableSeeds only
+// skips entities that already have an active alias row), so this is the
+// ordinary chain case rather than an exotic one.
 //
 // Shared by the compile pass and `ontology resolve --apply` so the two cannot
 // disagree: --apply previously checked only the direct pair, which let a human
 // complete a merge the pass had refused.
 func coAbsorptionConflict(g *aliasGraph, rej *rejectionIndex, alias, target string) string {
-	for _, member := range g.cluster(target) {
-		if member != alias && rej.is(alias, member) {
-			return member
+	moving := g.cluster(alias)   // alias + everything that resolves to it
+	landing := g.cluster(target) // target + everything already resolving there
+	for _, m := range moving {
+		for _, l := range landing {
+			if m != l && rej.is(m, l) {
+				return m + " / " + l
+			}
 		}
 	}
 	return ""
@@ -980,12 +1019,6 @@ func applyClusters(
 				stats.skipped++
 				continue
 			}
-			// Re-checked here, not only during candidate generation: a rejected
-			// pair can re-enter a block through a third entity.
-			if rej.is(alias.ID, canonical.ID) {
-				stats.skipped++
-				continue
-			}
 			target, err := ont.CanonicalID(canonical.ID)
 			if err != nil {
 				log.Warn("resolve: canonical resolution failed", "id", canonical.ID, "error", err)
@@ -996,27 +1029,14 @@ func applyClusters(
 				stats.skipped++
 				continue
 			}
-			// Re-check against the CHAIN-RESOLVED target, not just the elected
-			// canonical. When the canonical is itself an applied alias the link
-			// lands on a different entity than the one just checked — and since
-			// putAliasTx suppresses writes over a rejected row, the edges would
-			// be copied with NO audit row, leaving the alias to be re-seeded and
-			// re-copied on every later compile with nothing recording it.
-			if target != canonical.ID && rej.is(alias.ID, target) {
-				log.Warn("resolve: skipped, the pair is rejected once the canonical chain is followed",
-					"alias", alias.ID, "elected", canonical.ID, "target", target)
-				stats.skipped++
-				continue
-			}
-			// A rejection between two entities is also a rejection of folding
-			// both into one canonical: absorbing them together reconstructs
-			// exactly the merge the user refused.
+			// The single rejection gate. It subsumes the direct pair and the
+			// elected canonical — cluster(target) always contains target, and
+			// contains the elected canonical whenever it differs — so separate
+			// re-checks for those would be strictly dead code.
 			//
-			// Checked against everything already absorbed into `target` — by an
-			// earlier block in this run OR by a previous compile. An in-memory
-			// per-call map cannot see either: applyClusters runs once per block,
-			// so two halves of a rejected pair land in separate calls, and a link
-			// from a previous run is not in memory at all.
+			// It spans blocks and runs because both clusters are computed from
+			// the store-backed graph, and it is symmetric because linking moves
+			// the alias's dependents too.
 			if conflict := coAbsorptionConflict(graph, rej, alias.ID, target); conflict != "" {
 				log.Warn("resolve: skipped, co-absorbing a rejected pair into one canonical",
 					"alias", alias.ID, "with", conflict, "canonical", target)
@@ -1038,8 +1058,16 @@ func applyClusters(
 					// block auto-apply: canAutoApply is an OR over both sides, so
 					// a described alias would auto-apply anyway. A pruned
 					// canonical with a surviving alias row is routine.
-					log.Warn("resolve: chain-resolved canonical unavailable, queuing for review",
-						"target", target, "found", te != nil, "error", err)
+					//
+					// The row is queued against the ELECTED canonical, which
+					// exists, not the ghost target. A pending row naming a
+					// deleted entity can never be applied — --apply always errors
+					// — while its active status permanently removes the alias
+					// from future resolution, leaving --reject (recording a
+					// judgement the user never made) as the only escape.
+					log.Warn("resolve: chain-resolved canonical unavailable, queuing against the elected canonical",
+						"ghost_target", target, "queued_against", canonical.ID, "error", err)
+					target = canonical.ID
 					mustReview = true
 				default:
 					judged = *te
@@ -1185,4 +1213,17 @@ func CoAbsorptionConflict(ont store.OntologyStore, alias, canonical string) (str
 		return "", err
 	}
 	return coAbsorptionConflict(graph, rej, alias, graph.terminal(canonical)), nil
+}
+
+// TerminalCanonical resolves an id through the applied-alias chain to its end.
+//
+// Exported for `ontology resolve --apply`, which must refuse a link whose target
+// resolves back to the alias — that produces a cycle in which neither entity is
+// canonical and the sweep copies edges both ways forever.
+func TerminalCanonical(ont store.OntologyStore, id string) (string, error) {
+	g, err := newAliasGraph(ont)
+	if err != nil {
+		return "", err
+	}
+	return g.terminal(id), nil
 }
