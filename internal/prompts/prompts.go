@@ -222,6 +222,23 @@ type TriplesData struct {
 	Summary         string
 }
 
+// ResolveData holds data for the entity-resolution template (P3-3).
+//
+// Members is the rendered candidate block — one line per candidate, each under
+// an opaque label (E1, E2, ...) with its name, type and description.
+//
+// Labels rather than names or ids, deliberately: Entity.ID != Entity.Name for
+// every entity the compiler writes, and two rows can legally share a Name, so
+// neither is a safe key in the model's response. Labels make the mapping back
+// to ids total and unambiguous, and keep id spelling out of the prompt.
+//
+// Like TriplesData there is no separate path field: everything untrusted is
+// folded into Members by the caller so it sits inside the untrusted_source
+// frame.
+type ResolveData struct {
+	Members string
+}
+
 // WriteArticleData holds data for article writing template.
 type WriteArticleData struct {
 	ConceptName     string

@@ -241,3 +241,41 @@ func TestRenderTriplesSuppressesLanguageInstruction(t *testing.T) {
 			"the template must contain the literal \"Output ONLY a JSON\" phrase")
 	}
 }
+
+func TestRenderResolveEntities(t *testing.T) {
+	out, err := Render("resolve_entities", ResolveData{
+		Members: "E1  name: Buzz Aldrin  type: concept  desc: Apollo 11 pilot\n" +
+			"E2  name: Edwin Aldrin  type: concept  desc: (none)",
+	}, "")
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	for _, want := range []string{
+		"E1", "E2", "Buzz Aldrin", "Edwin Aldrin", "Apollo 11 pilot",
+		"same_referent", "broader", "confidence",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered prompt missing %q", want)
+		}
+	}
+	// The model must never be asked to nominate a canonical: Go elects it, and
+	// a model-chosen canonical Go then overrides makes the `broader` answer
+	// certify a direction that was never used.
+	if strings.Contains(out, "canonical") {
+		t.Error("resolution prompt asks the model for a canonical; election is Go's job")
+	}
+}
+
+// GUARD, not a driver — same convention as TestRenderTriplesSuppressesLanguageInstruction.
+// Without the literal marker phrase, a project with `language:` set gets a
+// translation instruction appended to a structured-output prompt.
+func TestRenderResolveSuppressesLanguageInstruction(t *testing.T) {
+	out, err := Render("resolve_entities", ResolveData{Members: "E1 name: x"}, "fr")
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(out, LanguageInstruction("fr")) {
+		t.Error("language instruction appended to a JSON-output template; " +
+			"resolve_entities.txt must contain the 'Output ONLY a JSON' marker")
+	}
+}
