@@ -298,3 +298,247 @@ func TestCanonicalIDBreaksCycle(t *testing.T) {
 		t.Fatal("CanonicalID looped forever on a cycle")
 	}
 }
+
+// --- LinkAlias: non-destructive edge union ---
+
+func seedEntity(t *testing.T, s *Store, id string) {
+	t.Helper()
+	if err := s.AddEntity(Entity{ID: id, Type: TypeConcept, Name: id}); err != nil {
+		t.Fatalf("AddEntity %s: %v", id, err)
+	}
+}
+
+func relCount(t *testing.T, s *Store) int {
+	t.Helper()
+	n, err := s.RelationCount()
+	if err != nil {
+		t.Fatalf("RelationCount: %v", err)
+	}
+	return n
+}
+
+// The core contract: the canonical gains the alias's edges AND the alias keeps
+// every one of its own. Nothing is deleted.
+func TestLinkAliasCopiesEdgesAndAliasKeepsItsOwn(t *testing.T) {
+	s := aliasStore(t)
+	for _, id := range []string{"edwin", "buzz", "apollo", "nasa"} {
+		seedEntity(t, s, id)
+	}
+	// edwin --extends--> apollo   (alias on the source side)
+	// nasa  --cites----> edwin    (alias on the target side)
+	if err := s.AddRelation(Relation{ID: "r1", SourceID: "edwin", TargetID: "apollo",
+		Relation: RelExtends, Evidence: "edwin extends apollo", Confidence: 0.7, SourceDoc: "raw/edwin.md"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddRelation(Relation{ID: "r2", SourceID: "nasa", TargetID: "edwin",
+		Relation: RelCites, Confidence: 0.5}); err != nil {
+		t.Fatal(err)
+	}
+	before := relCount(t, s)
+
+	res, err := s.LinkAlias(mkAlias("edwin", "buzz", store.AliasApplied))
+	if err != nil {
+		t.Fatalf("LinkAlias: %v", err)
+	}
+	if res.Copied != 2 {
+		t.Errorf("Copied = %d, want 2", res.Copied)
+	}
+	if res.AliasMissing || res.CanonicalMissing {
+		t.Errorf("unexpected missing flags: %+v", res)
+	}
+
+	// The alias keeps its own edges — this is what "non-destructive" means.
+	if n := relCount(t, s); n != before+2 {
+		t.Errorf("relation count = %d, want %d (2 copies ADDED, none moved)", n, before+2)
+	}
+	aliasOut, err := s.GetRelations("edwin", Outbound, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(aliasOut) != 1 || aliasOut[0].TargetID != "apollo" {
+		t.Errorf("alias lost its outbound edge: %+v", aliasOut)
+	}
+
+	// The canonical gained both, with the alias edge's provenance carried over.
+	canonOut, err := s.GetRelations("buzz", Outbound, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(canonOut) != 1 || canonOut[0].TargetID != "apollo" {
+		t.Fatalf("canonical missing the copied outbound edge: %+v", canonOut)
+	}
+	if canonOut[0].Evidence != "edwin extends apollo" || canonOut[0].SourceDoc != "raw/edwin.md" {
+		t.Errorf("copy lost provenance: %+v", canonOut[0])
+	}
+	canonIn, err := s.GetRelations("buzz", Inbound, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(canonIn) != 1 || canonIn[0].SourceID != "nasa" {
+		t.Errorf("canonical missing the copied inbound edge: %+v", canonIn)
+	}
+
+	// The alias row was recorded in the same transaction.
+	if act, _ := s.GetActiveAlias("edwin"); act == nil || act.CanonicalID != "buzz" {
+		t.Errorf("alias row not recorded: %+v", act)
+	}
+}
+
+// A copy must NEVER overwrite an edge the canonical asserted itself. The
+// confidence-guarded upsert AddRelation uses is sound only because both sides
+// assert the SAME edge; here the winning side asserts a DIFFERENT one, so a
+// DO UPDATE would write the alias's evidence onto the canonical's row — and it
+// could never recover, because the next compile's honest re-assertion at the
+// lower confidence loses to that same guard.
+func TestLinkAliasDoesNotOverwriteCanonicalEvidence(t *testing.T) {
+	s := aliasStore(t)
+	for _, id := range []string{"edwin", "buzz", "apollo"} {
+		seedEntity(t, s, id)
+	}
+	if err := s.AddRelation(Relation{ID: "own", SourceID: "buzz", TargetID: "apollo",
+		Relation: RelExtends, Evidence: "buzz extends apollo", Confidence: 0.6, SourceDoc: "raw/buzz.md"}); err != nil {
+		t.Fatal(err)
+	}
+	// The alias asserts the same (target, relation) with HIGHER confidence.
+	if err := s.AddRelation(Relation{ID: "alias-edge", SourceID: "edwin", TargetID: "apollo",
+		Relation: RelExtends, Evidence: "edwin extends apollo", Confidence: 0.9, SourceDoc: "raw/edwin.md"}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := s.LinkAlias(mkAlias("edwin", "buzz", store.AliasApplied))
+	if err != nil {
+		t.Fatalf("LinkAlias: %v", err)
+	}
+	if res.Copied != 0 || res.Skipped != 1 {
+		t.Errorf("got Copied=%d Skipped=%d, want 0/1", res.Copied, res.Skipped)
+	}
+
+	canon, err := s.GetRelations("buzz", Outbound, RelExtends)
+	if err != nil || len(canon) != 1 {
+		t.Fatalf("GetRelations: %+v %v", canon, err)
+	}
+	if canon[0].Evidence != "buzz extends apollo" {
+		t.Errorf("canonical's OWN evidence was overwritten by the copy: %q", canon[0].Evidence)
+	}
+	if canon[0].Confidence != 0.6 {
+		t.Errorf("canonical's own confidence changed to %v", canon[0].Confidence)
+	}
+	if canon[0].SourceDoc != "raw/buzz.md" {
+		t.Errorf("canonical's own source_doc was overwritten: %q", canon[0].SourceDoc)
+	}
+}
+
+// An edge between the alias and its own canonical cannot be copied — it would
+// be a self-loop, which AddRelation rejects. Under non-destructive semantics it
+// is RETAINED where it is, not deleted.
+func TestLinkAliasSelfLoopNotCopiedButRetained(t *testing.T) {
+	s := aliasStore(t)
+	seedEntity(t, s, "edwin")
+	seedEntity(t, s, "buzz")
+	if err := s.AddRelation(Relation{ID: "e-c", SourceID: "edwin", TargetID: "buzz",
+		Relation: RelContradicts, Confidence: 0.4}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := s.LinkAlias(mkAlias("edwin", "buzz", store.AliasApplied))
+	if err != nil {
+		t.Fatalf("LinkAlias: %v", err)
+	}
+	if res.SelfLoops != 1 || res.Copied != 0 {
+		t.Errorf("got SelfLoops=%d Copied=%d, want 1/0", res.SelfLoops, res.Copied)
+	}
+	if n := relCount(t, s); n != 1 {
+		t.Errorf("relation count = %d, want the original edge retained (1)", n)
+	}
+}
+
+func TestLinkAliasMissingEndpoints(t *testing.T) {
+	s := aliasStore(t)
+	seedEntity(t, s, "present")
+
+	res, err := s.LinkAlias(mkAlias("ghost", "present", store.AliasApplied))
+	if err != nil {
+		t.Fatalf("missing alias must not error: %v", err)
+	}
+	if !res.AliasMissing {
+		t.Error("AliasMissing not set for an absent alias entity")
+	}
+	if act, _ := s.GetActiveAlias("ghost"); act != nil {
+		t.Errorf("alias row written for a missing alias: %+v", act)
+	}
+
+	res, err = s.LinkAlias(mkAlias("present", "ghost", store.AliasApplied))
+	if err != nil {
+		t.Fatalf("missing canonical must not error: %v", err)
+	}
+	if !res.CanonicalMissing {
+		t.Error("CanonicalMissing not set for an absent canonical entity")
+	}
+	if act, _ := s.GetActiveAlias("present"); act != nil {
+		t.Errorf("alias row written for a missing canonical: %+v", act)
+	}
+
+	if _, err := s.LinkAlias(mkAlias("a", "a", store.AliasApplied)); err == nil {
+		t.Error("self-alias must be an error")
+	}
+}
+
+// The sweep re-runs this on every compile. It must converge, not accumulate.
+func TestLinkAliasIsIdempotent(t *testing.T) {
+	s := aliasStore(t)
+	for _, id := range []string{"edwin", "buzz", "apollo"} {
+		seedEntity(t, s, id)
+	}
+	if err := s.AddRelation(Relation{ID: "r1", SourceID: "edwin", TargetID: "apollo",
+		Relation: RelExtends, Confidence: 0.7}); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := s.LinkAlias(mkAlias("edwin", "buzz", store.AliasApplied))
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterFirst := relCount(t, s)
+
+	second, err := s.LinkAlias(mkAlias("edwin", "buzz", store.AliasApplied))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Copied != 1 {
+		t.Errorf("first run Copied = %d, want 1", first.Copied)
+	}
+	if second.Copied != 0 || second.Skipped != 1 {
+		t.Errorf("second run Copied=%d Skipped=%d, want 0/1", second.Copied, second.Skipped)
+	}
+	if n := relCount(t, s); n != afterFirst {
+		t.Errorf("relation count grew on re-link: %d -> %d", afterFirst, n)
+	}
+}
+
+// A 32-bit id collides by birthday around 65k copied edges, and a colliding id
+// with a different (source,target,relation) is a NON-TARGET unique violation
+// that the ON CONFLICT clause does not absorb — the edge would be dropped.
+func TestLinkAliasCopiedRelationIDWidth(t *testing.T) {
+	s := aliasStore(t)
+	for _, id := range []string{"edwin", "buzz", "apollo"} {
+		seedEntity(t, s, id)
+	}
+	if err := s.AddRelation(Relation{ID: "r1", SourceID: "edwin", TargetID: "apollo",
+		Relation: RelExtends, Confidence: 0.7}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.LinkAlias(mkAlias("edwin", "buzz", store.AliasApplied)); err != nil {
+		t.Fatal(err)
+	}
+
+	canon, err := s.GetRelations("buzz", Outbound, "")
+	if err != nil || len(canon) != 1 {
+		t.Fatalf("GetRelations: %+v %v", canon, err)
+	}
+	id := canon[0].ID
+	const prefix = "alias:"
+	if len(id) != len(prefix)+16 {
+		t.Errorf("copied relation id = %q (%d chars), want %q + 16 hex chars (8 bytes)",
+			id, len(id), prefix)
+	}
+}

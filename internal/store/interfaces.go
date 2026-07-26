@@ -79,6 +79,10 @@ type OntologyStore interface {
 	ListAliases(status AliasStatus) ([]EntityAlias, error)
 	IsRejected(a, b string) (bool, error)
 	SetAliasStatus(alias, canonicalID string, status AliasStatus, decidedBy string) error
+	// LinkAlias copies the alias's edges onto the canonical and records the
+	// link, in ONE transaction. Non-destructive: nothing is deleted and no
+	// edge the canonical asserted itself is overwritten.
+	LinkAlias(a EntityAlias) (LinkResult, error)
 }
 
 type TrustStore interface {

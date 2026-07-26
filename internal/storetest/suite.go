@@ -1172,5 +1172,98 @@ func AliasConformance(new BackendFactory) func(*testing.T) {
 		if id, err := os.CanonicalID("unknown"); err != nil || id != "unknown" {
 			t.Errorf("CanonicalID(unknown) = %q, %v; want the input id", id, err)
 		}
+
+		// --- LinkAlias: non-destructive edge union, both backends ---
+		lb := new(t)
+		lo := lb.Ontology()
+		for _, id := range []string{"edwin", "buzz", "apollo"} {
+			if err := lo.AddEntity(store.Entity{ID: id, Type: "concept", Name: id}); err != nil {
+				t.Fatalf("AddEntity %s: %v", id, err)
+			}
+		}
+		// The canonical asserts an edge itself, at LOWER confidence than the
+		// alias's competing assertion of the same (target, relation).
+		if err := lo.AddRelation(store.Relation{ID: "own", SourceID: "buzz", TargetID: "apollo",
+			Relation: "extends", Evidence: "buzz extends apollo", Confidence: 0.6,
+			SourceDoc: "raw/buzz.md"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := lo.AddRelation(store.Relation{ID: "aliased", SourceID: "edwin", TargetID: "apollo",
+			Relation: "extends", Evidence: "edwin extends apollo", Confidence: 0.9,
+			SourceDoc: "raw/edwin.md"}); err != nil {
+			t.Fatal(err)
+		}
+		// An alias<->canonical edge: cannot be copied without becoming a
+		// self-loop, and must be RETAINED rather than deleted.
+		if err := lo.AddRelation(store.Relation{ID: "loop", SourceID: "edwin", TargetID: "buzz",
+			Relation: "contradicts", Confidence: 0.4}); err != nil {
+			t.Fatal(err)
+		}
+		beforeLink, err := lo.RelationCount()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		res, err := lo.LinkAlias(mk("edwin", "buzz", store.AliasApplied))
+		if err != nil {
+			t.Fatalf("LinkAlias: %v", err)
+		}
+		if res.Skipped != 1 {
+			t.Errorf("Skipped = %d, want 1 (the canonical already asserted that edge)", res.Skipped)
+		}
+		if res.SelfLoops != 1 {
+			t.Errorf("SelfLoops = %d, want 1", res.SelfLoops)
+		}
+
+		// The canonical's OWN evidence survives. A copy must never overwrite a
+		// native assertion — the confidence-guarded upsert is sound only when
+		// both sides assert the same edge, which a copy does not.
+		canon, err := lo.GetRelations("buzz", store.Outbound, "extends")
+		if err != nil || len(canon) != 1 {
+			t.Fatalf("GetRelations: %+v %v", canon, err)
+		}
+		if canon[0].Evidence != "buzz extends apollo" || canon[0].Confidence != 0.6 ||
+			canon[0].SourceDoc != "raw/buzz.md" {
+			t.Errorf("canonical's own edge was overwritten by the copy: %+v", canon[0])
+		}
+
+		// Nothing was deleted: the alias keeps every edge it had.
+		afterLink, err := lo.RelationCount()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if afterLink != beforeLink {
+			t.Errorf("relation count %d -> %d; nothing should have been added or removed here",
+				beforeLink, afterLink)
+		}
+		aliasEdges, err := lo.GetRelations("edwin", store.Both, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(aliasEdges) != 2 {
+			t.Errorf("alias edges = %d, want 2 retained (linking deletes nothing)", len(aliasEdges))
+		}
+
+		// Idempotent: the sweep re-runs this on every compile.
+		again, err := lo.LinkAlias(mk("edwin", "buzz", store.AliasApplied))
+		if err != nil {
+			t.Fatalf("LinkAlias re-run: %v", err)
+		}
+		if again.Copied != 0 {
+			t.Errorf("re-link Copied = %d, want 0", again.Copied)
+		}
+
+		// Missing endpoints are typed facts, not errors, and write no alias row.
+		miss, err := lo.LinkAlias(mk("ghost", "buzz", store.AliasApplied))
+		if err != nil || !miss.AliasMissing {
+			t.Errorf("missing alias: %+v %v; want AliasMissing, no error", miss, err)
+		}
+		if act, _ := lo.GetActiveAlias("ghost"); act != nil {
+			t.Errorf("alias row written for a missing alias: %+v", act)
+		}
+		miss, err = lo.LinkAlias(mk("apollo", "ghost", store.AliasApplied))
+		if err != nil || !miss.CanonicalMissing {
+			t.Errorf("missing canonical: %+v %v; want CanonicalMissing, no error", miss, err)
+		}
 	}
 }

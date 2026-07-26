@@ -1,7 +1,9 @@
 package postgres
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -58,25 +60,30 @@ func (s *ontologyStore) PutAlias(a store.EntityAlias) error {
 	if a.Source == "" {
 		a.Source = "llm"
 	}
-	return s.b.WriteTx(func(tx *sql.Tx) error {
-		_, err := tx.Exec(
-			`INSERT INTO entity_aliases
-			   (alias, canonical_id, entity_type, status, confidence, reason,
-			    source, created_at, decided_at, decided_by)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-			 ON CONFLICT (alias, canonical_id) DO UPDATE SET
-			   status     = excluded.status,
-			   confidence = excluded.confidence,
-			   reason     = excluded.reason,
-			   decided_at = excluded.decided_at,
-			   decided_by = excluded.decided_by
-			 WHERE entity_aliases.status <> 'rejected'`,
-			a.Alias, a.CanonicalID, a.EntityType, string(a.Status), a.Confidence,
-			nullStr(a.Reason), a.Source, a.CreatedAt,
-			nullStr(a.DecidedAt), nullStr(a.DecidedBy),
-		)
-		return err
-	})
+	return s.b.WriteTx(func(tx *sql.Tx) error { return putAliasTx(tx, a) })
+}
+
+// putAliasTx is the single alias-upsert statement, shared by PutAlias and
+// LinkAlias so the audit row is written exactly one way. LinkAlias cannot call
+// PutAlias: WriteTx's mutex is not reentrant, so a nested call would deadlock.
+func putAliasTx(tx *sql.Tx, a store.EntityAlias) error {
+	_, err := tx.Exec(
+		`INSERT INTO entity_aliases
+		   (alias, canonical_id, entity_type, status, confidence, reason,
+		    source, created_at, decided_at, decided_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		 ON CONFLICT (alias, canonical_id) DO UPDATE SET
+		   status     = excluded.status,
+		   confidence = excluded.confidence,
+		   reason     = excluded.reason,
+		   decided_at = excluded.decided_at,
+		   decided_by = excluded.decided_by
+		 WHERE entity_aliases.status <> 'rejected'`,
+		a.Alias, a.CanonicalID, a.EntityType, string(a.Status), a.Confidence,
+		nullStr(a.Reason), a.Source, a.CreatedAt,
+		nullStr(a.DecidedAt), nullStr(a.DecidedBy),
+	)
+	return err
 }
 
 // GetActiveAlias returns the live ('applied' or 'pending') decision, or
@@ -162,4 +169,110 @@ func (s *ontologyStore) CanonicalID(id string) (string, error) {
 	}
 	log.Warn("ontology: alias chain exceeded the hop cap", "id", id, "cap", maxAliasChain)
 	return cur, nil
+}
+
+// copiedRelationID — see internal/ontology/aliases.go. Eight BYTES of hex,
+// matching tripleRelationID; the "alias:" prefix marks a DERIVED edge whose
+// evidence quotes the alias's source document, not the canonical's.
+func copiedRelationID(source, predicate, target string) string {
+	sum := sha256.Sum256([]byte(source + "\x00" + predicate + "\x00" + target))
+	return "alias:" + hex.EncodeToString(sum[:8])
+}
+
+// LinkAlias copies the alias's edges onto the canonical and records the link in
+// one transaction. Non-destructive: nothing is deleted or overwritten.
+//
+// The statements are written per-backend rather than shared with the sqlite
+// half: placeholders differ ($N vs ?), and relations.created_at is TIMESTAMPTZ
+// here (bound through nullRFC) but TEXT there.
+func (s *ontologyStore) LinkAlias(a store.EntityAlias) (store.LinkResult, error) {
+	var res store.LinkResult
+	if a.Alias == a.CanonicalID {
+		return res, fmt.Errorf("ontology: entity %q cannot alias itself", a.Alias)
+	}
+
+	err := s.b.WriteTx(func(tx *sql.Tx) error {
+		// A missing endpoint is a fact to report, not an error: --prune and
+		// reconcile delete entities without consulting this table. Neither
+		// branch writes an alias row.
+		exists := func(id string) (bool, error) {
+			var n int
+			err := tx.QueryRow("SELECT COUNT(*) FROM entities WHERE id=$1", id).Scan(&n)
+			return n > 0, err
+		}
+		aliasOK, err := exists(a.Alias)
+		if err != nil {
+			return err
+		}
+		if !aliasOK {
+			res.AliasMissing = true
+			return nil
+		}
+		canonOK, err := exists(a.CanonicalID)
+		if err != nil {
+			return err
+		}
+		if !canonOK {
+			res.CanonicalMissing = true
+			return nil
+		}
+
+		rows, err := tx.Query(
+			"SELECT "+relationCols+" FROM relations WHERE source_id=$1 OR target_id=$1",
+			a.Alias)
+		if err != nil {
+			return err
+		}
+		edges, err := scanRelations(rows)
+		rows.Close()
+		if err != nil {
+			return err
+		}
+
+		for _, r := range edges {
+			src, tgt := r.SourceID, r.TargetID
+			if src == a.Alias {
+				src = a.CanonicalID
+			}
+			if tgt == a.Alias {
+				tgt = a.CanonicalID
+			}
+			if src == tgt {
+				res.SelfLoops++
+				continue
+			}
+
+			// DO NOTHING, not AddRelation's confidence-guarded DO UPDATE: that
+			// guard is sound only when both sides assert the SAME edge, and a
+			// copy asserts a different one. DO UPDATE here would overwrite the
+			// canonical's own evidence with the alias's, unrecoverably.
+			out, err := tx.Exec(`
+				INSERT INTO relations (id, source_id, target_id, relation, created_at,
+				                       evidence, confidence, source_doc,
+				                       valid_from, valid_to, invalidated_by)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+				ON CONFLICT (source_id, target_id, relation) DO NOTHING`,
+				copiedRelationID(src, r.Relation, tgt), src, tgt, r.Relation, nullRFC(r.CreatedAt),
+				nullStr(r.Evidence), r.Confidence, nullStr(r.SourceDoc),
+				nullStr(r.ValidFrom), nullStr(r.ValidTo), nullStr(r.InvalidatedBy))
+			if err != nil {
+				return err
+			}
+			n, err := out.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if n > 0 {
+				res.Copied++
+			} else {
+				res.Skipped++
+			}
+		}
+
+		return putAliasTx(tx, a)
+	})
+	if err != nil {
+		return store.LinkResult{}, err
+	}
+	return res, nil
 }
