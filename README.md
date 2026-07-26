@@ -491,7 +491,24 @@ serve:
 #     max_tokens: 4096
 #     max_entities_per_doc: 40
 #     max_relations_per_doc: 60
+#   resolve:                       # entity resolution (P3-3, opt-in)
+#     enabled: true                # default false — pairs with triples (see below)
+#     model: ""                    # default: models.extract, then models.summarize
+#     max_tokens: 4096
+#     max_block_size: 60           # candidates per arbitration call
+#     auto_apply_threshold: 0.85   # below this, a proposal waits for review
+#     max_token_df: 0.05           # ignore name tokens shared by >5% of a type
+#     min_token_df_floor: 20       # ...but never ignore one seen fewer than 20 times
+#     use_embeddings: false        # widen candidates to names sharing no tokens
+#     embed_threshold: 0.82
+#     max_embed_candidates: 500    # global per-run cap on embedding calls
 ```
+
+`resolve` and `triples` belong together. Auto-linking requires a description on
+at least one side of a pair, and triple extraction is the only compile-path
+writer of entity descriptions — so `resolve.enabled` on its own queues proposals
+for review rather than linking anything automatically. The pass warns once per
+run when it sees that combination.
 
 ### Multi-Provider Setup
 

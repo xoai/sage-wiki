@@ -106,11 +106,92 @@ types, and it skips a pattern whose target entity does not exist yet. Once
 triple extraction populates typed entities in Pass 2, some keyword edges that
 were previously skipped will start being created.
 
+## Entity resolution
+
+`ontology.resolve.enabled: true` adds a pass that links surface-form variants of
+one entity, so that "NASA" and "National Aeronautics and Space Administration"
+stop being two disconnected nodes with half the graph each.
+
+It **links; it does not collapse.** Both entity rows survive, and the canonical
+gains *copies* of the alias's edges — so traversal from the canonical sees the
+whole cluster while nothing is ever deleted. `sage-wiki ontology list` still
+shows both rows, and traversal from the alias still shows only its own edges.
+Collapsing into a single node needs alias-aware prune, reconcile and manifest
+handling first, and is deliberately left to a later cycle.
+
+### Pair it with triple extraction
+
+Auto-linking requires a description on at least one side of a pair. Triple
+extraction is the only compile-path writer of entity descriptions, so
+
+```yaml
+ontology:
+  triples:
+    enabled: true
+  resolve:
+    enabled: true
+```
+
+is the combination that links automatically. With `resolve` on and `triples`
+off, the pass still runs and still finds candidates, but every proposal is
+queued for review instead of applied — it will not link entities on name
+similarity alone. It warns once per run when it sees that.
+
+### Reviewing and deciding
+
+```
+sage-wiki ontology resolve --review              # list pending proposals
+sage-wiki ontology resolve --apply  <alias-id>   # apply one
+sage-wiki ontology resolve --reject <alias-id>   # reject; never re-proposed
+sage-wiki ontology resolve --sweep               # re-apply approved links (free)
+```
+
+A proposal goes to review rather than applying automatically when its confidence
+is below `auto_apply_threshold`, when the model flags one member as a strictly
+*broader* concept than the others, or when neither side has a description.
+Rejection is symmetric: rejecting A→B also blocks B→A, so re-rolling the
+direction cannot bypass your decision.
+
+### What it costs
+
+Only entities the current compile touched seed an arbitration call, and a new
+entity that matches nothing costs **zero** calls. Name tokens shared by more
+than `max_token_df` of a type are ignored for blocking, so a common word like
+"model" does not drag hundreds of entities into one call — with a floor
+(`min_token_df_floor`) so a genuinely rare name in a small vault is not
+discarded along with it.
+
+`use_embeddings: true` additionally catches names sharing no tokens at all
+("NYC" / "New York City"). It is off by default because the embedding API has no
+batch endpoint here: every vector is one HTTP call, vectors are held in memory
+for the pass and discarded, and each enabled compile re-embeds up to
+`max_embed_candidates` entities.
+
+### Things worth knowing
+
+- **A copied edge cites the alias's document.** Its `evidence` span and
+  `source_doc` are the alias's, carried over unchanged, so an edge on the
+  canonical may quote a document that never names the canonical. Copied edges
+  are identifiable by an `alias:` id prefix.
+- **A copy never overwrites the canonical's own assertion.** If the canonical
+  already asserts the same edge, its evidence and confidence are kept.
+- **The compile-path sweep only runs when there is something to compile.** Edges
+  added by reconcile, the MCP tools, trust promotion or scribe reach the
+  canonical on the next compile, or immediately via
+  `sage-wiki ontology resolve --sweep`.
+- **Pruning is partial for linked entities.** `--prune` removing an alias leaves
+  the copies it contributed on the canonical; removing a *canonical* takes its
+  copied edges with it, since relations cascade on entity delete.
+- **`source`-type entities are never resolved.** Their identity is their file
+  path, and two documents with the same basename would otherwise look identical.
+
 ### What it does not do yet
 
-- **Entity resolution.** "NASA" and "National Aeronautics and Space
-  Administration" remain separate nodes. Until that lands, surface-form variants
-  fracture the graph.
+- **Collapsing into one node.** Resolution links; both rows remain.
+- **Un-linking.** The alias table records every link, so one can be undone by
+  hand, but there is no single command for it yet.
+- **Alias-aware search.** A query for "Buzz" does not yet find canonical
+  "Buzz Aldrin" — that is graph-query work.
 - **Temporal validity.** The three temporal columns are stored and returned but
   nothing reads them; contradicting facts collide rather than invalidating each
   other.
