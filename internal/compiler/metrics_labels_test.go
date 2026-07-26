@@ -27,3 +27,16 @@ func TestTriplesPassDurationSeriesWithinInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Same contract for resolution (P3-3): without "resolve" in the closed
+// inventory the series ships out-of-inventory on /metrics, and ValidateLabels
+// only checks series that were actually registered — so nothing fails unless a
+// test registers this one.
+func TestResolvePassDurationSeriesWithinInventory(t *testing.T) {
+	metrics.ResetForTest()
+	metrics.ObserveDuration(metrics.HistogramNamed(
+		"compile_pass_duration_seconds", metrics.CompileBuckets(), "pass", "resolve"), time.Now())
+	if err := metrics.ValidateLabels(); err != nil {
+		t.Fatal(err)
+	}
+}

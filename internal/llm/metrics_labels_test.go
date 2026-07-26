@@ -45,3 +45,13 @@ func TestClientPassRoundTrips(t *testing.T) {
 		t.Errorf("after restore Pass() = %q, want \"extract\"", got)
 	}
 }
+
+// The "resolve" pass (P3-3) spends money, so its llm_tokens_total series must
+// be in the inventory or the feature is invisible in cost reporting.
+func TestResolvePassLabelWithinInventory(t *testing.T) {
+	metrics.ResetForTest()
+	NewCostTracker("anthropic", 0).Track("resolve", "m", Usage{InputTokens: 1, OutputTokens: 1}, false)
+	if err := metrics.ValidateLabels(); err != nil {
+		t.Fatal(err)
+	}
+}

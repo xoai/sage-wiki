@@ -337,7 +337,7 @@ func helpText(name string) string {
 // allowedLabelKV is the D3 cardinality inventory — the ONLY permitted
 // label keys and their permitted values.
 var allowedLabelKV = map[string]map[string]bool{
-	"pass":      {"summarize": true, "extract": true, "write": true, "triples": true},
+	"pass":      {"summarize": true, "extract": true, "write": true, "triples": true, "resolve": true},
 	"stage":     {"bm25": true, "vector": true, "rrf": true},
 	"direction": {"input": true, "output": true, "cached": true},
 	"cache":     {"doc": true, "chunk": true},
