@@ -256,8 +256,8 @@ func TestResolveCLIUsesBackendAgnosticSeam(t *testing.T) {
 	}
 	defer b.Close()
 
-	var _ store.Backend = b
-	var _ store.OntologyStore = ont
+	// openResolveStore's signature already guarantees the backend-agnostic
+	// types; what needs asserting is that the handle is WRITABLE.
 	// Writer mode is mandatory: --apply and --sweep write, and a reader handle
 	// fails every write path.
 	if err := ont.PutAlias(store.EntityAlias{

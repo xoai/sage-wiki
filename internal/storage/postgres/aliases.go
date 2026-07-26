@@ -217,14 +217,18 @@ func (s *ontologyStore) LinkAlias(a store.EntityAlias) (store.LinkResult, error)
 			return nil
 		}
 
-		rows, err := tx.Query(
-			"SELECT "+relationCols+" FROM relations WHERE source_id=$1 OR target_id=$1",
-			a.Alias)
-		if err != nil {
-			return err
-		}
-		edges, err := scanRelations(rows)
-		rows.Close()
+		// Scoped so the cursor is released before the INSERT loop below runs on
+		// the same transaction, while still closing via defer.
+		edges, err := func() ([]store.Relation, error) {
+			rows, err := tx.Query(
+				"SELECT "+relationCols+" FROM relations WHERE source_id=$1 OR target_id=$1",
+				a.Alias)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+			return scanRelations(rows)
+		}()
 		if err != nil {
 			return err
 		}
