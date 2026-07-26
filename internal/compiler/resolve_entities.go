@@ -1,13 +1,16 @@
 package compiler
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"unicode"
 
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/llm"
+	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
 // Claude-driven entity resolution (P3-3, GRAPH-03).
@@ -320,4 +323,154 @@ func normalizeClusters(raw []resolvedCluster, labels map[string]store.Entity) []
 		})
 	}
 	return out
+}
+
+// resolveBlock is one arbitration unit: a touched seed plus the pool entities
+// that might denote the same thing.
+//
+// Blocks are SEED-CENTRIC, not connected components. Every block therefore
+// contains at least one touched entity, so no call is ever spent on a group
+// that cannot produce a link. Two blocks may overlap; the pass resolves that
+// with a per-run proposed set, which is far cheaper than making them disjoint
+// and avoids the giant-component problem a shared token like "model" creates.
+type resolveBlock struct {
+	seed    store.Entity
+	members []store.Entity          // seed + candidates, sorted by id
+	labels  map[string]store.Entity // opaque label -> entity
+}
+
+// buildBlocks groups each touched entity with its same-type candidates.
+//
+// A candidate qualifies on any of: a shared discriminating token, an equal
+// normalized full form, or — when embeddings are on — cosine >= threshold.
+// Pairs `rejected` returns true for contribute nothing: re-offering a pair a
+// human separated wastes a call and risks re-linking it.
+//
+// vecs may be nil (embeddings off, or the embedder failed); the lexical signals
+// stand on their own.
+func buildBlocks(
+	touched, pool []store.Entity,
+	tokens map[string]bool,
+	vecs map[string][]float32,
+	cfg config.ResolveConfig,
+	rejected func(a, b string) bool,
+) []resolveBlock {
+	byType := map[string][]store.Entity{}
+	for _, e := range pool {
+		byType[e.Type] = append(byType[e.Type], e)
+	}
+
+	// Precompute once per pool entity rather than per (seed, candidate) pair.
+	norm := make(map[string][]string, len(pool))
+	full := make(map[string]string, len(pool))
+	for _, e := range pool {
+		toks := normalizeNameTokens(e.Name)
+		norm[e.ID] = toks
+		full[e.ID] = strings.Join(toks, " ")
+	}
+
+	seeds := append([]store.Entity(nil), touched...)
+	sort.Slice(seeds, func(i, j int) bool { return seeds[i].ID < seeds[j].ID })
+
+	var blocks []resolveBlock
+	for _, seed := range seeds {
+		var candidates []store.Entity
+		for _, c := range byType[seed.Type] {
+			if c.ID == seed.ID || rejected(seed.ID, c.ID) {
+				continue
+			}
+			if candidateMatches(seed, c, norm, full, tokens, vecs, cfg) {
+				candidates = append(candidates, c)
+			}
+		}
+		// Nothing to arbitrate: this is the incremental-cost property — a new,
+		// unambiguous entity costs zero LLM calls.
+		if len(candidates) == 0 {
+			continue
+		}
+
+		sort.Slice(candidates, func(i, j int) bool { return candidates[i].ID < candidates[j].ID })
+		if cap := cfg.MaxBlockSize - 1; len(candidates) > cap {
+			log.Warn("resolve: candidate cap reached, dropping the tail",
+				"seed", seed.ID, "kept", cap, "dropped", len(candidates)-cap)
+			candidates = candidates[:cap]
+		}
+
+		members := append([]store.Entity{seed}, candidates...)
+		sort.Slice(members, func(i, j int) bool { return members[i].ID < members[j].ID })
+
+		labels := make(map[string]store.Entity, len(members))
+		for i, m := range members {
+			labels[fmt.Sprintf("E%d", i+1)] = m
+		}
+		blocks = append(blocks, resolveBlock{seed: seed, members: members, labels: labels})
+	}
+	return blocks
+}
+
+func candidateMatches(
+	seed, c store.Entity,
+	norm map[string][]string,
+	full map[string]string,
+	tokens map[string]bool,
+	vecs map[string][]float32,
+	cfg config.ResolveConfig,
+) bool {
+	if f := full[seed.ID]; f != "" && f == full[c.ID] {
+		return true
+	}
+	for _, t := range norm[seed.ID] {
+		if !tokens[t] {
+			continue
+		}
+		for _, u := range norm[c.ID] {
+			if t == u {
+				return true
+			}
+		}
+	}
+	if !cfg.UseEmbeddings || vecs == nil {
+		return false
+	}
+	a, b := vecs[seed.ID], vecs[c.ID]
+	// A dimension mismatch is realistic mid-run (an embedder or model swap) and
+	// must skip the pair, never panic on a short slice.
+	if len(a) == 0 || len(b) == 0 || len(a) != len(b) {
+		return false
+	}
+	return vectors.CosineSimilarity(a, b) >= cfg.EmbedThreshold
+}
+
+// renderBlockMembers formats a block for the prompt.
+//
+// Labels and display names only — never an id. The model must not learn or echo
+// ids: Entity.ID != Entity.Name, two rows can share a Name, and a label keeps
+// the mapping back to entities total and unambiguous.
+func renderBlockMembers(b resolveBlock) string {
+	labels := make([]string, 0, len(b.labels))
+	for l := range b.labels {
+		labels = append(labels, l)
+	}
+	sort.Slice(labels, func(i, j int) bool { return labelIndex(labels[i]) < labelIndex(labels[j]) })
+
+	var sb strings.Builder
+	for _, l := range labels {
+		e := b.labels[l]
+		desc := strings.TrimSpace(e.Definition)
+		if desc == "" {
+			desc = "(none)"
+		}
+		fmt.Fprintf(&sb, "%s  name: %s  type: %s  desc: %s\n", l, e.Name, e.Type, desc)
+	}
+	return sb.String()
+}
+
+func labelIndex(label string) int {
+	n := 0
+	for _, r := range label {
+		if r >= '0' && r <= '9' {
+			n = n*10 + int(r-'0')
+		}
+	}
+	return n
 }

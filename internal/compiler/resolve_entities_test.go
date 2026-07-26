@@ -3,6 +3,8 @@ package compiler
 import (
 	"fmt"
 	"reflect"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/xoai/sage-wiki/internal/config"
@@ -290,5 +292,204 @@ func TestNormalizeClustersClampsConfidence(t *testing.T) {
 	}, labels)
 	if len(got) != 1 || got[0].confidence != 1 {
 		t.Errorf("confidence = %v, want clamped to 1", got)
+	}
+}
+
+// --- blocking ---
+
+func idsOf(es []store.Entity) []string {
+	var out []string
+	for _, e := range es {
+		out = append(out, e.ID)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func noneRejected(string, string) bool { return false }
+
+// Blocks are seeded ONLY by touched entities. A block with no touched entity
+// cannot produce a link by construction, so spending an arbitration call on it
+// is pure waste — and with token blocking over a large vault, most candidate
+// groups are exactly that.
+func TestBuildBlocksSeededByTouchedOnly(t *testing.T) {
+	pool := []store.Entity{
+		ent("buzz-aldrin", "Buzz Aldrin", "", "wiki/buzz.md", "2026-01-01T00:00:00Z"),
+		ent("Edwin Aldrin", "Edwin Aldrin", "an astronaut", "", "2026-02-01T00:00:00Z"),
+		ent("neil-armstrong", "Neil Armstrong", "", "", "2026-01-01T00:00:00Z"),
+		ent("armstrong-musician", "Armstrong Musician", "", "", "2026-01-01T00:00:00Z"),
+	}
+	touched := []store.Entity{pool[1]} // only "Edwin Aldrin" was touched
+	tokens := discriminatingTokens(pool, defaultResolveMaxTokenDF, defaultResolveMinTokenDFFloor)
+	cfg := applyResolveDefaults(config.ResolveConfig{})
+
+	blocks := buildBlocks(touched, pool, tokens, nil, cfg, noneRejected)
+
+	if len(blocks) != 1 {
+		t.Fatalf("blocks = %d, want 1 (one touched seed)", len(blocks))
+	}
+	got := idsOf(blocks[0].members)
+	want := []string{"Edwin Aldrin", "buzz-aldrin"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("block members = %v, want %v", got, want)
+	}
+	// The two Armstrongs share a token with each other but neither is touched,
+	// so no call is spent on them.
+	for _, b := range blocks {
+		for _, m := range b.members {
+			if strings.Contains(m.ID, "armstrong") {
+				t.Errorf("untouched-only group %q was blocked", m.ID)
+			}
+		}
+	}
+}
+
+// A new entity that matches nothing costs ZERO arbitration calls. This is the
+// incremental-cost property the whole design rests on.
+func TestBuildBlocksSkipsSeedWithNoCandidates(t *testing.T) {
+	pool := []store.Entity{
+		ent("unique-thing", "Unique Thing", "", "", ""),
+		ent("other", "Completely Different", "", "", ""),
+	}
+	tokens := discriminatingTokens(pool, defaultResolveMaxTokenDF, defaultResolveMinTokenDFFloor)
+	cfg := applyResolveDefaults(config.ResolveConfig{})
+
+	blocks := buildBlocks([]store.Entity{pool[0]}, pool, tokens, nil, cfg, noneRejected)
+	if len(blocks) != 0 {
+		t.Errorf("blocks = %d, want 0 — an unmatched entity must cost no LLM call", len(blocks))
+	}
+}
+
+func TestBuildBlocksRespectsMaxBlockSize(t *testing.T) {
+	var pool []store.Entity
+	for i := 0; i < 200; i++ {
+		pool = append(pool, ent(fmt.Sprintf("aldrin-%d", i), fmt.Sprintf("Aldrin %d", i), "", "", ""))
+	}
+	cfg := applyResolveDefaults(config.ResolveConfig{MaxBlockSize: 10})
+	// Force "aldrin" to count as discriminating so the block would be huge.
+	tokens := map[string]bool{"aldrin": true}
+
+	blocks := buildBlocks([]store.Entity{pool[0]}, pool, tokens, nil, cfg, noneRejected)
+	if len(blocks) != 1 {
+		t.Fatalf("blocks = %d, want 1", len(blocks))
+	}
+	if len(blocks[0].members) > 10 {
+		t.Errorf("block size = %d, want <= 10", len(blocks[0].members))
+	}
+	// The seed must survive its own truncation.
+	found := false
+	for _, m := range blocks[0].members {
+		if m.ID == pool[0].ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the seed was truncated out of its own block")
+	}
+}
+
+// A rejected pair must not even be offered to the model — re-proposing it wastes
+// a call and risks re-linking what a human separated.
+func TestBuildBlocksExcludesRejectedPairs(t *testing.T) {
+	pool := []store.Entity{
+		ent("armstrong-astronaut", "Neil Armstrong", "", "", ""),
+		ent("armstrong-musician", "Louis Armstrong", "", "", ""),
+	}
+	tokens := map[string]bool{"armstrong": true, "neil": true, "louis": true}
+	cfg := applyResolveDefaults(config.ResolveConfig{})
+
+	rejected := func(a, b string) bool {
+		return (a == "armstrong-astronaut" && b == "armstrong-musician") ||
+			(a == "armstrong-musician" && b == "armstrong-astronaut")
+	}
+	blocks := buildBlocks([]store.Entity{pool[0]}, pool, tokens, nil, cfg, rejected)
+	if len(blocks) != 0 {
+		t.Errorf("blocks = %d, want 0 — the only candidate is a rejected pair", len(blocks))
+	}
+}
+
+// Embeddings widen recall to names sharing no tokens at all, which is the whole
+// reason the signal exists.
+func TestBuildBlocksEmbeddingAddsTokenlessCandidate(t *testing.T) {
+	pool := []store.Entity{
+		ent("nyc", "NYC", "", "", ""),
+		ent("new-york-city", "New York City", "", "", ""),
+	}
+	tokens := discriminatingTokens(pool, defaultResolveMaxTokenDF, defaultResolveMinTokenDFFloor)
+	cfg := applyResolveDefaults(config.ResolveConfig{UseEmbeddings: true})
+
+	// No shared tokens: lexical blocking alone finds nothing.
+	if blocks := buildBlocks([]store.Entity{pool[0]}, pool, tokens, nil, cfg, noneRejected); len(blocks) != 0 {
+		t.Fatalf("lexical blocking unexpectedly matched: %d blocks", len(blocks))
+	}
+
+	vecs := map[string][]float32{
+		"nyc":           {1, 0, 0},
+		"new-york-city": {0.99, 0.14, 0},
+	}
+	blocks := buildBlocks([]store.Entity{pool[0]}, pool, tokens, vecs, cfg, noneRejected)
+	if len(blocks) != 1 {
+		t.Fatalf("blocks = %d, want 1 (cosine above threshold)", len(blocks))
+	}
+	if got := idsOf(blocks[0].members); !reflect.DeepEqual(got, []string{"new-york-city", "nyc"}) {
+		t.Errorf("members = %v", got)
+	}
+}
+
+// A dimension mismatch skips the pair rather than panicking — an embedder swap
+// mid-run is the realistic trigger.
+func TestBuildBlocksEmbeddingDimensionMismatchSkips(t *testing.T) {
+	pool := []store.Entity{
+		ent("nyc", "NYC", "", "", ""),
+		ent("new-york-city", "New York City", "", "", ""),
+	}
+	cfg := applyResolveDefaults(config.ResolveConfig{UseEmbeddings: true})
+	vecs := map[string][]float32{
+		"nyc":           {1, 0, 0},
+		"new-york-city": {1, 0}, // different dimension
+	}
+	blocks := buildBlocks([]store.Entity{pool[0]}, pool, map[string]bool{}, vecs, cfg, noneRejected)
+	if len(blocks) != 0 {
+		t.Errorf("blocks = %d, want 0 — a dimension mismatch must skip, not match", len(blocks))
+	}
+}
+
+// Labels are what the model sees. They must cover every member and map back
+// uniquely, because Entity.ID != Entity.Name and two rows can share a Name.
+func TestBlockLabelsAreTotalAndUnique(t *testing.T) {
+	pool := []store.Entity{
+		ent("a", "Shared Name", "", "", ""),
+		ent("b", "Shared Name", "", "", ""),
+	}
+	tokens := map[string]bool{"shared": true, "name": true}
+	cfg := applyResolveDefaults(config.ResolveConfig{})
+
+	blocks := buildBlocks([]store.Entity{pool[0]}, pool, tokens, nil, cfg, noneRejected)
+	if len(blocks) != 1 {
+		t.Fatalf("blocks = %d, want 1", len(blocks))
+	}
+	b := blocks[0]
+	if len(b.labels) != len(b.members) {
+		t.Fatalf("labels = %d, members = %d; the mapping must be total",
+			len(b.labels), len(b.members))
+	}
+	seen := map[string]bool{}
+	for label, e := range b.labels {
+		if seen[e.ID] {
+			t.Errorf("entity %q has two labels", e.ID)
+		}
+		seen[e.ID] = true
+		if !strings.HasPrefix(label, "E") {
+			t.Errorf("label %q is not opaque", label)
+		}
+	}
+
+	// The rendered block must carry the labels and names but never an id — ids
+	// are what the model must not echo back.
+	rendered := renderBlockMembers(b)
+	for _, want := range []string{"E1", "E2", "Shared Name"} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("rendered block missing %q:\n%s", want, rendered)
+		}
 	}
 }
