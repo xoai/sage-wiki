@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -184,9 +185,8 @@ func resolveApply(ont store.OntologyStore, alias string) error {
 	}
 	if conflict != "" {
 		return cli.CLIError(outputFormat, fmt.Errorf(
-			"cannot link %q into %q: %q already resolves there, and you rejected %q and %q "+
-				"as different entities — linking would reunite them",
-			row.Alias, row.CanonicalID, conflict, row.Alias, conflict))
+			"cannot link %q into %q — %s. Linking would settle a pair you own",
+			row.Alias, row.CanonicalID, conflict))
 	}
 
 	row.Status = store.AliasApplied
@@ -245,12 +245,19 @@ func resolveReject(ont store.OntologyStore, alias string) error {
 		return cli.CLIError(outputFormat, err)
 	}
 	alsoRejected := false
-	if reverse != nil && reverse.CanonicalID == row.Alias && reverse.Status == store.AliasApplied {
+	// Applied OR pending. Clearing only the applied case leaves an unapplicable
+	// pending row behind: --review lists it forever, --apply always errors
+	// (the pair is now rejected), and its active status freezes the alias out of
+	// resolution — leaving --reject on the other half, recording a judgement the
+	// user never made, as the only escape.
+	if reverse != nil && reverse.CanonicalID == row.Alias {
 		if err := ont.SetAliasStatus(reverse.Alias, reverse.CanonicalID, store.AliasRejected, "user"); err != nil {
 			return cli.CLIError(outputFormat, err)
 		}
 		alsoRejected = true
-		wasApplied = true
+		if reverse.Status == store.AliasApplied {
+			wasApplied = true
+		}
 	}
 	if outputFormat == "json" {
 		payload := map[string]any{
@@ -265,7 +272,7 @@ func resolveReject(ont store.OntologyStore, alias string) error {
 	fmt.Printf("Rejected %s → %s. This pair will not be proposed again, in either direction.\n",
 		row.Alias, row.CanonicalID)
 	if alsoRejected {
-		fmt.Printf("Also rejected the applied link %s → %s, which pointed the other way.\n",
+		fmt.Printf("Also rejected %s → %s, the row pointing the other way.\n",
 			row.CanonicalID, row.Alias)
 	}
 	if wasApplied {
@@ -286,39 +293,28 @@ func resolveReject(ont store.OntologyStore, alias string) error {
 // edges added by reconcile, MCP, trust promotion or scribe do not reach the
 // canonical until the next compile — or until this runs.
 func resolveSweep(ont store.OntologyStore) error {
-	rows, err := ont.ListAliases(store.AliasApplied)
-	if err != nil {
-		return cli.CLIError(outputFormat, err)
-	}
-	jsonOut := outputFormat == "json"
-	copied, skipped, missing, failed := 0, 0, 0, 0
-	for _, a := range rows {
-		res, err := ont.LinkAlias(a)
-		if err != nil {
-			failed++
-			if !jsonOut {
-				fmt.Printf("  ! %s → %s: %v\n", a.Alias, a.CanonicalID, err)
-			}
-			continue
-		}
-		if res.AliasMissing || res.CanonicalMissing {
-			missing++
-			if !jsonOut {
-				fmt.Printf("  · %s → %s: endpoint missing (link retained)\n", a.Alias, a.CanonicalID)
-			}
-			continue
-		}
-		copied += res.Copied
-		skipped += res.Skipped
-	}
-	if jsonOut {
+	// Delegates to the compile pass's implementation rather than repeating it.
+	// A second copy here is exactly how the rejection filter came to exist on
+	// the compile path and not on the command the guide recommends as the
+	// remedy — while --reject printed a promise that copy broke.
+	res := compiler.SweepAliases(context.Background(), ont)
+
+	if outputFormat == "json" {
 		fmt.Println(cli.FormatJSON(true, map[string]int{
-			"links": len(rows), "copied": copied, "already_present": skipped,
-			"endpoint_missing": missing, "failed": failed,
+			"links": res.Rows, "copied": res.Copied,
+			"already_present":  res.AlreadyPresent,
+			"endpoint_missing": res.EndpointMissing,
+			"failed":           res.Failed, "rejected_skipped": res.RejectedSkipped,
 		}, ""))
-		return nil
+	} else {
+		fmt.Printf("Swept %d link(s): %d edge(s) copied, %d already present, "+
+			"%d with a missing endpoint, %d skipped as rejected, %d failed.\n",
+			res.Rows, res.Copied, res.AlreadyPresent, res.EndpointMissing,
+			res.RejectedSkipped, res.Failed)
 	}
-	fmt.Printf("Swept %d link(s): %d edge(s) copied, %d already present, %d with a missing endpoint, %d failed.\n",
-		len(rows), copied, skipped, missing, failed)
+	if res.Failed > 0 {
+		// A scripted sweep must be able to detect breakage from the exit code.
+		return cli.CLIError(outputFormat, fmt.Errorf("%d link(s) failed to sweep", res.Failed))
+	}
 	return nil
 }

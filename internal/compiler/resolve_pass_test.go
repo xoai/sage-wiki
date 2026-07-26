@@ -1026,3 +1026,80 @@ func TestResolvePassDoesNotCreateACycle(t *testing.T) {
 		}
 	}
 }
+
+// GATE-3 R6 CRITICAL 1. The pending gate checked only the DIRECT pair while the
+// rejection gate beside it does the cluster cross product. A pending A->B is
+// therefore consummated transitively by linking a third entity into the same
+// component.
+func TestResolvePassPendingPairNotConsummatedTransitively(t *testing.T) {
+	srv, _, _ := resolveServer(t, twoMemberCluster)
+	ont := passStore(t)
+	addEnt(t, ont, "A", "Buzz Aldrin", "an astronaut", "wiki/a.md")
+	addEnt(t, ont, "B", "Buzz Aldrin", "an astronaut", "")
+	addEnt(t, ont, "T", "Buzz Aldrin", "an astronaut", "")
+	addEnt(t, ont, "edge-tgt", "Apollo", "", "")
+	if err := ont.AddRelation(ontology.Relation{
+		ID: "r", SourceID: "B", TargetID: "edge-tgt",
+		Relation: ontology.RelExtends, Confidence: 0.7}); err != nil {
+		t.Fatal(err)
+	}
+	// B is already absorbed into T.
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "B", CanonicalID: "T", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A <-> B is awaiting a human.
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "A", CanonicalID: "B", EntityType: ontology.TypeConcept,
+		Status: store.AliasPending, Confidence: 0.9, Source: "llm",
+		CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed T: cluster {T, A}. The direct pair (T, A) is not the pending pair,
+	// but B sits in T's component, so linking T -> A merges A with B.
+	ResolveEntitiesPass(context.Background(), ont,
+		[]string{"T"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+
+	applied, _ := ont.ListAliases(store.AliasApplied)
+	for _, r := range applied {
+		if r.Alias == "T" && r.CanonicalID == "A" {
+			t.Errorf("linked T -> A, merging A with B transitively while A -> B is "+
+				"still awaiting human review: %+v", r)
+		}
+	}
+}
+
+// GATE-3 R6 CRITICAL 2. The snapshot is loaded once per pass, but round 5 made
+// it depend on PENDING rows — which the pass itself writes. A pair queued by an
+// early block is invisible to a later block in the same run.
+func TestResolvePassPendingWrittenThisRunIsHonoured(t *testing.T) {
+	// Two blocks: the first queues a pending pair, the second must see it.
+	const perBlock = `{"clusters":[
+	  {"members":["E1","E2"],"same_referent":true,"broader":false,
+	   "confidence":0.50,"reason":"unsure"}]}`
+	srv, _, _ := resolveServer(t, perBlock)
+	ont := passStore(t)
+	// No descriptions -> confidence 0.5 is below threshold -> pending.
+	addEnt(t, ont, "a-row", "Buzz Aldrin", "", "wiki/a.md")
+	addEnt(t, ont, "b-row", "Buzz Aldrin", "", "wiki/b.md")
+
+	ResolveEntitiesPass(context.Background(), ont,
+		[]string{"a-row", "b-row"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+
+	pending, _ := ont.ListAliases(store.AliasPending)
+	applied, _ := ont.ListAliases(store.AliasApplied)
+	// The same pair must not be both queued for review and linked in one run.
+	for _, p := range pending {
+		for _, a := range applied {
+			if (p.Alias == a.Alias && p.CanonicalID == a.CanonicalID) ||
+				(p.Alias == a.CanonicalID && p.CanonicalID == a.Alias) {
+				t.Errorf("pair %s/%s is both pending and applied after one run",
+					p.Alias, p.CanonicalID)
+			}
+		}
+	}
+}

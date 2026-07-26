@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"sort"
@@ -554,12 +555,12 @@ func TestCoAbsorptionSeesThroughMultipleHops(t *testing.T) {
 	g := graphOf([2]string{"x", "y"}, [2]string{"y", "z"})
 	rej := rejectionsOf([2]string{"a", "x"})
 
-	if got := coAbsorptionConflict(g, rej, "a", "z"); got == "" {
+	if got := pairConflict(g, rej, "a", "z"); got == "" {
 		t.Error("linking a -> z was allowed although x, which the user separated " +
 			"from a, resolves to z through two hops")
 	}
 	// An unrelated rejection must not block.
-	if got := coAbsorptionConflict(g, rejectionsOf([2]string{"p", "q"}), "a", "z"); got != "" {
+	if got := pairConflict(g, rejectionsOf([2]string{"p", "q"}), "a", "z"); got != "" {
 		t.Errorf("false positive: %q", got)
 	}
 }
@@ -572,7 +573,7 @@ func TestCoAbsorptionSeesTheAliasSideCluster(t *testing.T) {
 	g := graphOf([2]string{"x", "a"})
 	rej := rejectionsOf([2]string{"x", "t"})
 
-	if got := coAbsorptionConflict(g, rej, "a", "t"); got == "" {
+	if got := pairConflict(g, rej, "a", "t"); got == "" {
 		t.Error("linking a -> t was allowed although x resolves to a and the user " +
 			"separated x from t; linking drags x under t as well")
 	}
@@ -586,7 +587,7 @@ func TestCoAbsorptionCrossProductBothSides(t *testing.T) {
 	)
 	rej := rejectionsOf([2]string{"m1", "l1"})
 
-	if got := coAbsorptionConflict(g, rej, "alias", "target"); got == "" {
+	if got := pairConflict(g, rej, "alias", "target"); got == "" {
 		t.Error("a rejection between the deepest member of each side was missed")
 	}
 }
@@ -658,4 +659,110 @@ func TestAliasGraphClusterIsCycleProof(t *testing.T) {
 			t.Errorf("cluster(b) missing %q on a cycle: %v", want, got)
 		}
 	}
+}
+
+// GATE-3 R6. The pending gate must be the CROSS PRODUCT, like the rejection
+// gate beside it. A direct-pair check lets a pending A/B be settled by linking a
+// third entity that unifies them transitively.
+func TestPairConflictAwaitingIsTransitive(t *testing.T) {
+	// B already resolves to T; A/B is awaiting a human.
+	g := graphOf([2]string{"B", "T"})
+	rej := &rejectionIndex{
+		partners: map[string]map[string]bool{},
+		awaiting: map[string]map[string]bool{},
+	}
+	rej.markAwaiting("A", "B")
+
+	if got := pairConflict(g, rej, "T", "A"); got == "" {
+		t.Error("linking T -> A was allowed although B resolves to T and A/B is " +
+			"awaiting review — the link settles that pair transitively")
+	}
+	// An unrelated pending pair must not block.
+	clean := &rejectionIndex{
+		partners: map[string]map[string]bool{},
+		awaiting: map[string]map[string]bool{},
+	}
+	clean.markAwaiting("P", "Q")
+	if got := pairConflict(g, clean, "T", "A"); got != "" {
+		t.Errorf("false positive on an unrelated pending pair: %q", got)
+	}
+}
+
+// The pair a human is settling must not block itself, or every proposal becomes
+// permanently unapplicable — but a REJECTION of that same pair still blocks,
+// because that is a decision rather than a question.
+func TestPairConflictExceptIgnoresOnlyTheSettledPair(t *testing.T) {
+	g := graphOf()
+	rej := &rejectionIndex{
+		partners: map[string]map[string]bool{},
+		awaiting: map[string]map[string]bool{},
+	}
+	rej.markAwaiting("A", "B")
+
+	if got := pairConflictExcept(g, rej, "A", "B", "A", "B"); got != "" {
+		t.Errorf("the pair being settled blocked itself: %q", got)
+	}
+	rej.mark("A", "B")
+	rej.mark("B", "A")
+	if got := pairConflictExcept(g, rej, "A", "B", "A", "B"); got == "" {
+		t.Error("a REJECTED pair must still block even when it is the pair being settled")
+	}
+}
+
+// The snapshot must stay fresh: the pass writes pending rows, so a pair queued
+// by an early block has to be visible to a later one.
+func TestRejectionIndexMarkAwaitingIsSymmetricAndLive(t *testing.T) {
+	rej := &rejectionIndex{
+		partners: map[string]map[string]bool{},
+		awaiting: map[string]map[string]bool{},
+	}
+	if rej.awaitingReview("A", "B") {
+		t.Fatal("empty index reported an awaiting pair")
+	}
+	rej.markAwaiting("A", "B")
+	if !rej.awaitingReview("A", "B") || !rej.awaitingReview("B", "A") {
+		t.Error("markAwaiting must record the pair in both directions")
+	}
+}
+
+// Seeds must be embedded before pool candidates, or a seed whose id sorts past
+// the cap gets no vector and its entire embedding spend buys nothing.
+func TestEmbedForBlockingPrioritisesSeeds(t *testing.T) {
+	seed := ent("zzz-seed", "Zzz Seed", "", "", "")
+	var pool []store.Entity
+	for i := 0; i < 5; i++ {
+		pool = append(pool, ent(fmt.Sprintf("a%d", i), fmt.Sprintf("A %d", i), "", "", ""))
+	}
+	cfg := applyResolveDefaults(config.ResolveConfig{
+		UseEmbeddings: true, MaxEmbedCandidates: 3,
+	})
+	emb := &seedFirstEmbedder{}
+
+	vecs := embedForBlocking(context.Background(), emb, []store.Entity{seed}, pool, cfg)
+
+	if _, ok := vecs["zzz-seed"]; !ok {
+		t.Errorf("the seed was truncated out of the embed set by the cap; "+
+			"every one of its pairs now fails the cosine test. embedded: %v", keysOf(vecs))
+	}
+	if len(vecs) > 3 {
+		t.Errorf("embedded %d, want <= the cap of 3", len(vecs))
+	}
+}
+
+type seedFirstEmbedder struct{ n int }
+
+func (c *seedFirstEmbedder) Embed(string) ([]float32, error) {
+	c.n++
+	return []float32{1, 0, 0}, nil
+}
+func (c *seedFirstEmbedder) Dimensions() int { return 3 }
+func (c *seedFirstEmbedder) Name() string    { return "seed-first" }
+
+func keysOf(m map[string][]float32) []string {
+	var out []string
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

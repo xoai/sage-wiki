@@ -479,3 +479,59 @@ func TestResolveCLIRejectAlsoClearsTheReverseAppliedLink(t *testing.T) {
 		}
 	}
 }
+
+// GATE-3 R6. --reject must clear the reverse row whether it is applied OR
+// pending. Clearing only the applied case leaves an unapplicable pending row:
+// --review lists it forever, --apply always errors (the pair is now rejected),
+// and its active status freezes the alias out of resolution — leaving --reject
+// on the other half, a judgement the user never made, as the only escape.
+func TestResolveCLIRejectAlsoClearsAPendingReverseRow(t *testing.T) {
+	dir := resolveVault(t, "config.yaml")
+	withProject(t, dir, "config.yaml")
+
+	b, ont, err := openResolveStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"A", "B"} {
+		if err := ont.AddEntity(store.Entity{ID: id, Type: ontology.TypeConcept, Name: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Applied A -> B, and a PENDING B -> A still queued the other way.
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "A", CanonicalID: "B", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "B", CanonicalID: "A", EntityType: ontology.TypeConcept,
+		Status: store.AliasPending, Confidence: 0.9, Source: "llm",
+		CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	b.Close()
+
+	if err := runResolve(t, map[string]string{"reject": "A"}); err != nil {
+		t.Fatalf("--reject: %v", err)
+	}
+
+	b2, ont2, err := openResolveStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b2.Close()
+
+	pending, _ := ont2.ListAliases(store.AliasPending)
+	for _, r := range pending {
+		if r.Alias == "B" && r.CanonicalID == "A" {
+			t.Error("a PENDING reverse row survived the rejection: it can never be " +
+				"applied, and its active status freezes B out of resolution")
+		}
+	}
+	if act, _ := ont2.GetActiveAlias("B"); act != nil {
+		t.Errorf("B still carries an active row after the pair was rejected: %+v", act)
+	}
+}

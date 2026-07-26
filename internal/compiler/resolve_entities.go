@@ -689,14 +689,27 @@ type resolveStats struct {
 //
 // Ungated on purpose (see ResolveEntitiesPass). For anyone who never enabled
 // resolution this is one indexed query returning nothing.
-func sweepAliases(ctx context.Context, ont store.OntologyStore) {
+// SweepAliases re-applies every approved link, skipping any pair the user has
+// since rejected. Exported so `ontology resolve --sweep` runs the identical
+// logic as the compile pass — the CLI having its own copy is how the rejection
+// filter came to exist on one path and not the other.
+func SweepAliases(ctx context.Context, ont store.OntologyStore) SweepResult {
+	return sweepAliases(ctx, ont)
+}
+
+// SweepResult reports what a sweep did.
+type SweepResult struct {
+	Rows, Copied, AlreadyPresent, EndpointMissing, Failed, RejectedSkipped int
+}
+
+func sweepAliases(ctx context.Context, ont store.OntologyStore) SweepResult {
 	rows, err := ont.ListAliases(store.AliasApplied)
 	if err != nil {
 		log.Warn("resolve: alias sweep skipped, list failed", "error", err)
-		return
+		return SweepResult{}
 	}
 	if len(rows) == 0 {
-		return
+		return SweepResult{}
 	}
 	// A user can reject a pair whose applied row still exists — --reject on a
 	// PENDING row does not remove an applied row in the reverse direction. The
@@ -706,9 +719,11 @@ func sweepAliases(ctx context.Context, ont store.OntologyStore) {
 	if err != nil {
 		log.Warn("resolve: alias sweep skipped, cannot read rejections "+
 			"(sweeping without them could re-copy across a rejected pair)", "error", err)
-		return
+		return SweepResult{}
 	}
+	res := SweepResult{Rows: len(rows)}
 	copied, missing, failed, blocked := 0, 0, 0, 0
+	skippedPresent := 0
 	for i, a := range rows {
 		if rej.is(a.Alias, a.CanonicalID) {
 			blocked++
@@ -723,7 +738,7 @@ func sweepAliases(ctx context.Context, ont store.OntologyStore) {
 			log.Warn("resolve: alias sweep cancelled", "done", i, "remaining", len(rows)-i)
 			break
 		}
-		res, err := ont.LinkAlias(a)
+		r, err := ont.LinkAlias(a)
 		if err != nil {
 			failed++
 			log.Warn("resolve: sweep re-link failed", "alias", a.Alias, "canonical", a.CanonicalID, "error", err)
@@ -732,17 +747,21 @@ func sweepAliases(ctx context.Context, ont store.OntologyStore) {
 		// A pruned endpoint is a fact, not a failure: --prune and reconcile
 		// delete entities without consulting the alias table. The row stays, so
 		// the link is still actionable if the entity returns.
-		if res.AliasMissing || res.CanonicalMissing {
+		if r.AliasMissing || r.CanonicalMissing {
 			missing++
 			continue
 		}
-		copied += res.Copied
+		copied += r.Copied
+		skippedPresent += r.Skipped
 	}
 	if missing > 0 || failed > 0 || copied > 0 || blocked > 0 {
 		log.Info("resolve: alias sweep", "rows", len(rows),
 			"edges_copied", copied, "endpoint_missing", missing, "failed", failed,
 			"rejected_skipped", blocked)
 	}
+	res.Copied, res.AlreadyPresent = copied, skippedPresent
+	res.EndpointMissing, res.Failed, res.RejectedSkipped = missing, failed, blocked
+	return res
 }
 
 // resolvableSeeds narrows the touched set to entities worth arbitrating and
@@ -889,6 +908,13 @@ func mark(m map[string]map[string]bool, a, b string) {
 // either direction.
 func (r *rejectionIndex) awaitingReview(a, b string) bool { return r.awaiting[a][b] }
 
+// markAwaiting records a pending pair created during this run, keeping the
+// snapshot fresh for later blocks.
+func (r *rejectionIndex) markAwaiting(a, b string) {
+	mark(r.awaiting, a, b)
+	mark(r.awaiting, b, a)
+}
+
 func (r *rejectionIndex) mark(a, b string) { mark(r.partners, a, b) }
 
 func (r *rejectionIndex) is(a, b string) bool { return r.partners[a][b] }
@@ -992,28 +1018,51 @@ func (g *aliasGraph) cluster(id string) []string {
 	return out
 }
 
-// coAbsorptionConflict reports a rejected pair that linking alias -> target
-// would reunite, as "a / b", or "".
+// pairConflict reports why linking alias -> target must not happen, or "".
 //
-// The check is the CROSS PRODUCT of both transitive clusters, not alias against
-// target's cluster. Linking does not move one entity: everything already
-// resolving to `alias` follows it under `target`. Checking only
-// {alias} x cluster(target) misses a rejection between one of the alias's own
-// dependents and anything on the target side — and an entity that is a
-// canonical, not an alias, is a perfectly legal seed (resolvableSeeds only
-// skips entities that already have an active alias row), so this is the
-// ordinary chain case rather than an exotic one.
+// ONE gate for both rejected and awaiting-review pairs, over the CROSS PRODUCT
+// of both transitive clusters. Two guards side by side with different scopes is
+// exactly the bug this cycle kept reproducing: rounds 3 and 4 were about the
+// rejection gate not being transitive, and round 5 then added a pending gate
+// that checked only the direct pair — the same mistake, one line away from the
+// code that gets it right.
+//
+// Linking does not move one entity: everything already resolving to `alias`
+// follows it under `target`, and everything already under `target` is unified
+// with it. So both sides expand, and a contradiction anywhere in the product
+// blocks the link.
 //
 // Shared by the compile pass and `ontology resolve --apply` so the two cannot
-// disagree: --apply previously checked only the direct pair, which let a human
-// complete a merge the pass had refused.
-func coAbsorptionConflict(g *aliasGraph, rej *rejectionIndex, alias, target string) string {
+// disagree.
+func pairConflict(g *aliasGraph, rej *rejectionIndex, alias, target string) string {
+	return pairConflictExcept(g, rej, alias, target, "", "")
+}
+
+// pairConflictExcept is pairConflict with one awaiting pair ignored.
+//
+// `ontology resolve --apply` needs this: the human IS settling that exact pair,
+// so treating its own pending row as an "awaiting review" conflict would make
+// every proposal permanently unapplicable. A REJECTION of the same pair still
+// blocks — that is a decision, not a question.
+func pairConflictExcept(g *aliasGraph, rej *rejectionIndex, alias, target, exA, exB string) string {
 	moving := g.cluster(alias)   // alias + everything that resolves to it
 	landing := g.cluster(target) // target + everything already resolving there
 	for _, m := range moving {
 		for _, l := range landing {
-			if m != l && rej.is(m, l) {
-				return m + " / " + l
+			if m == l {
+				continue
+			}
+			if rej.is(m, l) {
+				return "rejected: " + m + " / " + l
+			}
+			// A pair a human is already deciding must not be settled by the
+			// pass, in either direction and by no route — including linking a
+			// third entity that unifies them transitively.
+			if rej.awaitingReview(m, l) {
+				if (m == exA && l == exB) || (m == exB && l == exA) {
+					continue // the pair the caller is settling
+				}
+				return "awaiting review: " + m + " / " + l
 			}
 		}
 	}
@@ -1087,29 +1136,12 @@ func applyClusters(
 				stats.skipped++
 				continue
 			}
-			// A pair a human is already deciding must not be auto-applied by
-			// re-rolling the direction. Which side is "alias" is decided by
-			// electCanonical, and that flips the moment one side gains an
-			// ArticlePath — so without this the review bar is bypassed by the
-			// ordinary act of writing an article.
-			if rej.awaitingReview(alias.ID, target) {
-				log.Warn("resolve: skipped, this pair is already awaiting review",
-					"alias", alias.ID, "canonical", target)
-				stats.skipped++
-				continue
-			}
-
-			// The single rejection gate. It subsumes the direct pair and the
-			// elected canonical — cluster(target) always contains target, and
-			// contains the elected canonical whenever it differs — so separate
-			// re-checks for those would be strictly dead code.
-			//
-			// It spans blocks and runs because both clusters are computed from
-			// the store-backed graph, and it is symmetric because linking moves
-			// the alias's dependents too.
-			if conflict := coAbsorptionConflict(graph, rej, alias.ID, target); conflict != "" {
-				log.Warn("resolve: skipped, co-absorbing a rejected pair into one canonical",
-					"alias", alias.ID, "with", conflict, "canonical", target)
+			// The single gate: rejected OR awaiting review, across both
+			// transitive clusters. It subsumes the direct pair and the elected
+			// canonical, since cluster(target) contains both.
+			if conflict := pairConflict(graph, rej, alias.ID, target); conflict != "" {
+				log.Warn("resolve: skipped, linking would settle a pair the user owns",
+					"alias", alias.ID, "canonical", target, "conflict", conflict)
 				stats.skipped++
 				continue
 			}
@@ -1167,6 +1199,20 @@ func applyClusters(
 					continue
 				}
 				proposed[alias.ID] = true
+				// Keep the snapshot fresh WITHIN the run. Round 5 made
+				// `awaiting` depend on pending rows, and the pass writes them, so
+				// a pair queued by an early block would otherwise be invisible to
+				// a later one.
+				//
+				// Defence in depth, honestly labelled: I could not construct a
+				// fixture that isolates it. electCanonical is deterministic, so
+				// the same pair reaches the same verdict in every block of a run,
+				// and a transitive route writes its pending row against the
+				// chain-resolved target — which the direct check already covers.
+				// Removing this line fails no test. It is kept because the cost
+				// is one map write and the alternative is relying on that
+				// argument staying true as the election rules change.
+				rej.markAwaiting(alias.ID, target)
 				stats.pending++
 				continue
 			}
@@ -1294,7 +1340,7 @@ func CoAbsorptionConflict(ont store.OntologyStore, alias, canonical string) (str
 	if err != nil {
 		return "", err
 	}
-	return coAbsorptionConflict(graph, rej, alias, graph.terminal(canonical)), nil
+	return pairConflictExcept(graph, rej, alias, graph.terminal(canonical), alias, canonical), nil
 }
 
 // TerminalCanonical resolves an id through the applied-alias chain to its end.
