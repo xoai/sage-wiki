@@ -788,3 +788,116 @@ func TestResolvePassRejectedPairNotCoAbsorbedAcrossBlocks(t *testing.T) {
 		t.Errorf("both halves of a rejected pair were folded into %q: %+v", "c-canon", applied)
 	}
 }
+
+// GATE-3 R3 CRITICAL. The sibling index was keyed by each row's DIRECT
+// canonical but queried with the CHAIN-RESOLVED target, so an alias sitting
+// under an intermediate hop was invisible — and multi-hop chains are the normal
+// steady state, because LinkAlias never rewrites rows to the terminal.
+func TestResolvePassRejectedPairNotCoAbsorbedThroughAChain(t *testing.T) {
+	srv, _, _ := resolveServer(t, twoMemberCluster)
+	ont := passStore(t)
+	for _, id := range []string{"a-row", "x-row", "y-row", "z-row"} {
+		addEnt(t, ont, id, "Buzz Aldrin", "an astronaut", "")
+	}
+	// z-row wins the election.
+	if err := ont.UpdateEntity(ontology.Entity{
+		ID: "z-row", Name: "Buzz Aldrin", Definition: "an astronaut",
+		ArticlePath: "wiki/z.md"}); err != nil {
+		t.Fatal(err)
+	}
+	// x -> y -> z, applied, never rewritten to the terminal.
+	for _, p := range [][2]string{{"x-row", "y-row"}, {"y-row", "z-row"}} {
+		if err := ont.PutAlias(store.EntityAlias{
+			Alias: p[0], CanonicalID: p[1], EntityType: ontology.TypeConcept,
+			Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The user separated a-row from x-row, which now sits under z-row.
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "a-row", CanonicalID: "x-row", EntityType: ontology.TypeConcept,
+		Status: store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		DecidedBy: "user",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ResolveEntitiesPass(context.Background(), ont,
+		[]string{"a-row"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+
+	applied, _ := ont.ListAliases(store.AliasApplied)
+	for _, a := range applied {
+		if a.Alias == "a-row" {
+			t.Errorf("a-row was linked to %q, joining x-row transitively under the same "+
+				"canonical despite the user separating them", a.CanonicalID)
+		}
+	}
+}
+
+// GATE-3 R3 MAJOR. A pair where NEITHER side was touched must not be decided:
+// the untouched entity acquires an alias row, which permanently removes it from
+// future resolution (resolvableSeeds skips ids with an active row).
+func TestResolvePassDoesNotDecideAboutTwoUntouchedEntities(t *testing.T) {
+	const threeMember = `{"clusters":[
+	  {"members":["E1","E2","E3"],"same_referent":true,"broader":false,
+	   "confidence":0.95,"reason":"same"}]}`
+	srv, _, _ := resolveServer(t, threeMember)
+	ont := passStore(t)
+	addEnt(t, ont, "aldrin-t", "Buzz Aldrin", "an astronaut", "")
+	addEnt(t, ont, "aldrin-u1", "Buzz Aldrin", "an astronaut", "wiki/u1.md")
+	addEnt(t, ont, "aldrin-u2", "Buzz Aldrin", "an astronaut", "")
+
+	ResolveEntitiesPass(context.Background(), ont,
+		[]string{"aldrin-t"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+
+	for _, st := range []store.AliasStatus{store.AliasApplied, store.AliasPending} {
+		rows, _ := ont.ListAliases(st)
+		for _, r := range rows {
+			if r.Alias == "aldrin-u2" {
+				t.Errorf("a row was written for %q, which this compile never touched, "+
+					"freezing it out of future resolution: %+v", r.Alias, r)
+			}
+		}
+	}
+	// The touched entity's own pair is still decided.
+	act, _ := ont.GetActiveAlias("aldrin-t")
+	if act == nil {
+		t.Error("the touched entity's pair was not decided")
+	}
+}
+
+// GATE-3 R3 MAJOR. When the chain-resolved target cannot be loaded, the pair
+// must be QUEUED, not silently lost — canAutoApply is an OR over both sides, so
+// a described alias would otherwise still auto-apply.
+func TestResolvePassUnloadableTargetGoesToReview(t *testing.T) {
+	srv, _, _ := resolveServer(t, twoMemberCluster)
+	ont := passStore(t)
+	addEnt(t, ont, "a-row", "Buzz Aldrin", "a described astronaut", "")
+	addEnt(t, ont, "b-row", "Buzz Aldrin", "", "wiki/b.md")
+	// b-row points at a canonical that no longer exists (pruned).
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "b-row", CanonicalID: "c-gone", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ResolveEntitiesPass(context.Background(), ont,
+		[]string{"a-row"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+
+	applied, _ := ont.ListAliases(store.AliasApplied)
+	pending, _ := ont.ListAliases(store.AliasPending)
+	found := false
+	for _, r := range append(applied, pending...) {
+		if r.Alias == "a-row" {
+			found = true
+			if r.Status == store.AliasApplied {
+				t.Errorf("auto-applied against an unloadable target: %+v", r)
+			}
+		}
+	}
+	if !found {
+		t.Error("the proposal was silently lost; the call will be re-billed every compile")
+	}
+}

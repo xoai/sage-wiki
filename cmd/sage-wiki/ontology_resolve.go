@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/xoai/sage-wiki/internal/cli"
+	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/store"
@@ -156,6 +157,21 @@ func resolveApply(ont store.OntologyStore, alias string) error {
 		return cli.CLIError(outputFormat, fmt.Errorf(
 			"%q and %q were rejected as different entities — reject/apply is symmetric, "+
 				"so this pair cannot be linked in either direction", row.Alias, row.CanonicalID))
+	}
+	// The same co-absorption rule the compile pass applies. Without it, a
+	// proposal the pass queued (rather than applied) could be completed here,
+	// folding both halves of a rejected pair under one canonical — the exact
+	// merge the pass refused, finished by the command that reports rejections
+	// are honoured.
+	conflict, err := compiler.CoAbsorptionConflict(ont, row.Alias, row.CanonicalID)
+	if err != nil {
+		return cli.CLIError(outputFormat, err)
+	}
+	if conflict != "" {
+		return cli.CLIError(outputFormat, fmt.Errorf(
+			"cannot link %q into %q: %q already resolves there, and you rejected %q and %q "+
+				"as different entities — linking would reunite them",
+			row.Alias, row.CanonicalID, conflict, row.Alias, conflict))
 	}
 
 	row.Status = store.AliasApplied
