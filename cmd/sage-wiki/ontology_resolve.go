@@ -245,6 +245,11 @@ func resolveReject(ont store.OntologyStore, alias string) error {
 		return cli.CLIError(outputFormat, err)
 	}
 	alsoRejected := false
+	// Where the copies actually landed. When the applied half is the REVERSE
+	// row, the residue is on that row's canonical — naming row.CanonicalID would
+	// point the user at the wrong entity, and there is no un-link command to
+	// recover from following it.
+	residueOn := row.CanonicalID
 	// Applied OR pending. Clearing only the applied case leaves an unapplicable
 	// pending row behind: --review lists it forever, --apply always errors
 	// (the pair is now rejected), and its active status freezes the alias out of
@@ -257,6 +262,7 @@ func resolveReject(ont store.OntologyStore, alias string) error {
 		alsoRejected = true
 		if reverse.Status == store.AliasApplied {
 			wasApplied = true
+			residueOn = reverse.CanonicalID
 		}
 	}
 	if outputFormat == "json" {
@@ -281,7 +287,7 @@ func resolveReject(ont store.OntologyStore, alias string) error {
 		// rollback that did not happen.
 		fmt.Printf("Note: this link had already been APPLIED. Edges copied onto %s remain "+
 			"(they carry an \"alias:\" id prefix); rejecting only stops it being re-applied.\n",
-			row.CanonicalID)
+			residueOn)
 	}
 	return nil
 }

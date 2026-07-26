@@ -132,10 +132,17 @@ ontology:
     enabled: true
 ```
 
-is the combination that links automatically. With `resolve` on and `triples`
-off, the pass still runs and still finds candidates, but every proposal is
-queued for review instead of applied — it will not link entities on name
-similarity alone. It warns once per run when it sees that.
+is the combination that links automatically, because triple extraction is the
+only **compile-path** writer of entity descriptions.
+
+With `resolve` on and `triples` off, most proposals are queued for review rather
+than applied. That is not a guarantee, and it is worth being precise about why:
+auto-apply needs a description on **at least one** side, and `sage-wiki scribe`
+writes descriptions outside the compile path. So an entity you described via
+scribe can auto-link against a bare Pass-3 concept even with `triples: false`.
+If you want review-only behaviour as a hard rule, raise
+`auto_apply_threshold` to `1.0` — that is the only setting that makes it one.
+The pass warns once per run when it sees `resolve` without `triples`.
 
 ### Reviewing and deciding
 

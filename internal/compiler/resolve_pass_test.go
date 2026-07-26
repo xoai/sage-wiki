@@ -1103,3 +1103,39 @@ func TestResolvePassPendingWrittenThisRunIsHonoured(t *testing.T) {
 		}
 	}
 }
+
+// GATE-3 R7 MAJOR. touchedSet is frozen from the seed list, but a seed can
+// BECOME an alias in an earlier block — after which a later block's
+// chain-resolved target is an entity this compile never touched, while
+// touched[canonical.ID] is still true. The pair check then passes for a pair
+// neither side of which was touched.
+func TestResolvePassDoesNotLeakThroughAWithinRunChain(t *testing.T) {
+	srv, _, _ := resolveServer(t, twoMemberCluster)
+	ont := passStore(t)
+	// Untouched, and the eventual terminal.
+	addEnt(t, ont, "c-canon", "Buzz Aldrin", "an astronaut", "wiki/c.md")
+	// Untouched.
+	addEnt(t, ont, "a-row", "Buzz Aldrin", "an astronaut", "")
+	// Touched this compile.
+	addEnt(t, ont, "b-seed", "Buzz Aldrin", "an astronaut", "")
+	addEnt(t, ont, "tgt", "Apollo", "", "")
+	if err := ont.AddRelation(ontology.Relation{
+		ID: "r", SourceID: "a-row", TargetID: "tgt",
+		Relation: ontology.RelExtends, Confidence: 0.7}); err != nil {
+		t.Fatal(err)
+	}
+
+	ResolveEntitiesPass(context.Background(), ont,
+		[]string{"b-seed"}, resolveCfg(), triplesClient(t, srv.URL), nil)
+
+	for _, st := range []store.AliasStatus{store.AliasApplied, store.AliasPending} {
+		rows, _ := ont.ListAliases(st)
+		for _, r := range rows {
+			if r.Alias == "a-row" {
+				t.Errorf("wrote %s -> %s (%s): neither endpoint was touched by this "+
+					"compile, and a-row is now frozen out of future resolution",
+					r.Alias, r.CanonicalID, r.Status)
+			}
+		}
+	}
+}

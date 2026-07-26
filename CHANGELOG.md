@@ -12,9 +12,11 @@
   gains *copies* of the alias's edges, so nothing is ever deleted and a link is
   reversible. Defaults to **off**, and pairs with `ontology.triples.enabled`:
   auto-linking requires a description on at least one side, and triple
-  extraction is the only compile-path writer of entity descriptions, so
-  `resolve` alone queues proposals for review rather than linking on name
-  similarity. Ambiguous pairs — low confidence, a model-flagged "broader"
+  extraction is the only *compile-path* writer of entity descriptions, so with
+  `resolve` on and `triples` off most proposals are queued for review rather
+  than applied — though `sage-wiki scribe` also writes descriptions, so that is
+  a strong tendency and not a guarantee; `auto_apply_threshold: 1.0` is the
+  hard rule. Ambiguous pairs — low confidence, a model-flagged "broader"
   member, or no description — go to review instead of applying; decide them with
   `sage-wiki ontology resolve --review|--apply|--reject`. Rejection is symmetric,
   so re-rolling the direction cannot bypass it. Candidate blocking is seeded only

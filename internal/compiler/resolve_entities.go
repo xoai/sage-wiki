@@ -586,8 +586,10 @@ func ResolveEntitiesPass(
 		// Not fatal, but the user should know why nothing links: entity
 		// descriptions are what auto-apply requires, and the triples pass is
 		// their only compile-path writer.
-		log.Warn("resolve: ontology.triples is disabled — entities have no descriptions, " +
-			"so proposals will be queued for review rather than applied automatically")
+		log.Warn("resolve: ontology.triples is disabled — most entities will have no " +
+			"description, so proposals are usually queued for review. Not guaranteed: " +
+			"scribe also writes descriptions. Set ontology.resolve.auto_apply_threshold " +
+			"to 1.0 for review-only as a hard rule.")
 	}
 
 	// Cost attribution. Without this the spend bills to whatever pass ran last —
@@ -694,6 +696,16 @@ type resolveStats struct {
 // logic as the compile pass — the CLI having its own copy is how the rejection
 // filter came to exist on one path and not the other.
 func SweepAliases(ctx context.Context, ont store.OntologyStore) SweepResult {
+	// ResolveEntitiesPass normalises these before anything touches them; a
+	// public entry point that skips the normalisation panics on ctx.Err() at the
+	// first non-rejected applied row — a data-dependent crash, which is exactly
+	// the hazard extract_triples.go documents for its own nilable ctx.
+	if ont == nil {
+		return SweepResult{}
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return sweepAliases(ctx, ont)
 }
 
@@ -1101,10 +1113,8 @@ func applyClusters(
 			// per-ALIAS check is too tight and broke the primary use case, where
 			// the article row written this compile is elected canonical and the
 			// alias is the triples row from an earlier one.
-			if !touched[alias.ID] && !touched[canonical.ID] {
-				stats.skipped++
-				continue
-			}
+			// NOTE: judged against `target` below, not `canonical.ID` — see the
+			// re-check after chain resolution.
 			// Per-run guard: blocks may overlap, and two proposals for one alias
 			// would collide on the one-active-row index.
 			if proposed[alias.ID] {
@@ -1133,6 +1143,22 @@ func applyClusters(
 				continue
 			}
 			if target == alias.ID {
+				stats.skipped++
+				continue
+			}
+			// The touched check belongs HERE, against the pair actually written.
+			// Checking the ELECTED canonical instead leaks: a seed can become an
+			// alias in an earlier block, after which its terminal — the entity
+			// the row really names — was never touched by this compile, while
+			// touched[canonical.ID] is still true. The result is a row for a pair
+			// neither side of which this compile looked at, and any active row
+			// permanently removes that entity from future resolution.
+			//
+			// Per PAIR, not per alias and not per cluster: per alias breaks the
+			// primary use case (the article row written this compile is elected
+			// canonical, the alias is the triples row from an earlier one), and
+			// per cluster is looser still.
+			if !touched[alias.ID] && !touched[target] {
 				stats.skipped++
 				continue
 			}
@@ -1204,14 +1230,17 @@ func applyClusters(
 				// a pair queued by an early block would otherwise be invisible to
 				// a later one.
 				//
-				// Defence in depth, honestly labelled: I could not construct a
-				// fixture that isolates it. electCanonical is deterministic, so
-				// the same pair reaches the same verdict in every block of a run,
-				// and a transitive route writes its pending row against the
-				// chain-resolved target — which the direct check already covers.
-				// Removing this line fails no test. It is kept because the cost
-				// is one map write and the alternative is relying on that
-				// argument staying true as the election rules change.
+				// CORRECTION: an earlier version of this comment claimed no
+				// fixture could isolate this line. That was wrong — a Gate-3
+				// reviewer built one. The direction flips through a PRE-EXISTING
+				// APPLIED CHAIN, not through the election: with `applied x->a`,
+				// a later block's cluster {b,x} elects x and then chain-resolves
+				// to a, which is an earlier block's pending ALIAS. My reasoning
+				// checked only the mechanism I had in mind (electCanonical is
+				// deterministic) and concluded no mechanism existed.
+				//
+				// The in-repo test below is still weaker than that probe, so
+				// treat this line as load-bearing rather than optional.
 				rej.markAwaiting(alias.ID, target)
 				stats.pending++
 				continue

@@ -505,10 +505,11 @@ serve:
 ```
 
 `resolve` and `triples` belong together. Auto-linking requires a description on
-at least one side of a pair, and triple extraction is the only compile-path
-writer of entity descriptions — so `resolve.enabled` on its own queues proposals
-for review rather than linking anything automatically. The pass warns once per
-run when it sees that combination.
+at least one side of a pair, and triple extraction is the only *compile-path*
+writer of entity descriptions — so with `resolve` on and `triples` off, most
+proposals are queued for review. Not all: `sage-wiki scribe` also writes
+descriptions, so a scribe-described entity can still auto-link. Set
+`auto_apply_threshold: 1.0` if you want review-only as a hard rule.
 
 ### Multi-Provider Setup
 

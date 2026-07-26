@@ -515,10 +515,12 @@ type OntologyConfig struct {
 // adds LLM calls, and an upgrade must not raise anyone's bill unasked.
 //
 // It PAIRS with Triples. Auto-apply requires a description on at least one side
-// of a proposed link, and the only compile-path writer of entity descriptions is
-// the triple-extraction pass — so `resolve.enabled` alone surfaces proposals for
-// human review but links nothing automatically. The pass warns once per run when
-// it sees that combination.
+// of a proposed link, and the only COMPILE-PATH writer of entity descriptions is
+// the triple-extraction pass — so `resolve.enabled` alone surfaces most
+// proposals for review rather than linking them. Not a guarantee:
+// internal/scribe also writes Definition, so a scribe-described entity can
+// auto-link with triples off. AutoApplyThreshold 1.0 is the only setting that
+// makes review-only a hard rule. The pass warns once per run.
 //
 // A VALUE, not a pointer, with `omitempty` on the field: yaml.v3 elides a zero
 // struct (unlike encoding/json), which is what stops `sage-wiki pack apply` from

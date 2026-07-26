@@ -535,3 +535,158 @@ func TestResolveCLIRejectAlsoClearsAPendingReverseRow(t *testing.T) {
 		t.Errorf("B still carries an active row after the pair was rejected: %+v", act)
 	}
 }
+
+// GATE-3 R7. --reject must not over-reach: it clears only the row pointing
+// directly back, never an unrelated link further along a chain.
+func TestResolveCLIRejectDoesNotOverReach(t *testing.T) {
+	dir := resolveVault(t, "config.yaml")
+	withProject(t, dir, "config.yaml")
+
+	b, ont, err := openResolveStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"A", "B", "C"} {
+		if err := ont.AddEntity(store.Entity{ID: id, Type: ontology.TypeConcept, Name: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A -> B pending; B -> C applied (a DIFFERENT pair further along the chain).
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "A", CanonicalID: "B", EntityType: ontology.TypeConcept,
+		Status: store.AliasPending, Confidence: 0.9, Source: "llm",
+		CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "B", CanonicalID: "C", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	b.Close()
+
+	if err := runResolve(t, map[string]string{"reject": "A"}); err != nil {
+		t.Fatalf("--reject: %v", err)
+	}
+
+	b2, ont2, err := openResolveStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b2.Close()
+	act, _ := ont2.GetActiveAlias("B")
+	if act == nil || act.CanonicalID != "C" || act.Status != store.AliasApplied {
+		t.Errorf("rejecting A -> B also disturbed the unrelated B -> C link: %+v", act)
+	}
+}
+
+// GATE-3 R7. The CLI --sweep must run the SHARED implementation, including its
+// rejection filter — a CLI-local copy is how the filter came to exist on one
+// path and not the other.
+func TestResolveCLISweepHonoursRejections(t *testing.T) {
+	dir := resolveVault(t, "config.yaml")
+	withProject(t, dir, "config.yaml")
+
+	b, ont, err := openResolveStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"alias", "canon", "tgt"} {
+		if err := ont.AddEntity(store.Entity{ID: id, Type: ontology.TypeConcept, Name: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The user rejects the pair the other way round.
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "canon", CanonicalID: "alias", EntityType: ontology.TypeConcept,
+		Status: store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		DecidedBy: "user",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ont.AddRelation(store.Relation{
+		ID: "late", SourceID: "alias", TargetID: "tgt",
+		Relation: ontology.RelExtends, Confidence: 0.5,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	b.Close()
+
+	if err := runResolve(t, map[string]string{"sweep": "true"}); err != nil {
+		t.Fatalf("--sweep: %v", err)
+	}
+
+	b2, ont2, err := openResolveStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b2.Close()
+	canon, _ := ont2.GetRelations("canon", store.Outbound, "")
+	if len(canon) != 0 {
+		t.Errorf("--sweep copied across a rejected pair: %+v", canon)
+	}
+}
+
+// GATE-3 R7. The "edges remain" note must name the entity the copies actually
+// landed on. When the APPLIED half is the reverse row, that is the reverse row's
+// canonical — pointing the user elsewhere is worse than silence, because there
+// is no un-link command to recover from following it.
+func TestResolveCLIRejectNamesTheEntityHoldingTheResidue(t *testing.T) {
+	dir := resolveVault(t, "config.yaml")
+	withProject(t, dir, "config.yaml")
+
+	b, ont, err := openResolveStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"A", "B"} {
+		if err := ont.AddEntity(store.Entity{ID: id, Type: ontology.TypeConcept, Name: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Applied A -> B (so the copies live on B); pending B -> A the other way.
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "A", CanonicalID: "B", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ont.PutAlias(store.EntityAlias{
+		Alias: "B", CanonicalID: "A", EntityType: ontology.TypeConcept,
+		Status: store.AliasPending, Confidence: 0.9, Source: "llm",
+		CreatedAt: "2026-07-26T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	b.Close()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	runErr := runResolve(t, map[string]string{"reject": "B"}) // reject from the pending side
+	w.Close()
+	os.Stdout = orig
+	if runErr != nil {
+		t.Fatalf("--reject: %v", runErr)
+	}
+	buf := make([]byte, 8192)
+	n, _ := r.Read(buf)
+	r.Close()
+	out := string(buf[:n])
+
+	if !strings.Contains(out, "Edges copied onto B remain") {
+		t.Errorf("the residue note names the wrong entity — the applied link was "+
+			"A -> B, so the copies are on B:\n%s", out)
+	}
+}
