@@ -93,8 +93,11 @@ then re-embed — the same flow a model change requires on sqlite.
 Although postgres removes the single-writer file constraint, sage-wiki
 deliberately keeps single-writer-process semantics in this release: the
 write mutex, the advisory locks, and the compile coordinator are unchanged.
-Exploiting postgres concurrency (multi-writer, `SELECT … FOR UPDATE`
-hardening, durable compile workers) is **P2-3 scope** — do not assume it.
+Durable compile workers (P2-3) have since shipped — the serve-mode worker
+with leases, heartbeats, and a dead-letter queue is configured under
+`serve.worker`; see [configuration.md](configuration.md#serveworker).
+Multi-writer postgres concurrency (`SELECT … FOR UPDATE` hardening)
+remains out of scope.
 
 ## Implementation map
 

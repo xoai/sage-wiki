@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **README repositioned and restructured.** sage-wiki's README now leads
+  with what it has become — a graph memory and knowledge base for AI
+  agents and humans, scaling personal → team → company — and shrinks from
+  1058 to ~335 lines by linking into the guides instead of inlining them.
+  Two new guides absorb the extracted depth:
+  `docs/guides/configuration.md` (the full annotated config, multi-provider
+  recipes, the serve-mode compile worker, price-table override) and
+  `docs/guides/customizing-prompts.md` (prompt scaffolding — all EIGHT
+  template files, not the five previously listed — and custom frontmatter
+  fields). Guide merges preserve README-only content: the block-level
+  co-occurrence rule for relation extraction (configurable-relations), the
+  in-memory vector-cache restart caveat and opt-in ANN section
+  (search-quality), external-parser hardening details (CONTRIBUTING +
+  team-setup), and webui dist regeneration (CONTRIBUTING).
+  User-visible corrections riding along: `summary_max_tokens` default is
+  4000 (was misdocumented as 2000) and `init` writes `max_parallel: 4`;
+  batch API availability includes Gemini; the deprecated
+  `ontology.relations` key reference now reads `relation_types`; benchmark
+  numbers refreshed to eval/REPORT.md's current results (85.9–86.7%
+  overall, 97.5–99.7% recall@1) with fixed eval/ paths; the command table
+  gains `ontology resolve`, `hub init|compile`, `compile --fresh`,
+  `source`, `coverage`, and `version`; `.bmp` added to supported image
+  formats; the stale "durable workers — do not assume" note in
+  storage-backends.md now points at the shipped `serve.worker`. Translated
+  READMEs carry a parity banner and the corrected 18-tool count (7 read);
+  full translation parity follows in dedicated commits.
+
 ### Added
 
 - **Claude-driven entity resolution (P3-3), opt-in.** With
@@ -140,26 +169,6 @@
   filter. Reachable through `wiki_ontology_query` and `sage-wiki ontology`.
   Postgres was already correct; both backends are now covered by the shared
   conformance suite.
-
-- **CI on main (all checks green).** Frontend dist check: git
-  safe.directory set in the alpine container job (dubious-ownership
-  refused the workspace). Translation drift: script committed
-  non-executable (now 100755, invoked via bash). Windows auth tests: file
-  backend pinned in file-behavior tests (windows-latest keychain probe
-  poisoned them), `~` expansion honors `$HOME` before `os.UserHomeDir`,
-  0600 assertion GOOS-conditional. macOS pack install: containment check
-  resolves the base path too (tempdir symlink rejected every install).
-- **Windows portability sweep.** Atomic rename retries transient Windows
-  file-lock failures (Defender/indexer timing); manifest summary/article
-  paths and linter finding paths emit forward slashes on every OS;
-  `ValidateRelPath` rejects rooted paths on Windows too; PDF extraction
-  owns its file handle across library panics; prompt templates pinned to
-  LF line endings (.gitattributes) so the byte-exact drift guard holds on
-  Windows checkouts; SSE progress test synchronized on subscriber
-  readiness.
-- **Dependencies.** golang.org/x/text → v0.40.0 (GO-2026-5970, infinite
-  loop) and github.com/yuin/goldmark → v1.7.17 (GO-2026-5320, XSS) —
-  govulncheck clean.
 
 ## 0.2.0 — 2026-07-24
 
@@ -321,6 +330,25 @@
 
 ### Fixed
 
+- **CI on main (all checks green).** Frontend dist check: git
+  safe.directory set in the alpine container job (dubious-ownership
+  refused the workspace). Translation drift: script committed
+  non-executable (now 100755, invoked via bash). Windows auth tests: file
+  backend pinned in file-behavior tests (windows-latest keychain probe
+  poisoned them), `~` expansion honors `$HOME` before `os.UserHomeDir`,
+  0600 assertion GOOS-conditional. macOS pack install: containment check
+  resolves the base path too (tempdir symlink rejected every install).
+- **Windows portability sweep.** Atomic rename retries transient Windows
+  file-lock failures (Defender/indexer timing); manifest summary/article
+  paths and linter finding paths emit forward slashes on every OS;
+  `ValidateRelPath` rejects rooted paths on Windows too; PDF extraction
+  owns its file handle across library panics; prompt templates pinned to
+  LF line endings (.gitattributes) so the byte-exact drift guard holds on
+  Windows checkouts; SSE progress test synchronized on subscriber
+  readiness.
+- **Dependencies.** golang.org/x/text → v0.40.0 (GO-2026-5970, infinite
+  loop) and github.com/yuin/goldmark → v1.7.17 (GO-2026-5320, XSS) —
+  govulncheck clean.
 - **Real errors no longer masquerade as "not found" or success (REL-04, P1-4).**
   `vectors.Get` returned `(nil, nil)` for ANY database error — a closed or
   corrupt `.sage/wiki.db` was indistinguishable from a cache miss, silently

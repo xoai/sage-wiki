@@ -6,6 +6,11 @@ sage-wiki builds a knowledge graph where concepts are connected by typed relatio
 
 When sage-wiki writes an article (Pass 3 of the compiler), it scans the text for `[[wikilinks]]` and checks whether any keyword synonyms appear near the linked concept. If a match is found, a typed relation edge is created in the ontology graph.
 
+"Near" is precise: extraction uses block-level keyword proximity — a
+keyword must co-occur with a `[[wikilink]]`
+in the same paragraph or heading block.
+This prevents spurious edges from cross-paragraph matches.
+
 For example, if an article about Flash Attention contains:
 
 > Flash Attention **optimizes** the memory access pattern of [[Self-Attention]]

@@ -76,6 +76,13 @@ Source overlap is the highest-weighted signal because articles generated from th
 
 Graph expansion is applied **before** both the enhanced (chunk-level) and document-level search sub-functions, so both code paths benefit uniformly. Expanded articles are added to the context with `### Graph-related:` headers and tracked in `QueryResult.Sources` for provenance.
 
+Seed entities that entity resolution has linked as aliases are resolved to
+their canonical entity first, so a hit on an alias expands from the whole
+cluster's neighborhood. For direct graph questions, the `wiki_graph_query`
+MCP tool answers only from a bounded, serialized set of edges — citations
+carry source-document provenance when the edge is evidenced — see
+[graph-memory.md](graph-memory.md#asking-the-graph).
+
 ### Token budget control
 
 The query context is capped at a configurable token limit (default 8000). Articles are prioritized by combined score (RRF + graph relevance) and filled greedily:
@@ -85,6 +92,27 @@ The query context is capped at a configurable token limit (default 8000). Articl
 3. Depth-1 ontology traversal last (fallback for articles not yet included)
 
 Each article is truncated at 4000 tokens (16000 chars, using chars/4 estimation). When the budget is exhausted, remaining articles are skipped.
+
+### In-memory vector cache
+
+Vector search runs over a per-process in-memory matrix (normalized at
+load), ~11× faster than per-query SQLite scans at 10K+ chunks. Writes from
+the same process keep it coherent. **Caveat:** a long-lived MCP/web server
+does not observe vector writes made by a *separate CLI process* until
+restart — restart the server after bulk out-of-process writes (e.g.
+`sage-wiki write` or a batch `compile` against a project the server is
+watching).
+
+### ANN vector search (opt-in)
+
+For very large vaults, enable approximate nearest-neighbor search (HNSW,
+pure Go) — brute-force exact search stays the default:
+
+```yaml
+search:
+  ann:
+    enabled: true
+```
 
 ## Configuration
 
