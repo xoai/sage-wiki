@@ -52,6 +52,7 @@ embed:
   model: {embed_model}
 
 compiler:
+  mode: standard        # sync compile — auto mode batches at >=10 sources (async, breaks the pipeline)
   max_parallel: 4
   summary_max_tokens: 4000
   article_max_tokens: 4000

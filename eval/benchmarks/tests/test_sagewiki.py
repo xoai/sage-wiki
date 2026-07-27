@@ -51,6 +51,7 @@ class TestProjectSetup:
         assert cfg.count("gpt-4o-mini") == 5  # summarize/extract/write/lint/query
         assert "text-embedding-3-small" in cfg
         assert "auto_commit: false" in cfg and "auto_lint: false" in cfg
+        assert "mode: standard" in cfg  # auto mode batch-submits at >=10 sources
         assert "sk-" not in cfg
         assert (proj / "raw").is_dir()
 
