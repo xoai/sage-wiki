@@ -4,6 +4,8 @@
 
 ### Changed
 
+- **README diagrams refreshed** (architecture, compiler pipeline,
+  interfaces) — higher-resolution replacements for the three PNGs.
 - **Translated READMEs regenerated to full parity** with the restructured
   English README (zh, ja, ko, vi, fr, ru): same 22 sections, localized
   internal anchors, translated bash-fence comments with byte-identical
