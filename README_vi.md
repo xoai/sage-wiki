@@ -1,3 +1,5 @@
+⚠️ Bản dịch này có trước một đợt tái cấu trúc lớn của README — hãy xem [README.md](README.md) tiếng Anh cho đến khi bản dịch được cập nhật. *(This translation predates a major README restructuring — see the English README.md until parity lands.)*
+
 [English](README.md) | [中文](README_zh.md) | [日本語](README_ja.md) | [한국어](README_ko.md) | **Tiếng Việt** | [Français](README_fr.md) | [Русский](README_ru.md)
 
 <!-- translations: may-lag -->
@@ -752,7 +754,7 @@ Xem [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Tệp kỹ năng Agent
 
-sage-wiki có 17 công cụ MCP, nhưng agent sẽ không sử dụng chúng trừ khi có gì đó trong ngữ cảnh của chúng cho biết *khi nào* cần kiểm tra wiki. Tệp kỹ năng lấp đầy khoảng trống đó — các đoạn mã được tạo ra dạy agent khi nào cần tìm kiếm, ghi nhận gì, và cách truy vấn hiệu quả.
+sage-wiki có 18 công cụ MCP, nhưng agent sẽ không sử dụng chúng trừ khi có gì đó trong ngữ cảnh của chúng cho biết *khi nào* cần kiểm tra wiki. Tệp kỹ năng lấp đầy khoảng trống đó — các đoạn mã được tạo ra dạy agent khi nào cần tìm kiếm, ghi nhận gì, và cách truy vấn hiệu quả.
 
 ```bash
 # Tạo trong quá trình khởi tạo dự án
@@ -924,7 +926,7 @@ python3 eval.py ./test-fixture
 - **Ontology:** Đồ thị quan hệ-thực thể có kiểu với duyệt BFS và phát hiện chu trình
 - **Tìm kiếm:** Pipeline nâng cao với FTS5 cấp chunk + lập chỉ mục vector, mở rộng truy vấn LLM, xếp hạng lại LLM, kết hợp RRF, và mở rộng đồ thị 4 tín hiệu. Phản hồi tìm kiếm báo hiệu nguồn chưa biên dịch cho biên dịch theo yêu cầu.
 - **Trình biên dịch:** Pipeline phân tầng (Tầng 0: chỉ mục, Tầng 1: embed, Tầng 2: phân tích mã, Tầng 3: biên dịch LLM đầy đủ) với backpressure thích ứng, trích xuất Pass 2 đồng thời, cache prompt, Batch API (Anthropic + OpenAI + Gemini), theo dõi chi phí, biên dịch theo yêu cầu qua MCP, chấm điểm chất lượng, và nhận biết cascade. Embedding bao gồm thử lại với backoff mũ, giới hạn tốc độ tùy chọn, và mean-pooling cho đầu vào dài. 10 trình phân tích mã tích hợp (Go qua go/ast, 8 ngôn ngữ qua regex, trích xuất khóa dữ liệu có cấu trúc).
-- **MCP:** 17 công cụ (6 đọc, 9 ghi, 2 kết hợp) qua stdio hoặc SSE, bao gồm `wiki_compile_topic` cho biên dịch theo yêu cầu và `wiki_capture` cho trích xuất tri thức
+- **MCP:** 18 công cụ (7 đọc, 9 ghi, 2 kết hợp) qua stdio hoặc SSE, bao gồm `wiki_compile_topic` cho biên dịch theo yêu cầu và `wiki_capture` cho trích xuất tri thức
 - **TUI:** bubbletea + glamour bảng điều khiển terminal 4 tab (duyệt, tìm kiếm, hỏi đáp, biên dịch) với hiển thị phân bố tầng
 - **Web UI:** Preact + Tailwind CSS nhúng qua `go:embed` với build tag (`-tags webui`)
 - **Scribe:** Giao diện mở rộng để nhập tri thức từ cuộc hội thoại. Session scribe xử lý bản ghi JSONL của Claude Code.

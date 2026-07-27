@@ -751,8 +751,12 @@ commands for file types the built-in extractors don't cover. They are a
 - `parsers.external: true` loads parser definitions from the project's
   `parsers/` directory.
 - `parsers.trust_external: true` acknowledges that those definitions run as
-  **unsandboxed subprocesses on every compile** (with timeout enforcement
-  and environment stripping — see the README).
+  **unsandboxed subprocesses on every compile** — with timeout enforcement
+  (30s default, 120s max) and environment stripping (only PATH, HOME, LANG
+  reach the subprocess). Built-in extractors are further hardened with
+  decompression caps against zip bombs and a nightly fuzzing job; the full
+  authoring and hardening details live in
+  [CONTRIBUTING.md](../../CONTRIBUTING.md).
 - Contribution packs containing parsers additionally require
   `pack apply --enable-parsers`.
 

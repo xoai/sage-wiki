@@ -134,6 +134,10 @@ When a source is modified, it demotes to Tier 1 automatically. Its
 existing articles are marked as stale (not deleted). On the next access
 via compile-on-demand, it recompiles with updated content.
 
+At very large chunk counts, ANN vector search (HNSW, opt-in) trades exact
+search for speed — it is a search-accuracy decision first, so it lives in
+[search-quality.md](search-quality.md#ann-vector-search-opt-in).
+
 ## Compile-on-Demand
 
 The wiki grows organically around topics you actually query. When you

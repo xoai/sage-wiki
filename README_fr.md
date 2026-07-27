@@ -1,3 +1,5 @@
+⚠️ Cette traduction est antérieure à une restructuration majeure du README — consultez le [README.md](README.md) anglais en attendant la mise à jour. *(This translation predates a major README restructuring — see the English README.md until parity lands.)*
+
 [English](README.md) | [中文](README_zh.md) | [日本語](README_ja.md) | [한국어](README_ko.md) | [Tiếng Việt](README_vi.md) | **Français** | [Русский](README_ru.md)
 
 <!-- translations: may-lag -->
@@ -754,7 +756,7 @@ Voir [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Fichiers de compétences agent
 
-sage-wiki dispose de 17 outils MCP, mais les agents ne les utiliseront pas à moins que quelque chose dans leur contexte indique *quand* consulter le wiki. Les fichiers de compétences comblent cette lacune — des extraits générés qui enseignent aux agents quand chercher, quoi capturer et comment interroger efficacement.
+sage-wiki dispose de 18 outils MCP, mais les agents ne les utiliseront pas à moins que quelque chose dans leur contexte indique *quand* consulter le wiki. Les fichiers de compétences comblent cette lacune — des extraits générés qui enseignent aux agents quand chercher, quoi capturer et comment interroger efficacement.
 
 ```bash
 # Générer lors de l'initialisation du projet
@@ -926,7 +928,7 @@ python3 eval.py ./test-fixture
 - **Ontologie :** Graphe entité-relation typé avec parcours BFS et détection de cycles
 - **Recherche :** Pipeline amélioré avec indexation FTS5 + vecteurs au niveau des fragments, expansion de requête par LLM, re-classement par LLM, fusion RRF et expansion par graphe à 4 signaux. Les réponses de recherche signalent les sources non compilées pour la compilation à la demande.
 - **Compilateur :** Pipeline par paliers (Palier 0 : indexation, Palier 1 : embedding, Palier 2 : analyse de code, Palier 3 : compilation LLM complète) avec contre-pression adaptative, extraction Pass 2 concurrente, cache de prompts, API batch (Anthropic + OpenAI + Gemini), suivi des coûts, compilation à la demande via MCP, scoring de qualité et conscience des cascades. L'embedding inclut une reprise avec backoff exponentiel, limitation de débit optionnelle et mean-pooling pour les entrées longues. 10 analyseurs de code intégrés (Go via go/ast, 8 langages via regex, extraction de clés de données structurées).
-- **MCP :** 17 outils (6 lecture, 9 écriture, 2 composés) via stdio ou SSE, incluant `wiki_compile_topic` pour la compilation à la demande et `wiki_capture` pour l'extraction de connaissances
+- **MCP :** 18 outils (7 lecture, 9 écriture, 2 composés) via stdio ou SSE, incluant `wiki_compile_topic` pour la compilation à la demande et `wiki_capture` pour l'extraction de connaissances
 - **TUI :** tableau de bord terminal bubbletea + glamour à 4 onglets (parcourir, rechercher, Q&R, compiler) avec affichage de la distribution par paliers
 - **Interface web :** Preact + Tailwind CSS intégrée via `go:embed` avec build tag (`-tags webui`)
 - **Scribe :** Interface extensible pour l'ingestion de connaissances depuis les conversations. Le scribe de session traite les transcriptions JSONL de Claude Code.

@@ -1,3 +1,5 @@
+⚠️ 此翻译早于一次重大的 README 重构 — 在同步更新之前，请以英文 [README.md](README.md) 为准。 *(This translation predates a major README restructuring — see the English README.md until parity lands.)*
+
 [English](README.md) | **中文** | [日本語](README_ja.md) | [한국어](README_ko.md) | [Tiếng Việt](README_vi.md) | [Français](README_fr.md) | [Русский](README_ru.md)
 
 <!-- translations: may-lag -->
@@ -719,7 +721,7 @@ parsers:
 
 ## Agent 技能文件
 
-sage-wiki 提供 17 个 MCP 工具,但 Agent 不会主动使用它们,除非上下文中告诉了 Agent *何时*该查询 wiki。技能文件弥补了这个差距 -- 生成的代码片段教会 Agent 何时搜索、何时捕获知识、如何高效查询。
+sage-wiki 提供 18 个 MCP 工具,但 Agent 不会主动使用它们,除非上下文中告诉了 Agent *何时*该查询 wiki。技能文件弥补了这个差距 -- 生成的代码片段教会 Agent 何时搜索、何时捕获知识、如何高效查询。
 
 ```bash
 # 初始化项目时生成
@@ -891,7 +893,7 @@ python3 eval.py ./test-fixture
 - **本体:** 类型化实体-关系图,支持 BFS 遍历和环检测
 - **搜索:** 增强管线,支持 chunk 级别 FTS5 + 向量索引、LLM 查询扩展、LLM 重排序、RRF 融合和 4 信号图扩展。搜索结果提示未编译源文件以支持按需编译。
 - **编译器:** 分层管线 (层级 0: 索引, 层级 1: 向量, 层级 2: 代码解析, 层级 3: 完整 LLM 编译),支持自适应背压、并发 Pass 2 提取、prompt 缓存、batch API (Anthropic + OpenAI + Gemini)、费用追踪、MCP 按需编译、质量评分和级联感知。Embedding 支持指数退避重试、可选限速和长文本均值池化。内置 10 个代码解析器 (Go 使用 go/ast, 8 种语言使用正则, 结构化数据键提取)。
-- **MCP:** 17 个工具 (6 读、9 写、2 组合),通过 stdio 或 SSE 提供,包括 `wiki_compile_topic` 按需编译和 `wiki_capture` 知识提取
+- **MCP:** 18 个工具 (7 读、9 写、2 组合),通过 stdio 或 SSE 提供,包括 `wiki_compile_topic` 按需编译和 `wiki_capture` 知识提取
 - **TUI:** bubbletea + glamour 4 标签终端面板 (浏览、搜索、问答、编译),支持层级分布显示
 - **Web UI:** Preact + Tailwind CSS 通过 `go:embed` 嵌入,使用构建标签 (`-tags webui`)
 - **Scribe:** 可扩展接口,从对话中摄取知识。会话 scribe 处理 Claude Code JSONL 记录。

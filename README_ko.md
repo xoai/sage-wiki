@@ -1,3 +1,5 @@
+⚠️ 이 번역은 README의 대규모 개편 이전 버전입니다 — 동기화될 때까지 영어 [README.md](README.md)를 참조하세요. *(This translation predates a major README restructuring — see the English README.md until parity lands.)*
+
 [English](README.md) | [中文](README_zh.md) | [日本語](README_ja.md) | **한국어** | [Tiếng Việt](README_vi.md) | [Français](README_fr.md) | [Русский](README_ru.md)
 
 <!-- translations: may-lag -->
@@ -752,7 +754,7 @@ parsers:
 
 ## 에이전트 스킬 파일
 
-sage-wiki에는 17개의 MCP 도구가 있지만, 에이전트의 컨텍스트에 *언제* 위키를 확인해야 하는지 알려주는 것이 없으면 사용하지 않습니다. 스킬 파일이 이 격차를 해소합니다 — 에이전트에게 언제 검색하고, 무엇을 캡처하며, 어떻게 효과적으로 쿼리할지 가르치는 생성된 스니펫입니다.
+sage-wiki에는 18개의 MCP 도구가 있지만, 에이전트의 컨텍스트에 *언제* 위키를 확인해야 하는지 알려주는 것이 없으면 사용하지 않습니다. 스킬 파일이 이 격차를 해소합니다 — 에이전트에게 언제 검색하고, 무엇을 캡처하며, 어떻게 효과적으로 쿼리할지 가르치는 생성된 스니펫입니다.
 
 ```bash
 # 프로젝트 초기화 시 생성
@@ -924,7 +926,7 @@ python3 eval.py ./test-fixture
 - **온톨로지:** BFS 탐색과 순환 감지를 갖춘 타입화된 엔티티-관계 그래프
 - **검색:** 청크 수준 FTS5 + 벡터 인덱싱, LLM 쿼리 확장, LLM 재순위 매기기, RRF 퓨전, 4신호 그래프 확장을 갖춘 향상된 파이프라인. 검색 응답은 온디맨드 컴파일을 위해 컴파일되지 않은 소스를 알립니다.
 - **컴파일러:** 적응형 백프레셔, 동시 Pass 2 추출, 프롬프트 캐싱, Batch API (Anthropic + OpenAI + Gemini), 비용 추적, MCP를 통한 온디맨드 컴파일, 품질 스코어링, 캐스케이드 인식을 갖춘 계층화된 파이프라인 (Tier 0: 인덱스, Tier 1: 임베드, Tier 2: 코드 파싱, Tier 3: 전체 LLM 컴파일). 임베딩은 지수 백오프를 통한 재시도, 선택적 속도 제한, 긴 입력에 대한 평균 풀링을 포함합니다. 10개 내장 코드 파서 (go/ast를 통한 Go, 정규식을 통한 8개 언어, 구조화된 데이터 키 추출).
-- **MCP:** stdio 또는 SSE를 통한 17개 도구 (읽기 6, 쓰기 9, 복합 2), 온디맨드 컴파일을 위한 `wiki_compile_topic`과 지식 추출을 위한 `wiki_capture` 포함
+- **MCP:** stdio 또는 SSE를 통한 18개 도구 (읽기 7, 쓰기 9, 복합 2), 온디맨드 컴파일을 위한 `wiki_compile_topic`과 지식 추출을 위한 `wiki_capture` 포함
 - **TUI:** 티어 분포 표시를 갖춘 bubbletea + glamour 4탭 터미널 대시보드 (탐색, 검색, Q&A, 컴파일)
 - **웹 UI:** 빌드 태그(`-tags webui`)를 사용하여 `go:embed`로 임베딩된 Preact + Tailwind CSS
 - **Scribe:** 대화에서 지식을 수집하기 위한 확장 가능한 인터페이스. 세션 스크라이브는 Claude Code JSONL 트랜스크립트를 처리합니다.

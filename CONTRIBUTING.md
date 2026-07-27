@@ -22,6 +22,28 @@
 3. Place the script in `parsers/` and ensure it's executable (relative paths in `command` and `args` are resolved against `parsers/`)
 4. Enable external parsers in config: `parsers: { external: true }`
 
+External parsers run with timeout enforcement (30s default, 120s max) and
+environment stripping (only PATH, HOME, LANG reach the subprocess). They
+require double opt-in: `parsers.external: true` to load definitions and
+`parsers.trust_external: true` to acknowledge unsandboxed execution; packs
+with parsers additionally need `pack apply --enable-parsers`. Built-in
+extractors are hardened with decompression caps (per-entry and aggregate
+limits against zip bombs) and covered by a nightly fuzzing job
+([.github/workflows/fuzz.yml](.github/workflows/fuzz.yml)) that feeds
+malformed docx/xlsx/pptx/epub/eml/pdf inputs and checks the caps hold.
+
+## Regenerating the web UI dist
+
+The committed `internal/web/dist` must byte-match a `node:22-alpine` build
+(CI enforces this with a hard-fail drift check). After changing anything
+under `web/`, regenerate inside the pinned environment and commit the
+result:
+
+```sh
+docker run --rm -v "$PWD:/src" -w /src/web node:22-alpine sh -c "npm ci && npm run build"
+```
+
+
 ## Creating a pack
 
 ### Quick start
@@ -62,6 +84,25 @@ sage-wiki pack apply my-pack --mode merge
 # verify config and ontology changes
 sage-wiki status
 ```
+
+### Pack command reference
+
+```bash
+sage-wiki pack install <name|url>     # install (bundled name or Git URL)
+sage-wiki pack apply <name> [--mode merge|replace]   # apply to the project
+sage-wiki pack remove <name>          # remove a pack from the project
+sage-wiki pack list                   # list applied, cached, and bundled packs
+sage-wiki pack search <query>         # search the pack registry
+sage-wiki pack update [name]          # update installed packs to latest versions
+sage-wiki pack info <name>            # show details about a pack
+sage-wiki pack create <name>          # scaffold a new pack directory
+sage-wiki pack validate [path]        # validate a pack's schema and files
+sage-wiki pack conflicts              # show multi-pack file overlaps
+```
+
+Packs are composable — apply multiple packs and their ontology types are
+union-merged. Conflicts (overlapping prompt files) are reported; use
+`sage-wiki pack conflicts` to inspect.
 
 ### Submitting to the registry
 
