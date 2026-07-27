@@ -1,6 +1,6 @@
 # sage-wiki as a Memory Layer for AI Agents
 
-sage-wiki runs as an MCP server with 17 tools. But tools alone aren't enough — agents won't proactively use the wiki unless their context tells them *when* to check it, *what* to capture, and *how* to query effectively. This guide covers the full setup: connecting MCP, generating skill files, and establishing the read-capture-evolve loop that turns sage-wiki into compounding institutional memory.
+sage-wiki runs as an MCP server with 18 tools. But tools alone aren't enough — agents won't proactively use the wiki unless their context tells them *when* to check it, *what* to capture, and *how* to query effectively. This guide covers the full setup: connecting MCP, generating skill files, and establishing the read-capture-evolve loop that turns sage-wiki into compounding institutional memory.
 
 ## The Problem Skill Files Solve
 

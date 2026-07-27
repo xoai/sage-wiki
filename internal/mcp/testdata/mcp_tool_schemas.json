@@ -1,0 +1,475 @@
+{
+  "wiki_add_ontology": {
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "description": "Create an ontology entity or relation.",
+    "inputSchema": {
+      "properties": {
+        "entity_id": {
+          "description": "Entity ID to create",
+          "type": "string"
+        },
+        "entity_name": {
+          "description": "Human-readable entity name",
+          "type": "string"
+        },
+        "entity_type": {
+          "description": "Entity type: concept, technique, source, claim, artifact",
+          "type": "string"
+        },
+        "relation": {
+          "description": "Relation type: implements, extends, optimizes, etc.",
+          "type": "string"
+        },
+        "source_id": {
+          "description": "Relation source entity ID",
+          "type": "string"
+        },
+        "target_id": {
+          "description": "Relation target entity ID",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "wiki_add_ontology"
+  },
+  "wiki_add_source": {
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "description": "Add a source file to a source folder and update the manifest.",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "description": "File path relative to project root",
+          "type": "string"
+        },
+        "type": {
+          "description": "Source type: article, paper, code (default: auto-detect)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "name": "wiki_add_source"
+  },
+  "wiki_capture": {
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "description": "Capture knowledge from a conversation or text. Extracts key learnings via LLM and stores them as wiki sources for compilation.",
+    "inputSchema": {
+      "properties": {
+        "content": {
+          "description": "Conversation excerpt or text to extract knowledge from (max 100KB)",
+          "type": "string"
+        },
+        "context": {
+          "description": "What the conversation was about",
+          "type": "string"
+        },
+        "tags": {
+          "description": "Comma-separated tags for captured items",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "type": "object"
+    },
+    "name": "wiki_capture"
+  },
+  "wiki_commit": {
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "description": "Git add and commit all changes.",
+    "inputSchema": {
+      "properties": {
+        "message": {
+          "description": "Commit message (auto-generated if omitted)",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "wiki_commit"
+  },
+  "wiki_compile": {
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "description": "Run the full compile pipeline: diff → summarize → extract concepts → write articles.",
+    "inputSchema": {
+      "properties": {
+        "dry_run": {
+          "description": "Show what would change without writing",
+          "type": "boolean"
+        },
+        "fresh": {
+          "description": "Ignore checkpoint, clean compile",
+          "type": "boolean"
+        },
+        "prune": {
+          "description": "Remove orphaned articles whose sole source was deleted",
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "wiki_compile"
+  },
+  "wiki_compile_diff": {
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "description": "Show added/modified/removed source files compared to the manifest.",
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "wiki_compile_diff"
+  },
+  "wiki_compile_topic": {
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "description": "Compile sources for a specific topic on demand. Finds uncompiled sources matching the topic, promotes them, and runs the full compilation pipeline. Use when wiki_search returns uncompiled_sources \u003e 0.",
+    "inputSchema": {
+      "properties": {
+        "max_sources": {
+          "description": "Maximum sources to compile (default 20)",
+          "type": "number"
+        },
+        "topic": {
+          "description": "Topic or query to compile sources for",
+          "type": "string"
+        }
+      },
+      "required": [
+        "topic"
+      ],
+      "type": "object"
+    },
+    "name": "wiki_compile_topic"
+  },
+  "wiki_graph_query": {
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "description": "Answer a relational question by graph traversal: seed entities are resolved from the question (aliases resolve to their canonical entity), a bounded multi-hop subgraph is serialized, and the answer is grounded ONLY in those edges — every citation carries source_doc and confidence provenance.",
+    "inputSchema": {
+      "properties": {
+        "hops": {
+          "description": "Traversal depth 1-5 (default 2)",
+          "type": "number"
+        },
+        "max_edges": {
+          "description": "Subgraph edge cap 1-500 (default 60)",
+          "type": "number"
+        },
+        "question": {
+          "description": "Natural-language question about relations between entities",
+          "type": "string"
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "type": "object"
+    },
+    "name": "wiki_graph_query"
+  },
+  "wiki_learn": {
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "description": "Store a learning entry for the self-learning loop.",
+    "inputSchema": {
+      "properties": {
+        "content": {
+          "description": "What was learned",
+          "type": "string"
+        },
+        "tags": {
+          "description": "Comma-separated tags",
+          "type": "string"
+        },
+        "type": {
+          "description": "Learning type: gotcha, correction, convention, error-fix, api-drift",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "content"
+      ],
+      "type": "object"
+    },
+    "name": "wiki_learn"
+  },
+  "wiki_lint": {
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "description": "Run linting passes on the wiki. Returns findings with severity and suggestions.",
+    "inputSchema": {
+      "properties": {
+        "fix": {
+          "description": "Auto-fix issues",
+          "type": "boolean"
+        },
+        "pass": {
+          "description": "Specific lint pass to run",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "wiki_lint"
+  },
+  "wiki_list": {
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "description": "List wiki articles, optionally filtered by entity type.",
+    "inputSchema": {
+      "properties": {
+        "type": {
+          "description": "Filter by entity type: concept, technique, source, claim, artifact",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "wiki_list"
+  },
+  "wiki_ontology_query": {
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "description": "Query the ontology graph. Traverse from an entity following typed relations. If the entity is an alias of a resolved entity, traversal starts from its canonical entity.",
+    "inputSchema": {
+      "properties": {
+        "depth": {
+          "description": "Traversal depth 1-5 (default 1)",
+          "type": "number"
+        },
+        "direction": {
+          "description": "Traversal direction: outbound, inbound, both (default outbound)",
+          "type": "string"
+        },
+        "entity": {
+          "description": "Entity ID to start from",
+          "type": "string"
+        },
+        "relation": {
+          "description": "Filter by relation type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity"
+      ],
+      "type": "object"
+    },
+    "name": "wiki_ontology_query"
+  },
+  "wiki_provenance": {
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "description": "Show source-article provenance. Given a source path, returns generated articles. Given an article/concept name, returns contributing sources.",
+    "inputSchema": {
+      "properties": {
+        "article": {
+          "description": "Concept/article name (e.g. attention)",
+          "type": "string"
+        },
+        "source": {
+          "description": "Source file path (e.g. raw/paper.pdf)",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "wiki_provenance"
+  },
+  "wiki_read": {
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "description": "Read the full content of a wiki article by path.",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "description": "Article file path relative to project root",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "name": "wiki_read"
+  },
+  "wiki_search": {
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "description": "Search the wiki using hybrid BM25 + vector search. Returns ranked results.",
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "description": "Maximum results (default 10)",
+          "type": "number"
+        },
+        "query": {
+          "description": "Search query",
+          "type": "string"
+        },
+        "tags": {
+          "description": "Comma-separated tag filter",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "name": "wiki_search"
+  },
+  "wiki_status": {
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "description": "Show wiki stats: sources, concepts, entries, vectors, entities, relations.",
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "wiki_status"
+  },
+  "wiki_write_article": {
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "description": "Write a concept article, create ontology entity, and embed vector.",
+    "inputSchema": {
+      "properties": {
+        "concept": {
+          "description": "Concept ID (lowercase-hyphenated)",
+          "type": "string"
+        },
+        "content": {
+          "description": "Article markdown content with frontmatter",
+          "type": "string"
+        }
+      },
+      "required": [
+        "concept",
+        "content"
+      ],
+      "type": "object"
+    },
+    "name": "wiki_write_article"
+  },
+  "wiki_write_summary": {
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "description": "Write a summary markdown file, index in FTS5, and optionally embed vector.",
+    "inputSchema": {
+      "properties": {
+        "concepts": {
+          "description": "Comma-separated concept names extracted",
+          "type": "string"
+        },
+        "content": {
+          "description": "Summary markdown content",
+          "type": "string"
+        },
+        "source": {
+          "description": "Source file path this summary is for",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "content"
+      ],
+      "type": "object"
+    },
+    "name": "wiki_write_summary"
+  }
+}

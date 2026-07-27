@@ -10,7 +10,6 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
@@ -18,6 +17,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/pathsafe"
 	"github.com/xoai/sage-wiki/internal/store"
@@ -127,23 +127,24 @@ func (s *Server) OntStore() store.OntologyStore { return s.ont }
 // CallTool invokes a tool handler by name. Used for testing.
 func (s *Server) CallTool(ctx context.Context, name string, req mcp.CallToolRequest) *mcp.CallToolResult {
 	handlers := map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error){
-		"wiki_search":        s.handleSearch,
-		"wiki_read":          s.handleRead,
-		"wiki_status":        s.handleStatus,
+		"wiki_search":         s.handleSearch,
+		"wiki_read":           s.handleRead,
+		"wiki_status":         s.handleStatus,
 		"wiki_ontology_query": s.handleOntologyQuery,
-		"wiki_list":          s.handleList,
-		"wiki_add_source":    s.handleAddSource,
-		"wiki_write_summary": s.handleWriteSummary,
-		"wiki_write_article": s.handleWriteArticle,
-		"wiki_add_ontology":  s.handleAddOntology,
-		"wiki_learn":         s.handleLearn,
-		"wiki_commit":        s.handleCommit,
-		"wiki_compile_diff":  s.handleCompileDiff,
-		"wiki_compile":       s.handleCompile,
-		"wiki_lint":          s.handleLint,
-		"wiki_capture":       s.handleCapture,
-		"wiki_compile_topic": s.handleCompileTopic,
-		"wiki_provenance":    s.handleProvenance,
+		"wiki_graph_query":    s.handleGraphQuery,
+		"wiki_list":           s.handleList,
+		"wiki_add_source":     s.handleAddSource,
+		"wiki_write_summary":  s.handleWriteSummary,
+		"wiki_write_article":  s.handleWriteArticle,
+		"wiki_add_ontology":   s.handleAddOntology,
+		"wiki_learn":          s.handleLearn,
+		"wiki_commit":         s.handleCommit,
+		"wiki_compile_diff":   s.handleCompileDiff,
+		"wiki_compile":        s.handleCompile,
+		"wiki_lint":           s.handleLint,
+		"wiki_capture":        s.handleCapture,
+		"wiki_compile_topic":  s.handleCompileTopic,
+		"wiki_provenance":     s.handleProvenance,
 	}
 	if h, ok := handlers[name]; ok {
 		r, _ := h(ctx, req)
@@ -191,6 +192,17 @@ func (s *Server) registerReadTools() {
 			mcp.WithNumber("depth", mcp.Description("Traversal depth 1-5 (default 1)")),
 		),
 		s.handleOntologyQuery,
+	)
+
+	// wiki_graph_query (P3-4): multi-hop, provenance-cited graph QA.
+	s.mcp.AddTool(
+		mcp.NewTool("wiki_graph_query",
+			mcp.WithDescription("Answer a relational question by graph traversal: seed entities are resolved from the question (aliases resolve to their canonical entity), a bounded multi-hop subgraph is serialized, and the answer is grounded ONLY in those edges — every citation carries source_doc and confidence provenance."),
+			mcp.WithString("question", mcp.Required(), mcp.Description("Natural-language question about relations between entities")),
+			mcp.WithNumber("hops", mcp.Description("Traversal depth 1-5 (default 2)")),
+			mcp.WithNumber("max_edges", mcp.Description("Subgraph edge cap 1-500 (default 60)")),
+		),
+		s.handleGraphQuery,
 	)
 
 	// wiki_list
@@ -356,10 +368,10 @@ func (s *Server) handleRead(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 
 func (s *Server) handleStatus(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	info, err := wiki.GetStatus(s.projectDir, &wiki.Stores{
-		Mem:   s.mem,
-		Vec:   s.vec,
-		Ont:   s.ont,
-		DB:    s.db,
+		Mem: s.mem,
+		Vec: s.vec,
+		Ont: s.ont,
+		DB:  s.db,
 	})
 	if err != nil {
 		return errorResult(err.Error()), nil

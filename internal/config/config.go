@@ -102,25 +102,25 @@ type EmbedConfig struct {
 }
 
 type CompilerConfig struct {
-	MaxParallel        int      `yaml:"max_parallel"`
-	DebounceSeconds    int      `yaml:"debounce_seconds"`
-	SummaryMaxTokens   int      `yaml:"summary_max_tokens"`
-	ArticleMaxTokens   int      `yaml:"article_max_tokens"`
-	ExtractMaxTokens   int      `yaml:"extract_max_tokens,omitempty"` // max output tokens for concept extraction (default: 8192)
-	ExtractBatchSize   int      `yaml:"extract_batch_size,omitempty"` // summaries per concept extraction call (default: 20)
-	AutoCommit         bool     `yaml:"auto_commit"`
-	AutoLint           bool     `yaml:"auto_lint"`
-	Mode               string   `yaml:"mode,omitempty"`                    // standard, batch, or auto
-	EstimateBefore     bool     `yaml:"estimate_before,omitempty"`         // prompt with cost estimate before compiling
-	PromptCache        *bool    `yaml:"prompt_cache,omitempty"`            // enable prompt caching (default: true)
-	BatchThreshold     int      `yaml:"batch_threshold,omitempty"`         // min sources to auto-select batch mode
-	TokenPriceOverride float64  `yaml:"token_price_per_million,omitempty"` // override price per 1M input tokens
+	MaxParallel        int     `yaml:"max_parallel"`
+	DebounceSeconds    int     `yaml:"debounce_seconds"`
+	SummaryMaxTokens   int     `yaml:"summary_max_tokens"`
+	ArticleMaxTokens   int     `yaml:"article_max_tokens"`
+	ExtractMaxTokens   int     `yaml:"extract_max_tokens,omitempty"` // max output tokens for concept extraction (default: 8192)
+	ExtractBatchSize   int     `yaml:"extract_batch_size,omitempty"` // summaries per concept extraction call (default: 20)
+	AutoCommit         bool    `yaml:"auto_commit"`
+	AutoLint           bool    `yaml:"auto_lint"`
+	Mode               string  `yaml:"mode,omitempty"`                    // standard, batch, or auto
+	EstimateBefore     bool    `yaml:"estimate_before,omitempty"`         // prompt with cost estimate before compiling
+	PromptCache        *bool   `yaml:"prompt_cache,omitempty"`            // enable prompt caching (default: true)
+	BatchThreshold     int     `yaml:"batch_threshold,omitempty"`         // min sources to auto-select batch mode
+	TokenPriceOverride float64 `yaml:"token_price_per_million,omitempty"` // override price per 1M input tokens
 	// PriceTable is an optional JSON price-table path (PERF-04): entries
 	// override built-in prices per provider/model; built-ins cover the rest.
 	// Relative paths resolve against the project dir.
-	PriceTable string `yaml:"price_table,omitempty"`
-	Timezone           string   `yaml:"timezone,omitempty"`                // IANA timezone for user-facing timestamps (default: UTC)
-	ArticleFields      []string `yaml:"article_fields,omitempty"`          // custom frontmatter fields extracted from LLM response
+	PriceTable    string   `yaml:"price_table,omitempty"`
+	Timezone      string   `yaml:"timezone,omitempty"`       // IANA timezone for user-facing timestamps (default: UTC)
+	ArticleFields []string `yaml:"article_fields,omitempty"` // custom frontmatter fields extracted from LLM response
 
 	// Tiered compilation
 	DefaultTier    int            `yaml:"default_tier,omitempty"`  // default tier for sources (default: 3)
@@ -507,6 +507,21 @@ type OntologyConfig struct {
 	EntityTypes   []EntityTypeConfig `yaml:"entity_types,omitempty"`
 	Triples       TriplesConfig      `yaml:"triples,omitempty"`
 	Resolve       ResolveConfig      `yaml:"resolve,omitempty"`
+	GraphQuery    GraphQueryConfig   `yaml:"graph_query,omitempty"`
+}
+
+// GraphQueryConfig bounds the multi-hop graph-query surface (P3-4): the
+// wiki_graph_query MCP tool's subgraph serialization. Both values fall back
+// to defaults when unset or out of range — resolution lives in
+// internal/query (applyGraphQueryDefaults), next to its one consumer.
+type GraphQueryConfig struct {
+	// MaxHops bounds BFS expansion from the seed entities. Default 2,
+	// valid range 1..5 (the same ceiling wiki_ontology_query's depth uses).
+	MaxHops int `yaml:"max_hops,omitempty"`
+	// MaxEdges bounds the serialized subgraph — it is a token budget in
+	// disguise. Default 60, valid range 1..500. Within each hop edges are
+	// sorted before the cap applies, so the retained SET is deterministic.
+	MaxEdges int `yaml:"max_edges,omitempty"`
 }
 
 // ResolveConfig controls Claude-driven entity resolution (P3-3).
