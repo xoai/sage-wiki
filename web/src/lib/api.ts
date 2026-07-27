@@ -31,6 +31,10 @@ export interface GraphData {
   nodes: { id: string; type: string; name: string; connections: number }[];
   edges: { source: string; target: string; relation: string }[];
   total: number;
+  // Present on neighborhood queries: the entity the graph is actually
+  // centered on. May differ from the requested ?center= when the server
+  // resolved an alias to its canonical entity.
+  center?: string;
 }
 
 export interface StatusData {

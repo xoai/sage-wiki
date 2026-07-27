@@ -104,7 +104,7 @@ const maxSweepPasses = 33
 const (
 	defaultResolveMaxTokens          = 4096
 	defaultResolveMaxBlockSize       = 60
-	defaultResolveAutoApplyThreshold = 1.0
+	defaultResolveAutoApplyThreshold = 0.85
 	defaultResolveMaxTokenDF         = 0.05
 	defaultResolveMinTokenDFFloor    = 20
 	defaultResolveEmbedThreshold     = 0.82
@@ -123,8 +123,17 @@ func applyResolveDefaults(c config.ResolveConfig) config.ResolveConfig {
 	}
 	// Falls BACK rather than clamping. Clamping a configured 0 to some small
 	// epsilon would still auto-apply near-zero-confidence proposals; the only
-	// safe reading of an out-of-range threshold is "unset".
+	// safe reading of an out-of-range threshold is "unset". Since the default
+	// moved to 0.85 the fallback lands on the PERMISSIVE side, so an explicit
+	// out-of-range value (a typo like 1.5 meant as "stricter than 1.0") warns;
+	// unset (0) is every default user and stays silent.
 	if c.AutoApplyThreshold <= 0 || c.AutoApplyThreshold > 1 {
+		if c.AutoApplyThreshold != 0 {
+			log.Warn("resolve: auto_apply_threshold out of range (0,1] — "+
+				"falling back to the default, which auto-applies",
+				"configured", c.AutoApplyThreshold,
+				"default", defaultResolveAutoApplyThreshold)
+		}
 		c.AutoApplyThreshold = defaultResolveAutoApplyThreshold
 	}
 	if c.MaxTokenDF <= 0 {
@@ -294,9 +303,10 @@ func warnPendingBacklog(ont store.OntologyStore) {
 
 // canAutoApply decides whether a proposed link is applied without review.
 //
-// Under the DEFAULT configuration this returns false on its first line: the
-// threshold defaults to 1.0, which means never. The guards below matter once an
-// operator has lowered it deliberately.
+// The threshold defaults to 0.85 — auto-apply is the default behaviour now
+// that --unlink makes a mistaken link exactly reversible. An operator who
+// wants review-only sets an explicit 1.0, which the first branch below turns
+// into "never, exactly".
 //
 // The description requirement is the one that matters most among them. Concept
 // entities carry no Definition (write.go) unless the triple-extraction pass ran,
@@ -310,10 +320,12 @@ func warnPendingBacklog(ont store.OntologyStore) {
 // threshold: a test passing the package default asserts nothing about the
 // guards below this line — see resolveCfg in resolve_pass_test.go.
 func canAutoApply(c resolvedCluster, x, y store.Entity, threshold float64) bool {
-	// 1.0 means NEVER, exactly. normalizeClusters clamps confidence to [0,1], so
-	// a model returning 1.0 would otherwise satisfy `confidence >= threshold` and
-	// defeat the review-only default — a safety default a model can beat by being
-	// confident is not a safety default.
+	// 1.0 means NEVER, exactly — the guarantee outlives the review-only
+	// default that motivated it. An operator who sets 1.0 asks for review-only;
+	// normalizeClusters clamps confidence to [0,1], so a model returning 1.0
+	// would otherwise satisfy `confidence >= threshold` and beat that request —
+	// a review-only setting a model can defeat by being confident is not a
+	// setting at all.
 	//
 	// >= 1.0, not an epsilon form: applyResolveDefaults guarantees (0,1], 1.0 is
 	// exactly representable, and an epsilon would silently disarm a deliberate

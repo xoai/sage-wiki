@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
 
@@ -180,6 +182,84 @@ func TestHandleOntologyQuery(t *testing.T) {
 	json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &entities)
 	if len(entities) != 1 {
 		t.Errorf("expected 1 entity, got %d", len(entities))
+	}
+
+	// Querying via an ALIAS resolves to the canonical silently: the payload
+	// stays a bare array of entities — no wrapper object, no resolved_from
+	// field — and carries the canonical's edges.
+	if err := srv.ont.AddEntity(ontology.Entity{ID: "fa", Type: "technique", Name: "FA"}); err != nil {
+		t.Fatalf("AddEntity: %v", err)
+	}
+	if _, err := srv.ont.LinkAlias(store.EntityAlias{
+		Alias: "fa", CanonicalID: "flash-attn", EntityType: "technique",
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-27T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("LinkAlias: %v", err)
+	}
+	result, err = srv.handleOntologyQuery(context.Background(), makeToolRequest(map[string]any{
+		"entity":    "fa",
+		"direction": "outbound",
+		"depth":     float64(1),
+	}))
+	if err != nil {
+		t.Fatalf("handleOntologyQuery(alias): %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	var viaAlias []map[string]any
+	if err := json.Unmarshal([]byte(text), &viaAlias); err != nil {
+		t.Fatalf("alias payload is no longer a bare entity array: %v\n%s", err, text)
+	}
+	if len(viaAlias) != 1 || viaAlias[0]["id"] != "attention" {
+		t.Errorf("alias query must return the canonical's edges, got %s", text)
+	}
+	if strings.Contains(text, "resolved_from") {
+		t.Errorf("resolution must be silent — no resolved_from field: %s", text)
+	}
+}
+
+// TestMCPTraverseResolvesAlias exercises the same resolution end-to-end
+// through CallTool dispatch, the path a real MCP client takes.
+func TestMCPTraverseResolvesAlias(t *testing.T) {
+	dir := setupTestProject(t)
+	srv, _ := NewServer(dir)
+	defer srv.Close()
+
+	for _, e := range []ontology.Entity{
+		{ID: "canon", Type: "concept", Name: "Canon"},
+		{ID: "neighbor", Type: "concept", Name: "Neighbor"},
+		{ID: "alias", Type: "concept", Name: "Alias"},
+	} {
+		if err := srv.ont.AddEntity(e); err != nil {
+			t.Fatalf("AddEntity %s: %v", e.ID, err)
+		}
+	}
+	if err := srv.ont.AddRelation(ontology.Relation{
+		ID: "r1", SourceID: "canon", TargetID: "neighbor", Relation: "extends",
+	}); err != nil {
+		t.Fatalf("AddRelation: %v", err)
+	}
+	if _, err := srv.ont.LinkAlias(store.EntityAlias{
+		Alias: "alias", CanonicalID: "canon", EntityType: "concept",
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-27T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("LinkAlias: %v", err)
+	}
+
+	result := srv.CallTool(context.Background(), "wiki_ontology_query", makeToolRequest(map[string]any{
+		"entity":    "alias",
+		"direction": "outbound",
+		"depth":     float64(1),
+	}))
+	if result.IsError {
+		t.Fatalf("CallTool error: %s", result.Content[0].(mcp.TextContent).Text)
+	}
+	var entities []map[string]any
+	text := result.Content[0].(mcp.TextContent).Text
+	if err := json.Unmarshal([]byte(text), &entities); err != nil {
+		t.Fatalf("payload is not a bare entity array: %v\n%s", err, text)
+	}
+	if len(entities) != 1 || entities[0]["id"] != "neighbor" {
+		t.Errorf("traverse via alias must land on the canonical's neighborhood, got %s", text)
 	}
 }
 

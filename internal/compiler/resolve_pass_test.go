@@ -49,14 +49,15 @@ func resolveServer(t *testing.T, payload string) (*httptest.Server, *atomic.Int6
 	return srv, &calls, &prompts
 }
 
-// resolveCfg takes the threshold as a PARAMETER, deliberately. The package
-// default is the "never auto-apply" value, so a test that inherited it would
-// return false on canAutoApply's first line and assert nothing about the guards
-// below — every "no applied row" assertion would hold vacuously. Every caller
-// here states the threshold it depends on.
+// resolveCfg takes the threshold as a PARAMETER, deliberately. A test that
+// inherited the package default would change meaning whenever the default
+// moves: under the old 1.0 default every "no applied row" assertion held
+// vacuously (canAutoApply returned false on its first line), and under 0.85
+// the same fixture silently starts applying. Every caller here states the
+// threshold it depends on.
 //
 // The one test that SHOULD inherit the default is
-// TestResolvePassQueuesRatherThanLinksByDefault, which builds its own config
+// TestResolvePassAutoAppliesByDefault, which builds its own config
 // omitting the key: it exercises the default itself, not a guard.
 func resolveCfg(threshold float64) *config.Config {
 	c := &config.Config{}
@@ -82,10 +83,13 @@ const twoMemberCluster = `{"clusters":[
    "confidence":0.95,"reason":"same astronaut"}
 ]}`
 
-// Confidence 1.0 is deliberate and load-bearing: it is the exact input the
-// never-branch exists to defend against, and the ONLY value at which removing
-// that branch makes TestResolvePassQueuesRatherThanLinksByDefault fail. At 0.95
-// the mutation survives, because 0.95 < 1.0 queues anyway.
+// Confidence 1.0 is deliberate and load-bearing, from two sides. For the
+// never-branch it is the exact input the branch defends against at an
+// EXPLICIT threshold 1.0 — TestCanAutoApplyNeverAtThresholdOne is where
+// removing the branch shows, and at 0.95 that mutation would survive because
+// 0.95 < 1.0 queues anyway. For TestResolvePassAutoAppliesByDefault it clears
+// the 0.85 default with no dependence on where between 0.85 and 1.0 the
+// default might later sit.
 const certainCluster = `{"clusters":[
   {"members":["E1","E2"],"same_referent":true,"broader":false,
    "confidence":1.0,"reason":"same astronaut"}
@@ -1242,20 +1246,20 @@ func TestSweepAliasesNormalisesNilArguments(t *testing.T) {
 	}
 }
 
-// TestResolvePassQueuesRatherThanLinksByDefault is the ONE test that inherits the
+// TestResolvePassAutoAppliesByDefault is the ONE test that inherits the
 // package default, and it does so on purpose: it exercises the DEFAULT, not a
 // guard, so §3.1's "no test may inherit" rule does not apply to it. Every other
 // test states its threshold via resolveCfg.
 //
-// Without it the cycle's whole property is silently revertible — a later "compat
-// branch" that restores 0.85 for users who never set the key leaves the rest of
-// the suite green.
+// Without it the default is silently revertible — a later "safety branch" that
+// restores review-only for users who never set the key leaves the rest of the
+// suite green.
 //
-// The fixture would auto-apply under EVERY other guard: described on both sides,
-// same_referent, broader false, confidence 1.0. Only the new default stops it.
-// The outbound edge and Errorf (not Fatalf) are what make RelationCount() a live
-// assertion — it catches a pending proposal that copies edges anyway.
-func TestResolvePassQueuesRatherThanLinksByDefault(t *testing.T) {
+// The fixture passes EVERY guard: described on both sides, same_referent,
+// broader false, confidence 1.0 ≥ 0.85. Under the default that MUST auto-apply.
+// And because cheap mistakes are the argument for the 0.85 default, the same
+// test walks the exit: unlink removes the derived edge and rejects the pair.
+func TestResolvePassAutoAppliesByDefault(t *testing.T) {
 	srv, calls, _ := resolveServer(t, certainCluster)
 	ont := passStore(t)
 	addEnt(t, ont, "buzz-aldrin", "Buzz Aldrin", "Apollo 11 pilot", "wiki/concepts/buzz-aldrin.md")
@@ -1284,26 +1288,59 @@ func TestResolvePassQueuesRatherThanLinksByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(applied) != 0 {
-		t.Errorf("applied = %d, want 0 — the default must never auto-apply: %+v",
-			len(applied), applied)
+	if len(applied) != 1 {
+		t.Fatalf("applied = %d, want 1 — the 0.85 default must auto-apply a "+
+			"1.0-confidence fully-guarded cluster: %+v", len(applied), applied)
+	}
+	al := applied[0]
+	// The articled row is the canonical, so the alias's edge derives onto it.
+	if al.Alias != "Buzz Aldrin" || al.CanonicalID != "buzz-aldrin" {
+		t.Fatalf("link direction = %q -> %q, want \"Buzz Aldrin\" -> \"buzz-aldrin\"",
+			al.Alias, al.CanonicalID)
 	}
 
-	pending, err := ont.ListAliases(store.AliasPending)
+	// The union: the canonical now shows the alias's apollo-11 edge, and the
+	// whole-graph count includes the derived copy.
+	rels, err := ont.GetRelations("buzz-aldrin", ontology.Both, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pending) != 1 {
-		t.Errorf("pending = %d, want 1 — the proposal must be queued for review", len(pending))
+	derived := false
+	for _, r := range rels {
+		if r.TargetID == "apollo-11" {
+			derived = true
+		}
+	}
+	if !derived {
+		t.Errorf("canonical shows no derived edge to apollo-11 after auto-apply: %+v", rels)
+	}
+	if n, err := ont.RelationCount(); err != nil || n != 2 {
+		t.Errorf("RelationCount = %d (err %v), want 2 (original + derived)", n, err)
 	}
 
-	// Errorf above, so this runs: a queued proposal must not have copied edges.
-	n, err := ont.RelationCount()
+	// The round-trip: unlink deletes exactly the derived edge and rejects the
+	// pair so the next compile cannot silently re-apply it.
+	if err := ont.UnlinkAlias(al.Alias, al.CanonicalID); err != nil {
+		t.Fatalf("UnlinkAlias: %v", err)
+	}
+	rels, err = ont.GetRelations("buzz-aldrin", ontology.Both, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Errorf("relations = %d, want 1 — a pending proposal must not copy edges", n)
+	for _, r := range rels {
+		if r.TargetID == "apollo-11" {
+			t.Errorf("derived edge survived unlink: %+v", r)
+		}
+	}
+	if n, err := ont.RelationCount(); err != nil || n != 1 {
+		t.Errorf("RelationCount after unlink = %d (err %v), want 1 — the original only", n, err)
+	}
+	rejected, err := ont.ListAliases(store.AliasRejected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rejected) != 1 {
+		t.Errorf("rejected = %d, want 1 — unlink without rejection is a pause, not an undo", len(rejected))
 	}
 }
 

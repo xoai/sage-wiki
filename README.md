@@ -496,7 +496,7 @@ serve:
 #     model: ""                    # default: models.extract, then models.summarize
 #     max_tokens: 4096
 #     max_block_size: 60           # candidates per arbitration call
-#     auto_apply_threshold: 1.0    # DEFAULT. 1.0 = never auto-apply; lower to opt in
+#     auto_apply_threshold: 0.85   # DEFAULT. set exactly 1.0 for review-only (never auto-apply)
 #     max_token_df: 0.05           # ignore name tokens shared by >5% of a type
 #     min_token_df_floor: 20       # ...but never ignore one seen fewer than 20 times
 #     use_embeddings: false        # widen candidates to names sharing no tokens
@@ -504,19 +504,21 @@ serve:
 #     max_embed_candidates: 500    # global per-run cap on embedding calls
 ```
 
-**Nothing is linked automatically by default.** `auto_apply_threshold` defaults
-to `1.0`, which means *never* — every proposal is queued for you to decide with
-`sage-wiki ontology resolve --review`. The pass warns when proposals are waiting.
+**High-confidence proposals link automatically by default.**
+`auto_apply_threshold` defaults to `0.85`; anything below it — or failing any
+other guard — is queued for you to decide with
+`sage-wiki ontology resolve --review`. The pass warns when proposals are
+waiting. For review-only, set an explicit `1.0`: that means *never*
+auto-apply, exactly, and even a model reporting confidence 1.0 cannot clear it.
 
-A link **is** reversible: `sage-wiki ontology resolve --unlink <alias>` removes
-exactly the edges that link caused and rejects the pair, so a later compile
-cannot quietly re-apply it. Derived edges are stored separately from the ones
-your sources actually asserted, which is what makes the undo exact rather than a
-reconstruction.
+A link **is** reversible — which is why auto-apply is a sane default:
+`sage-wiki ontology resolve --unlink <alias>` removes exactly the edges that
+link caused and rejects the pair, so a later compile cannot quietly re-apply
+it. Derived edges are stored separately from the ones your sources actually
+asserted, which is what makes the undo exact rather than a reconstruction.
 
-Lower the threshold to opt in — `0.85` is the old default and a reasonable
-starting point. Once you do, `resolve` and `triples` belong together:
-auto-linking also requires a description on at least one side of a pair, and
+`resolve` and `triples` belong together: auto-linking also requires a
+description on at least one side of a pair, and
 triple extraction is the only *compile-path* writer of entity descriptions. (Not
 the only writer at all: `sage-wiki scribe` writes them too, so a scribe-described
 entity can auto-link even with `triples` off.)
@@ -724,7 +726,7 @@ sage-wiki uses an enhanced search pipeline for Q&A queries, inspired by analyzin
 - **LLM re-ranking** — Top 15 candidates are scored by the LLM for relevance. Position-aware blending protects high-confidence retrieval results (ranks 1-3 get 75% retrieval weight, ranks 11+ get 60% reranker weight).
 - **Cross-lingual vector search** — Full brute-force cosine search across all chunk vectors, combined with BM25 via RRF fusion. This ensures multilingual queries (e.g., Polish query against English content) find semantically relevant results even when there's zero lexical overlap.
 - **In-memory vector cache** — Vector search runs over a per-process in-memory matrix (normalized at load), ~11× faster than per-query SQLite scans at 10K+ chunks. Writes from the same process keep it coherent. **Caveat:** a long-lived MCP/web server does not observe vector writes made by a *separate CLI process* until restart — restart the server after bulk out-of-process writes (e.g. `sage-wiki write` or a batch `compile` against a project the server is watching).
-- **Graph-enhanced context expansion** — After retrieval, a 4-signal graph scorer finds related articles via the ontology: direct relations (×3.0), shared source documents (×4.0), common neighbors via Adamic-Adar (×1.5), and entity type affinity (×1.0). This surfaces articles that are structurally related but missed by keyword/vector search.
+- **Graph-enhanced context expansion** — After retrieval, a 4-signal graph scorer finds related articles via the ontology: direct relations (×3.0), shared source documents (×4.0), common neighbors via Adamic-Adar (×1.5), and entity type affinity (×1.0). This surfaces articles that are structurally related but missed by keyword/vector search. Seed entities that entity resolution has linked as aliases are resolved to their canonical entity first, so a hit on an alias expands from the whole cluster's neighborhood.
 - **Token budget control** — Query context is capped at a configurable token limit (default 8000), with articles truncated at 4000 tokens each. Greedy filling prioritizes the highest-scored articles.
 
 |                 | sage-wiki                                  | qmd               |

@@ -184,7 +184,7 @@ func (s *Server) registerReadTools() {
 	// wiki_ontology_query
 	s.mcp.AddTool(
 		mcp.NewTool("wiki_ontology_query",
-			mcp.WithDescription("Query the ontology graph. Traverse from an entity following typed relations."),
+			mcp.WithDescription("Query the ontology graph. Traverse from an entity following typed relations. If the entity is an alias of a resolved entity, traversal starts from its canonical entity."),
 			mcp.WithString("entity", mcp.Required(), mcp.Description("Entity ID to start from")),
 			mcp.WithString("relation", mcp.Description("Filter by relation type")),
 			mcp.WithString("direction", mcp.Description("Traversal direction: outbound, inbound, both (default outbound)")),
@@ -373,6 +373,8 @@ func (s *Server) handleOntologyQuery(ctx context.Context, req mcp.CallToolReques
 	if entityID == "" {
 		return errorResult("entity is required"), nil
 	}
+	// The entity argument may name an alias; its edges live on the canonical.
+	entityID = store.CanonicalOrSelf(s.ont, entityID)
 
 	dir := ontology.Outbound
 	if d, ok := args["direction"].(string); ok {

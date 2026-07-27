@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 // RelevanceWeights configures the weight of each scoring signal.
@@ -80,8 +81,29 @@ func ScoreRelevance(ont *ontology.Store, opts RelevanceOpts) ([]ScoredArticle, e
 		opts.MaxDepth = 2
 	}
 
-	seedSet := make(map[string]bool, len(opts.SeedIDs))
+	// Consumer-boundary alias resolution (D2, decision-035 follow-up): the
+	// canonical carries the cluster's union of edges, so a seed that is an
+	// alias would miss it. Store methods never resolve — this boundary does.
+	// Failed resolution degrades to the raw id (see store.CanonicalOrSelf).
+	rawSeeds := opts.SeedIDs
+	resolved := make([]string, 0, len(rawSeeds))
+	seen := make(map[string]bool, len(rawSeeds))
+	for _, id := range rawSeeds {
+		cid := store.CanonicalOrSelf(ont, id)
+		if !seen[cid] {
+			seen[cid] = true
+			resolved = append(resolved, cid)
+		}
+	}
+	opts.SeedIDs = resolved
+
+	// seedSet keeps BOTH the raw and the resolved ids: neither half of a
+	// cluster may be re-suggested as its own expansion.
+	seedSet := make(map[string]bool, len(opts.SeedIDs)+len(rawSeeds))
 	for _, id := range opts.SeedIDs {
+		seedSet[id] = true
+	}
+	for _, id := range rawSeeds {
 		seedSet[id] = true
 	}
 

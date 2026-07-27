@@ -33,9 +33,12 @@ func TestApplyResolveDefaults(t *testing.T) {
 			got.AutoApplyThreshold, defaultResolveAutoApplyThreshold)
 	}
 	// The LITERAL value, not just the symbol: comparing the constant to itself
-	// holds for any value, so it cannot pin the review-only default.
-	if got.AutoApplyThreshold != 1.0 {
-		t.Errorf("default AutoApplyThreshold = %v, want 1.0 (review-only)",
+	// holds for any value, so it cannot pin the default. This pin moves WITH
+	// the default, deliberately — the never-at-1.0 guarantee is pinned
+	// separately by TestCanAutoApplyNeverAtThresholdOne and the {1.0, 1.0}
+	// passthrough row below, which must NOT move.
+	if got.AutoApplyThreshold != 0.85 {
+		t.Errorf("default AutoApplyThreshold = %v, want 0.85 (auto-apply at or above)",
 			got.AutoApplyThreshold)
 	}
 	if got.MaxTokenDF != defaultResolveMaxTokenDF {
@@ -50,6 +53,32 @@ func TestApplyResolveDefaults(t *testing.T) {
 	if got.MaxEmbedCandidates != defaultResolveMaxEmbedCandidates {
 		t.Errorf("MaxEmbedCandidates = %d, want %d",
 			got.MaxEmbedCandidates, defaultResolveMaxEmbedCandidates)
+	}
+}
+
+// An out-of-range threshold falls back to the DEFAULT — which, since the
+// default moved to 0.85, is the PERMISSIVE side. The fallback must not be
+// silent: a user who typed 1.5 meaning "stricter than 1.0" would otherwise get
+// automatic linking with no signal. Unset (0, the yaml zero value) stays
+// silent — that is every default user, not a typo.
+func TestApplyResolveDefaultsWarnsOnOutOfRangeThreshold(t *testing.T) {
+	for _, tc := range []struct {
+		in       float64
+		wantWarn bool
+	}{
+		{1.5, true},
+		{-0.5, true},
+		{0, false},   // unset — the default path, not a typo
+		{0.5, false}, // valid
+		{1.0, false}, // valid: explicit review-only
+	} {
+		out := captureWarns(t)
+		applyResolveDefaults(config.ResolveConfig{AutoApplyThreshold: tc.in})
+		warned := strings.Contains(out(), "auto_apply_threshold")
+		if warned != tc.wantWarn {
+			t.Errorf("threshold %v: warned = %v, want %v (log: %q)",
+				tc.in, warned, tc.wantWarn, out())
+		}
 	}
 }
 
