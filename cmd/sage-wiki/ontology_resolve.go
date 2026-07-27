@@ -21,9 +21,10 @@ var ontologyResolveCmd = &cobra.Command{
 	Short: "Review, apply or reject entity-resolution proposals",
 	Long: `Manage entity-resolution links (P3-3).
 
-Linking is non-destructive: the canonical gains copies of the alias's edges and
-BOTH entity rows survive. --review lists proposals the compiler queued for a
-human; --apply and --reject decide one. --sweep re-applies every approved link,
+Linking is non-destructive AND reversible: the canonical gains the alias's edges,
+BOTH entity rows survive, and --unlink removes exactly the edges a link caused. --review lists proposals the compiler queued for a
+human; --apply and --reject decide one; --unlink undoes an applied one. --sweep
+re-applies every approved link,
 copying forward any edge that landed on an alias since the last compile — it
 makes no LLM calls.`,
 	RunE: runOntologyResolve,
@@ -34,6 +35,7 @@ func init() {
 	ontologyResolveCmd.Flags().String("apply", "", "Apply the pending proposal for this alias id")
 	ontologyResolveCmd.Flags().String("reject", "", "Reject the pending proposal for this alias id")
 	ontologyResolveCmd.Flags().Bool("sweep", false, "Re-apply every approved link (no LLM calls)")
+	ontologyResolveCmd.Flags().String("unlink", "", "Undo an applied link for this alias id and reject the pair")
 	ontologyCmd.AddCommand(ontologyResolveCmd)
 }
 
@@ -79,18 +81,19 @@ func runOntologyResolve(cmd *cobra.Command, args []string) error {
 	sweep, _ := cmd.Flags().GetBool("sweep")
 	applyID, _ := cmd.Flags().GetString("apply")
 	rejectID, _ := cmd.Flags().GetString("reject")
+	unlinkID, _ := cmd.Flags().GetString("unlink")
 
 	// Exactly one action. Two would be ambiguous about ordering; zero is almost
 	// always a mistyped flag rather than a request to do nothing.
 	n := 0
-	for _, set := range []bool{review, sweep, applyID != "", rejectID != ""} {
+	for _, set := range []bool{review, sweep, applyID != "", rejectID != "", unlinkID != ""} {
 		if set {
 			n++
 		}
 	}
 	if n != 1 {
 		return cli.CLIError(outputFormat, fmt.Errorf(
-			"exactly one of --review, --apply, --reject or --sweep is required (got %d)", n))
+			"exactly one of --review, --apply, --reject, --unlink or --sweep is required (got %d)", n))
 	}
 
 	b, ont, err := openResolveStore(dir)
@@ -106,9 +109,51 @@ func runOntologyResolve(cmd *cobra.Command, args []string) error {
 		return resolveSweep(ont)
 	case applyID != "":
 		return resolveApply(ont, applyID)
+	case unlinkID != "":
+		return resolveUnlink(ont, unlinkID)
 	default:
 		return resolveReject(ont, rejectID)
 	}
+}
+
+// resolveUnlink undoes an applied link: it removes exactly the edges that link
+// caused, records the pair as rejected so the next compile cannot re-apply it,
+// and then re-sweeps.
+//
+// The sweep runs OUTSIDE UnlinkAlias's transaction, deliberately: it loops
+// LinkAlias, each of which takes its own WriteTx, and that mutex is not
+// reentrant — calling it from inside would deadlock, not error. A failure
+// between the two leaves derived rows that the next sweep corrects.
+func resolveUnlink(ont store.OntologyStore, alias string) error {
+	row, err := ont.GetActiveAlias(alias)
+	if err != nil {
+		return cli.CLIError(outputFormat, err)
+	}
+	if row == nil {
+		return cli.CLIError(outputFormat, fmt.Errorf("no active link for alias %q", alias))
+	}
+	if row.Status != store.AliasApplied {
+		return cli.CLIError(outputFormat, fmt.Errorf(
+			"alias %q is %s, not applied — use --reject to decide a pending proposal", alias, row.Status))
+	}
+
+	if err := ont.UnlinkAlias(row.Alias, row.CanonicalID); err != nil {
+		return cli.CLIError(outputFormat, err)
+	}
+	// Rebuild: rows derived transitively under this link are stamped with the
+	// INTERMEDIATE alias, so deleting by cause alone cannot reach them.
+	sweep := compiler.SweepAliases(context.Background(), ont)
+
+	if outputFormat == "json" {
+		fmt.Println(cli.FormatJSON(true, map[string]any{
+			"alias": row.Alias, "canonical": row.CanonicalID,
+			"status": "rejected", "resweep_rows": sweep.Rows, "resweep_copied": sweep.Copied,
+		}, ""))
+		return nil
+	}
+	fmt.Printf("✓ unlinked %s → %s (pair rejected; %d surviving link(s) swept)\n",
+		row.Alias, row.CanonicalID, sweep.Rows)
+	return nil
 }
 
 func resolveReview(ont store.OntologyStore) error {
@@ -248,10 +293,10 @@ func resolveReject(ont store.OntologyStore, alias string) error {
 		return cli.CLIError(outputFormat, err)
 	}
 	alsoRejected := false
-	// Where the copies actually landed. When the applied half is the REVERSE
-	// row, the residue is on that row's canonical — naming row.CanonicalID would
-	// point the user at the wrong entity, and there is no un-link command to
-	// recover from following it.
+	// Where the derived edges actually landed. When the applied half is the
+	// REVERSE row, they sit on that row's canonical — naming row.CanonicalID
+	// would point the user at the wrong entity, and --unlink takes an alias id,
+	// so following the wrong name would undo the wrong link.
 	residueOn := row.CanonicalID
 	// Applied OR pending. Clearing only the applied case leaves an unapplicable
 	// pending row behind: --review lists it forever, --apply always errors
@@ -277,7 +322,7 @@ func resolveReject(ont store.OntologyStore, alias string) error {
 		}
 		// The residue fact belongs on the machine-readable path too: a scripted
 		// consumer told only "rejected" has no way to learn that the canonical
-		// permanently holds copied edges, and there is no un-link command.
+		// still holds derived edges, or that --unlink is what removes them.
 		if wasApplied {
 			payload["edges_remain_on"] = residueOn
 		}

@@ -114,8 +114,8 @@ func TestValidRelationNames(t *testing.T) {
 func TestRelationPatterns(t *testing.T) {
 	defs := []RelationDef{
 		{Name: "implements", Synonyms: []string{"implements"}},
-		{Name: "cites", Synonyms: nil},          // should be skipped
-		{Name: "derived_from", Synonyms: nil},    // should be skipped
+		{Name: "cites", Synonyms: nil},        // should be skipped
+		{Name: "derived_from", Synonyms: nil}, // should be skipped
 		{Name: "regulates", Synonyms: []string{"regulates", "调控"}},
 	}
 	patterns := RelationPatterns(defs)

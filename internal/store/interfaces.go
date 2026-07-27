@@ -79,10 +79,29 @@ type OntologyStore interface {
 	ListAliases(status AliasStatus) ([]EntityAlias, error)
 	IsRejected(a, b string) (bool, error)
 	SetAliasStatus(alias, canonicalID string, status AliasStatus, decidedBy string) error
-	// LinkAlias copies the alias's edges onto the canonical and records the
+	// LinkAlias derives the alias's edges onto the canonical and records the
 	// link, in ONE transaction. Non-destructive: nothing is deleted and no
-	// edge the canonical asserted itself is overwritten.
+	// edge the canonical asserted itself is overwritten. Derived edges land in
+	// derived_relations stamped with the alias that caused them
+	// (decision-035), which is what makes UnlinkAlias exact.
 	LinkAlias(a EntityAlias) (LinkResult, error)
+	// UnlinkAlias reverses a link: it deletes exactly the edges this alias
+	// caused and records the pair as rejected, in ONE transaction.
+	//
+	// The rejection is not optional. resolvableSeeds and applyClusters both
+	// gate on GetActiveAlias, so deleting the row alone would make the entity a
+	// live seed again and the next compile would re-propose and — below
+	// auto_apply_threshold 1.0 — re-apply it. A delete without the status
+	// change is a pause, not an undo.
+	//
+	// It does NOT rebuild transitively derived rows: under A->B->C, rows
+	// derived from A's edges but stamped B survive. The caller runs a sweep
+	// afterwards, OUTSIDE this transaction — WriteTx is not reentrant.
+	UnlinkAlias(alias, canonicalID string) error
+	// ClearDerived removes every derived edge. The sweep calls it before
+	// replaying the surviving applied links, because replaying alone cannot
+	// remove anything and so cannot undo.
+	ClearDerived() error
 }
 
 type TrustStore interface {

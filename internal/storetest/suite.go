@@ -23,6 +23,8 @@ func RunConformance(t *testing.T, newBackend BackendFactory) {
 	t.Run("vectors", VectorsConformance(newBackend))
 	t.Run("ontology", OntologyConformance(newBackend))
 	t.Run("aliases", AliasConformance(newBackend))
+	t.Run("derived_union", DerivedUnionConformance(newBackend))
+	t.Run("unlink", UnlinkConformance(newBackend))
 	t.Run("trust", TrustConformance(newBackend))
 	t.Run("compile_items", CompileItemsConformance(newBackend))
 	t.Run("compile_items_queue", CompileItemsQueueConformance(newBackend))
@@ -1348,6 +1350,188 @@ func AliasConformance(new BackendFactory) func(*testing.T) {
 			}
 		case <-time.After(10 * time.Second):
 			t.Fatal("CanonicalID looped forever on a cycle")
+		}
+	}
+}
+
+// DerivedUnionConformance proves both backends agree on decision-035's union
+// semantics. It could not exist before M3: until LinkAlias wrote derived rows,
+// the interface had no way to create one, so each backend could only be checked
+// against itself with raw SQL.
+func DerivedUnionConformance(new BackendFactory) func(*testing.T) {
+	return func(t *testing.T) {
+		b := new(t)
+		os := b.Ontology()
+		mk := func(id string) {
+			t.Helper()
+			if err := os.AddEntity(store.Entity{ID: id, Type: "concept", Name: id}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, id := range []string{"canon", "alias", "x", "y"} {
+			mk(id)
+		}
+		// The alias owns an edge the canonical does not.
+		if err := os.AddRelation(store.Relation{
+			ID: "r1", SourceID: "alias", TargetID: "x", Relation: "extends", Evidence: "ALIAS-EDGE",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		// ...and both assert one to y, so the canonical's own must win.
+		if err := os.AddRelation(store.Relation{
+			ID: "r2", SourceID: "alias", TargetID: "y", Relation: "extends", Evidence: "ALIAS",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.AddRelation(store.Relation{
+			ID: "r3", SourceID: "canon", TargetID: "y", Relation: "extends", Evidence: "CANONICAL",
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		res, err := os.LinkAlias(store.EntityAlias{
+			Alias: "alias", CanonicalID: "canon", EntityType: "concept",
+			Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-27T00:00:00Z",
+		})
+		if err != nil {
+			t.Fatalf("LinkAlias: %v", err)
+		}
+		if res.Copied != 1 {
+			t.Errorf("Copied = %d, want 1 (only alias->x is new)", res.Copied)
+		}
+		if res.Skipped != 1 {
+			t.Errorf("Skipped = %d, want 1 (canon->y already asserted natively)", res.Skipped)
+		}
+
+		// The canonical now sees the alias's edge, through the union.
+		rels, err := os.GetRelations("canon", store.Outbound, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		byTarget := map[string]string{}
+		for _, r := range rels {
+			byTarget[r.TargetID] = r.Evidence
+		}
+		if byTarget["x"] != "ALIAS-EDGE" {
+			t.Errorf("canon->x evidence = %q, want ALIAS-EDGE (derived)", byTarget["x"])
+		}
+		if byTarget["y"] != "CANONICAL" {
+			t.Errorf("canon->y evidence = %q, want CANONICAL — a derived row must never displace an original", byTarget["y"])
+		}
+		if len(rels) != 2 {
+			t.Errorf("canon outbound = %d, want 2: %+v", len(rels), rels)
+		}
+
+		// The alias keeps its own edges — this links, it does not collapse.
+		aliasRels, err := os.GetRelations("alias", store.Outbound, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(aliasRels) != 2 {
+			t.Errorf("alias outbound = %d, want 2 (its own rows survive)", len(aliasRels))
+		}
+
+		// Every whole-graph edge read must agree. ListRelations is here because
+		// it was unioned on Postgres and NOT on SQLite, and nothing caught it:
+		// the two backends answered `ontology list --type relations`
+		// differently. A method named in the design as needing the union but
+		// absent from this test is exactly how that ships.
+		listed, err := os.ListRelations("", -1)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// RelationCount and AllRelations must agree — both are whole-graph edge
+		// reads, and disagreeing was a real defect found while implementing M3.
+		n, err := os.RelationCount()
+		if err != nil {
+			t.Fatal(err)
+		}
+		all, err := os.AllRelations()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != len(all) {
+			t.Errorf("RelationCount() = %d but len(AllRelations()) = %d — both are whole-graph edge reads", n, len(all))
+		}
+		if len(listed) != len(all) {
+			t.Errorf("ListRelations() = %d but AllRelations() = %d — both must union derived edges",
+				len(listed), len(all))
+		}
+	}
+}
+
+// UnlinkConformance is decision-035's headline: a link that can be taken back.
+// Three cycles failed to deliver this, so the assertions are deliberately about
+// the END STATE of the graph, not about what the API returned.
+func UnlinkConformance(new BackendFactory) func(*testing.T) {
+	return func(t *testing.T) {
+		b := new(t)
+		os := b.Ontology()
+		for _, id := range []string{"canon", "alias", "x"} {
+			if err := os.AddEntity(store.Entity{ID: id, Type: "concept", Name: id}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.AddRelation(store.Relation{
+			ID: "r1", SourceID: "alias", TargetID: "x", Relation: "extends",
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		before, err := os.AllRelations()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		link := store.EntityAlias{
+			Alias: "alias", CanonicalID: "canon", EntityType: "concept",
+			Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-27T00:00:00Z",
+		}
+		if _, err := os.LinkAlias(link); err != nil {
+			t.Fatal(err)
+		}
+		mid, err := os.GetRelations("canon", store.Outbound, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(mid) != 1 {
+			t.Fatalf("canon should see the derived edge, got %+v", mid)
+		}
+
+		if err := os.UnlinkAlias("alias", "canon"); err != nil {
+			t.Fatalf("UnlinkAlias: %v", err)
+		}
+
+		// The graph must be indistinguishable from before the link.
+		after, err := os.AllRelations()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(after) != len(before) {
+			t.Errorf("relations after unlink = %d, want %d (pre-link): %+v", len(after), len(before), after)
+		}
+		post, err := os.GetRelations("canon", store.Outbound, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(post) != 0 {
+			t.Errorf("canon still sees %d edges after unlink: %+v", len(post), post)
+		}
+
+		// And the pair must be rejected, or the next compile re-applies it. A
+		// delete alone is a pause, not an undo.
+		rejected, err := os.IsRejected("alias", "canon")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !rejected {
+			t.Error("unlink left the pair un-rejected — the next compile would re-apply it")
+		}
+		if active, err := os.GetActiveAlias("alias"); err != nil {
+			t.Fatal(err)
+		} else if active != nil {
+			t.Errorf("alias still has an active row after unlink: %+v", active)
 		}
 	}
 }

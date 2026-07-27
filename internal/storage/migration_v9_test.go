@@ -43,10 +43,10 @@ func buildV8Fixture(t *testing.T) *DB {
 	}
 
 	rows := []struct {
-		path                                   string
-		tier                                   int
-		indexed, embedded, parsed              int
-		summarized, extracted, written         int
+		path                           string
+		tier                           int
+		indexed, embedded, parsed      int
+		summarized, extracted, written int
 	}{
 		{"t0-done.md", 0, 1, 0, 0, 0, 0, 0},
 		{"t0-pending.md", 0, 0, 0, 0, 0, 0, 0},
@@ -83,8 +83,8 @@ func TestMigrationV9_Upgrade(t *testing.T) {
 	if err := db.ReadDB().QueryRow("SELECT COALESCE(MAX(version),0) FROM schema_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 11 {
-		t.Errorf("MAX(version) = %d, want 11", version)
+	if version != 12 {
+		t.Errorf("MAX(version) = %d, want 12", version)
 	}
 
 	// Queue columns exist with the right defaults.
@@ -144,8 +144,8 @@ func TestMigrationV9_FreshDB(t *testing.T) {
 	if err := db.ReadDB().QueryRow("SELECT COALESCE(MAX(version),0) FROM schema_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 11 {
-		t.Errorf("fresh DB MAX(version) = %d, want 11", version)
+	if version != 12 {
+		t.Errorf("fresh DB MAX(version) = %d, want 12", version)
 	}
 	var idxCount int
 	if err := db.ReadDB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE name='idx_ci_claim'").Scan(&idxCount); err != nil {

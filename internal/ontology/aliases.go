@@ -274,6 +274,7 @@ func (s *Store) LinkAlias(a store.EntityAlias) (store.LinkResult, error) {
 		return res, fmt.Errorf("ontology: entity %q cannot alias itself", a.Alias)
 	}
 
+	var derivedWritten bool
 	err := s.db.WriteTx(func(tx *sql.Tx) error {
 		// Both endpoints must exist. A missing endpoint is a FACT to report, not
 		// an error: --prune and reconcile delete entities without consulting this
@@ -304,10 +305,21 @@ func (s *Store) LinkAlias(a store.EntityAlias) (store.LinkResult, error) {
 
 		// Scoped so the cursor is released before the INSERT loop below runs on
 		// the same transaction, while still closing via defer.
+		//
+		// This read UNIONS derived rows, and that is load-bearing: it is what
+		// makes A->B->C chains converge (see the doc comment above). Once copies
+		// live in derived_relations, reading `relations` alone would make A's
+		// contribution invisible to LinkAlias(B->C) and the chain would never
+		// complete.
 		edges, err := func() ([]store.Relation, error) {
-			rows, err := tx.Query(
-				`SELECT `+relationCols+` FROM relations WHERE source_id=? OR target_id=?`,
-				a.Alias, a.Alias)
+			q := `SELECT ` + relationCols + ` FROM relations WHERE source_id=? OR target_id=?`
+			args := []any{a.Alias, a.Alias}
+			if s.derivedExists() {
+				q += "\nUNION ALL\nSELECT " + relationCols + " FROM derived_relations d" +
+					" WHERE (d.source_id=? OR d.target_id=?)" + derivedNotShadowed
+				args = append(args, a.Alias, a.Alias)
+			}
+			rows, err := tx.Query(q, args...)
 			if err != nil {
 				return nil, err
 			}
@@ -333,20 +345,48 @@ func (s *Store) LinkAlias(a store.EntityAlias) (store.LinkResult, error) {
 				continue
 			}
 
-			// DO NOTHING, deliberately — NOT AddRelation's confidence-guarded
-			// DO UPDATE. That guard is sound only because both sides assert the
-			// SAME edge. Here the incoming side asserts a DIFFERENT edge, so
-			// DO UPDATE would write the alias's evidence and source_doc onto an
-			// edge the canonical asserted itself, and the canonical could never
-			// recover it: its own honest re-assertion at the lower confidence
-			// would lose to the same guard on every later compile.
+			// Derived edges live in their own table, stamped with the alias
+			// that caused them, so un-link is a delete by cause rather than a
+			// reconstruction (decision-035).
+			//
+			// The lookup below does two jobs at once. If `relations` already
+			// holds this edge it is either:
+			//
+			//   - a GENUINE original the canonical asserted itself, which a
+			//     derived row must never displace — that is what the old
+			//     ON CONFLICT DO NOTHING protected, and Skipped still counts it;
+			//   - or a P3-3 ANONYMOUS COPY, identifiable because its id is
+			//     exactly copiedRelationID for these endpoints. That one is
+			//     converted in place: deleted here and re-inserted below with
+			//     its cause recorded. No LIKE predicate is involved, so an
+			//     entity id that merely starts with "alias:" is never at risk.
+			wantID := copiedRelationID(src, r.Relation, tgt)
+			var existingID sql.NullString
+			err := tx.QueryRow(
+				`SELECT id FROM relations WHERE source_id=? AND target_id=? AND relation=?`,
+				src, tgt, r.Relation).Scan(&existingID)
+			switch {
+			case err == sql.ErrNoRows:
+				// nothing there; fall through to the insert
+			case err != nil:
+				return err
+			case existingID.Valid && existingID.String == wantID:
+				if _, err := tx.Exec(`DELETE FROM relations WHERE id=?`, wantID); err != nil {
+					return err
+				}
+				res.Converted++
+			default:
+				res.Skipped++
+				continue
+			}
+
 			out, err := tx.Exec(
-				`INSERT INTO relations (id, source_id, target_id, relation, created_at,
-				                        evidence, confidence, source_doc,
-				                        valid_from, valid_to, invalidated_by)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-				 ON CONFLICT(source_id, target_id, relation) DO NOTHING`,
-				copiedRelationID(src, r.Relation, tgt), src, tgt, r.Relation, r.CreatedAt,
+				`INSERT INTO derived_relations (alias_id, id, source_id, target_id, relation,
+				                                created_at, evidence, confidence, source_doc,
+				                                valid_from, valid_to, invalidated_by)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				 ON CONFLICT(alias_id, source_id, target_id, relation) DO NOTHING`,
+				a.Alias, wantID, src, tgt, r.Relation, r.CreatedAt,
 				r.Evidence, r.Confidence, r.SourceDoc,
 				r.ValidFrom, r.ValidTo, r.InvalidatedBy)
 			if err != nil {
@@ -358,6 +398,7 @@ func (s *Store) LinkAlias(a store.EntityAlias) (store.LinkResult, error) {
 			}
 			if n > 0 {
 				res.Copied++
+				derivedWritten = true
 			} else {
 				res.Skipped++
 			}
@@ -384,5 +425,43 @@ func (s *Store) LinkAlias(a store.EntityAlias) (store.LinkResult, error) {
 	if err != nil {
 		return store.LinkResult{}, err
 	}
+	if derivedWritten {
+		s.markDerivedWritten()
+	}
 	return res, nil
+}
+
+// UnlinkAlias reverses a link. See store.OntologyStore for the contract.
+func (s *Store) UnlinkAlias(alias, canonicalID string) error {
+	err := s.db.WriteTx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`DELETE FROM derived_relations WHERE alias_id=?`, alias); err != nil {
+			return err
+		}
+		// Rejection, not deletion of the alias row: the audit trail is what
+		// keeps the pair from being re-proposed, and putAliasTx's rejected-row
+		// guard depends on it existing.
+		_, err := tx.Exec(
+			`UPDATE entity_aliases SET status='rejected', decided_at=?, decided_by='unlink'
+			  WHERE alias=? AND canonical_id=?`,
+			time.Now().UTC().Format(time.RFC3339), alias, canonicalID)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	s.markDerivedMaybeEmpty()
+	return nil
+}
+
+// ClearDerived removes every derived edge, for the sweep's rebuild pass.
+func (s *Store) ClearDerived() error {
+	err := s.db.WriteTx(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DELETE FROM derived_relations`)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	s.markDerivedMaybeEmpty()
+	return nil
 }

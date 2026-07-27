@@ -1130,8 +1130,8 @@ func TestResolvePassPendingWrittenThisRunIsHonoured(t *testing.T) {
 // an alias in an earlier block — after which a later block's chain-resolved
 // target was never touched by this compile, while touched[canonical.ID] is still
 // true. The pre-R7 predicate then writes an APPLIED row for a pair neither side
-// of which this compile looked at, copying its edges with no un-link command and
-// freezing it out of future resolution.
+// of which this compile looked at, deriving its edges and freezing it out of
+// future resolution.
 //
 // My first attempt at this test was VACUOUS — one seed, therefore one block, so
 // the "seed becomes an alias" mechanism never occurred, and the assertion held

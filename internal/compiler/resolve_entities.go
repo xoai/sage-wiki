@@ -93,6 +93,14 @@ var ResolveSchema = llm.JSONSchema{
 // candidate cap negative, so every block would be empty.
 const maxResolveChain = 32
 
+// maxSweepPasses bounds the sweep's fixpoint replay.
+//
+// A chain of N links needs N passes to propagate and one more to OBSERVE that
+// nothing changed, so the bound is maxAliasChain + 1 rather than the 32 that
+// ontology.maxAliasChain places on following a chain. At 32 a 32-link chain
+// exited on the bound without ever confirming a fixpoint — correct by luck.
+const maxSweepPasses = 33
+
 const (
 	defaultResolveMaxTokens          = 4096
 	defaultResolveMaxBlockSize       = 60
@@ -792,6 +800,43 @@ func sweepAliases(ctx context.Context, ont store.OntologyStore) SweepResult {
 		return SweepResult{}
 	}
 	if len(rows) == 0 {
+		// No applied links, so no derived edges are justified. Clearing is what
+		// makes the sweep an undo rather than an append: after --unlink removed
+		// the last link, rows derived transitively under it would otherwise
+		// survive with nothing to justify them.
+		if err := ont.ClearDerived(); err != nil {
+			log.Warn("resolve: could not clear derived edges", "error", err)
+		}
+		return SweepResult{}
+	}
+
+	// NOTE for anyone reading Copied/AlreadyPresent: because this rebuilds, a
+	// steady-state sweep reports every edge as Copied. AlreadyPresent counts
+	// only pass 0 (see the fixpoint below), so it still means what it always
+	// meant — "the canonical asserts this edge itself" — rather than counting
+	// this sweep meeting its own derived rows.
+	//
+	// REBUILD, not append. LinkAlias only ever inserts, so replaying the
+	// surviving links cannot remove a row that a now-unlinked alias caused:
+	// under A->B->C, LinkAlias(B->C) derived C-side rows FROM A's rows and
+	// stamped them B, so `--unlink A` leaves them behind. Rebuilding from the
+	// surviving applied links is what self-corrects the chain. Measured with the
+	// fixpoint below: 200 flat aliases run two passes — 400 write transactions,
+	// ~52ms, against ~34ms for a single pass — on a compile that already made
+	// LLM calls. The earlier "74ms vs 24ms" figure predated the fixpoint.
+	//
+	// The window between clear and replay is real: a concurrent reader sees no
+	// derived edges for its duration, and a crash inside it leaves them missing
+	// until the next sweep. Both self-heal, and the sweep runs at the end of a
+	// compile that already took orders of magnitude longer.
+	//
+	// CANCELLATION IS CHECKED FIRST, and that ordering is the whole point. This
+	// pass is registered with defer, so Ctrl-C reaches it; clearing before the
+	// check meant a cancelled compile WIPED every derived edge and returned
+	// before replacing any of them. An append-only sweep made a cancel harmless,
+	// so the rebuild introduced the hazard and has to close it.
+	if ctx.Err() != nil {
+		log.Warn("resolve: alias sweep skipped, context cancelled")
 		return SweepResult{}
 	}
 	// A user can reject a pair whose applied row still exists — --reject on a
@@ -813,39 +858,89 @@ func sweepAliases(ctx context.Context, ont store.OntologyStore) SweepResult {
 			"(sweeping without them could re-copy across a rejected pair)", "error", err)
 		return SweepResult{}
 	}
+
+	// EVERY early return must come BEFORE this. The clear is destructive and the
+	// replay is what puts the edges back, so any path that clears and then bails
+	// leaves the graph stripped — which is what the cancellation check above and
+	// this ordering exist to prevent. Adding a new early exit below this line
+	// reintroduces that hazard.
+	if err := ont.ClearDerived(); err != nil {
+		log.Warn("resolve: could not clear derived edges before rebuild", "error", err)
+		return SweepResult{}
+	}
+
 	res := SweepResult{Rows: len(rows)}
-	copied, missing, failed, blocked := 0, 0, 0, 0
-	skippedPresent := 0
-	for i, a := range rows {
-		if rej.is(a.Alias, a.CanonicalID) {
-			blocked++
-			continue
+
+	// REPLAY TO A FIXPOINT, because ListAliases returns links in id order
+	// (ORDER BY alias, canonical_id) and that is not topological.
+	//
+	// A chain only propagates in one pass if the links happen to be visited
+	// outward: A->B must run before B->C for A's edges to reach C. Alphabetical
+	// order gives that for A->B->C and the reverse for zz->yy->xx, so a single
+	// pass silently truncated roughly half of all multi-hop chains. The old
+	// append-only sweep was equally order-dependent but ACCUMULATED, so
+	// successive compiles converged; the rebuild clears first, which made the
+	// truncation permanent and re-inflicted it on every compile.
+	//
+	// COUNTER SEMANTICS, chosen per counter rather than per sweep, because a
+	// fixpoint replay makes "count what happened" ambiguous three ways and each
+	// naive answer was measured wrong:
+	//
+	//   - accumulating everything multiplied structural facts by the pass count
+	//     ("2 skipped as rejected" for one rejection);
+	//   - taking everything from pass 0 hid per-pass EVENTS — a link whose
+	//     replay failed only on pass 1 reported a CLEAN sweep while the rebuild
+	//     had cleared the very edges that failed replay was meant to restore,
+	//     and --sweep exited 0 on a stripped graph;
+	//   - Copied alone is safe to accumulate, because LinkAlias's conflict
+	//     target makes a re-derivation a no-op — which is also what lets the
+	//     loop detect a fixpoint.
+	//
+	// So: Copied accumulates. Failed / EndpointMissing / RejectedSkipped are
+	// per-LINK sets deduped across passes — a link failing on three passes is
+	// one broken link, and one failing only on pass 2 still counts.
+	// AlreadyPresent is pass 0 only, and is therefore blind to a native shadow
+	// first reached on a later pass; re-visits re-conflict with our own derived
+	// rows, so later passes cannot distinguish "canonical asserts this" from
+	// "we derived this a pass ago", and under-counting a diagnostic beats
+	// inventing phantoms in it.
+	var first passCounts
+	copiedTotal := 0
+	failedLinks := map[string]bool{}
+	missingLinks := map[string]bool{}
+	blockedLinks := map[string]bool{}
+	exhausted := true
+	for pass := 0; pass < maxSweepPasses; pass++ {
+		pc, ok := sweepPass(ctx, ont, rows, rej, pass, failedLinks, missingLinks, blockedLinks)
+		if pass == 0 {
+			first = pc
 		}
-		// The pass is registered with defer, so a Ctrl-C during compile still
-		// reaches this loop. Without the check it would run one write
-		// transaction per applied row to completion.
-		if ctx.Err() != nil {
-			// Rows, not edges: copied counts EDGES, so subtracting it from a row
-			// count can go negative.
-			log.Warn("resolve: alias sweep cancelled", "done", i, "remaining", len(rows)-i)
+		copiedTotal += pc.copied
+		if !ok {
+			exhausted = false // cancelled: sweepPass logged it, and an exhaustion warn would be wrong
 			break
 		}
-		r, err := ont.LinkAlias(a)
-		if err != nil {
-			failed++
-			log.Warn("resolve: sweep re-link failed", "alias", a.Alias, "canonical", a.CanonicalID, "error", err)
-			continue
+		if pc.copied == 0 {
+			exhausted = false // fixpoint confirmed: a full pass derived nothing new
+			break
 		}
-		// A pruned endpoint is a fact, not a failure: --prune and reconcile
-		// delete entities without consulting the alias table. The row stays, so
-		// the link is still actionable if the entity returns.
-		if r.AliasMissing || r.CanonicalMissing {
-			missing++
-			continue
-		}
-		copied += r.Copied
-		skippedPresent += r.Skipped
 	}
+	if exhausted {
+		// The loop ran out of passes while edges were still propagating, so
+		// convergence was never CONFIRMED. At exactly the cap the chain may in
+		// fact be fully propagated (a cap-length chain uses every pass and
+		// leaves none to observe the fixpoint); anything deeper is truncated —
+		// and because the sweep rebuilds, truncation recurs identically on
+		// every compile. Say "may", not "is": sending a user to hunt for
+		// missing edges that exist is its own failure.
+		log.Warn("resolve: alias sweep hit the pass cap without confirming convergence — "+
+			"chains deeper than the cap are missing derived edges, and will be on every compile",
+			"passes", maxSweepPasses, "links", len(rows))
+	}
+
+	copied, missing, failed, blocked, skippedPresent :=
+		copiedTotal, len(missingLinks), len(failedLinks), len(blockedLinks), first.skipped
+
 	if missing > 0 || failed > 0 || copied > 0 || blocked > 0 {
 		log.Info("resolve: alias sweep", "rows", len(rows),
 			"edges_copied", copied, "endpoint_missing", missing, "failed", failed,
@@ -854,6 +949,56 @@ func sweepAliases(ctx context.Context, ont store.OntologyStore) SweepResult {
 	res.Copied, res.AlreadyPresent = copied, skippedPresent
 	res.EndpointMissing, res.Failed, res.RejectedSkipped = missing, failed, blocked
 	return res
+}
+
+// passCounts is one pass's observations. The caller decides which accumulate;
+// see the counter-semantics comment in sweepAliases.
+type passCounts struct{ copied, skipped int }
+
+// sweepPass replays every applied link once, recording per-link facts into the
+// caller's sets (deduped across passes by alias id — out-degree is at most 1,
+// so the alias identifies the link). Reports false if cancelled.
+func sweepPass(ctx context.Context, ont store.OntologyStore, rows []store.EntityAlias,
+	rej *rejectionIndex, pass int, failedLinks, missingLinks, blockedLinks map[string]bool) (passCounts, bool) {
+	var pc passCounts
+	for i, a := range rows {
+		if rej.is(a.Alias, a.CanonicalID) {
+			blockedLinks[a.Alias] = true
+			continue
+		}
+		// The pass is registered with defer, so a Ctrl-C during compile still
+		// reaches this loop. Without the check it would run one write
+		// transaction per applied row to completion.
+		if ctx.Err() != nil {
+			// Rows, not edges: copied counts EDGES, so subtracting it from a row
+			// count can go negative.
+			//
+			// Says "incomplete" because it is: the sweep cleared derived edges
+			// before replaying, so an abort here leaves the links after `done`
+			// with no derived edges until the next successful sweep. Silence
+			// would make that look like a normal partial run.
+			log.Warn("resolve: alias sweep cancelled — derived edges for the remaining links are "+
+				"missing until the next sweep",
+				"pass", pass, "done", i, "remaining", len(rows)-i)
+			return pc, false
+		}
+		r, err := ont.LinkAlias(a)
+		if err != nil {
+			failedLinks[a.Alias] = true
+			log.Warn("resolve: sweep re-link failed", "alias", a.Alias, "canonical", a.CanonicalID, "error", err)
+			continue
+		}
+		// A pruned endpoint is a fact, not a failure: --prune and reconcile
+		// delete entities without consulting the alias table. The row stays, so
+		// the link is still actionable if the entity returns.
+		if r.AliasMissing || r.CanonicalMissing {
+			missingLinks[a.Alias] = true
+			continue
+		}
+		pc.copied += r.Copied
+		pc.skipped += r.Skipped
+	}
+	return pc, true
 }
 
 // resolvableSeeds narrows the touched set to entities worth arbitrating and

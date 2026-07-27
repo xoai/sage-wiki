@@ -14,9 +14,9 @@ import (
 
 // DB manages SQLite connections with WAL mode and single-writer pattern.
 type DB struct {
-	write    *sql.DB
-	read     *sql.DB
-	writeMu  sync.Mutex
+	write     *sql.DB
+	read      *sql.DB
+	writeMu   sync.Mutex
 	closeOnce sync.Once
 }
 
@@ -154,6 +154,7 @@ var schemaMigrations = []migration{
 	{sql: migrationV9},
 	{sql: migrationV10},
 	{sql: migrationV11},
+	{sql: migrationV12},
 }
 
 // migrate runs schema migrations.
@@ -276,6 +277,9 @@ CREATE TABLE IF NOT EXISTS relations_new (
 	UNIQUE(source_id, target_id, relation)
 );
 
+-- NB (decision-035): this rebuild reads the relations table only, and must keep
+-- doing so. derived_relations holds alias-derived copies; folding them in here
+-- would launder them into originals and make un-link impossible again.
 INSERT OR IGNORE INTO relations_new SELECT * FROM relations;
 DROP TABLE IF EXISTS relations;
 ALTER TABLE relations_new RENAME TO relations;
@@ -589,4 +593,44 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_aliases_active
 	ON entity_aliases(alias) WHERE status IN ('applied','pending');
 CREATE INDEX IF NOT EXISTS idx_entity_aliases_canonical ON entity_aliases(canonical_id);
 CREATE INDEX IF NOT EXISTS idx_entity_aliases_status    ON entity_aliases(status);
+`
+
+// migrationV12 adds derived_relations (decision-035). LinkAlias used to copy an
+// alias's edges into `relations`, where a copy is indistinguishable from an
+// original — which is why a link could never be undone: "which alias put this
+// row here?" has no answer in the data. Derived edges now live here, each
+// stamped with the alias that caused it, so un-link is a delete by cause.
+//
+// `id` carries the same copiedRelationID a copy carries today. It is NOT a
+// primary key: two aliases may legitimately derive the same edge, and
+// un-linking one must leave the other's row. The primary key is therefore
+// (alias_id, source_id, target_id, relation) — idempotent per alias, permissive
+// across aliases. A read returns one row for such an edge, so this table is not
+// 1:1 with what a read returns.
+//
+// ON DELETE CASCADE mirrors `relations`: a pruned entity must take its derived
+// edges with it. There is deliberately no FK to entity_aliases — prune and
+// reconcile delete entities without consulting it, and an FK there would turn a
+// prune into a failure.
+const migrationV12 = `
+CREATE TABLE IF NOT EXISTS derived_relations (
+	alias_id       TEXT NOT NULL,
+	id             TEXT NOT NULL,
+	source_id      TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+	target_id      TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+	relation       TEXT NOT NULL,
+	created_at     TEXT,
+	evidence       TEXT,
+	confidence     REAL,
+	source_doc     TEXT,
+	valid_from     TEXT,
+	valid_to       TEXT,
+	invalidated_by TEXT,
+	PRIMARY KEY (alias_id, source_id, target_id, relation)
+);
+
+-- source/target carry the union's per-arm predicate; alias_id carries un-link.
+CREATE INDEX IF NOT EXISTS idx_derived_source ON derived_relations(source_id);
+CREATE INDEX IF NOT EXISTS idx_derived_target ON derived_relations(target_id);
+CREATE INDEX IF NOT EXISTS idx_derived_alias  ON derived_relations(alias_id);
 `
