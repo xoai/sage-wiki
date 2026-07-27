@@ -506,9 +506,13 @@ serve:
 
 **Nothing is linked automatically by default.** `auto_apply_threshold` defaults
 to `1.0`, which means *never* — every proposal is queued for you to decide with
-`sage-wiki ontology resolve --review`. That is deliberate: a link is not
-reversible (there is no un-link command), so it should not happen without a
-human. The pass warns when proposals are waiting.
+`sage-wiki ontology resolve --review`. The pass warns when proposals are waiting.
+
+A link **is** reversible: `sage-wiki ontology resolve --unlink <alias>` removes
+exactly the edges that link caused and rejects the pair, so a later compile
+cannot quietly re-apply it. Derived edges are stored separately from the ones
+your sources actually asserted, which is what makes the undo exact rather than a
+reconstruction.
 
 Lower the threshold to opt in — `0.85` is the old default and a reasonable
 starting point. Once you do, `resolve` and `triples` belong together:

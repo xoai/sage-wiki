@@ -117,11 +117,16 @@ would otherwise stay two disconnected nodes with half the graph each.
 "Review-only by default" below.
 
 It **links; it does not collapse.** Both entity rows survive, and the canonical
-gains *copies* of the alias's edges — so traversal from the canonical sees the
-whole cluster while nothing is ever deleted. `sage-wiki ontology list` still
-shows both rows, and traversal from the alias still shows only its own edges.
-Collapsing into a single node needs alias-aware prune, reconcile and manifest
-handling first, and is deliberately left to a later cycle.
+gains the alias's edges — so traversal from the canonical sees the whole cluster
+while nothing is ever deleted. `sage-wiki ontology list` still shows both rows,
+and traversal from the alias still shows only its own edges. Collapsing into a
+single node needs alias-aware prune, reconcile and manifest handling first, and
+is deliberately left to a later cycle.
+
+**And it is reversible.** A derived edge is stored separately from the ones your
+sources actually asserted, stamped with the link that caused it, so
+`--unlink` removes exactly those and nothing else. That separation is the whole
+reason the undo is exact rather than a guess — see "Undoing a link" below.
 
 ### Review-only by default
 
@@ -134,10 +139,11 @@ ontology:
     # auto_apply_threshold defaults to 1.0 — never auto-apply
 ```
 
-Every proposal is queued for you to decide. The reason is that a link is **not
-reversible**: there is no un-link command, and rejecting an already-applied link
-stops it being re-proposed without removing the edges already copied. Something
-that cannot be undone should not happen without a human.
+Every proposal is queued for you to decide. This default predates `--unlink` —
+it was introduced when a link genuinely could not be taken back. Now that one
+can, review-only is a *conservative* default rather than a necessary one: a
+mistaken link costs an `--unlink`, not a permanently fractured graph. Lower the
+threshold if that trade suits your vault.
 
 So that the queue is not invisible, the pass warns at the normal log level —
 no `-v` needed — whenever proposals are standing, on every exit path and in
@@ -179,8 +185,28 @@ usually means descriptions will be missing.
 sage-wiki ontology resolve --review              # list pending proposals
 sage-wiki ontology resolve --apply  <alias-id>   # apply one
 sage-wiki ontology resolve --reject <alias-id>   # reject; never re-proposed
-sage-wiki ontology resolve --sweep               # re-apply approved links (free)
+sage-wiki ontology resolve --unlink <alias-id>   # undo an APPLIED link
+sage-wiki ontology resolve --sweep               # re-derive approved links (free)
 ```
+
+### Undoing a link
+
+```
+sage-wiki ontology resolve --unlink "NASA"
+✓ unlinked NASA → National Aeronautics and Space Administration (pair rejected; 3 links re-derived)
+```
+
+Three things happen, and all three are necessary:
+
+1. **The edges that link caused are deleted** — exactly those, because each
+   derived edge records which link produced it. Edges your sources asserted
+   directly are untouched.
+2. **The pair is rejected.** Without this the next compile would re-propose it
+   and, below `auto_apply_threshold: 1.0`, re-apply it — so a delete on its own
+   is a pause, not an undo.
+3. **Links are re-derived.** Under a chain A→B→C, edges that reached C came from
+   A *via* B and are recorded against B, so removing A's own rows is not enough.
+   Rebuilding from the links that survive is what clears them.
 
 A proposal goes to review rather than applying automatically when
 `auto_apply_threshold` is at its default of `1.0` (which forbids auto-apply
@@ -207,19 +233,23 @@ for the pass and discarded, and each enabled compile re-embeds up to
 
 ### Things worth knowing
 
-- **A copied edge cites the alias's document.** Its `evidence` span and
+- **A derived edge cites the alias's document.** Its `evidence` span and
   `source_doc` are the alias's, carried over unchanged, so an edge on the
-  canonical may quote a document that never names the canonical. Copied edges
-  are identifiable by an `alias:` id prefix.
-- **A copy never overwrites the canonical's own assertion.** If the canonical
-  already asserts the same edge, its evidence and confidence are kept.
+  canonical may quote a document that never names the canonical. Derived edges
+  live in their own table, stamped with the link that produced them, which is
+  what lets `--unlink` remove exactly those.
+- **A derived edge never overwrites the canonical's own assertion.** If the
+  canonical already asserts the same edge, its evidence and confidence are kept.
 - **The compile-path sweep only runs when there is something to compile.** Edges
   added by reconcile, the MCP tools, trust promotion or scribe reach the
   canonical on the next compile, or immediately via
   `sage-wiki ontology resolve --sweep`.
-- **Pruning is partial for linked entities.** `--prune` removing an alias leaves
-  the copies it contributed on the canonical; removing a *canonical* takes its
-  copied edges with it, since relations cascade on entity delete.
+- **Pruning an alias does not immediately remove what it derived.** A derived
+  edge references the *canonical* and the far endpoint, not the alias, so
+  deleting the alias entity leaves the canonical still showing the edge. The
+  next sweep notices the missing endpoint and rebuilds without it. Deleting the
+  canonical or the far endpoint does remove them at once, by cascade. To
+  separate two entities without deleting either, use `--unlink`.
 - **`source`-type entities are never resolved.** Their identity is their file
   path, and two documents with the same basename would otherwise look identical.
 

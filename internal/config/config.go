@@ -516,7 +516,8 @@ type OntologyConfig struct {
 //
 // Enabling it links NOTHING on its own: AutoApplyThreshold defaults to 1.0,
 // which means never auto-apply, so every proposal is queued for a human. A link
-// is not reversible, so it must not happen without one. The pass warns at WARN
+// can now be undone with `ontology resolve --unlink`, so this default is
+// conservative rather than necessary — it predates that command. The pass warns at WARN
 // level whenever proposals are standing, on every exit path.
 //
 // Lower the threshold to opt in. Once lowered, auto-apply ALSO requires a
@@ -548,7 +549,9 @@ type ResolveConfig struct {
 	// canAutoApply. normalizeClusters clamps confidence to [0,1], so without that
 	// branch a model returning 1.0 would defeat a 1.0 threshold.
 	//
-	// 1.0 is the DEFAULT: review-only, because a link cannot be undone.
+	// 1.0 is the DEFAULT: review-only. It was introduced when a link could not
+	// be undone; `--unlink` (decision-035) now makes a mistake cheap, so
+	// lowering this is a reasonable choice rather than a risk.
 	//
 	// Outside (0,1] it falls back to the default rather than clamping: a
 	// configured 0 would auto-apply every proposal including zero-confidence

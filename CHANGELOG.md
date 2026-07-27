@@ -11,13 +11,12 @@
   of the cluster's edges. **Proposals are queued, not applied**: see the default
   below.
   It **links; it does not collapse**: both entity rows survive and the canonical
-  gains *copies* of the alias's edges, so nothing is ever deleted. Note that this
-  is **not** the same as reversible — there is no un-link command yet, and
-  rejecting an already-applied link stops it being re-applied without removing
-  the edges already copied (they carry an `alias:` id prefix). Defaults to **off**; and when
+  gains the alias's edges, so nothing is ever deleted. It is also **reversible**
+  — `sage-wiki ontology resolve --unlink <alias>` removes exactly the edges that
+  link caused and rejects the pair so a later compile cannot re-apply it.
+  Defaults to **off**; and when
   enabled, `auto_apply_threshold` defaults to **1.0, which means never
-  auto-apply** — every proposal is queued for a human, because a link is not
-  reversible. The pass warns at the default log level whenever proposals are
+  auto-apply** — every proposal is queued for a human. The pass warns at the default log level whenever proposals are
   waiting. Lower the threshold to opt in (`0.85` was the previous default); once
   you do, auto-apply additionally requires a description on at least one side,
   and triple extraction is the only *compile-path* writer of those — though
@@ -25,7 +24,7 @@
   by itself a guarantee. A proposal goes to review when the threshold forbids
   auto-apply (the default), when confidence is below it, when the model flags a
   member as strictly "broader", or when neither side has a description; decide
-  them with `sage-wiki ontology resolve --review|--apply|--reject`. Rejection is symmetric,
+  them with `sage-wiki ontology resolve --review|--apply|--reject|--unlink`. Rejection is symmetric,
   so re-rolling the direction cannot bypass it. Candidate blocking is seeded only
   by entities the compile touched (a new unmatched entity costs zero LLM calls)
   and discards name tokens shared by more than 5% of a type, with an absolute
