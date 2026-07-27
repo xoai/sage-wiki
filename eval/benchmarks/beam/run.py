@@ -413,7 +413,11 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
         },
         "metrics": metrics,
         "latency": latency_stats(rows),
-        "per_question": rows,
+        "per_question": [
+            {**{k: v for k, v in r.items() if k != "retrieval"},
+             "retrieved_count": len(r.get("retrieval", []))}
+            for r in rows
+        ],
     }
     cfg.results_dir.mkdir(parents=True, exist_ok=True)
     out = cfg.results_dir / f"beam_{cfg.project_name}.json"
