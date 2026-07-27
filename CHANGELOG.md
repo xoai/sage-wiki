@@ -39,6 +39,24 @@
   Postgres migration v4 add the `entity_aliases` table on both backends. See
   `docs/guides/graph-memory.md`, including the cost section and the notes on
   derived-edge provenance and the partial prune contract.
+- **Multi-hop graph query with per-fact provenance (P3-4).** New MCP tool
+  `wiki_graph_query` (`{question, hops?, max_edges?}`) answers relational
+  questions by traversal: seed entities are resolved from the question via
+  hybrid search (an alias seed lands on its canonical entity), a bounded
+  subgraph is serialized as numbered triples, and the model must answer ONLY
+  from those edges — every citation returns with `source_doc` and
+  `confidence` (plus the evidence span when present). Zero matched entities
+  and zero edges each short-circuit with a distinct answer and no LLM call.
+  Bounds come from `ontology.graph_query` (`max_hops` default 2, `max_edges`
+  default 60; out-of-range values fall back rather than clamping),
+  overridable per call, and truncation is reported in the response. The
+  serialized subgraph is framed as untrusted content with delimiter-spoof
+  neutralization (the P1-6 frame). Strictly additive — all 18 tool schemas
+  are now pinned by a per-name golden. The regular Q&A context also gains
+  edge provenance: each related-article fallback block names its connecting
+  edge (`via: (a) --[rel]--> (b) {source, confidence}`); graph-EXPANDED
+  articles are deliberately not annotated, because expansion aggregates many
+  signals and naming one edge would be false provenance.
 - **Alias-aware retrieval surfaces.** Once entity resolution links an alias,
   every user-facing graph surface starts from its canonical entity:
   graph-expansion seeds in query/search, the query context's fallback

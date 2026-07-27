@@ -726,7 +726,7 @@ sage-wiki uses an enhanced search pipeline for Q&A queries, inspired by analyzin
 - **LLM re-ranking** — Top 15 candidates are scored by the LLM for relevance. Position-aware blending protects high-confidence retrieval results (ranks 1-3 get 75% retrieval weight, ranks 11+ get 60% reranker weight).
 - **Cross-lingual vector search** — Full brute-force cosine search across all chunk vectors, combined with BM25 via RRF fusion. This ensures multilingual queries (e.g., Polish query against English content) find semantically relevant results even when there's zero lexical overlap.
 - **In-memory vector cache** — Vector search runs over a per-process in-memory matrix (normalized at load), ~11× faster than per-query SQLite scans at 10K+ chunks. Writes from the same process keep it coherent. **Caveat:** a long-lived MCP/web server does not observe vector writes made by a *separate CLI process* until restart — restart the server after bulk out-of-process writes (e.g. `sage-wiki write` or a batch `compile` against a project the server is watching).
-- **Graph-enhanced context expansion** — After retrieval, a 4-signal graph scorer finds related articles via the ontology: direct relations (×3.0), shared source documents (×4.0), common neighbors via Adamic-Adar (×1.5), and entity type affinity (×1.0). This surfaces articles that are structurally related but missed by keyword/vector search. Seed entities that entity resolution has linked as aliases are resolved to their canonical entity first, so a hit on an alias expands from the whole cluster's neighborhood.
+- **Graph-enhanced context expansion** — After retrieval, a 4-signal graph scorer finds related articles via the ontology: direct relations (×3.0), shared source documents (×4.0), common neighbors via Adamic-Adar (×1.5), and entity type affinity (×1.0). This surfaces articles that are structurally related but missed by keyword/vector search. Seed entities that entity resolution has linked as aliases are resolved to their canonical entity first, so a hit on an alias expands from the whole cluster's neighborhood. The `wiki_graph_query` MCP tool exposes the graph directly: a multi-hop question is answered only from a bounded, serialized set of edges, and every citation carries source-document provenance.
 - **Token budget control** — Query context is capped at a configurable token limit (default 8000), with articles truncated at 4000 tokens each. Greedy filling prioritizes the highest-scored articles.
 
 |                 | sage-wiki                                  | qmd               |
@@ -872,7 +872,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full parser authoring guide.
 
 ## Agent Skill Files
 
-sage-wiki has 17 MCP tools, but agents won't use them unless something in their context says *when* to check the wiki. Skill files bridge that gap — generated snippets that teach agents when to search, what to capture, and how to query effectively.
+sage-wiki has 18 MCP tools, but agents won't use them unless something in their context says *when* to check the wiki. Skill files bridge that gap — generated snippets that teach agents when to search, what to capture, and how to query effectively.
 
 ```bash
 # Generate during project init
@@ -1044,7 +1044,7 @@ python3 eval.py ./test-fixture
 - **Ontology:** Typed entity-relation graph with BFS traversal and cycle detection
 - **Search:** Enhanced pipeline with chunk-level FTS5 + vector indexing, LLM query expansion, LLM re-ranking, RRF fusion, and 4-signal graph expansion. Search responses signal uncompiled sources for compile-on-demand.
 - **Compiler:** Tiered pipeline (Tier 0: index, Tier 1: embed, Tier 2: code parse, Tier 3: full LLM compile) with adaptive backpressure, concurrent Pass 2 extraction, prompt caching, batch API (Anthropic + OpenAI + Gemini), cost tracking, compile-on-demand via MCP, quality scoring, and cascade awareness. Embedding includes retry with exponential backoff, optional rate limiting, and mean-pooling for long inputs. 10 built-in code parsers (Go via go/ast, 8 languages via regex, structured data key extraction).
-- **MCP:** 17 tools (6 read, 9 write, 2 compound) via stdio or SSE, including `wiki_compile_topic` for on-demand compilation and `wiki_capture` for knowledge extraction
+- **MCP:** 18 tools (7 read, 9 write, 2 compound) via stdio or SSE, including `wiki_graph_query` for provenance-cited multi-hop graph QA, `wiki_compile_topic` for on-demand compilation and `wiki_capture` for knowledge extraction
 - **TUI:** bubbletea + glamour 4-tab terminal dashboard (browse, search, Q&A, compile) with tier distribution display
 - **Web UI:** Preact + Tailwind CSS embedded via `go:embed` with build tag (`-tags webui`)
 - **Scribe:** Extensible interface for ingesting knowledge from conversations. Session scribe processes Claude Code JSONL transcripts.

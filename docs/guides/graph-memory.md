@@ -266,12 +266,38 @@ for the pass and discarded, and each enabled compile re-embeds up to
 ### What it does not do yet
 
 - **Collapsing into one node.** Resolution links; both rows remain.
-- **Un-linking.** The alias table records every link, so one can be undone by
-  hand, but there is no single command for it yet.
-- **Alias-aware search.** A query for "Buzz" does not yet find canonical
-  "Buzz Aldrin" — that is graph-query work.
 - **Temporal validity.** The three temporal columns are stored and returned but
   nothing reads them; contradicting facts collide rather than invalidating each
   other.
-- **Graph query.** There is no multi-hop question-answering tool over these
-  edges yet.
+
+(Un-linking, alias-aware seeding, and multi-hop graph query — once on this
+list — now exist: `ontology resolve --unlink`, canonical seed resolution at
+every user surface, and `wiki_graph_query` below.)
+
+## Asking the graph
+
+The `wiki_graph_query` MCP tool answers relational questions by traversal
+rather than article retrieval:
+
+- **Args:** `question` (required), `hops` (1–5, default 2), `max_edges`
+  (1–500, default 60). Defaults come from `ontology.graph_query`
+  (`max_hops`, `max_edges`); out-of-range values — config or per-call — fall
+  back rather than clamping.
+- **How it answers:** seed entities are resolved from the question via
+  hybrid search (an alias seed lands on its canonical entity), a bounded
+  subgraph is serialized as numbered triples —
+  `E3: (Buzz Aldrin) --[pilots]--> (Apollo 11) {source: raw/a.md, confidence: 0.90}`
+  — and the model must answer ONLY from those edges.
+- **Citations:** the response returns the cited edges with their
+  `source_doc` and `confidence` (and evidence span when present). An answer
+  the edges cannot support says so and cites nothing.
+- **Bounds are honest:** when the edge cap truncates the subgraph the
+  response says `truncated: true`; nothing pretends to have read the whole
+  graph. Zero matched entities or zero edges return a distinct answer with
+  no LLM call.
+- **Provenance in regular queries too:** the Q&A context's related-article
+  fallback names the connecting edge under each `### Related:` header
+  (`via: (a) --[extends]--> (b) {source: raw/a.md, confidence: 0.80}`).
+  Graph-EXPANDED articles are deliberately not annotated — expansion
+  aggregates many signals, and naming a single edge there would be false
+  provenance.

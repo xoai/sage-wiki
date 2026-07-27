@@ -19,9 +19,9 @@ import (
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/memory"
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/search"
-	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/vectors"
@@ -29,12 +29,12 @@ import (
 
 // QueryResult holds the answer and metadata.
 type QueryResult struct {
-	Question    string
-	Answer      string
-	Sources     []string // article paths used
-	ChunksUsed  []string // chunk IDs used in context
-	Format      string   // markdown, terminal, marp
-	OutputPath  string   // if auto-filed
+	Question   string
+	Answer     string
+	Sources    []string // article paths used
+	ChunksUsed []string // chunk IDs used in context
+	Format     string   // markdown, terminal, marp
+	OutputPath string   // if auto-filed
 }
 
 // QueryOpts allows callers to pass shared resources.
@@ -333,6 +333,7 @@ func buildContextFromEnhanced(projectDir string, outputDir string, results []sea
 		}
 		// A search hit may be an alias; its edges live on the canonical.
 		entityID = store.CanonicalOrSelf(ontStore, entityID)
+		viaEdges := neighborEdges(ontStore, entityID)
 		related, _ := ontStore.Traverse(entityID, ontology.TraverseOpts{
 			Direction: ontology.Both,
 			MaxDepth:  1,
@@ -353,7 +354,7 @@ func buildContextFromEnhanced(projectDir string, outputDir string, results []sea
 						break
 					}
 					seen[rel.ArticlePath] = true
-					ctx.WriteString(fmt.Sprintf("### Related: %s\n%s\n\n---\n\n", rel.ArticlePath, content))
+					fmt.Fprintf(&ctx, "### Related: %s\n%s%s\n\n---\n\n", rel.ArticlePath, viaLine(viaEdges, rel.ID), content)
 					tokensUsed += contentTokens
 				}
 			}
@@ -361,6 +362,53 @@ func buildContextFromEnhanced(projectDir string, outputDir string, results []sea
 	}
 
 	return ctx.String(), sources, nil
+}
+
+// neighborEdges maps each depth-1 neighbor to the edge that connects it to
+// the seed — keyed on the OTHER endpoint (TargetID for outbound, SourceID
+// for inbound; a literal-TargetID key would key inbound edges on the seed
+// itself and their provenance would silently vanish). One GetRelations per
+// seed entity, only when the fallback runs.
+func neighborEdges(ontStore *ontology.Store, entityID string) map[string]store.Relation {
+	m := map[string]store.Relation{}
+	rels, err := ontStore.GetRelations(entityID, ontology.Both, "")
+	if err != nil {
+		return m
+	}
+	for _, r := range rels {
+		neighbor := r.TargetID
+		if neighbor == entityID {
+			neighbor = r.SourceID
+		}
+		if _, ok := m[neighbor]; !ok {
+			m[neighbor] = r
+		}
+	}
+	return m
+}
+
+// viaLine renders the provenance annotation under a "### Related:" header.
+// Empty when no edge maps (defensively — unreachable at depth 1, where the
+// map is built from the same GetRelations call Traverse expands with).
+// The tag follows the serialization render rule: confidence 0 means "not
+// scored" and is omitted, as is an empty source.
+func viaLine(viaEdges map[string]store.Relation, neighborID string) string {
+	e, ok := viaEdges[neighborID]
+	if !ok {
+		return ""
+	}
+	var parts []string
+	if e.SourceDoc != "" {
+		parts = append(parts, "source: "+e.SourceDoc)
+	}
+	if e.Confidence > 0 {
+		parts = append(parts, fmt.Sprintf("confidence: %.2f", e.Confidence))
+	}
+	tag := ""
+	if len(parts) > 0 {
+		tag = " {" + strings.Join(parts, ", ") + "}"
+	}
+	return fmt.Sprintf("via: (%s) --[%s]--> (%s)%s\n", e.SourceID, e.Relation, e.TargetID, tag)
 }
 
 // buildDocLevelContext is the original document-level search path.
@@ -467,6 +515,7 @@ func buildDocLevelContext(projectDir string, question string, topK int,
 		}
 		// A search hit may be an alias; its edges live on the canonical.
 		entityID = store.CanonicalOrSelf(ontStore, entityID)
+		viaEdges := neighborEdges(ontStore, entityID)
 		related, _ := ontStore.Traverse(entityID, ontology.TraverseOpts{
 			Direction: ontology.Both,
 			MaxDepth:  1,
@@ -487,7 +536,7 @@ func buildDocLevelContext(projectDir string, question string, topK int,
 						break
 					}
 					seen[rel.ArticlePath] = true
-					ctx.WriteString(fmt.Sprintf("### Related: %s\n%s\n\n---\n\n", rel.ArticlePath, content))
+					fmt.Fprintf(&ctx, "### Related: %s\n%s%s\n\n---\n\n", rel.ArticlePath, viaLine(viaEdges, rel.ID), content)
 					tokensUsed += contentTokens
 				}
 			}
