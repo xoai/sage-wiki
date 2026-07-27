@@ -85,7 +85,7 @@ def load_dataset(size: str) -> list[dict]:
     cache = DATASET_DIR / f"beam_{size}.json"
     if cache.is_file():
         return json.loads(cache.read_text(encoding="utf-8"))
-    from datasets import load_dataset as hf_load  # deferred heavy import
+    from datasets import load_dataset as hf_load  # type: ignore[import-not-found]
 
     ds = hf_load(HF_DATASET, split=size)
     records = [normalize_record(dict(item)) for item in ds]

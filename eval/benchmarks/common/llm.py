@@ -27,7 +27,7 @@ class LLMError(Exception):
 
 
 def _real_transport(api_key: str | None = None):
-    import openai  # deferred: tests never import it
+    import openai  # type: ignore[import-not-found]  # deferred: tests never import it
 
     client = openai.OpenAI(api_key=api_key) if api_key else openai.OpenAI()
 

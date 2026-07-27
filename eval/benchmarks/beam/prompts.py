@@ -1,6 +1,7 @@
 # Vendored from mem0ai/memory-benchmarks (benchmarks/beam/prompts.py), Apache License 2.0.
 # Copyright the mem0ai/memory-benchmarks contributors. See eval/benchmarks/NOTICE.
-# Prompts are unmodified to preserve benchmark comparability.
+# Prompt text is unmodified to preserve benchmark comparability; only type
+# annotations were adjusted for strict linting (no behavior change).
 """
 BEAM Benchmark Prompt Templates
 ================================
@@ -104,7 +105,7 @@ Return your evaluation as a JSON object with exactly two fields:
 
 # ─── Answer generation ───────────────────────────────────────────
 
-def get_beam_answer_generation_prompt(question: str, memories: list, top_k: int = None) -> str:
+def get_beam_answer_generation_prompt(question: str, memories: list, top_k: "int | None" = None) -> str:
     """Build the prompt for generating an answer from retrieved memories.
 
     Memories are sorted chronologically (oldest first) and include timestamps.

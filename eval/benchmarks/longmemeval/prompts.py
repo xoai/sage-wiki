@@ -1,6 +1,7 @@
 # Vendored from mem0ai/memory-benchmarks (benchmarks/longmemeval/prompts.py), Apache License 2.0.
 # Copyright the mem0ai/memory-benchmarks contributors. See eval/benchmarks/NOTICE.
-# Prompts are unmodified to preserve benchmark comparability.
+# Prompt text is unmodified to preserve benchmark comparability; only type
+# annotations were adjusted for strict linting (no behavior change).
 """
 LongMemEval Judge Prompts
 =========================
@@ -214,7 +215,7 @@ def get_answer_generation_prompt(
     question: str,
     search_results: List[Dict[str, Any]],
     question_date: str,
-    user_profile: dict = None,
+    user_profile: "dict | None" = None,
 ) -> str:
     """Build the answer generation prompt from search results.
 

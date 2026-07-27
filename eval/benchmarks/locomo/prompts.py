@@ -1,6 +1,7 @@
 # Vendored from mem0ai/memory-benchmarks (benchmarks/locomo/prompts.py), Apache License 2.0.
 # Copyright the mem0ai/memory-benchmarks contributors. See eval/benchmarks/NOTICE.
-# Prompts are unmodified to preserve benchmark comparability.
+# Prompt text is unmodified to preserve benchmark comparability; only type
+# annotations were adjusted for strict linting (no behavior change).
 """
 LOCOMO Benchmark Prompts
 ========================
@@ -146,8 +147,8 @@ def _format_user_profile(user_profile: dict) -> str:
 def get_answer_generation_prompt(
     question: str,
     search_results: list,
-    reference_date: str = None,
-    user_profile: dict = None,
+    reference_date: "str | None" = None,
+    user_profile: "dict | None" = None,
 ) -> str:
     """Build the answer generation prompt from search results.
 
@@ -248,7 +249,7 @@ Generated answer: {{response}}
 Return JSON with "reasoning" (one sentence) and "label" (CORRECT or WRONG). Do NOT include both labels."""
 
 
-def _build_judge_prompt(evidence_context: str = None) -> str:
+def _build_judge_prompt(evidence_context: "str | None" = None) -> str:
     """Build the judge prompt template, with or without evidence."""
     if evidence_context:
         prompt = _JUDGE_TEMPLATE.format(

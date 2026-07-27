@@ -167,17 +167,16 @@ class SageWikiBackend:
 
         start = time.monotonic()
         log = proj / "compile.log"
-        last = None
+        last = self._run(key, "compile", timeout_s=timeout_s)
         for attempt in range(2):  # initial + 1 retry (sage-wiki resumes its own checkpoints)
-            proc = self._run(key, "compile", timeout_s=timeout_s)
             with log.open("a", encoding="utf-8") as fh:
-                fh.write(f"--- compile attempt {attempt + 1} (exit {proc.returncode}) ---\n")
-                fh.write(proc.stdout)
-                fh.write(proc.stderr)
-            last = proc
-            if proc.returncode == 0:
+                fh.write(f"--- compile attempt {attempt + 1} (exit {last.returncode}) ---\n")
+                fh.write(last.stdout)
+                fh.write(last.stderr)
+            if last.returncode == 0 or attempt == 1:
                 break
-        if last is None or last.returncode != 0:
+            last = self._run(key, "compile", timeout_s=timeout_s)
+        if last.returncode != 0:
             raise CompileError(
                 f"compile failed for {key} after retry (exit {last.returncode}); "
                 f"see {log}. stderr tail: {last.stderr[-300:]}"
