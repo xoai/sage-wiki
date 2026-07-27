@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## 0.2.1 — 2026-07-28
+
 ### Changed
 
 - **README repositioned and restructured.** sage-wiki's README now leads
