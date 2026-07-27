@@ -123,3 +123,15 @@ class TestEndToEnd:
         assert agg["metadata"]["judge_parse_errors"] == 4
         row = agg["per_question"][0]
         assert row["judgment"] == "FAIL" and row["judge_parse_error"] is True
+
+
+class TestYesPrefixedGarbageJudge:
+    def test_parse_failure_never_scores_pass(self, tmp_path):
+        cfg = RunConfig(out_dir=tmp_path / "o", results_dir=tmp_path / "r",
+                        project_name="t", per_type=5)
+        judge = StubLLM(judge_text="Yesterday's diary entry confirms the outing.")
+        agg = run_benchmark(cfg, StubBackend(), StubLLM(), judge, DATASET)
+        assert agg["metrics"]["overall"]["accuracy"] == 0.0
+        for r in agg["per_question"]:
+            assert r["judgment"] == "FAIL" and r["score"] == 0.0
+            assert r["judge_parse_error"] is True

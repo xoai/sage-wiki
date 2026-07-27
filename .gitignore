@@ -20,3 +20,7 @@ bin/
 
 # memory-benchmark working data (datasets, projects, checkpoints)
 eval/benchmarks/runs/
+
+# Python bytecode
+__pycache__/
+*.pyc

@@ -149,3 +149,18 @@ class TestEndToEnd:
     def test_max_questions_caps(self, tmp_path):
         agg, _ = run_with(tmp_path, max_questions=1)
         assert agg["metrics"]["overall"]["total"] == 1
+
+
+class FailingCompileBackend(StubBackend):
+    def compile(self, key, timeout_s=0):
+        from benchmarks.common.sagewiki import CompileError
+        raise CompileError("compile blew up")
+
+
+class TestCompileFailureAccounting:
+    def test_failed_project_recorded_in_run_metadata(self, tmp_path):
+        agg, _ = run_with(tmp_path, backend=FailingCompileBackend())
+        assert agg["metadata"]["failed_projects"] == ["conv0"]
+        meta = json.loads((tmp_path / "out" / "_run_metadata.json").read_text())
+        assert meta["failed_projects"] == ["conv0"]
+        assert agg["metrics"]["overall"]["infra_errors"] == 2

@@ -48,6 +48,9 @@ case "$CMD" in
       null-data)
         echo '{"ok":true,"data":null}'
         ;;
+      garbage-stdout)
+        echo 'this is not json at all'
+        ;;
       embed-warning)
         echo "warning: embed failed, using BM25-only: dial tcp: timeout" >&2
         echo "$BM25_JSON"

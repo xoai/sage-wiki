@@ -17,6 +17,7 @@ import json
 import logging
 import random
 import re
+import subprocess
 import threading
 import urllib.request
 from dataclasses import dataclass
@@ -24,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 from benchmarks.common.checkpoints import CheckpointStore, heartbeat, write_run_metadata
-from benchmarks.common.llm import LLMClient
+from benchmarks.common.llm import LLMClient, LLMError
 from benchmarks.common.metrics import aggregate_accuracy, latency_stats
 from benchmarks.common.sagewiki import (
     CompileError,
@@ -182,16 +183,20 @@ def _process_question(cfg: RunConfig, backend, answerer, judge_llm, q: dict) -> 
         for sid, date_str, turns in sorted_sessions(q):
             backend.write_session(key, sid, render_session(sid, date_str, turns))
         backend.compile(key)
-        resp = backend.search(key, q["question"], limit=cfg.top_k)
-    except (CompileError, DegradedSearchError) as exc:
-        record.update(status="infra_error", error=str(exc), score=0.0,
-                      search_latency_ms=None)
+    except (CompileError, subprocess.TimeoutExpired) as exc:
+        record.update(status="infra_error", error=f"compile: {exc}", score=0.0,
+                      search_latency_ms=None, failed_project=key)
         return record
-
-    record["search_latency_ms"] = resp.latency_ms
-    record["retrieval"] = resp.results
-    gen_prompt = get_answer_generation_prompt(q["question"], resp.results, qdate)
-    answer = answerer.generate("", gen_prompt)
+    try:
+        resp = backend.search(key, q["question"], limit=cfg.top_k)
+        record["search_latency_ms"] = resp.latency_ms
+        record["retrieval"] = resp.results
+        gen_prompt = get_answer_generation_prompt(q["question"], resp.results, qdate)
+        answer = answerer.generate("", gen_prompt)
+    except (DegradedSearchError, LLMError, subprocess.TimeoutExpired) as exc:
+        record.update(status="infra_error", error=str(exc), score=0.0)
+        record.setdefault("search_latency_ms", None)
+        return record
     answer = re.sub(r"[<\[]mem_thinking[>\]].*?[<\[]/mem_thinking[>\]]", "",
                     answer, flags=re.DOTALL).strip()
     if "ANSWER:" in answer:
@@ -202,14 +207,21 @@ def _process_question(cfg: RunConfig, backend, answerer, judge_llm, q: dict) -> 
         question_type=q["question_type"], question_id=qid, question=q["question"],
         answer=str(q["answer"]), response=answer, question_date=qdate)
     verdict = parse_error = None
-    for _ in range(JUDGE_RETRIES):
-        raw = judge_llm.generate("", judge_prompt)
-        verdict, parse_error = parse_yes_no(raw)
-        if not parse_error:
-            break
+    try:
+        for _ in range(JUDGE_RETRIES):
+            raw = judge_llm.generate("", judge_prompt)
+            verdict, parse_error = parse_yes_no(raw)
+            if not parse_error:
+                break
+    except LLMError as exc:
+        record.update(status="infra_error", error=str(exc), score=0.0)
+        return record
+    # A parse failure is never a PASS (spec §5) — parse_yes_no's startswith
+    # fallback could otherwise credit yes-prefixed garbage ("Yesterday…").
+    correct = bool(verdict) and not parse_error
     record.update(
-        judgment="PASS" if verdict else "FAIL",
-        score=1.0 if verdict else 0.0,
+        judgment="PASS" if correct else "FAIL",
+        score=1.0 if correct else 0.0,
         judge_parse_error=bool(parse_error),
     )
     return record
@@ -261,6 +273,8 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
             "scope": {"per_type": cfg.per_type, "seed": cfg.seed, "top_k": cfg.top_k},
             "total_questions": len(rows),
             "judge_parse_errors": sum(1 for r in rows if r.get("judge_parse_error")),
+            "failed_projects": sorted({r["failed_project"] for r in rows
+                                       if r.get("failed_project")}),
             "usage": {"answerer": answerer.usage(), "judge": judge_llm.usage()},
         },
         "metrics": metrics,
@@ -274,7 +288,8 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
     cfg.results_dir.mkdir(parents=True, exist_ok=True)
     out = cfg.results_dir / f"longmemeval_{cfg.project_name}.json"
     out.write_text(json.dumps(aggregate, ensure_ascii=False, indent=1), encoding="utf-8")
-    write_run_metadata(cfg.out_dir, status="complete", results_file=str(out))
+    write_run_metadata(cfg.out_dir, status="complete", results_file=str(out),
+                       failed_projects=aggregate["metadata"]["failed_projects"])
     log.info("results written to %s", out)
     return aggregate
 

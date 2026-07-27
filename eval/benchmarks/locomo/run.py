@@ -16,6 +16,7 @@ import concurrent.futures
 import json
 import logging
 import re
+import subprocess
 import threading
 import time
 import urllib.request
@@ -24,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 from benchmarks.common.checkpoints import CheckpointStore, heartbeat, write_run_metadata
-from benchmarks.common.llm import LLMClient
+from benchmarks.common.llm import LLMClient, LLMError
 from benchmarks.common.metrics import aggregate_accuracy, latency_stats
 from benchmarks.common.sagewiki import (
     CompileError,
@@ -175,22 +176,21 @@ def _process_question(cfg: RunConfig, backend, answerer, judge_llm,
     }
     try:
         resp = backend.search(f"conv{conv_idx}", qa["question"], limit=cfg.top_k)
-    except DegradedSearchError as exc:
-        record.update(status="infra_error", error=str(exc), score=0.0,
-                      search_latency_ms=None)
+        record["search_latency_ms"] = resp.latency_ms
+        record["retrieval"] = resp.results
+        gen_prompt = get_answer_generation_prompt(qa["question"], resp.results,
+                                                  reference_date=ref_date)
+        answer = answerer.generate("", gen_prompt)
+        if "ANSWER:" in answer:
+            answer = answer.rsplit("ANSWER:", 1)[-1].strip()
+        record["generated_answer"] = answer
+        judgment, score, parse_err, reason = _judge(
+            judge_llm, category, qa["question"], qa["answer"], answer)
+    except (DegradedSearchError, LLMError, subprocess.TimeoutExpired) as exc:
+        record.update(status="infra_error", error=str(exc), score=0.0)
+        record.setdefault("search_latency_ms", None)
         return record
 
-    record["search_latency_ms"] = resp.latency_ms
-    record["retrieval"] = resp.results
-    gen_prompt = get_answer_generation_prompt(qa["question"], resp.results,
-                                              reference_date=ref_date)
-    answer = answerer.generate("", gen_prompt)
-    if "ANSWER:" in answer:
-        answer = answer.rsplit("ANSWER:", 1)[-1].strip()
-    record["generated_answer"] = answer
-
-    judgment, score, parse_err, reason = _judge(
-        judge_llm, category, qa["question"], qa["answer"], answer)
     record.update(judgment=judgment, score=score,
                   judge_parse_error=parse_err, judge_reason=reason)
     return record
@@ -208,21 +208,24 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
                        status="running")
     done = store.done_ids()
     compile_stats: dict[str, dict] = {}
+    failed_projects: list[str] = []
     all_qids: list[str] = []
     counter = {"n": 0}
     counter_lock = threading.Lock()
+
+    def scoped_questions(entry: dict) -> list[tuple[int, dict]]:
+        qs = [(qi, qa) for qi, qa in enumerate(entry.get("qa", []))
+              if qa.get("category") in cfg.categories]
+        return qs[: cfg.max_questions] if cfg.max_questions is not None else qs
+
+    run_total = sum(len(scoped_questions(dataset[c])) for c in cfg.conversations)
 
     for conv_idx in cfg.conversations:
         entry = dataset[conv_idx]
         conversation = entry["conversation"]
         key = f"conv{conv_idx}"
         sessions = sorted_sessions(conversation)
-        questions = [
-            (qi, qa) for qi, qa in enumerate(entry.get("qa", []))
-            if qa.get("category") in cfg.categories
-        ]
-        if cfg.max_questions is not None:
-            questions = questions[: cfg.max_questions]
+        questions = scoped_questions(entry)
         pending = [(qi, qa) for qi, qa in questions
                    if f"conv{conv_idx}_q{qi}" not in done]
         all_qids.extend(f"conv{conv_idx}_q{qi}" for qi, _ in questions)
@@ -240,8 +243,9 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
                                       "vector_count": stats.vector_count,
                                       "sources": stats.source_count,
                                       "skipped": stats.skipped}
-        except CompileError as exc:
+        except (CompileError, subprocess.TimeoutExpired) as exc:
             log.error("compile failed for %s: %s", key, exc)
+            failed_projects.append(key)
             for qi, qa in pending:
                 qid = f"conv{conv_idx}_q{qi}"
                 store.save(qid, {
@@ -255,7 +259,6 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
             continue
 
         ref_date = sessions[-1][1] if sessions else None
-        total = len(questions)
 
         def work(item):
             qi, qa = item
@@ -264,8 +267,7 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
             store.save(record["question_id"], record)
             with counter_lock:
                 counter["n"] += 1
-                heartbeat(log, counter["n"], total * len(cfg.conversations),
-                          every=cfg.heartbeat_every)
+                heartbeat(log, counter["n"], run_total, every=cfg.heartbeat_every)
             return record
 
         if pending:
@@ -290,6 +292,7 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
             "total_questions": len(rows),
             "judge_parse_errors": sum(1 for r in rows if r.get("judge_parse_error")),
             "compile_stats": compile_stats,
+            "failed_projects": failed_projects,
             "usage": usage,
         },
         "metrics": metrics,
@@ -303,8 +306,8 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
     cfg.results_dir.mkdir(parents=True, exist_ok=True)
     out = cfg.results_dir / f"locomo_{cfg.project_name}.json"
     out.write_text(json.dumps(aggregate, ensure_ascii=False, indent=1), encoding="utf-8")
-    write_run_metadata(cfg.out_dir, status="complete",
-                       results_file=str(out), usage=usage)
+    write_run_metadata(cfg.out_dir, status="complete", results_file=str(out),
+                       usage=usage, failed_projects=failed_projects)
     log.info("results written to %s", out)
     return aggregate
 

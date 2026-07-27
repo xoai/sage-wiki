@@ -213,7 +213,11 @@ class SageWikiBackend:
             if proc.returncode != 0:
                 last_reason = f"exit {proc.returncode}: {proc.stderr[-200:]}"
                 continue
-            envelope = json.loads(proc.stdout)
+            try:
+                envelope = json.loads(proc.stdout)
+            except json.JSONDecodeError as exc:
+                last_reason = f"undecodable stdout: {exc}"
+                continue
             rows = envelope.get("data") or []  # zero hits arrive as data: null
             if self._degraded(proc.stderr, rows):
                 last_reason = "BM25-only degrade detected"

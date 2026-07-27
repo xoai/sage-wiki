@@ -159,3 +159,11 @@ class TestFailFast:
             require_api_key()
         monkeypatch.setenv("OPENAI_API_KEY", "test")
         require_api_key()  # no raise
+
+
+class TestGarbageStdout:
+    def test_undecodable_stdout_becomes_degraded_error(self, backend, tmp_path, monkeypatch):
+        set_fixture(tmp_path, monkeypatch, "garbage-stdout")
+        backend.init_project("conv0")
+        with pytest.raises(DegradedSearchError, match="undecodable"):
+            backend.search("conv0", "q", limit=10)

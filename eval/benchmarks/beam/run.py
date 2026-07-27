@@ -17,6 +17,7 @@ import ast
 import concurrent.futures
 import json
 import logging
+import subprocess
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -24,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks.common.checkpoints import CheckpointStore, heartbeat, write_run_metadata
-from benchmarks.common.llm import LLMClient
+from benchmarks.common.llm import LLMClient, LLMError
 from benchmarks.common.metrics import (
     aggregate_beam,
     compute_kendall_tau_b,
@@ -306,18 +307,16 @@ def _process_question(cfg: RunConfig, backend, answerer, judge_llm,
     }
     try:
         resp = backend.search(key, question_text, limit=cfg.top_k)
-    except DegradedSearchError as exc:
-        record.update(status="infra_error", error=str(exc), score=0.0,
-                      search_latency_ms=None)
+        record["search_latency_ms"] = resp.latency_ms
+        record["retrieval"] = resp.results
+        answer = answerer.generate("", get_beam_answer_generation_prompt(
+            question_text, resp.results, top_k=cfg.top_k))
+        record["generated_answer"] = answer
+        nugget_scores, parse_err = judge_nuggets(judge_llm, question_text, nuggets, answer)
+    except (DegradedSearchError, LLMError, subprocess.TimeoutExpired) as exc:
+        record.update(status="infra_error", error=str(exc), score=0.0)
+        record.setdefault("search_latency_ms", None)
         return record
-
-    record["search_latency_ms"] = resp.latency_ms
-    record["retrieval"] = resp.results
-    answer = answerer.generate("", get_beam_answer_generation_prompt(
-        question_text, resp.results, top_k=cfg.top_k))
-    record["generated_answer"] = answer
-
-    nugget_scores, parse_err = judge_nuggets(judge_llm, question_text, nuggets, answer)
     score = nugget_question_score([n["score"] for n in nugget_scores])
     record.update(
         nugget_scores=nugget_scores,
@@ -326,9 +325,12 @@ def _process_question(cfg: RunConfig, backend, answerer, judge_llm,
         judge_parse_error=parse_err,
     )
     if q.get("question_type") == "event_ordering":
-        supplement = event_ordering_supplement(judge_llm, question_text, nuggets, answer)
-        record["tau_b"] = supplement["tau_b"]
-        record["event_ordering"] = supplement
+        try:
+            supplement = event_ordering_supplement(judge_llm, question_text, nuggets, answer)
+            record["tau_b"] = supplement["tau_b"]
+            record["event_ordering"] = supplement
+        except LLMError as exc:
+            record["event_ordering"] = {"error": str(exc)}  # supplement only — question keeps its nugget score
     return record
 
 
@@ -343,6 +345,7 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
                               "conversations": cfg.conversations, "top_k": cfg.top_k},
                        status="running")
     done = store.done_ids()
+    failed_projects: list[str] = []
     all_qids: list[str] = []
     counter = {"n": 0}
     lock = threading.Lock()
@@ -369,8 +372,9 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
                 md = render_batch(bi, turns)
                 backend.write_session(key, f"batch_{bi:04d}", md)
             backend.compile(key)
-        except CompileError as exc:
+        except (CompileError, subprocess.TimeoutExpired) as exc:
             log.error("compile failed for %s: %s", key, exc)
+            failed_projects.append(key)
             for qi, q in pending:
                 qid = f"conv{conv_idx}_q{qi}"
                 store.save(qid, {
@@ -409,6 +413,7 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
                       "conversations": cfg.conversations, "top_k": cfg.top_k},
             "total_questions": len(rows),
             "judge_parse_errors": sum(1 for r in rows if r.get("judge_parse_error")),
+            "failed_projects": failed_projects,
             "usage": {"answerer": answerer.usage(), "judge": judge_llm.usage()},
         },
         "metrics": metrics,
@@ -422,7 +427,8 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
     cfg.results_dir.mkdir(parents=True, exist_ok=True)
     out = cfg.results_dir / f"beam_{cfg.project_name}.json"
     out.write_text(json.dumps(aggregate, ensure_ascii=False, indent=1), encoding="utf-8")
-    write_run_metadata(cfg.out_dir, status="complete", results_file=str(out))
+    write_run_metadata(cfg.out_dir, status="complete", results_file=str(out),
+                       failed_projects=failed_projects)
     log.info("results written to %s", out)
     return aggregate
 
