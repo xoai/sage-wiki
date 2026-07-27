@@ -185,16 +185,17 @@ func (s *ontologyStore) ListRelations(relationType string, limit int) ([]store.R
 		limitFrag = fmt.Sprintf(" LIMIT $%d", len(args)+1)
 		args = append(args, limit)
 	}
-	var rows *sql.Rows
-	var err error
+	// ORDER BY and LIMIT apply to the whole union, so they follow it.
+	var base, dpred string
 	if relationType != "" {
-		rows, err = s.b.pool.Query(
-			"SELECT "+relationCols+" FROM relations WHERE relation=$1 ORDER BY created_at DESC"+limitFrag,
-			args...)
+		base = "SELECT " + relationCols + " FROM relations WHERE relation=$1"
+		dpred = "d.relation=$1"
 	} else {
-		rows, err = s.b.pool.Query(
-			"SELECT "+relationCols+" FROM relations ORDER BY created_at DESC"+limitFrag, args...)
+		base = "SELECT " + relationCols + " FROM relations"
+		dpred = "TRUE"
 	}
+	rows, err := s.b.pool.Query(
+		s.unionIfDerived(base, dpred)+" ORDER BY created_at DESC"+limitFrag, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +204,7 @@ func (s *ontologyStore) ListRelations(relationType string, limit int) ([]store.R
 }
 
 func (s *ontologyStore) AllRelations() ([]store.Relation, error) {
-	rows, err := s.b.pool.Query("SELECT " + relationCols + " FROM relations")
+	rows, err := s.b.pool.Query(s.unionIfDerived("SELECT "+relationCols+" FROM relations", "TRUE"))
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +214,8 @@ func (s *ontologyStore) AllRelations() ([]store.Relation, error) {
 
 func (s *ontologyStore) RelationsByType(relationType string) ([]store.Relation, error) {
 	rows, err := s.b.pool.Query(
-		"SELECT "+relationCols+" FROM relations WHERE relation=$1", relationType)
+		s.unionIfDerived("SELECT "+relationCols+" FROM relations WHERE relation=$1", "d.relation=$1"),
+		relationType)
 	if err != nil {
 		return nil, err
 	}
@@ -222,31 +224,28 @@ func (s *ontologyStore) RelationsByType(relationType string) ([]store.Relation, 
 }
 
 func (s *ontologyStore) EntityConnectionCounts() (map[string]int, error) {
-	// PARITY: the absorbed query's outer GROUP BY id has no SUM aggregate —
-	// on postgres the equivalent bare-column pick is not valid SQL, so this
-	// uses the same UNION ALL shape and sums Go-side... NO — parity note
-	// (decisions.md 2026-07-21): sqlite picks ONE side's count arbitrarily.
-	// Postgres cannot express "arbitrary bare column" portably, so we use
-	// MAX(cnt) which matches sqlite's typical first-row behavior for the
-	// dual-side case in the fixtures the web view was built against.
+	// PARITY preserved exactly, MAX(cnt) included — see the SQLite twin. Only
+	// the source changes; fixing the quirk here would be an unrelated
+	// behaviour change (spec §10 files it, deliberately unfixed).
+	src := s.endpointSource("", "TRUE")
 	rows, err := s.b.pool.Query(`
 		SELECT id, MAX(cnt) FROM (
-			SELECT source_id AS id, COUNT(*) AS cnt FROM relations GROUP BY source_id
+			SELECT source_id AS id, COUNT(*) AS cnt FROM (` + src + `) a GROUP BY source_id
 			UNION ALL
-			SELECT target_id AS id, COUNT(*) AS cnt FROM relations GROUP BY target_id
+			SELECT target_id AS id, COUNT(*) AS cnt FROM (` + src + `) b GROUP BY target_id
 		) x GROUP BY id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	counts := map[string]int{}
+	counts := make(map[string]int)
 	for rows.Next() {
 		var id string
 		var cnt int
 		if err := rows.Scan(&id, &cnt); err != nil {
 			return nil, err
 		}
-		counts[id] = cnt
+		counts[id] += cnt
 	}
 	return counts, rows.Err()
 }
@@ -259,30 +258,38 @@ func (s *ontologyStore) DeleteEntity(id string) error {
 }
 
 func (s *ontologyStore) GetRelations(entityID string, direction store.Direction, relationType string) ([]store.Relation, error) {
-	var conds []string
+	var conds, dconds []string
 	var args []any
 	n := 1
 	switch direction {
 	case store.Outbound:
 		conds = append(conds, fmt.Sprintf("source_id=$%d", n))
+		dconds = append(dconds, fmt.Sprintf("d.source_id=$%d", n))
 		n++
 		args = append(args, entityID)
 	case store.Inbound:
 		conds = append(conds, fmt.Sprintf("target_id=$%d", n))
+		dconds = append(dconds, fmt.Sprintf("d.target_id=$%d", n))
 		n++
 		args = append(args, entityID)
 	default:
 		conds = append(conds, fmt.Sprintf("(source_id=$%d OR target_id=$%d)", n, n))
+		dconds = append(dconds, fmt.Sprintf("(d.source_id=$%d OR d.target_id=$%d)", n, n))
 		n++
 		args = append(args, entityID)
 	}
 	if relationType != "" {
 		conds = append(conds, fmt.Sprintf("relation=$%d", n))
+		dconds = append(dconds, fmt.Sprintf("d.relation=$%d", n))
 		args = append(args, relationType)
 	}
-	rows, err := s.b.pool.Query(
-		"SELECT "+relationCols+" FROM relations WHERE "+strings.Join(conds, " AND ")+" ORDER BY created_at DESC",
-		args...)
+	// ORDER BY moves outside the union so it sorts the whole result, not just
+	// the first arm. $N placeholders are reusable, so args are unchanged.
+	q := s.unionIfDerived(
+		"SELECT "+relationCols+" FROM relations WHERE "+strings.Join(conds, " AND "),
+		strings.Join(dconds, " AND "),
+	) + " ORDER BY created_at DESC"
+	rows, err := s.b.pool.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -380,23 +387,39 @@ func (s *ontologyStore) EntityCount(entityType string) (int, error) {
 }
 
 func (s *ontologyStore) RelationCount() (int, error) {
+	// Unioned — see the SQLite twin for why this is not a pass-through.
 	var n int
-	err := s.b.pool.QueryRow("SELECT COUNT(*) FROM relations").Scan(&n)
+	err := s.b.pool.QueryRow(
+		`SELECT COUNT(*) FROM (` + s.endpointSource("", "TRUE") + `) x`).Scan(&n)
 	return n, err
 }
 
 func (s *ontologyStore) EntityDegree(id string) (int, error) {
 	var n int
+	src := s.endpointSource("source_id=$1 OR target_id=$1", "(d.source_id=$1 OR d.target_id=$1)")
 	err := s.b.pool.QueryRow(
-		"SELECT (SELECT COUNT(*) FROM relations WHERE source_id=$1) + (SELECT COUNT(*) FROM relations WHERE target_id=$1)", id).Scan(&n)
+		"SELECT COUNT(*) FROM ("+src+") x WHERE x.source_id=$1 OR x.target_id=$1", id).Scan(&n)
 	return n, err
 }
 
 func (s *ontologyStore) EntitiesCiting(targetID string) ([]store.Entity, error) {
+	// NB: no relation filter here, unlike the SQLite twin. That divergence
+	// predates decision-035 and is deliberately left alone (spec §10).
+	//
+	// BEHAVIOUR CHANGE, declared: this was a JOIN, and a JOIN emitted one row
+	// per matching edge — so an entity with two relation types to the target
+	// appeared twice. IN (...) returns it once. That is the answer SQLite
+	// already gives (it filters on RelCites), so this narrows the divergence
+	// rather than widening it, but it is a change and not merely "the same
+	// query over a different source".
+	inner := "SELECT source_id FROM relations WHERE target_id=$1"
+	if s.b.derivedExists() {
+		inner += "\nUNION ALL\nSELECT d.source_id FROM derived_relations d WHERE d.target_id=$1" +
+			derivedNotShadowed
+	}
 	rows, err := s.b.pool.Query(`
 		SELECT e.id, e.type, e.name, e.definition, e.article_path, e.created_at, e.updated_at
-		FROM entities e JOIN relations r ON r.source_id = e.id
-		WHERE r.target_id=$1 ORDER BY e.name`, targetID)
+		FROM entities e WHERE e.id IN (`+inner+`) ORDER BY e.name`, targetID)
 	if err != nil {
 		return nil, err
 	}
@@ -413,10 +436,16 @@ func (s *ontologyStore) EntitiesCiting(targetID string) ([]store.Entity, error) 
 }
 
 func (s *ontologyStore) CitedBy(entityID string) ([]store.Entity, error) {
+	// Same declared behaviour change as EntitiesCiting: JOIN emitted duplicates
+	// across relation types, IN (...) does not.
+	inner := "SELECT target_id FROM relations WHERE source_id=$1"
+	if s.b.derivedExists() {
+		inner += "\nUNION ALL\nSELECT d.target_id FROM derived_relations d WHERE d.source_id=$1" +
+			derivedNotShadowed
+	}
 	rows, err := s.b.pool.Query(`
 		SELECT e.id, e.type, e.name, e.definition, e.article_path, e.created_at, e.updated_at
-		FROM entities e JOIN relations r ON r.target_id = e.id
-		WHERE r.source_id=$1 ORDER BY e.name`, entityID)
+		FROM entities e WHERE e.id IN (`+inner+`) ORDER BY e.name`, entityID)
 	if err != nil {
 		return nil, err
 	}

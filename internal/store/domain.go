@@ -158,16 +158,23 @@ type EntityAlias struct {
 // Every counter is of edges on the CANONICAL. Linking is non-destructive: the
 // alias keeps every one of its own edges, and nothing existing is overwritten.
 type LinkResult struct {
-	// Copied — edges newly created on the canonical.
+	// Copied — edges newly derived onto the canonical. A CONVERTED edge counts
+	// here too: it is newly present in derived_relations, even though the same
+	// edge already existed as an anonymous copy. Converted tells the two apart.
 	Copied int `json:"copied"`
 	// Skipped — the canonical already asserted this edge, so its own row was
-	// left untouched. A copy must never overwrite a native assertion: the
-	// confidence-guarded upsert AddRelation uses is sound only when both sides
-	// assert the SAME edge, which is not the case here.
+	// left untouched. A derived edge must never overwrite a native assertion:
+	// the confidence-guarded upsert AddRelation uses is sound only when both
+	// sides assert the SAME edge, which is not the case here.
 	Skipped int `json:"skipped"`
-	// SelfLoops — not copied because the other endpoint IS the canonical. The
+	// SelfLoops — not derived because the other endpoint IS the canonical. The
 	// original alias-to-canonical edge is retained, not deleted.
 	SelfLoops int `json:"self_loops"`
+	// Converted — a P3-3 anonymous copy found in `relations` and moved into
+	// derived_relations with its cause recorded (decision-035). Non-zero only
+	// while upgrading a vault written before that change; it is how those
+	// pre-existing copies become reversible.
+	Converted int `json:"converted,omitempty"`
 	// AliasMissing / CanonicalMissing are typed rather than errors: a zero
 	// LinkResult is otherwise indistinguishable from a successful link of an
 	// edgeless entity, and both the sweep and the CLI must tell those apart

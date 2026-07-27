@@ -24,10 +24,10 @@ var BuiltinRelations = []RelationDef{
 	{Name: RelExtends, Synonyms: []string{"extends", "extension of", "builds on", "builds upon", "扩展了", "基于"}},
 	{Name: RelOptimizes, Synonyms: []string{"optimizes", "optimization of", "improves upon", "faster than", "优化了", "改进了", "提升了"}},
 	{Name: RelContradicts, Synonyms: []string{"contradicts", "conflicts with", "disagrees with", "challenges", "矛盾", "冲突", "挑战了"}},
-	{Name: RelCites, Synonyms: nil},           // created programmatically, not by keyword extraction
+	{Name: RelCites, Synonyms: nil}, // created programmatically, not by keyword extraction
 	{Name: RelPrerequisiteOf, Synonyms: []string{"prerequisite", "requires knowledge of", "depends on", "built on top of", "前提", "依赖于", "前置条件"}},
 	{Name: RelTradesOff, Synonyms: []string{"trade-off", "tradeoff", "trades off", "at the cost of", "取舍", "权衡", "代价是"}},
-	{Name: RelDerivedFrom, Synonyms: nil},      // created programmatically by query system
+	{Name: RelDerivedFrom, Synonyms: nil}, // created programmatically by query system
 }
 
 // MergedRelations merges user config with built-in defaults.

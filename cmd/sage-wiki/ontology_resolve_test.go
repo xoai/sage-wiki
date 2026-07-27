@@ -78,6 +78,7 @@ func runResolve(t *testing.T, flags map[string]string) error {
 	c.Flags().String("apply", "", "")
 	c.Flags().String("reject", "", "")
 	c.Flags().Bool("sweep", false, "")
+	c.Flags().String("unlink", "", "")
 	for k, v := range flags {
 		if err := c.Flags().Set(k, v); err != nil {
 			t.Fatalf("set --%s: %v", k, err)
@@ -637,8 +638,9 @@ func TestResolveCLISweepHonoursRejections(t *testing.T) {
 
 // GATE-3 R7. The "edges remain" note must name the entity the copies actually
 // landed on. When the APPLIED half is the reverse row, that is the reverse row's
-// canonical — pointing the user elsewhere is worse than silence, because there
-// is no un-link command to recover from following it.
+// canonical — pointing the user elsewhere is worse than silence, because
+// --unlink takes an alias id and following the wrong name would undo the wrong
+// link.
 func TestResolveCLIRejectNamesTheEntityHoldingTheResidue(t *testing.T) {
 	dir := resolveVault(t, "config.yaml")
 	withProject(t, dir, "config.yaml")
@@ -693,7 +695,7 @@ func TestResolveCLIRejectNamesTheEntityHoldingTheResidue(t *testing.T) {
 
 // GATE-3 R8. The residue fact must reach the machine-readable path too: a
 // scripted consumer told only "rejected" has no way to learn that the canonical
-// permanently holds copied edges, and there is no un-link command.
+// still holds derived edges, or that --unlink is what removes them.
 func TestResolveCLIRejectJSONCarriesResidue(t *testing.T) {
 	dir := resolveVault(t, "config.yaml")
 	withProject(t, dir, "config.yaml")
@@ -741,5 +743,153 @@ func TestResolveCLIRejectJSONCarriesResidue(t *testing.T) {
 	}
 	if !strings.Contains(out, "edges_remain_on") || !strings.Contains(out, `"B"`) {
 		t.Errorf("the JSON payload does not say which entity keeps the copied edges:\n%s", out)
+	}
+}
+
+// --unlink had no test at the layer users touch: ~45 lines of command — the
+// flag, both guards, UnlinkAlias, the re-sweep and two output shapes — and the
+// helper above did not even register the flag. UnlinkConformance covers the
+// STORE method on both backends; this covers the command.
+func TestResolveCLIUnlinkRemovesDerivedEdgesAndRejectsThePair(t *testing.T) {
+	dir := resolveVault(t, "config.yaml")
+	seedResolveStore(t, dir, "config.yaml")
+	withProject(t, dir, "config.yaml")
+
+	// Promote the seeded proposal to an applied link.
+	if err := runResolve(t, map[string]string{"apply": "Buzz Aldrin"}); err != nil {
+		t.Fatalf("--apply: %v", err)
+	}
+
+	b, ont, err := openResolveStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked, err := ont.GetRelations("buzz-aldrin", store.Outbound, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Close()
+	if len(linked) != 1 {
+		t.Fatalf("setup: the canonical should see the alias's edge, got %d", len(linked))
+	}
+
+	if err := runResolve(t, map[string]string{"unlink": "Buzz Aldrin"}); err != nil {
+		t.Fatalf("--unlink: %v", err)
+	}
+
+	b, ont, err = openResolveStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+
+	after, err := ont.GetRelations("buzz-aldrin", store.Outbound, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 0 {
+		t.Errorf("canonical still sees %d edges after --unlink: %+v", len(after), after)
+	}
+	// The alias keeps its own edge — unlink separates, it does not delete.
+	own, err := ont.GetRelations("Buzz Aldrin", store.Outbound, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(own) != 1 {
+		t.Errorf("the alias lost its own edge: %+v", own)
+	}
+	// And the pair must be rejected, or the next compile re-applies it.
+	rejected, err := ont.IsRejected("Buzz Aldrin", "buzz-aldrin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rejected {
+		t.Error("--unlink left the pair un-rejected; the next compile would re-apply it")
+	}
+}
+
+// Both guards: --unlink on an unknown alias, and on one that is merely pending.
+func TestResolveCLIUnlinkGuards(t *testing.T) {
+	dir := resolveVault(t, "config.yaml")
+	seedResolveStore(t, dir, "config.yaml")
+	withProject(t, dir, "config.yaml")
+
+	if err := runResolve(t, map[string]string{"unlink": "no-such-alias"}); err == nil {
+		t.Error("--unlink on an unknown alias should error")
+	}
+	// The seeded row is PENDING, not applied — --reject decides those.
+	if err := runResolve(t, map[string]string{"unlink": "Buzz Aldrin"}); err == nil {
+		t.Error("--unlink on a pending proposal should error and point at --reject")
+	}
+}
+
+// The re-sweep inside resolveUnlink is what makes undo correct for TRANSITIVE
+// chains — under A→B→C, edges that reached C are stamped with the intermediate
+// alias B, so delete-by-cause on A cannot touch them. The single-link test
+// above passes without the re-sweep; this one does not.
+func TestResolveCLIUnlinkClearsTransitiveChain(t *testing.T) {
+	dir := resolveVault(t, "config.yaml")
+	withProject(t, dir, "config.yaml")
+
+	b, ont, err := openResolveStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"aa", "bb", "cc", "edge"} {
+		if err := ont.AddEntity(store.Entity{ID: id, Type: ontology.TypeConcept, Name: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := ont.AddRelation(store.Relation{
+		ID: "r1", SourceID: "aa", TargetID: "edge", Relation: ontology.RelExtends,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	mk := func(alias, canon string) store.EntityAlias {
+		return store.EntityAlias{
+			Alias: alias, CanonicalID: canon, EntityType: ontology.TypeConcept,
+			Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-27T00:00:00Z",
+		}
+	}
+	if _, err := ont.LinkAlias(mk("aa", "bb")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ont.LinkAlias(mk("bb", "cc")); err != nil {
+		t.Fatal(err)
+	}
+	chained, err := ont.GetRelations("cc", store.Both, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Close()
+	if len(chained) != 1 {
+		t.Fatalf("setup: cc should see aa's edge through the chain, got %d", len(chained))
+	}
+
+	if err := runResolve(t, map[string]string{"unlink": "aa"}); err != nil {
+		t.Fatalf("--unlink: %v", err)
+	}
+
+	b, ont, err = openResolveStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	ccRels, err := ont.GetRelations("cc", store.Both, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ccRels) != 0 {
+		t.Errorf("cc still sees %d edges after `--unlink aa` — the transitively derived "+
+			"row (stamped bb) survived, so resolveUnlink's re-sweep is not running: %+v",
+			len(ccRels), ccRels)
+	}
+	// aa keeps its own edge: unlink separates, it does not delete.
+	own, err := ont.GetRelations("aa", store.Both, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(own) != 1 {
+		t.Errorf("aa lost its own edge: %+v", own)
 	}
 }

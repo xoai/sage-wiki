@@ -182,10 +182,10 @@ func TestAddEntityInvalidTypeError(t *testing.T) {
 // IsValidType: table-driven tests
 func TestIsValidType(t *testing.T) {
 	tests := []struct {
-		name       string
-		types      []string // nil = permissive
-		checkType  string
-		wantValid  bool
+		name      string
+		types     []string // nil = permissive
+		checkType string
+		wantValid bool
 	}{
 		{"builtin concept", ValidEntityTypeNames(BuiltinEntityTypes), "concept", true},
 		{"builtin technique", ValidEntityTypeNames(BuiltinEntityTypes), "technique", true},

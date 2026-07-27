@@ -213,6 +213,7 @@ func (s *ontologyStore) LinkAlias(a store.EntityAlias) (store.LinkResult, error)
 		return res, fmt.Errorf("ontology: entity %q cannot alias itself", a.Alias)
 	}
 
+	var derivedWritten bool
 	err := s.b.WriteTx(func(tx *sql.Tx) error {
 		// A missing endpoint is a fact to report, not an error: --prune and
 		// reconcile delete entities without consulting this table. Neither
@@ -241,10 +242,17 @@ func (s *ontologyStore) LinkAlias(a store.EntityAlias) (store.LinkResult, error)
 
 		// Scoped so the cursor is released before the INSERT loop below runs on
 		// the same transaction, while still closing via defer.
+		//
+		// This read UNIONS derived rows, and that is load-bearing: it is what
+		// makes A->B->C chains converge. Reading `relations` alone after
+		// decision-035 would make A's contribution invisible to LinkAlias(B->C).
 		edges, err := func() ([]store.Relation, error) {
-			rows, err := tx.Query(
-				"SELECT "+relationCols+" FROM relations WHERE source_id=$1 OR target_id=$1",
-				a.Alias)
+			q := "SELECT " + relationCols + " FROM relations WHERE source_id=$1 OR target_id=$1"
+			if s.b.derivedExists() {
+				q += "\nUNION ALL\nSELECT " + relationCols + " FROM derived_relations d" +
+					" WHERE (d.source_id=$1 OR d.target_id=$1)" + derivedNotShadowed
+			}
+			rows, err := tx.Query(q, a.Alias)
 			if err != nil {
 				return nil, err
 			}
@@ -268,17 +276,40 @@ func (s *ontologyStore) LinkAlias(a store.EntityAlias) (store.LinkResult, error)
 				continue
 			}
 
-			// DO NOTHING, not AddRelation's confidence-guarded DO UPDATE: that
-			// guard is sound only when both sides assert the SAME edge, and a
-			// copy asserts a different one. DO UPDATE here would overwrite the
-			// canonical's own evidence with the alias's, unrecoverably.
+			// Derived edges live in their own table stamped with their cause
+			// (decision-035). The lookup does two jobs: a GENUINE original must
+			// never be displaced (Skipped, as the old ON CONFLICT protected),
+			// while a P3-3 ANONYMOUS COPY — identifiable because its id is
+			// exactly copiedRelationID for these endpoints — is converted in
+			// place. Exact id, no LIKE, so an entity id merely starting with
+			// "alias:" is never at risk.
+			wantID := copiedRelationID(src, r.Relation, tgt)
+			var existingID sql.NullString
+			err := tx.QueryRow(
+				`SELECT id FROM relations WHERE source_id=$1 AND target_id=$2 AND relation=$3`,
+				src, tgt, r.Relation).Scan(&existingID)
+			switch {
+			case err == sql.ErrNoRows:
+				// nothing there; fall through to the insert
+			case err != nil:
+				return err
+			case existingID.Valid && existingID.String == wantID:
+				if _, err := tx.Exec(`DELETE FROM relations WHERE id=$1`, wantID); err != nil {
+					return err
+				}
+				res.Converted++
+			default:
+				res.Skipped++
+				continue
+			}
+
 			out, err := tx.Exec(`
-				INSERT INTO relations (id, source_id, target_id, relation, created_at,
-				                       evidence, confidence, source_doc,
-				                       valid_from, valid_to, invalidated_by)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-				ON CONFLICT (source_id, target_id, relation) DO NOTHING`,
-				copiedRelationID(src, r.Relation, tgt), src, tgt, r.Relation, nullRFC(r.CreatedAt),
+				INSERT INTO derived_relations (alias_id, id, source_id, target_id, relation,
+				                               created_at, evidence, confidence, source_doc,
+				                               valid_from, valid_to, invalidated_by)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+				ON CONFLICT (alias_id, source_id, target_id, relation) DO NOTHING`,
+				a.Alias, wantID, src, tgt, r.Relation, nullRFC(r.CreatedAt),
 				nullStr(r.Evidence), r.Confidence, nullStr(r.SourceDoc),
 				nullStr(r.ValidFrom), nullStr(r.ValidTo), nullStr(r.InvalidatedBy))
 			if err != nil {
@@ -290,6 +321,7 @@ func (s *ontologyStore) LinkAlias(a store.EntityAlias) (store.LinkResult, error)
 			}
 			if n > 0 {
 				res.Copied++
+				derivedWritten = true
 			} else {
 				res.Skipped++
 			}
@@ -309,5 +341,40 @@ func (s *ontologyStore) LinkAlias(a store.EntityAlias) (store.LinkResult, error)
 	if err != nil {
 		return store.LinkResult{}, err
 	}
+	if derivedWritten {
+		s.b.markDerivedWritten()
+	}
 	return res, nil
+}
+
+// UnlinkAlias reverses a link. See store.OntologyStore for the contract.
+func (s *ontologyStore) UnlinkAlias(alias, canonicalID string) error {
+	err := s.b.WriteTx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`DELETE FROM derived_relations WHERE alias_id=$1`, alias); err != nil {
+			return err
+		}
+		_, err := tx.Exec(
+			`UPDATE entity_aliases SET status='rejected', decided_at=$1, decided_by='unlink'
+			  WHERE alias=$2 AND canonical_id=$3`,
+			time.Now().UTC().Format(time.RFC3339), alias, canonicalID)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	s.b.markDerivedMaybeEmpty()
+	return nil
+}
+
+// ClearDerived removes every derived edge, for the sweep's rebuild pass.
+func (s *ontologyStore) ClearDerived() error {
+	err := s.b.WriteTx(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DELETE FROM derived_relations`)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	s.b.markDerivedMaybeEmpty()
+	return nil
 }

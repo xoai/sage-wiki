@@ -61,6 +61,7 @@ type Store struct {
 	db               store.DBHandle
 	validRelations   map[string]bool
 	validEntityTypes map[string]bool
+	derivedGuard     // alias-derived edges (decision-035); see derived.go
 }
 
 // NewStore creates an ontology store with application-layer type validation.
@@ -196,19 +197,37 @@ func (s *Store) ListEntities(entityType string) ([]Entity, error) {
 
 // ListRelations returns relations filtered by type, up to limit results.
 func (s *Store) ListRelations(relationType string, limit int) ([]Relation, error) {
-	var rows *sql.Rows
-	var err error
+	// ORDER BY and LIMIT follow the union so they apply to the whole result,
+	// not just the first arm. (The Postgres twin has always unioned this; the
+	// SQLite side was missed, so `ontology list --type relations` answered
+	// differently per backend.)
+	derived := s.derivedExists()
+	var base, dpred string
+	var args []any
 	if relationType != "" {
-		rows, err = s.db.ReadDB().Query(
-			`SELECT `+relationCols+` FROM relations WHERE relation=? ORDER BY created_at DESC LIMIT ?`,
-			relationType, limit,
-		)
+		base = `SELECT ` + relationCols + ` FROM relations WHERE relation=?`
+		dpred = `d.relation=?`
+		args = []any{relationType}
 	} else {
-		rows, err = s.db.ReadDB().Query(
-			`SELECT `+relationCols+` FROM relations ORDER BY created_at DESC LIMIT ?`,
-			limit,
-		)
+		base = `SELECT ` + relationCols + ` FROM relations`
+		dpred = `1=1`
 	}
+	q := base
+	order := ` ORDER BY created_at DESC LIMIT ?`
+	if derived {
+		q += "\nUNION ALL" + derivedArm(dpred)
+		args = append(args, args...)
+		// Across a UNION ALL, SQLite resolves ORDER BY against the RESULT SET,
+		// and relationCols selects COALESCE(created_at,'') — an expression, not
+		// a bare column — so the name does not resolve. The ordinal does.
+		// 5 is created_at's position in relationCols, whose order is already a
+		// contract with scanRelations (see its comment).
+		order = ` ORDER BY 5 DESC LIMIT ?`
+	}
+	q += order
+	args = append(args, limit)
+
+	rows, err := s.db.ReadDB().Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -271,15 +290,20 @@ func (s *Store) AddRelation(r Relation) error {
 
 // GetRelations returns relations for an entity in a given direction.
 func (s *Store) GetRelations(entityID string, direction Direction, relationType string) ([]Relation, error) {
-	var query string
+	// The predicate is repeated into the derived arm rather than wrapping the
+	// whole thing, so that arm can seek its own indexes — see derived.go for
+	// why a view cannot.
+	var base, dpred string
 	var args []any
 
 	switch direction {
 	case Outbound:
-		query = "SELECT " + relationCols + " FROM relations WHERE source_id=?"
+		base = "SELECT " + relationCols + " FROM relations WHERE source_id=?"
+		dpred = "d.source_id=?"
 		args = []any{entityID}
 	case Inbound:
-		query = "SELECT " + relationCols + " FROM relations WHERE target_id=?"
+		base = "SELECT " + relationCols + " FROM relations WHERE target_id=?"
+		dpred = "d.target_id=?"
 		args = []any{entityID}
 	case Both:
 		// Parenthesized (P3-1/D11): AND binds tighter than OR, so the
@@ -287,13 +311,21 @@ func (s *Store) GetRelations(entityID string, direction Direction, relationType 
 		// target side only — a Both query with a filter returned outbound edges
 		// of every type. Postgres already parenthesized; this is the SQLite
 		// half of that parity.
-		query = "SELECT " + relationCols + " FROM relations WHERE (source_id=? OR target_id=?)"
+		base = "SELECT " + relationCols + " FROM relations WHERE (source_id=? OR target_id=?)"
+		dpred = "(d.source_id=? OR d.target_id=?)"
 		args = []any{entityID, entityID}
 	}
 
 	if relationType != "" {
-		query += " AND relation=?"
+		base += " AND relation=?"
+		dpred += " AND d.relation=?"
 		args = append(args, relationType)
+	}
+
+	query := base
+	if s.derivedExists() {
+		query = base + "\nUNION ALL" + derivedArm(dpred)
+		args = append(args, args...) // the arm repeats the same placeholders
 	}
 
 	rows, err := s.db.ReadDB().Query(query, args...)
@@ -411,16 +443,31 @@ func (s *Store) EntityCount(entityType string) (int, error) {
 
 // RelationCount returns the number of relations.
 func (s *Store) RelationCount() (int, error) {
+	// Unioned: this is a whole-graph edge count, the same class as
+	// AllRelations, so leaving it raw would make len(AllRelations()) and
+	// RelationCount() disagree. (decision-035's spec table filed it under
+	// pass-through; implementing it showed that was wrong.)
 	var count int
-	err := s.db.ReadDB().QueryRow("SELECT COUNT(*) FROM relations").Scan(&count)
+	err := s.db.ReadDB().QueryRow(
+		`SELECT COUNT(*) FROM (` + s.endpointSource("", "1=1") + `)`).Scan(&count)
 	return count, err
 }
 
 // EntityDegree returns the total number of relations (inbound + outbound) for an entity.
 func (s *Store) EntityDegree(id string) (int, error) {
+	// The guard is read ONCE and threaded: reading it separately for the SQL and
+	// for the args lets a concurrent write land between the two and produce a
+	// placeholder/argument mismatch.
+	derived := s.derivedExists()
+	args := []any{id, id}
+	if derived {
+		args = append(args, id, id)
+	}
 	var count int
 	err := s.db.ReadDB().QueryRow(
-		"SELECT COUNT(*) FROM relations WHERE source_id=? OR target_id=?", id, id,
+		`SELECT COUNT(*) FROM (`+
+			s.endpointSourceWith(derived, "source_id=? OR target_id=?", "(d.source_id=? OR d.target_id=?)")+`)`,
+		args...,
 	).Scan(&count)
 	return count, err
 }
@@ -428,12 +475,17 @@ func (s *Store) EntityDegree(id string) (int, error) {
 // EntitiesCiting returns all entities that have a "cites" relation pointing TO targetID.
 // This is the reverse lookup: "which concepts cite this source?"
 func (s *Store) EntitiesCiting(targetID string) ([]Entity, error) {
+	// IN (...) rather than a JOIN, so the predicate can be pushed into both
+	// arms and each can seek — see derived.go.
+	derived := s.derivedExists()
+	inner := `SELECT source_id FROM relations WHERE target_id=? AND relation=?`
+	if derived {
+		inner += "\nUNION ALL\nSELECT d.source_id FROM derived_relations d" +
+			" WHERE d.target_id=? AND d.relation=?" + derivedNotShadowed
+	}
 	rows, err := s.db.ReadDB().Query(
 		`SELECT e.id, e.type, e.name, COALESCE(e.definition,''), COALESCE(e.article_path,''), COALESCE(e.created_at,''), COALESCE(e.updated_at,'')
-		 FROM entities e
-		 JOIN relations r ON r.source_id = e.id
-		 WHERE r.target_id=? AND r.relation=?`, targetID, RelCites,
-	)
+		 FROM entities e WHERE e.id IN (`+inner+`)`, dupIf(derived, targetID, RelCites)...)
 	if err != nil {
 		return nil, err
 	}
@@ -453,12 +505,15 @@ func (s *Store) EntitiesCiting(targetID string) ([]Entity, error) {
 // CitedBy returns all entities that entityID cites (forward "cites" lookup).
 // This answers: "which sources does this concept cite?"
 func (s *Store) CitedBy(entityID string) ([]Entity, error) {
+	derived := s.derivedExists()
+	inner := `SELECT target_id FROM relations WHERE source_id=? AND relation=?`
+	if derived {
+		inner += "\nUNION ALL\nSELECT d.target_id FROM derived_relations d" +
+			" WHERE d.source_id=? AND d.relation=?" + derivedNotShadowed
+	}
 	rows, err := s.db.ReadDB().Query(
 		`SELECT e.id, e.type, e.name, COALESCE(e.definition,''), COALESCE(e.article_path,''), COALESCE(e.created_at,''), COALESCE(e.updated_at,'')
-		 FROM entities e
-		 JOIN relations r ON r.target_id = e.id
-		 WHERE r.source_id=? AND r.relation=?`, entityID, RelCites,
-	)
+		 FROM entities e WHERE e.id IN (`+inner+`)`, dupIf(derived, entityID, RelCites)...)
 	if err != nil {
 		return nil, err
 	}
@@ -479,7 +534,8 @@ func (s *Store) CitedBy(entityID string) ([]Entity, error) {
 // graph view's unbounded relations dump — spec §3: full rows, not the
 // 3-column handler shape).
 func (s *Store) AllRelations() ([]Relation, error) {
-	rows, err := s.db.ReadDB().Query(`SELECT ` + relationCols + ` FROM relations`)
+	rows, err := s.db.ReadDB().Query(
+		s.unionIfDerived(`SELECT `+relationCols+` FROM relations`, `1=1`))
 	if err != nil {
 		return nil, err
 	}
@@ -490,8 +546,14 @@ func (s *Store) AllRelations() ([]Relation, error) {
 // RelationsByType returns all relations of one type, fully populated
 // (P2-1: absorbs linter's contradicts-edge scan).
 func (s *Store) RelationsByType(relationType string) ([]Relation, error) {
-	rows, err := s.db.ReadDB().Query(
-		`SELECT `+relationCols+` FROM relations WHERE relation=?`, relationType)
+	derived := s.derivedExists()
+	q := `SELECT ` + relationCols + ` FROM relations WHERE relation=?`
+	args := []any{relationType}
+	if derived {
+		q += "\nUNION ALL" + derivedArm(`d.relation=?`)
+		args = append(args, relationType)
+	}
+	rows, err := s.db.ReadDB().Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -506,11 +568,17 @@ func (s *Store) RelationsByType(relationType string) ([]Relation, error) {
 // total (latent bug, reproduced byte-for-byte; fix deferred, decisions.md
 // 2026-07-21).
 func (s *Store) EntityConnectionCounts() (map[string]int, error) {
+	// Shape preserved EXACTLY, including the PARITY NOTE quirk above: the outer
+	// GROUP BY id over a bare cnt picks one side arbitrarily. Only the source
+	// changes — alias-derived edges now come from the union. Fixing the quirk
+	// here would be an unrelated behaviour change (decision-035 §10 files it,
+	// deliberately unfixed).
+	src := s.endpointSource("", "1=1")
 	rows, err := s.db.ReadDB().Query(`
 		SELECT id, cnt FROM (
-			SELECT source_id AS id, COUNT(*) AS cnt FROM relations GROUP BY source_id
+			SELECT source_id AS id, COUNT(*) AS cnt FROM (` + src + `) GROUP BY source_id
 			UNION ALL
-			SELECT target_id AS id, COUNT(*) AS cnt FROM relations GROUP BY target_id
+			SELECT target_id AS id, COUNT(*) AS cnt FROM (` + src + `) GROUP BY target_id
 		) GROUP BY id`)
 	if err != nil {
 		return nil, err

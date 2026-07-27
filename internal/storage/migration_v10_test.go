@@ -82,8 +82,8 @@ func TestMigrationV10AddsEvidenceColumns(t *testing.T) {
 	if err := db.ReadDB().QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_version").Scan(&version); err != nil {
 		t.Fatalf("read version: %v", err)
 	}
-	if version != 11 {
-		t.Fatalf("schema version = %d, want 11", version)
+	if version != 12 {
+		t.Fatalf("schema version = %d, want 12", version)
 	}
 
 	rows, err := db.ReadDB().Query("PRAGMA table_info(relations)")

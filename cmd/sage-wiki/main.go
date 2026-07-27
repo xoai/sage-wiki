@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
-		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"strings"
 
 	"github.com/xoai/sage-wiki/internal/auth"
@@ -25,19 +25,19 @@ import (
 	"github.com/xoai/sage-wiki/internal/linter"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/manifest"
-	"github.com/xoai/sage-wiki/internal/memory"
 	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
+	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/pack"
 	"github.com/xoai/sage-wiki/internal/prompts"
-	tuidashboard "github.com/xoai/sage-wiki/internal/tui/dashboard"
-	"github.com/xoai/sage-wiki/internal/web"
 	"github.com/xoai/sage-wiki/internal/query"
 	"github.com/xoai/sage-wiki/internal/scribe"
 	"github.com/xoai/sage-wiki/internal/skill"
-	"github.com/xoai/sage-wiki/internal/storedial"
 	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/internal/storedial"
+	tuidashboard "github.com/xoai/sage-wiki/internal/tui/dashboard"
 	"github.com/xoai/sage-wiki/internal/vectors"
+	"github.com/xoai/sage-wiki/internal/web"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
 

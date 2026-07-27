@@ -46,6 +46,13 @@ type backend struct {
 	host    string
 	dbName  string
 	closeOnce sync.Once
+
+	// Alias-derived edges (decision-035). On the backend, not the store:
+	// Ontology() returns a fresh &ontologyStore{} per call, so a per-store flag
+	// would re-probe on every construction and never be shared.
+	derivedMu  sync.RWMutex
+	hasDerived bool
+	probedAt   time.Time // zero = never probed
 }
 
 var _ store.Backend = (*backend)(nil)

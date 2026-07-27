@@ -7,7 +7,7 @@ import (
 )
 
 // currentSchemaVersion tracks len(schemaMigrations).
-const currentSchemaVersion = 4
+const currentSchemaVersion = 5
 
 // schemaMigrations is the append-only Postgres V-series. Each entry is ONE
 // statement per Exec (pgx stdlib rejects multi-statement prepared calls).
@@ -253,6 +253,38 @@ var schemaMigrations = [][]string{
 		`CREATE INDEX IF NOT EXISTS idx_entity_aliases_canonical ON entity_aliases(canonical_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_entity_aliases_status ON entity_aliases(status)`,
 		`INSERT INTO schema_version (version) SELECT 4 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = 4)`,
+	},
+	// v5 — derived_relations (decision-035). The SQLite twin is migrationV12;
+	// see its comment for why the primary key is per-alias rather than on id.
+	//
+	// Column types mirror THIS backend's relations table: created_at is
+	// TIMESTAMPTZ and confidence DOUBLE PRECISION here, TEXT and REAL on SQLite.
+	// The two DDLs are deliberately not identical — matching relations is what
+	// lets a derived row be scanned by the same code that scans an original.
+	//
+	// Every statement is IF NOT EXISTS because this runner has no transaction:
+	// a failure part-way through re-runs the whole slice from an un-bumped
+	// version, so each statement must tolerate having already succeeded.
+	{
+		`CREATE TABLE IF NOT EXISTS derived_relations (
+			alias_id       TEXT NOT NULL,
+			id             TEXT NOT NULL,
+			source_id      TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+			target_id      TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+			relation       TEXT NOT NULL,
+			created_at     TIMESTAMPTZ,
+			evidence       TEXT,
+			confidence     DOUBLE PRECISION,
+			source_doc     TEXT,
+			valid_from     TEXT,
+			valid_to       TEXT,
+			invalidated_by TEXT,
+			PRIMARY KEY (alias_id, source_id, target_id, relation)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_derived_source ON derived_relations(source_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_derived_target ON derived_relations(target_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_derived_alias  ON derived_relations(alias_id)`,
+		`INSERT INTO schema_version (version) SELECT 5 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = 5)`,
 	},
 }
 
