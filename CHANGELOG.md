@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Translated READMEs regenerated to full parity** with the restructured
+  English README (zh, ja, ko, vi, fr, ru): same 22 sections, localized
+  internal anchors, translated bash-fence comments with byte-identical
+  commands, verbatim config identifiers and numbers. The temporary
+  restructuring banners are removed; the standing may-lag marker stays.
+
 ## 0.2.1 — 2026-07-28
 
 ### Changed
