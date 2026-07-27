@@ -31,12 +31,19 @@ export function GraphView({ currentArticle, onNavigate }: Props) {
 
     const isOverview = !currentArticle;
 
+    // The server resolves an alias center to its canonical entity, so the
+    // node to highlight may not be currentArticle. nodeColor captures this
+    // variable; the fetch's .then updates it from the response before the
+    // graph data is set, so the first render already highlights correctly.
+    let centerId = currentArticle;
+    let cancelled = false;
+
     const graph = new ForceGraph2D(container)
       .width(width)
       .height(height)
       .nodeLabel((node: any) => node.name)
       .nodeColor((node: any) => {
-        if (currentArticle && node.id === currentArticle) return '#ef4444';
+        if (centerId && node.id === centerId) return '#ef4444';
         return TYPE_COLORS[node.type] || '#6b7280';
       })
       .nodeVal((node: any) => Math.max(2, Math.min(8, node.connections || 1)))
@@ -69,6 +76,10 @@ export function GraphView({ currentArticle, onNavigate }: Props) {
       : fetchGraph();
 
     fetchData.then((data: GraphData) => {
+      // A fetch that resolves after cleanup must not touch the destroyed
+      // graph instance or set state on an unmounted view.
+      if (cancelled) return;
+      if (data.center) centerId = data.center;
       setNodeCount(data.total);
       setLoading(false);
 
@@ -82,7 +93,9 @@ export function GraphView({ currentArticle, onNavigate }: Props) {
       };
 
       graph.graphData(graphData);
-    }).catch(() => setLoading(false));
+    }).catch(() => {
+      if (!cancelled) setLoading(false);
+    });
 
     // Handle resize with debounce
     let resizeTimer: any;
@@ -100,6 +113,7 @@ export function GraphView({ currentArticle, onNavigate }: Props) {
     observer.observe(container);
 
     return () => {
+      cancelled = true;
       clearTimeout(resizeTimer);
       observer.disconnect();
       graph.pauseAnimation();

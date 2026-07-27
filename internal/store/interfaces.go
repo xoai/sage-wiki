@@ -90,9 +90,9 @@ type OntologyStore interface {
 	//
 	// The rejection is not optional. resolvableSeeds and applyClusters both
 	// gate on GetActiveAlias, so deleting the row alone would make the entity a
-	// live seed again and the next compile would re-propose and — below
-	// auto_apply_threshold 1.0 — re-apply it. A delete without the status
-	// change is a pause, not an undo.
+	// live seed again and the next compile would re-propose and — at the
+	// default auto_apply_threshold of 0.85 — re-apply it. A delete without the
+	// status change is a pause, not an undo.
 	//
 	// It does NOT rebuild transitively derived rows: under A->B->C, rows
 	// derived from A's edges but stamped B survive. The caller runs a sweep

@@ -18,17 +18,17 @@ import (
 	"sync/atomic"
 	"time"
 
-			"github.com/xoai/sage-wiki/internal/compiler"
-	"github.com/xoai/sage-wiki/internal/metrics"
-	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/app"
+	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/pathsafe"
 	"github.com/xoai/sage-wiki/internal/query"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 // WebServer serves the web UI and REST API.
@@ -696,6 +696,12 @@ func (s *WebServer) handleGraph(w http.ResponseWriter, r *http.Request) {
 	var edges []edge
 
 	if center != "" {
+		// The requested center may be an alias. Resolve ONCE and let every
+		// use — the traversal, the node set, the center-entity lookup, and
+		// the response's center field — see the same canonical id; resolving
+		// per-use would let the four drift apart.
+		center = store.CanonicalOrSelf(s.ont, center)
+
 		// Neighborhood query
 		entities, _ := s.ont.Traverse(center, ontology.TraverseOpts{
 			Direction: ontology.Both,
@@ -752,11 +758,18 @@ func (s *WebServer) handleGraph(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, map[string]any{
+	resp := map[string]any{
 		"nodes": nodes,
 		"edges": edges,
 		"total": len(nodes),
-	})
+	}
+	if center != "" {
+		// Additive: tells the frontend which node the neighborhood is
+		// actually centered on — after alias resolution it may differ from
+		// the ?center= parameter the client sent.
+		resp["center"] = center
+	}
+	writeJSON(w, resp)
 }
 
 func (s *WebServer) handleQuery(w http.ResponseWriter, r *http.Request) {

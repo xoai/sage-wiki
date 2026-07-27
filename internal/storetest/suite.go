@@ -25,6 +25,7 @@ func RunConformance(t *testing.T, newBackend BackendFactory) {
 	t.Run("aliases", AliasConformance(newBackend))
 	t.Run("derived_union", DerivedUnionConformance(newBackend))
 	t.Run("unlink", UnlinkConformance(newBackend))
+	t.Run("traverse_alias_d2", TraverseAliasSeesOwnEdgesOnly(newBackend))
 	t.Run("trust", TrustConformance(newBackend))
 	t.Run("compile_items", CompileItemsConformance(newBackend))
 	t.Run("compile_items_queue", CompileItemsQueueConformance(newBackend))
@@ -1532,6 +1533,58 @@ func UnlinkConformance(new BackendFactory) func(*testing.T) {
 			t.Fatal(err)
 		} else if active != nil {
 			t.Errorf("alias still has an active row after unlink: %+v", active)
+		}
+	}
+}
+
+// TraverseAliasSeesOwnEdgesOnly is the D2 guard for consumer-boundary
+// resolution (20260727-canonical-seeds-and-default): store methods NEVER
+// resolve an alias to its canonical. Traversal from the alias returns the
+// alias's own stored neighbourhood — the compiler's resolve pass and the
+// alias's own-edges view depend on it. Resolution to the canonical happens at
+// consumer boundaries (query seeds, MCP, web, CLI), not here.
+func TraverseAliasSeesOwnEdgesOnly(new BackendFactory) func(*testing.T) {
+	return func(t *testing.T) {
+		b := new(t)
+		os := b.Ontology()
+		for _, id := range []string{"canon", "alias", "x", "y"} {
+			if err := os.AddEntity(store.Entity{ID: id, Type: "concept", Name: id}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// The alias owns an edge to x; the canonical owns its own to y.
+		if err := os.AddRelation(store.Relation{
+			ID: "r1", SourceID: "alias", TargetID: "x", Relation: "extends",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.AddRelation(store.Relation{
+			ID: "r2", SourceID: "canon", TargetID: "y", Relation: "extends",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.LinkAlias(store.EntityAlias{
+			Alias: "alias", CanonicalID: "canon", EntityType: "concept",
+			Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-27T00:00:00Z",
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := os.Traverse("alias", store.TraverseOpts{MaxDepth: 1, Direction: store.Both})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids := map[string]bool{}
+		for _, e := range got {
+			ids[e.ID] = true
+		}
+		if !ids["x"] {
+			t.Errorf("Traverse(alias) lost the alias's own edge to x: %v", ids)
+		}
+		if ids["y"] || ids["canon"] {
+			t.Errorf("Traverse(alias) returned the canonical's neighbourhood (%v) — "+
+				"a store method resolved the alias; resolution belongs at consumer "+
+				"boundaries only (D2)", ids)
 		}
 	}
 }

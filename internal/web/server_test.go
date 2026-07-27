@@ -12,6 +12,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
 
@@ -186,6 +187,66 @@ func TestHandleGraphNeighborhood(t *testing.T) {
 	nodes, ok := graph["nodes"].([]any)
 	if !ok || len(nodes) == 0 {
 		t.Error("expected nodes in neighborhood")
+	}
+}
+
+// TestWebGraphCenterResolvesAlias: centering the graph on an ALIAS must land
+// on the canonical's neighborhood — one resolution feeding the traversal, the
+// node set, the center-entity lookup, AND the response's additive "center"
+// field, which is how the frontend learns which node to highlight.
+func TestWebGraphCenterResolvesAlias(t *testing.T) {
+	srv := setupTestProject(t)
+	if err := srv.ont.AddEntity(ontology.Entity{ID: "sa", Type: "concept", Name: "SA"}); err != nil {
+		t.Fatalf("AddEntity: %v", err)
+	}
+	if _, err := srv.ont.LinkAlias(store.EntityAlias{
+		Alias: "sa", CanonicalID: "self-attention", EntityType: "concept",
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-27T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("LinkAlias: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/graph?center=sa&depth=1", nil)
+	w := httptest.NewRecorder()
+	srv.handleGraph(w, req)
+
+	var graph struct {
+		Center string `json:"center"`
+		Nodes  []struct {
+			ID string `json:"id"`
+		} `json:"nodes"`
+		Edges []struct {
+			Source string `json:"source"`
+			Target string `json:"target"`
+		} `json:"edges"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &graph); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if graph.Center != "self-attention" {
+		t.Errorf("center field = %q, want the canonical %q", graph.Center, "self-attention")
+	}
+	hasCanon := false
+	for _, n := range graph.Nodes {
+		if n.ID == "self-attention" {
+			hasCanon = true
+		}
+	}
+	if !hasCanon {
+		t.Errorf("canonical node missing from alias-centered graph: %+v", graph.Nodes)
+	}
+	hasEdge := false
+	for _, e := range graph.Edges {
+		// The harness wires multi-head-attention → self-attention; direction
+		// is the fixture's business, presence is this test's.
+		if (e.Source == "self-attention" && e.Target == "multi-head-attention") ||
+			(e.Source == "multi-head-attention" && e.Target == "self-attention") {
+			hasEdge = true
+		}
+	}
+	if !hasEdge {
+		t.Errorf("canonical's edge missing from alias-centered graph: %+v", graph.Edges)
 	}
 }
 

@@ -331,6 +331,8 @@ func buildContextFromEnhanced(projectDir string, outputDir string, results []sea
 		if len(entityID) > 8 && entityID[:8] == "concept:" {
 			entityID = entityID[8:]
 		}
+		// A search hit may be an alias; its edges live on the canonical.
+		entityID = store.CanonicalOrSelf(ontStore, entityID)
 		related, _ := ontStore.Traverse(entityID, ontology.TraverseOpts{
 			Direction: ontology.Both,
 			MaxDepth:  1,
@@ -463,6 +465,8 @@ func buildDocLevelContext(projectDir string, question string, topK int,
 		if len(entityID) > 8 && entityID[:8] == "concept:" {
 			entityID = entityID[8:]
 		}
+		// A search hit may be an alias; its edges live on the canonical.
+		entityID = store.CanonicalOrSelf(ontStore, entityID)
 		related, _ := ontStore.Traverse(entityID, ontology.TraverseOpts{
 			Direction: ontology.Both,
 			MaxDepth:  1,

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -9,6 +10,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/storedial"
 )
 
@@ -90,6 +92,13 @@ func runOntologyQuery(cmd *cobra.Command, args []string) error {
 		traverseDir = ontology.Inbound
 	case "both":
 		traverseDir = ontology.Both
+	}
+
+	// --entity may name an alias; traverse from its canonical. The notice goes
+	// to stderr so stdout stays one valid JSON document under --format json.
+	if resolved := store.CanonicalOrSelf(ont, entityID); resolved != entityID {
+		fmt.Fprintf(os.Stderr, "note: %q is an alias of %q; traversing from the canonical entity\n", entityID, resolved)
+		entityID = resolved
 	}
 
 	entities, err := ont.Traverse(entityID, ontology.TraverseOpts{

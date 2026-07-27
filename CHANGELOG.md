@@ -15,14 +15,18 @@
   — `sage-wiki ontology resolve --unlink <alias>` removes exactly the edges that
   link caused and rejects the pair so a later compile cannot re-apply it.
   Defaults to **off**; and when
-  enabled, `auto_apply_threshold` defaults to **1.0, which means never
-  auto-apply** — every proposal is queued for a human. The pass warns at the default log level whenever proposals are
-  waiting. Lower the threshold to opt in (`0.85` was the previous default); once
-  you do, auto-apply additionally requires a description on at least one side,
+  enabled, `auto_apply_threshold` defaults to **0.85** — a proposal at or above
+  it that passes every guard is applied automatically, and `--unlink` makes a
+  mistaken link cost one command, which is what justifies the default. Set an
+  explicit **1.0** for review-only and it is a hard guarantee: 1.0 means never
+  auto-apply, exactly, so even a model reporting confidence 1.0 cannot clear
+  it. The pass warns at the default log level whenever proposals are waiting,
+  and when an out-of-range threshold falls back to the 0.85 default.
+  Auto-apply additionally requires a description on at least one side,
   and triple extraction is the only *compile-path* writer of those — though
   `sage-wiki scribe` writes them too, so `resolve` on with `triples` off is not
   by itself a guarantee. A proposal goes to review when the threshold forbids
-  auto-apply (the default), when confidence is below it, when the model flags a
+  auto-apply (an explicit 1.0), when confidence is below it, when the model flags a
   member as strictly "broader", or when neither side has a description; decide
   them with `sage-wiki ontology resolve --review|--apply|--reject|--unlink`. Rejection is symmetric,
   so re-rolling the direction cannot bypass it. Candidate blocking is seeded only
@@ -35,6 +39,20 @@
   Postgres migration v4 add the `entity_aliases` table on both backends. See
   `docs/guides/graph-memory.md`, including the cost section and the notes on
   derived-edge provenance and the partial prune contract.
+- **Alias-aware retrieval surfaces.** Once entity resolution links an alias,
+  every user-facing graph surface starts from its canonical entity:
+  graph-expansion seeds in query/search, the query context's fallback
+  traversal, the web graph (`?center=` resolves, and the response gains an
+  additive `center` field naming the node actually centered on), and
+  `sage-wiki ontology query --entity` (which prints a note on stderr; stdout
+  stays one valid JSON document). **MCP behaviour change:** `wiki_ontology_query`
+  now resolves an alias `entity` argument to its canonical before traversing —
+  previously it traversed the alias's own stored view. The payload shape is
+  unchanged (a bare entity array, no extra fields). Store-level reads are
+  deliberately untouched — `Traverse`/`GetRelations` on an alias still return
+  only its own stored edges, pinned by a conformance test on both backends —
+  as are `wiki_list` (browsing, not seeding) and
+  `--unlink`/`--apply`/`--reject`, which take the alias by definition.
 - **LLM structured-output triple extraction (P3-2), opt-in.** With
   `ontology.triples.enabled: true`, each Tier-3 document gets one additional
   Pass-2 LLM call that extracts typed entities (each with a one-sentence

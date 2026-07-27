@@ -514,11 +514,13 @@ type OntologyConfig struct {
 // Enabled defaults to false for the same reason TriplesConfig does: the pass
 // adds LLM calls, and an upgrade must not raise anyone's bill unasked.
 //
-// Enabling it links NOTHING on its own: AutoApplyThreshold defaults to 1.0,
-// which means never auto-apply, so every proposal is queued for a human. A link
-// can now be undone with `ontology resolve --unlink`, so this default is
-// conservative rather than necessary — it predates that command. The pass warns at WARN
-// level whenever proposals are standing, on every exit path.
+// Enabling it links by default: AutoApplyThreshold defaults to 0.85, so
+// high-confidence, fully-guarded proposals are applied — and exactly
+// reversible with `ontology resolve --unlink` (decision-035), which is why
+// the default is no longer review-only. Set an explicit 1.0 for review-only:
+// that means never auto-apply, exactly, and every proposal queues for a
+// human. The pass warns at WARN level whenever proposals are standing, on
+// every exit path.
 //
 // Lower the threshold to opt in. Once lowered, auto-apply ALSO requires a
 // description on at least one side, and the only COMPILE-PATH writer of entity
@@ -549,13 +551,16 @@ type ResolveConfig struct {
 	// canAutoApply. normalizeClusters clamps confidence to [0,1], so without that
 	// branch a model returning 1.0 would defeat a 1.0 threshold.
 	//
-	// 1.0 is the DEFAULT: review-only. It was introduced when a link could not
-	// be undone; `--unlink` (decision-035) now makes a mistake cheap, so
-	// lowering this is a reasonable choice rather than a risk.
+	// 0.85 is the DEFAULT. Review-only (1.0) was the default while a link
+	// could not be undone; `--unlink` (decision-035) makes a mistake cost one
+	// command, so auto-apply is the default and an explicit 1.0 is the
+	// review-only opt-in.
 	//
 	// Outside (0,1] it falls back to the default rather than clamping: a
 	// configured 0 would auto-apply every proposal including zero-confidence
-	// ones, which is the worst outcome this pass can produce.
+	// ones, which is the worst outcome this pass can produce. An explicit
+	// out-of-range value warns — the fallback now lands on the permissive
+	// 0.85, not on review-only.
 	AutoApplyThreshold float64 `yaml:"auto_apply_threshold,omitempty"`
 
 	// MaxTokenDF and MinTokenDFFloor together decide which name tokens are

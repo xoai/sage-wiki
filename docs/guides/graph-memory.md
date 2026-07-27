@@ -112,14 +112,21 @@ were previously skipped will start being created.
 one entity — "NASA" and "National Aeronautics and Space Administration" — which
 would otherwise stay two disconnected nodes with half the graph each.
 
-**It proposes; by default it does not apply.** `auto_apply_threshold` defaults to
-`1.0`, which means never auto-apply, so every proposal waits for you. See
-"Review-only by default" below.
+**It proposes and, by default, applies only the certain ones.**
+`auto_apply_threshold` defaults to `0.85`: a proposal at or above it that also
+passes every guard is linked automatically, and any mistake is one `--unlink`
+away. Set an explicit `1.0` to keep every proposal waiting for you — see
+"Review-only as an opt-in" below.
 
 It **links; it does not collapse.** Both entity rows survive, and the canonical
 gains the alias's edges — so traversal from the canonical sees the whole cluster
 while nothing is ever deleted. `sage-wiki ontology list` still shows both rows,
-and traversal from the alias still shows only its own edges. Collapsing into a
+and at the *store* level an alias still keeps only its own stored edges — the
+conformance suite pins that on both backends. The user surfaces sit above the
+store and resolve first: graph-expansion seeds in query/search, the query
+context's fallback traversal, MCP `wiki_ontology_query`, the web graph's
+`?center=`, and `ontology query --entity` all start from the canonical, so
+asking any of them about the alias shows the whole cluster. Collapsing into a
 single node needs alias-aware prune, reconcile and manifest handling first, and
 is deliberately left to a later cycle.
 
@@ -128,22 +135,23 @@ sources actually asserted, stamped with the link that caused it, so
 `--unlink` removes exactly those and nothing else. That separation is the whole
 reason the undo is exact rather than a guess — see "Undoing a link" below.
 
-### Review-only by default
+### Review-only as an opt-in
 
-Enabling resolution links nothing on its own:
+Set the threshold to exactly `1.0` and resolution links nothing on its own:
 
 ```yaml
 ontology:
   resolve:
     enabled: true
-    # auto_apply_threshold defaults to 1.0 — never auto-apply
+    auto_apply_threshold: 1.0   # never auto-apply — every proposal queues
 ```
 
-Every proposal is queued for you to decide. This default predates `--unlink` —
-it was introduced when a link genuinely could not be taken back. Now that one
-can, review-only is a *conservative* default rather than a necessary one: a
-mistaken link costs an `--unlink`, not a permanently fractured graph. Lower the
-threshold if that trade suits your vault.
+That `1.0` is a hard guarantee, not just a high bar: the pass treats it as
+*never*, by an explicit branch, so even a model reporting confidence `1.0`
+cannot clear it. Review-only was the default while a link could not be taken
+back; `--unlink` changed the economics — a mistaken link now costs one command,
+not a permanently fractured graph — so `0.85` became the default and the queue
+became the opt-in.
 
 So that the queue is not invisible, the pass warns at the normal log level —
 no `-v` needed — whenever proposals are standing, on every exit path and in
@@ -154,10 +162,11 @@ WARN resolve: entity-resolution proposals are waiting for review —
      run `sage-wiki ontology resolve --review` to decide them  pending=12
 ```
 
-### Opting in to automatic linking
+### Automatic linking (the default)
 
-Lower the threshold. `0.85` was the previous default and is a reasonable
-starting point:
+`auto_apply_threshold` defaults to `0.85`, so an enabled pass auto-applies out
+of the box; state the value explicitly if you want it pinned against future
+default changes:
 
 ```yaml
 ontology:
@@ -165,17 +174,18 @@ ontology:
     enabled: true
   resolve:
     enabled: true
-    auto_apply_threshold: 0.85
+    auto_apply_threshold: 0.85   # the default, stated
 ```
 
-`triples` is in that block because once you have lowered the threshold,
-auto-apply *also* requires a description on at least one side of the pair, and
-triple extraction is the only **compile-path** writer of entity descriptions.
+`triples` is in that block because auto-apply *also* requires a description on
+at least one side of the pair, and triple extraction is the only
+**compile-path** writer of entity descriptions.
 
 That pairing is not itself a guarantee — `sage-wiki scribe` writes descriptions
 outside the compile path, so a scribe-described entity can auto-link against a
-bare Pass-3 concept even with `triples: false`. The threshold is what guarantees
-review-only; the description is a second condition on top of it. The pass warns
+bare Pass-3 concept even with `triples: false`. An explicit `1.0` threshold is
+what guarantees review-only; the description is a second condition on top of
+the threshold, not a substitute for it. The pass warns
 once per run when it sees `resolve` without `triples`, because that combination
 usually means descriptions will be missing.
 
@@ -202,15 +212,15 @@ Three things happen, and all three are necessary:
    derived edge records which link produced it. Edges your sources asserted
    directly are untouched.
 2. **The pair is rejected.** Without this the next compile would re-propose it
-   and, below `auto_apply_threshold: 1.0`, re-apply it — so a delete on its own
-   is a pause, not an undo.
+   and — at the default `auto_apply_threshold` — re-apply it, so a delete on
+   its own is a pause, not an undo.
 3. **Links are re-derived.** Under a chain A→B→C, edges that reached C came from
    A *via* B and are recorded against B, so removing A's own rows is not enough.
    Rebuilding from the links that survive is what clears them.
 
 A proposal goes to review rather than applying automatically when
-`auto_apply_threshold` is at its default of `1.0` (which forbids auto-apply
-outright), when its confidence is below a lowered threshold, when the model flags
+`auto_apply_threshold` is an explicit `1.0` (which forbids auto-apply
+outright), when its confidence is below the threshold, when the model flags
 one member as a strictly *broader* concept than the others, or when neither side
 has a description.
 Rejection is symmetric: rejecting A→B also blocks B→A, so re-rolling the
