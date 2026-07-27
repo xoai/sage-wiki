@@ -1,0 +1,4 @@
+openai>=1.60,<3
+tqdm>=4.66
+datasets>=2.20        # BEAM only (HuggingFace download)
+pytest>=8             # tests

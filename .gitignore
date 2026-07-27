@@ -17,3 +17,6 @@ sage/
 # Build
 /sage-wiki
 bin/
+
+# memory-benchmark working data (datasets, projects, checkpoints)
+eval/benchmarks/runs/
