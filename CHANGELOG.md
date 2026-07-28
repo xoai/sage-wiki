@@ -23,6 +23,20 @@
 
 ### Changed
 
+- **`sage-wiki query` retrieval was rewritten as a unified weighted
+  fusion** (20260728-search-upgrade M2): document- and chunk-level hits
+  now both contribute (agreement across granularities ranks higher),
+  the configured hybrid weights apply on this path for the first time,
+  multi-query expansion variants sum instead of taking the best rank,
+  and rankings will shift accordingly.
+- **All search surfaces (query, MCP, CLI, web, TUI, hub) inherit two
+  lexical upgrades** through the shared query builder: on corpora over
+  100 documents, query terms matching more than 20% of documents are
+  pruned (corpus-adaptive stopwording), and entry matching now weights
+  the id/article-path columns 3× over body content (title-proxy boost;
+  Postgres schema migration v6 rebuilds the search vector). Result
+  rankings on every surface change accordingly.
+
 - **README diagrams refreshed** (architecture, compiler pipeline,
   interfaces) — higher-resolution replacements for the three PNGs.
 - **Translated READMEs regenerated to full parity** with the restructured
