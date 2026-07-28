@@ -137,7 +137,9 @@ func Run(deps Deps, req Request) (Response, error) {
 
 	// Graph leg (ADR-037): built here so the pipeline stays decoupled
 	// from the ontology; the empty-ontology fast path guarantees the
-	// byte-identity invariant.
+	// byte-identity invariant. The COUNT(*) probe scales with ontology
+	// size — deliberately deferred to the V-M5c latency measurement
+	// (F-076): if it registers there, swap for an EXISTS-style probe.
 	var graphLeg legList
 	var graphAliases map[string]string
 	if req.channelEnabled(ChannelGraph) && deps.Ont != nil {
@@ -168,15 +170,11 @@ func Run(deps Deps, req Request) (Response, error) {
 		return Response{}, err
 	}
 
-	// Graph-only docs arrive without chunk text — hydrate from the entry;
-	// alias-union seeds annotate their canonical's results (spec §2.6).
-	if len(graphLeg.hits) > 0 && deps.Mem != nil {
+	// Alias-union seeds annotate their canonical's results (spec §2.6).
+	// Hydration of graph-only docs happens INSIDE the pipeline, before
+	// rerank (F-072) — no facade fetch needed here.
+	if len(graphAliases) > 0 {
 		for i := range results {
-			if results[i].ChunkText == "" && results[i].GraphRank > 0 {
-				if e, err := deps.Mem.Get(results[i].DocID); err == nil && e != nil {
-					results[i].ChunkText = e.Content
-				}
-			}
 			if alias, ok := graphAliases[results[i].DocID]; ok {
 				results[i].AliasOf = alias
 			}

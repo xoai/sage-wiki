@@ -391,6 +391,20 @@ func EnhancedSearch(opts EnhancedSearchOpts) ([]SearchResult, error) {
 			}
 		}
 	}
+	// Graph-only docs (no chunk at all) hydrate from their entries — they
+	// must reach the reranker with real text, not blank passages (F-072;
+	// the facade's post-pipeline hydration ran after rerank and was
+	// display-only).
+	if opts.MemStore != nil {
+		for i := range deduped {
+			fc := &deduped[i]
+			if fc.chunkID == "" && fc.content == "" {
+				if e, err := opts.MemStore.Get(fc.docID); err == nil && e != nil {
+					fc.content = e.Content
+				}
+			}
+		}
+	}
 
 	// Step 6: Optional LLM re-ranking
 	var results []SearchResult

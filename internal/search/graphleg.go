@@ -21,10 +21,16 @@ var defaultRelationWeights = map[string]float64{
 }
 
 // relationWeight resolves a relation type's weight: override > default
-// curve > 1.0.
+// curve > 1.0. An override of 0 (or negative) EXCLUDES the relation from
+// traversal — the same semantics the 4-signal scorer applies to cites
+// edges (F-075: silence was the only alternative, and users need an
+// off-switch per relation type).
 func relationWeight(rel string, overrides map[string]float64) float64 {
 	if overrides != nil {
-		if w, ok := overrides[rel]; ok && w > 0 {
+		if w, ok := overrides[rel]; ok {
+			if w <= 0 {
+				return 0 // excluded
+			}
 			return w
 		}
 	}
@@ -36,10 +42,10 @@ func relationWeight(rel string, overrides map[string]float64) float64 {
 
 // buildGraphLeg produces the graph channel's ranked list (ADR-037):
 // query tokens (plus hyphenated bigrams/trigrams) seed entities via exact
-// id, applied-alias chain, and active-alias lookup; BFS depth ≤2 over
-// relations scores each entity distance/weight (ascending = better; the
-// weight is the edge that reached it, best path kept); entities without an
-// ArticlePath never surface; the list is capped at limit×5.
+// id resolved through the APPLIED-alias chain (pending proposals never
+// influence ranking — F-074); settled-order expansion to hop ≤2 scores
+// each entity by accumulated 1/weight (ascending = better, true shortest
+// path); entities without an ArticlePath never surface; capped at limit×5.
 //
 // The second return maps docID → matched alias for alias-union seeds —
 // the advisory alias_of annotation (spec §2.6).
@@ -77,7 +83,6 @@ func buildGraphLeg(ont store.OntologyStore, query string, limit int, weightOverr
 		score float64
 	}
 	best := make(map[string]*node)
-	var frontier []string
 
 	seed := func(id, viaAlias string) {
 		if _, ok := best[id]; ok {
@@ -87,57 +92,77 @@ func buildGraphLeg(ont store.OntologyStore, query string, limit int, weightOverr
 			return
 		}
 		best[id] = &node{id: id, dist: 0, score: 0}
-		frontier = append(frontier, id)
 		if viaAlias != "" {
 			aliases["concept:"+id] = viaAlias
 		}
 	}
 
 	for _, cand := range candidates {
-		// Exact id (through the applied-alias chain).
+		// Exact id, resolved through the APPLIED-alias chain only —
+		// CanonicalOrSelf covers chains to the terminal; pending rows are
+		// un-approved proposals and must never influence ranking (F-074).
 		resolved := store.CanonicalOrSelf(ont, cand)
 		if resolved != cand {
 			seed(resolved, cand)
 		} else {
 			seed(cand, "")
 		}
-		// Active alias row (alias string → canonical id).
-		if al, err := ont.GetActiveAlias(cand); err == nil && al != nil {
-			seed(al.CanonicalID, cand)
-		}
 	}
 	if len(best) == 0 {
 		return leg, aliases
 	}
 
-	// BFS to depth 2; best (lowest) score per entity wins.
-	for depth := 1; depth <= 2; depth++ {
-		var next []string
-		for _, id := range frontier {
+	// Layered Bellman-Ford, 2 rounds (F-073): layer[h][v] = the cheapest
+	// score over paths of AT MOST h edges. Each round relaxes every edge
+	// out of the previous layer's snapshot, so the result is exact for
+	// the ≤2-edge bound and independent of relation insertion order —
+	// a plain per-depth BFS propagated stale scores (proven by the
+	// review's executed witness), and plain Dijkstra cannot honor the
+	// hop bound when a node's cheapest score needs more hops than the
+	// cheapest PATH THROUGH it (state is (node, hops), not node).
+	prev := make(map[string]float64, len(best))
+	for id, n := range best {
+		prev[id] = n.score
+	}
+	for hop := 1; hop <= 2; hop++ {
+		next := make(map[string]float64, len(prev))
+		for id, s := range prev {
+			next[id] = s // ≤h includes ≤h-1 paths
+		}
+		for id, s := range prev {
 			rels, err := ont.GetRelations(id, store.Both, "")
 			if err != nil {
 				continue
 			}
-			from := best[id]
 			for _, r := range rels {
 				other := r.TargetID
 				if other == id {
 					other = r.SourceID
 				}
 				w := relationWeight(r.Relation, weightOverrides)
-				score := from.score + 1.0/w
-				if b, ok := best[other]; !ok {
-					if e, err := ont.GetEntity(other); err != nil || e == nil {
-						continue
+				if w <= 0 {
+					continue // relation excluded by config (F-075)
+				}
+				cand := s + 1.0/w
+				cur, known := next[other]
+				if !known || cand < cur {
+					if _, tracked := best[other]; !tracked {
+						if e, err := ont.GetEntity(other); err != nil || e == nil {
+							continue
+						}
+						best[other] = &node{id: other, dist: hop, score: cand}
 					}
-					best[other] = &node{id: other, dist: depth, score: score}
-					next = append(next, other)
-				} else if score < b.score {
-					b.score = score
+					next[other] = cand
 				}
 			}
 		}
-		frontier = next
+		prev = next
+	}
+	// prev now holds the exact ≤2-edge score for every discovered node.
+	for id, s := range prev {
+		if n, ok := best[id]; ok {
+			n.score = s
+		}
 	}
 
 	// Rank ascending by score (deterministic tiebreak on id), articles only.
