@@ -13,6 +13,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/search"
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/vectors"
 	"github.com/xoai/sage-wiki/internal/wiki"
@@ -149,6 +150,58 @@ compiler:
 	changelogPath := filepath.Join(dir, "wiki", "CHANGELOG.md")
 	if _, err := os.Stat(changelogPath); os.IsNotExist(err) {
 		t.Error("CHANGELOG.md should exist")
+	}
+
+	// V-M3 (F-063): the DEFAULT Tier-3 compile path must populate
+	// entry_dates for every searchable identity — summary (bare path),
+	// raw (src:), and concept (max over sources) — without reconcile.
+	db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+	ms := memory.NewStore(db)
+
+	var conceptIDs []string
+	for name := range mf.Concepts {
+		conceptIDs = append(conceptIDs, "concept:"+name)
+	}
+	if len(conceptIDs) == 0 {
+		t.Fatal("no concepts in manifest — date assertions vacuous")
+	}
+	wantIDs := append([]string{
+		"raw/article1.md", "src:raw/article1.md",
+		"raw/article2.md", "src:raw/article2.md",
+	}, conceptIDs...)
+	dates, err := ms.GetSourceDates(wantIDs)
+	if err != nil {
+		t.Fatalf("GetSourceDates: %v", err)
+	}
+	for _, id := range wantIDs {
+		if dates[id] <= 0 {
+			t.Errorf("compile left %q dateless — Tier-3 date population broken", id)
+		}
+	}
+
+	// End-to-end: search.Run returns the date on a summary hit.
+	resp, err := search.Run(
+		search.Deps{Mem: ms, Chunks: memory.NewChunkStore(db), Vec: vectors.NewStore(db)},
+		search.Request{Query: "self-attention contextual", Limit: 5},
+	)
+	if err != nil {
+		t.Fatalf("search.Run: %v", err)
+	}
+	if len(resp.Results) == 0 {
+		t.Fatal("no search results post-compile")
+	}
+	dated := false
+	for _, r := range resp.Results {
+		if r.SourceDate > 0 {
+			dated = true
+		}
+	}
+	if !dated {
+		t.Errorf("no search result carries SourceDate — the Response contract half of V-M3c is broken: %+v", resp.Results)
 	}
 }
 

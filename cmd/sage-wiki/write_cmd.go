@@ -15,6 +15,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/sourcedate"
 	"github.com/xoai/sage-wiki/internal/storedial"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
@@ -77,7 +78,9 @@ func runWriteSummary(cmd *cobra.Command, args []string) error {
 	db, dbErr := storedial.OpenConcrete(dir, cfg.Storage)
 	if dbErr == nil {
 		defer db.Close()
-		memory.NewStore(db).Add(memory.Entry{ID: source, Content: content, ArticlePath: summaryPath})
+		ms := memory.NewStore(db)
+		ms.Add(memory.Entry{ID: source, Content: content, ArticlePath: summaryPath})
+		sourcedate.RecordForSource(ms, dir, source, "")
 		if embedder := embed.NewFromConfig(cfg); embedder != nil {
 			if v, err := embedder.Embed(content); err == nil {
 				vectors.NewStore(db).Upsert(source, v)

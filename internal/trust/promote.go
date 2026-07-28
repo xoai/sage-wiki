@@ -10,6 +10,7 @@ import (
 
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/extract"
+	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/store"
@@ -57,6 +58,14 @@ func PromoteOutput(store *Store, id string, projectDir string, stores IndexStore
 		ArticlePath: relPath,
 	}); err != nil {
 		return fmt.Errorf("trust: FTS5 index: %w", err)
+	}
+	// Q&A outputs carry their creation time as origin date (ADR-039) —
+	// this is the DEFAULT output path (include_outputs=false), so the
+	// stamp must live here, not only on the legacy autoFile branch.
+	if !o.CreatedAt.IsZero() {
+		if err := stores.MemStore.SetSourceDate(docID, o.CreatedAt.Unix()); err != nil {
+			log.Warn("trust: output source date not recorded", "id", docID, "error", err)
+		}
 	}
 
 	if stores.Embedder != nil {

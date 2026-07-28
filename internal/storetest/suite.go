@@ -112,6 +112,31 @@ func EntriesConformance(new BackendFactory) func(*testing.T) {
 			t.Errorf("hyphenated query errored: %v", err)
 		}
 
+		// SourceDate sidecar round-trip (M3, ADR-039): upsert, missing-ID
+		// absence, ts<=0 no-op — identical on both backends (F-068).
+		if err := es.SetSourceDate("src:a.md", 1700000000); err != nil {
+			t.Fatalf("SetSourceDate: %v", err)
+		}
+		if err := es.SetSourceDate("src:a.md", 1800000000); err != nil {
+			t.Fatalf("SetSourceDate upsert: %v", err)
+		}
+		if err := es.SetSourceDate("src:noop.md", 0); err != nil {
+			t.Fatalf("SetSourceDate ts<=0 must no-op, got %v", err)
+		}
+		sd, err := es.GetSourceDates([]string{"src:a.md", "src:noop.md", "src:absent.md"})
+		if err != nil {
+			t.Fatalf("GetSourceDates: %v", err)
+		}
+		if sd["src:a.md"] != 1800000000 {
+			t.Errorf("upserted date = %d, want 1800000000", sd["src:a.md"])
+		}
+		if _, ok := sd["src:noop.md"]; ok {
+			t.Error("ts<=0 wrote a row — must be a no-op")
+		}
+		if _, ok := sd["src:absent.md"]; ok {
+			t.Error("absent ID returned a date")
+		}
+
 		// CountUncompiled: entries join compile_items tier<3 (seeded via
 		// WriteTx raw SQL to avoid an import cycle).
 		if err := b.WriteTx(func(tx *sql.Tx) error {

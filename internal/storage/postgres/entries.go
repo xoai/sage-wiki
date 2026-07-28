@@ -73,33 +73,44 @@ func (s *entryStore) SetSourceDate(id string, ts int64) error {
 	})
 }
 
-// GetSourceDates — pg twin; missing IDs absent from the map.
+// GetSourceDates — pg twin; missing IDs absent from the map. Batched to
+// stay under bind limits (memory.sourceDateBatch parity, F-067).
 func (s *entryStore) GetSourceDates(ids []string) (map[string]int64, error) {
-	if len(ids) == 0 {
-		return map[string]int64{}, nil
-	}
-	placeholders := make([]string, len(ids))
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		placeholders[i] = fmt.Sprintf("$%d", i+1)
-		args[i] = id
-	}
-	rows, err := s.b.pool.Query(
-		"SELECT id, source_date FROM entry_dates WHERE id IN ("+strings.Join(placeholders, ",")+")", args...)
-	if err != nil {
-		return nil, fmt.Errorf("pg entries.GetSourceDates: %w", err)
-	}
-	defer rows.Close()
+	const batchSize = 500
 	out := make(map[string]int64, len(ids))
-	for rows.Next() {
-		var id string
-		var ts int64
-		if err := rows.Scan(&id, &ts); err != nil {
+	for start := 0; start < len(ids); start += batchSize {
+		end := start + batchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[start:end]
+		placeholders := make([]string, len(batch))
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			placeholders[i] = fmt.Sprintf("$%d", i+1)
+			args[i] = id
+		}
+		rows, err := s.b.pool.Query(
+			"SELECT id, source_date FROM entry_dates WHERE id IN ("+strings.Join(placeholders, ",")+")", args...)
+		if err != nil {
+			return nil, fmt.Errorf("pg entries.GetSourceDates: %w", err)
+		}
+		for rows.Next() {
+			var id string
+			var ts int64
+			if err := rows.Scan(&id, &ts); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[id] = ts
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
 			return nil, err
 		}
-		out[id] = ts
+		rows.Close()
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *entryStore) Search(query string, tags []string, limit int) ([]store.SearchResult, error) {

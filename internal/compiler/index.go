@@ -61,10 +61,7 @@ func indexRawSources(projectDir string, sources []CompileItem, memStore store.En
 			Content: entryContent,
 			Tags:    tags,
 		})
-		if err := memStore.SetSourceDate("src:"+src.SourcePath,
-			sourcedate.Resolve(filepath.Join(projectDir, src.SourcePath), "")); err != nil {
-			log.Warn("source date not recorded", "path", src.SourcePath, "error", err)
-		}
+		sourcedate.RecordForSource(memStore, projectDir, src.SourcePath, "")
 
 		if err := items.MarkPass(src.SourcePath, "indexed"); err != nil {
 			log.Warn("mark pass failed", "path", src.SourcePath, "pass", "indexed", "error", err)
@@ -134,10 +131,7 @@ func indexAndEmbedSources(
 			Content: entryContent,
 			Tags:    tags,
 		})
-		if err := memStore.SetSourceDate("src:"+src.SourcePath,
-			sourcedate.Resolve(absPath, "")); err != nil {
-			log.Warn("source date not recorded", "path", src.SourcePath, "error", err)
-		}
+		sourcedate.RecordForSource(memStore, projectDir, src.SourcePath, "")
 
 		if err := items.MarkPass(src.SourcePath, "indexed"); err != nil {
 			log.Warn("mark pass failed", "path", src.SourcePath, "pass", "indexed", "error", err)

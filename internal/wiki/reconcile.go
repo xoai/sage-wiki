@@ -18,6 +18,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/sourcedate"
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -106,6 +107,12 @@ func (rc *reconciler) run(ctx context.Context) (*ReconcileResult, error) {
 		log.Warn("reconcile: source-date backfill failed", "error", err)
 	} else if n > 0 {
 		log.Info("reconcile: source dates backfilled", "count", n)
+	}
+	// Pre-existing promoted Q&A outputs date from their trust records.
+	if n, err := sourcedate.BackfillOutputs(rc.mem, trust.NewStore(rc.db)); err != nil {
+		log.Warn("reconcile: output-date backfill failed", "error", err)
+	} else if n > 0 {
+		log.Info("reconcile: output dates backfilled", "count", n)
 	}
 
 	// output_index rows that are no longer an expected output are orphaned.

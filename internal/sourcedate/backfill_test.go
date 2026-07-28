@@ -46,8 +46,16 @@ func TestBackfill(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 4 { // three sources + one concept; nothing.md stays dateless
-		t.Errorf("backfilled %d, want 4", n)
+	// Three dated sources × two identities (bare summary ID + src:) + one
+	// concept = 7; nothing.md stays dateless.
+	if n != 7 {
+		t.Errorf("backfilled %d, want 7", n)
+	}
+	// Both identities of a source carry the same date (F-060: the bare
+	// path is the Tier-3 summary doc ID — the dominant doc class).
+	bare, err := mem.GetSourceDates([]string{"dated.md", "plain.md", "gone.md"})
+	if err != nil || len(bare) != 3 {
+		t.Fatalf("bare summary IDs not dated: %v %v", bare, err)
 	}
 
 	dates, err := mem.GetSourceDates([]string{"src:dated.md", "src:plain.md", "src:gone.md", "src:nothing.md", "concept:topic"})

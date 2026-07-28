@@ -25,6 +25,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/prompts"
+	"github.com/xoai/sage-wiki/internal/sourcedate"
 )
 
 func (s *Server) registerWriteTools() {
@@ -203,6 +204,7 @@ func (s *Server) handleWriteSummary(ctx context.Context, req mcplib.CallToolRequ
 	if err := s.mem.Add(memory.Entry{ID: source, Content: content, ArticlePath: summaryPath}); err != nil {
 		log.Warn("index summary failed (reconciler will heal)", "source", source, "error", err)
 	}
+	sourcedate.RecordForSource(s.mem, s.projectDir, source, "")
 	s.tryEmbed(source, content)
 
 	conceptsStr, _ := args["concepts"].(string)

@@ -1,6 +1,35 @@
 package memory
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
+
+// F-067: GetSourceDates batches its IN clause — >999 IDs (past sqlite's
+// historical parameter limits) must round-trip without error.
+func TestGetSourceDatesBatchesLargeIDSets(t *testing.T) {
+	_, store := setupTestDB(t)
+
+	ids := make([]string, 1200)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("doc%d", i)
+		if i%3 == 0 {
+			if err := store.SetSourceDate(ids[i], int64(1000000+i)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	dates, err := store.GetSourceDates(ids)
+	if err != nil {
+		t.Fatalf("batched lookup failed: %v", err)
+	}
+	if len(dates) != 400 {
+		t.Errorf("got %d dates, want 400", len(dates))
+	}
+	if dates["doc300"] != 1000300 {
+		t.Errorf("doc300 = %d, want 1000300", dates["doc300"])
+	}
+}
 
 // V-M2e (sqlite half): under the column weights bm25(entries, 3.0, 1.0,
 // 1.5, 3.0), a match in id/article_path (the title proxies) outranks an

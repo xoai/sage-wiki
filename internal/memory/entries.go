@@ -295,34 +295,49 @@ func (s *Store) SetSourceDate(id string, ts int64) error {
 	})
 }
 
+// sourceDateBatch bounds the IN clause well under every driver's bind
+// limit (Gate-3 F-067 — an unbounded clause errors the whole call on
+// large corpora and no dates would ever backfill).
+const sourceDateBatch = 500
+
 // GetSourceDates returns source dates for the given IDs; missing IDs are
-// absent from the map (no date — no recency contribution).
+// absent from the map (no date — no recency contribution). IDs are
+// queried in batches of sourceDateBatch.
 func (s *Store) GetSourceDates(ids []string) (map[string]int64, error) {
-	if len(ids) == 0 {
-		return map[string]int64{}, nil
-	}
-	placeholders := strings.Repeat("?,", len(ids))
-	placeholders = placeholders[:len(placeholders)-1]
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		args[i] = id
-	}
-	rows, err := s.db.ReadDB().Query(
-		"SELECT id, source_date FROM entry_dates WHERE id IN ("+placeholders+")", args...)
-	if err != nil {
-		return nil, fmt.Errorf("memory.GetSourceDates: %w", err)
-	}
-	defer rows.Close()
 	out := make(map[string]int64, len(ids))
-	for rows.Next() {
-		var id string
-		var ts int64
-		if err := rows.Scan(&id, &ts); err != nil {
+	for start := 0; start < len(ids); start += sourceDateBatch {
+		end := start + sourceDateBatch
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[start:end]
+		placeholders := strings.Repeat("?,", len(batch))
+		placeholders = placeholders[:len(placeholders)-1]
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			args[i] = id
+		}
+		rows, err := s.db.ReadDB().Query(
+			"SELECT id, source_date FROM entry_dates WHERE id IN ("+placeholders+")", args...)
+		if err != nil {
+			return nil, fmt.Errorf("memory.GetSourceDates: %w", err)
+		}
+		for rows.Next() {
+			var id string
+			var ts int64
+			if err := rows.Scan(&id, &ts); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[id] = ts
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
 			return nil, err
 		}
-		out[id] = ts
+		rows.Close()
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // ListAll returns every entry, fully populated (P2-1: absorbs reembed's raw
