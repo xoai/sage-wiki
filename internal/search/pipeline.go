@@ -33,16 +33,22 @@ type EnhancedSearchOpts struct {
 
 	// SkipBM25 disables the lexical legs (channels:[vector] ablation).
 	SkipBM25 bool
+
+	// GraphLeg, when non-empty, joins the fusion as the third channel at
+	// GraphWeight (0 → DefaultGraphWeight). Built by the facade (ADR-037).
+	GraphLeg    legList
+	GraphWeight float64
 }
 
 // DefaultRerankMinCoverage gates blending when the LLM scored fewer than
 // this fraction of the head (ADR-038; sage-memory's measured failure mode).
 const DefaultRerankMinCoverage = 0.5
 
-// Default fusion weights — the config defaults (spec §2.2).
+// Default fusion weights — the config defaults (spec §2.2, ADR-037).
 const (
 	DefaultBM25Weight   = 0.7
 	DefaultVectorWeight = 0.3
+	DefaultGraphWeight  = 0.2
 )
 
 // fusedChunk is a document accumulated across fusion legs, carrying its
@@ -55,6 +61,7 @@ type fusedChunk struct {
 	rrfScore      float64
 	bm25Rank      int
 	vecRank       int
+	graphRank     int
 	retrievalRank int // position in the post-RRF list, used for blending
 }
 
@@ -80,7 +87,7 @@ type legList struct {
 // lists supplies the doc's chunk identity/text; doc-leg-only docs fall
 // back to entry content. Output is sorted deterministically and carries
 // per-channel best ranks for attribution.
-func fuseLegs(lists []legList, wBM25, wVec float64) []fusedChunk {
+func fuseLegs(lists []legList, wBM25, wVec, wGraph float64) []fusedChunk {
 	const k = 60.0
 	type acc struct {
 		fusedChunk
@@ -91,8 +98,11 @@ func fuseLegs(lists []legList, wBM25, wVec float64) []fusedChunk {
 
 	for _, l := range lists {
 		w := wBM25
-		if l.channel == ChannelVector {
+		switch l.channel {
+		case ChannelVector:
 			w = wVec
+		case ChannelGraph:
+			w = wGraph
 		}
 		seen := make(map[string]bool, len(l.hits)) // best (first) hit per doc per list
 		for i, h := range l.hits {
@@ -113,6 +123,10 @@ func fuseLegs(lists []legList, wBM25, wVec float64) []fusedChunk {
 				case ChannelVector:
 					if a.vecRank == 0 || rank < a.vecRank {
 						a.vecRank = rank
+					}
+				case ChannelGraph:
+					if a.graphRank == 0 || rank < a.graphRank {
+						a.graphRank = rank
 					}
 				}
 			}
@@ -192,6 +206,7 @@ func blendResults(deduped []fusedChunk, reranked []RerankResult, minCoverage flo
 			Rank:        fc.retrievalRank,
 			BM25Rank:    fc.bm25Rank,
 			VectorRank:  fc.vecRank,
+			GraphRank:   fc.graphRank,
 		})
 	}
 	if applied {
@@ -226,6 +241,12 @@ type SearchResult struct {
 	// SourceDate is the doc's origin date (unix seconds; ADR-039 — never
 	// a row timestamp). 0 = no date: no recency contribution was applied.
 	SourceDate int64
+
+	// GraphRank is the graph channel's best rank (0 = not graph-ranked);
+	// AliasOf carries the matched alias when the doc was reached through
+	// an alias-union seed (advisory, never filtering — spec §2.6).
+	GraphRank int
+	AliasOf   string
 }
 
 // EnhancedSearch runs the full enhanced search pipeline:
@@ -335,8 +356,17 @@ func EnhancedSearch(opts EnhancedSearchOpts) ([]SearchResult, error) {
 		}
 	}
 
+	// Graph channel joins as the third leg (ADR-037).
+	if len(opts.GraphLeg.hits) > 0 {
+		lists = append(lists, opts.GraphLeg)
+	}
+	wGraph := opts.GraphWeight
+	if wGraph <= 0 {
+		wGraph = DefaultGraphWeight
+	}
+
 	// Step 3: weighted RRF fusion, doc-keyed.
-	deduped := fuseLegs(lists, wBM25, wVec)
+	deduped := fuseLegs(lists, wBM25, wVec, wGraph)
 
 	// Step 4: hydrate best chunks that arrived without content (vector-only
 	// chunk hits) — they would otherwise reach the reranker as empty

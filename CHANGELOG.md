@@ -29,6 +29,14 @@
   the configured hybrid weights apply on this path for the first time,
   multi-query expansion variants sum instead of taking the best rank,
   and rankings will shift accordingly.
+- **The ontology graph now joins retrieval ranking as a third fused
+  channel** (`sage-wiki query` path): query terms seed entities (alias
+  links included), a depth-2 traversal with per-relation weights
+  (`contradicts` 1.1, `cites` 0.7) ranks their neighborhoods, and the
+  results fuse at `search.hybrid_weight_graph` (default 0.2). Articles
+  reachable only through the graph can now surface; results carry
+  their graph rank and an `alias_of` note when reached via an alias.
+  An empty ontology costs nothing (byte-identical results).
 - **All search surfaces (query, MCP, CLI, web, TUI, hub) inherit two
   lexical upgrades** through the shared query builder: on corpora over
   100 documents, query terms matching more than 20% of documents are

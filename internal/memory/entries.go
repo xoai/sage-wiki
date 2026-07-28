@@ -89,7 +89,7 @@ func (s *Store) Search(query string, tags []string, limit int) ([]SearchResult, 
 	ftsQuery := formatFTSTerms(dfPruneTerms(s.db,
 		"SELECT COUNT(*) FROM entries",
 		"SELECT COUNT(*) FROM entries WHERE entries MATCH ?",
-		buildFTSTerms(query)))
+		BuildFTSTerms(query)))
 	if ftsQuery == "" {
 		return nil, nil
 	}
@@ -163,12 +163,12 @@ func ContentHash(content string) string {
 // buildFTSQuery converts a user query into FTS5 OR-joined prefix terms.
 // Stopwords are filtered out. FTS5 special characters are stripped for safety.
 func buildFTSQuery(query string) string {
-	return formatFTSTerms(buildFTSTerms(query))
+	return formatFTSTerms(BuildFTSTerms(query))
 }
 
 // buildFTSTerms returns the sanitized, stopword-filtered term list (raw
 // words — formatFTSTerms adds quoting and prefix stars).
-func buildFTSTerms(query string) []string {
+func BuildFTSTerms(query string) []string {
 	words := strings.Fields(strings.ToLower(query))
 	var terms []string
 	for _, w := range words {

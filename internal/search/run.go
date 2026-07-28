@@ -10,6 +10,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/metrics"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -77,6 +78,12 @@ type Deps struct {
 	BM25Weight   float64
 	VectorWeight float64
 
+	// Graph channel (ADR-037). Nil Ont disables the leg entirely; an
+	// empty ontology short-circuits to byte-identical 2-channel results.
+	Ont                  store.OntologyStore
+	GraphWeight          float64            // 0 → DefaultGraphWeight
+	GraphRelationWeights map[string]float64 // per-relation overrides (config-extensible types)
+
 	// IncludeDoc, when non-nil, is the trust predicate: results whose
 	// DocID it rejects are excluded. Callers inject their trust
 	// semantics (query's output-trust rules; M5 adapters likewise) —
@@ -128,6 +135,17 @@ func Run(deps Deps, req Request) (Response, error) {
 		pipelineLimit = limit * 3
 	}
 
+	// Graph leg (ADR-037): built here so the pipeline stays decoupled
+	// from the ontology; the empty-ontology fast path guarantees the
+	// byte-identity invariant.
+	var graphLeg legList
+	var graphAliases map[string]string
+	if req.channelEnabled(ChannelGraph) && deps.Ont != nil {
+		if n, err := deps.Ont.EntityCount(""); err == nil && n > 0 {
+			graphLeg, graphAliases = buildGraphLeg(deps.Ont, req.Query, limit, deps.GraphRelationWeights)
+		}
+	}
+
 	results, err := EnhancedSearch(EnhancedSearchOpts{
 		Query:             req.Query,
 		Limit:             pipelineLimit,
@@ -142,10 +160,27 @@ func Run(deps Deps, req Request) (Response, error) {
 		RerankMinCoverage: req.RerankMinCoverage,
 		BM25Weight:        deps.BM25Weight,
 		VectorWeight:      deps.VectorWeight,
+		GraphWeight:       deps.GraphWeight,
 		SkipBM25:          !req.channelEnabled(ChannelBM25),
+		GraphLeg:          graphLeg,
 	})
 	if err != nil {
 		return Response{}, err
+	}
+
+	// Graph-only docs arrive without chunk text — hydrate from the entry;
+	// alias-union seeds annotate their canonical's results (spec §2.6).
+	if len(graphLeg.hits) > 0 && deps.Mem != nil {
+		for i := range results {
+			if results[i].ChunkText == "" && results[i].GraphRank > 0 {
+				if e, err := deps.Mem.Get(results[i].DocID); err == nil && e != nil {
+					results[i].ChunkText = e.Content
+				}
+			}
+			if alias, ok := graphAliases[results[i].DocID]; ok {
+				results[i].AliasOf = alias
+			}
+		}
 	}
 
 	// Tag semantics (spec §2.1): FilterTags is a hard AND filter,

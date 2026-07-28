@@ -77,7 +77,7 @@ func (s *ChunkStore) SearchChunks(query string, limit int) ([]ChunkResult, error
 	ftsQuery := formatFTSTerms(dfPruneTerms(s.db,
 		"SELECT COUNT(DISTINCT doc_id) FROM chunks_meta",
 		"SELECT COUNT(DISTINCT m.doc_id) FROM chunks_fts f JOIN chunks_meta m ON m.chunk_id = f.chunk_id WHERE chunks_fts MATCH ?",
-		buildFTSTerms(query)))
+		BuildFTSTerms(query)))
 	if ftsQuery == "" {
 		return nil, nil
 	}

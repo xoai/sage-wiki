@@ -105,7 +105,7 @@ func TestFuseLegsSumsMultiQueryVectorLists(t *testing.T) {
 		{channel: ChannelVector, hits: []legHit{{docID: "D", chunkID: "D:c0"}, {docID: "E", chunkID: "E:c0"}}},
 		{channel: ChannelVector, hits: []legHit{{docID: "D", chunkID: "D:c0"}}},
 	}
-	fused := fuseLegs(lists, 0.7, 0.3)
+	fused := fuseLegs(lists, 0.7, 0.3, 0.2)
 	var d, e fusedChunk
 	for _, fc := range fused {
 		switch fc.docID {
