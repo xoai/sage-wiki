@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"database/sql"
 	"fmt"
 	"testing"
 
@@ -38,6 +39,37 @@ func TestPGSearchDFPrunesFrequentTerms(t *testing.T) {
 	}
 	if len(backstop) == 0 {
 		t.Fatal("pg all-frequent query must keep first terms (backstop)")
+	}
+}
+
+// PB-2: pg twin of the chunk-leg DF-prune pin (single-table probe — no
+// JOIN risk, pinned anyway per the same-task-twin discipline).
+func TestPGSearchChunksDFPrunesFrequentTerms(t *testing.T) {
+	b, _, cleanup := derivedTestBackend(t)
+	defer cleanup()
+
+	cs := b.Chunks()
+	for i := 0; i < 120; i++ {
+		content := fmt.Sprintf("common filler text number%d", i)
+		if i == 0 {
+			content = "common zebra migration"
+		}
+		docID := fmt.Sprintf("doc%d", i)
+		if err := b.WriteTx(func(tx *sql.Tx) error {
+			return cs.IndexChunks(tx, docID, []store.ChunkEntry{
+				{ChunkID: docID + ":c0", ChunkIndex: 0, Content: content},
+			})
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	results, err := cs.SearchChunks("common zebra", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].DocID != "doc0" {
+		t.Fatalf("pg chunk-leg DF pruning failed: want only doc0, got %d results", len(results))
 	}
 }
 
