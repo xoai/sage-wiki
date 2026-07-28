@@ -49,21 +49,31 @@ Infrastructure failures (compile hard-fail, degraded search) are recorded as
 questions in the published runs there were 0 infra errors and 0 judge parse
 errors.** Search-side degrade detection (stderr scan + a no-vector-ranked-
 results guard) exists but is best-effort; the compile gate above is the
-load-bearing defense that questions run against compiled content.
+load-bearing defense that every project's *compiled layer* (summaries,
+concepts, articles, embeddings) exists before questions run.
+
+**What retrieval actually returns:** sage-wiki's hybrid index intentionally
+contains raw source chunks alongside compiled content, so retrieved context
+is a mix — in the larger LOCOMO conversations, 18–29% of retrieved entries
+are raw transcript chunks; in the 19-source conversations, almost none.
+That mix *is* the system under test. The incident below concerned a project
+whose compiled layer was entirely missing, not this designed mix.
 
 ### Integrity incident (disclosed)
 
 An earlier LOCOMO run published 81.8% overall. Independent review found that
-conversation 0 (152 questions, 9.9%) had been benchmarked against **raw
-transcripts**: an interrupted compile left its work queue leased, the
-restarted compile exited 0 having done nothing, and the original
-`vector_count > 0` gate passed on one stray vector. Raw-transcript retrieval
-scored 94.7% on those questions — memory benchmarks are much easier against
-verbatim text. The project was wiped, recompiled through the hardened gate,
-and all 152 questions rerun; this report carries only the corrected numbers.
-Properly compiled, conv0 scores 44.7% — its question set is heavily
-temporal/detail, the compile-abstraction weak spot. LongMemEval and BEAM
-projects were audited at the database level and were clean.
+conversation 0 (152 questions, 9.9%) had been benchmarked against a project
+with **no compiled layer at all**: an interrupted compile left its work
+queue leased, the restarted compile exited 0 having done nothing (raw
+sources FTS-indexed, one stray vector, zero summaries/concepts/articles),
+and the original `vector_count > 0` gate passed. Retrieval was therefore
+pure verbatim transcript — which scored 94.7% on those questions; memory
+benchmarks are much easier against unabridged text. The project was wiped,
+recompiled through the hardened gate, and all 152 questions rerun; this
+report carries only the corrected numbers. Properly compiled, conv0 scores
+44.7% — its question set is heavily temporal/detail, the
+compile-abstraction weak spot. LongMemEval and BEAM projects were audited
+at the database level and were clean.
 
 ## LOCOMO — 76.8% overall
 
@@ -92,9 +102,9 @@ preserved them inside article text. Per-conversation accuracy spreads
 44.7%–86.9% — the low end (conv0) is dominated by exact-date and duration
 questions the compiled wiki abstracts away.
 
-Compile: ~122 s per conversation for the nine conversations compiled in the
-first run (272 session files, 20.3 min total) and 90.4 s for conversation
-0's clean recompile (19 sources → 30 vectors, 11 concepts).
+Compile: the nine conversations compiled cleanly in the first run took
+≈18.7 min for 253 session files (≈125 s per conversation); conversation 0's
+clean recompile took 90.4 s (19 sources → 30 vectors, 11 concepts).
 
 ## LongMemEval-S — 63.3% overall
 
@@ -230,11 +240,13 @@ it adds roughly **$2–4**. Total wall time: ~2.5 h for the initial runs plus
    BEAM absolute numbers as judge-noisy; the per-type ordering is more
    robust than the levels.
 4. **The compile step is the memory bottleneck, by design.** sage-wiki is a
-   knowledge compiler, not a verbatim log store. These results measure the
-   compiled-wiki representation, which trades verbatim recall for
-   organized, interlinked knowledge — the 94.7%→44.7% conv0 delta between
-   raw-transcript and compiled retrieval (see the integrity incident) is a
-   direct measurement of that trade-off on detail-heavy questions.
+   knowledge compiler, not a verbatim log store. These results measure
+   sage-wiki's full retrieval surface — compiled articles and summaries
+   plus the raw source chunks its index intentionally retains — which
+   trades verbatim recall for organized, interlinked knowledge. The
+   94.7%→44.7% conv0 delta between pure-transcript retrieval and the
+   designed compiled-dominant mix (see the integrity incident) is a direct
+   measurement of that trade-off on detail-heavy questions.
 5. Compile used `gpt-4o-mini` for all passes — a stronger compile model
    would likely lift every number; that axis is unexplored here.
 
