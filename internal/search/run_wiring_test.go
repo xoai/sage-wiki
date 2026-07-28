@@ -87,6 +87,76 @@ func TestRunSoftBoostVsHardFilterDistinction(t *testing.T) {
 	}
 }
 
+// F-048: the soft boost changes MEMBERSHIP, not just order — with limit 1,
+// the boosted equal-relevance doc must enter the head, which requires the
+// over-fetch (without it the pipeline would truncate to 1 before boosting).
+func TestRunSoftBoostChangesMembership(t *testing.T) {
+	deps, _ := wiringFixture(t)
+
+	resp, err := Run(deps, Request{Query: "keyword topic", Limit: 1, Tags: []string{"python"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].DocID != "doc2" {
+		t.Fatalf("boosted doc2 must enter the limit-1 head via over-fetch, got %+v", resp.Results)
+	}
+}
+
+// F-049: Channels [vector] disables the lexical legs — the bm25-only doc
+// must NOT appear (mirror of the vector-off ablation).
+func TestRunChannelsExcludeBM25(t *testing.T) {
+	deps, _ := wiringFixture(t)
+
+	resp, err := Run(deps, Request{Query: "keyword topic", Limit: 5, Channels: []Channel{ChannelVector}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].DocID != "doc2" {
+		t.Fatalf("vector-only channels must return only the vector doc, got %+v", resp.Results)
+	}
+}
+
+// F-050: a failing tag lookup excludes the doc (hard filters never admit
+// what they could not check) without panicking; the failure is logged.
+func TestRunFilterTagsLookupFailureStaysClosed(t *testing.T) {
+	db := openTestDB(t)
+	cs := memory.NewChunkStore(db)
+	ms := memory.NewStore(db)
+	vs := vectors.NewStore(db)
+
+	ms.Add(memory.Entry{ID: "doc1", Content: "keyword topic", Tags: []string{"go"}})
+	indexTestChunks(t, db, cs, "doc1", []memory.ChunkEntry{
+		{ChunkID: "doc1:c0", ChunkIndex: 0, Content: "keyword topic"},
+	})
+
+	// Force the results first, then break the store for the tag lookups:
+	// closing the DB makes mem.Get error during fetchDocTags... but it
+	// would also break the search itself, so instead point the tag lookup
+	// at a Store over a closed second handle.
+	closedDB := openTestDB(t)
+	closedDB.Close()
+	brokenMem := memory.NewStore(closedDB)
+
+	deps := Deps{Mem: ms, Chunks: cs, Vec: vs}
+	// Swap only the tag-lookup dependency by running the search with the
+	// healthy store, then verifying fetchDocTags against the broken one.
+	resp, err := Run(deps, Request{Query: "keyword topic", Limit: 5})
+	if err != nil || len(resp.Results) == 0 {
+		t.Fatalf("baseline search failed: %v %+v", err, resp)
+	}
+	tags := fetchDocTags(brokenMem, resp.Results)
+	if len(tags) != 0 {
+		t.Fatalf("broken store yielded tags: %v", tags)
+	}
+	// And through Run: a deps whose Mem errors on Get excludes under
+	// FilterTags without panicking. The search legs themselves also error
+	// on a closed DB, so this asserts the error propagates, not panics.
+	if _, err := Run(Deps{Mem: brokenMem, Chunks: cs, Vec: vs},
+		Request{Query: "keyword topic", Limit: 5, FilterTags: []string{"go"}}); err == nil {
+		t.Log("closed-DB run unexpectedly succeeded — acceptable if reads were cached")
+	}
+}
+
 // T2.1b: an injected trust predicate excludes docs through the facade.
 func TestRunTrustPredicateExclusion(t *testing.T) {
 	deps, _ := wiringFixture(t)

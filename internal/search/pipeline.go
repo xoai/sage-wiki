@@ -30,6 +30,9 @@ type EnhancedSearchOpts struct {
 	// Fusion weights (0 → DefaultBM25Weight / DefaultVectorWeight).
 	BM25Weight   float64
 	VectorWeight float64
+
+	// SkipBM25 disables the lexical legs (channels:[vector] ablation).
+	SkipBM25 bool
 }
 
 // DefaultRerankMinCoverage gates blending when the LLM scored fewer than
@@ -214,8 +217,9 @@ type SearchResult struct {
 	FinalScore  float64
 	Rank        int
 
-	// Per-channel ranks of the best chunk (0 = the leg did not rank it).
-	// These are the per-channel attribution source (spec §2.1, T6.3).
+	// Per-channel best rank across the channel's leg lists — doc- or
+	// chunk-granularity (0 = the channel did not rank it). These are the
+	// per-channel attribution source (spec §2.1, T6.3).
 	BM25Rank   int
 	VectorRank int
 }
@@ -257,28 +261,30 @@ func EnhancedSearch(opts EnhancedSearchOpts) ([]SearchResult, error) {
 	}
 
 	var lists []legList
-	for _, q := range expanded.AllQueries() {
-		// chunk-FTS
-		crs, err := opts.ChunkStore.SearchChunks(q, candidateLimit)
-		if err != nil {
-			return nil, err
-		}
-		l := legList{channel: ChannelBM25}
-		for _, r := range crs {
-			l.hits = append(l.hits, legHit{docID: r.DocID, chunkID: r.ChunkID, heading: r.Heading, content: r.Content})
-		}
-		lists = append(lists, l)
+	if !opts.SkipBM25 {
+		for _, q := range expanded.AllQueries() {
+			// chunk-FTS
+			crs, err := opts.ChunkStore.SearchChunks(q, candidateLimit)
+			if err != nil {
+				return nil, err
+			}
+			l := legList{channel: ChannelBM25}
+			for _, r := range crs {
+				l.hits = append(l.hits, legHit{docID: r.DocID, chunkID: r.ChunkID, heading: r.Heading, content: r.Content})
+			}
+			lists = append(lists, l)
 
-		// doc-FTS
-		ers, err := opts.MemStore.Search(q, nil, candidateLimit)
-		if err != nil {
-			return nil, err
+			// doc-FTS
+			ers, err := opts.MemStore.Search(q, nil, candidateLimit)
+			if err != nil {
+				return nil, err
+			}
+			dl := legList{channel: ChannelBM25}
+			for _, e := range ers {
+				dl.hits = append(dl.hits, legHit{docID: e.ID, docContent: e.Content})
+			}
+			lists = append(lists, dl)
 		}
-		dl := legList{channel: ChannelBM25}
-		for _, e := range ers {
-			dl.hits = append(dl.hits, legHit{docID: e.ID, docContent: e.Content})
-		}
-		lists = append(lists, dl)
 	}
 
 	if opts.Embedder != nil {

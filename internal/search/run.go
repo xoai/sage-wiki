@@ -6,6 +6,7 @@ import (
 
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/llm"
+	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/vectors"
@@ -44,10 +45,16 @@ type Request struct {
 	Expand bool
 	Rerank bool
 
-	Tags        []string // soft boost (wired in T2.1b)
-	FilterTags  []string // hard AND filter (wired in T2.1b)
-	TrustFilter string   // trust semantics preserved through the facade (T2.1b)
+	Tags       []string // soft boost (wired in T2.1b)
+	FilterTags []string // hard AND filter (wired in T2.1b)
 
+	// Trust preservation is Deps.IncludeDoc — callers inject their trust
+	// semantics as a predicate; the M5 adapters map their trust-mode
+	// strings onto it there (Gate-3 F-053: no dead string field here).
+
+	// Granularity is plumbed but not yet branched on: Docs and Chunks
+	// return the same doc-level results with best-chunk text until the
+	// M5 adapters shape Docs output (documented no-op, F-053).
 	Granularity Granularity
 
 	// RerankMinCoverage gates blending (0 → DefaultRerankMinCoverage).
@@ -111,10 +118,12 @@ func Run(deps Deps, req Request) (Response, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	// Post-pipeline filters shrink the result set — over-fetch so the
-	// final cut can still fill the requested limit.
+	// Post-pipeline filters shrink the result set, and the soft boost can
+	// promote candidates from below the cut — over-fetch so the final cut
+	// still fills the requested limit and boosts change membership, not
+	// just order (F-048, matching the doc-level formula's pool semantics).
 	pipelineLimit := limit
-	if len(req.FilterTags) > 0 || deps.IncludeDoc != nil {
+	if len(req.FilterTags) > 0 || len(req.Tags) > 0 || deps.IncludeDoc != nil {
 		pipelineLimit = limit * 3
 	}
 
@@ -132,6 +141,7 @@ func Run(deps Deps, req Request) (Response, error) {
 		RerankMinCoverage: req.RerankMinCoverage,
 		BM25Weight:        deps.BM25Weight,
 		VectorWeight:      deps.VectorWeight,
+		SkipBM25:          !req.channelEnabled(ChannelBM25),
 	})
 	if err != nil {
 		return Response{}, err
@@ -185,16 +195,34 @@ func Run(deps Deps, req Request) (Response, error) {
 	return Response{Results: results}, nil
 }
 
-// fetchDocTags loads entry tags for each distinct result doc.
+// fetchDocTags loads entry tags for each distinct result doc. Lookup
+// errors are logged (once, with a count) — a hard filter that excludes a
+// doc because its tag lookup FAILED must not be indistinguishable from
+// one that excluded an untagged doc (F-050; failure stays closed: a hard
+// filter never admits docs it could not check).
 func fetchDocTags(mem *memory.Store, results []SearchResult) map[string][]string {
 	out := make(map[string][]string, len(results))
+	errCount := 0
+	var firstErr error
 	for _, r := range results {
 		if _, seen := out[r.DocID]; seen {
 			continue
 		}
-		if e, err := mem.Get(r.DocID); err == nil && e != nil {
+		e, err := mem.Get(r.DocID)
+		if err != nil {
+			errCount++
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if e != nil {
 			out[r.DocID] = e.Tags
 		}
+	}
+	if errCount > 0 {
+		log.Warn("tag lookup failed for some result docs — hard filters treat them as unmatched",
+			"failed", errCount, "first_error", firstErr)
 	}
 	return out
 }
