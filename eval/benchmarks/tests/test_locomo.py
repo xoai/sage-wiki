@@ -246,3 +246,73 @@ class TestQuotaAbort:
         meta = json.loads((tmp_path / "out" / "_run_metadata.json").read_text())
         assert meta["status"] == "aborted_quota"
         assert "resume" in meta["error"].lower()
+
+
+class TestStratifiedSample:
+    """--sample N draws a representative subset: category proportions preserved,
+    spread across conversations, deterministic per seed."""
+
+    def build_dataset(self, n_convs=10, per_cat=None):
+        per_cat = per_cat or {1: 28, 2: 32, 3: 10, 4: 84}
+        ds = []
+        for c in range(n_convs):
+            qa = []
+            for cat, count in per_cat.items():
+                for i in range(count):
+                    qa.append({"question": f"c{c} cat{cat} q{i}", "answer": "a", "category": cat})
+            ds.append({"conversation": {"speaker_a": "A", "speaker_b": "B"}, "qa": qa})
+        return ds
+
+    def test_returns_exactly_n(self):
+        from benchmarks.locomo.run import stratified_question_sample
+        ds = self.build_dataset()
+        got = stratified_question_sample(ds, list(range(10)), [1, 2, 3, 4], 150, seed=42)
+        assert len(got) == 150
+
+    def test_category_proportions_track_population(self):
+        from benchmarks.locomo.run import stratified_question_sample
+        ds = self.build_dataset()
+        got = stratified_question_sample(ds, list(range(10)), [1, 2, 3, 4], 150, seed=42)
+        from collections import Counter
+        counts = Counter(qa["category"] for _, _, qa in got)
+        # population shares: cat4 54.5%, cat2 20.8%, cat1 18.2%, cat3 6.5%
+        assert 78 <= counts[4] <= 86
+        assert 28 <= counts[2] <= 34
+        assert 24 <= counts[1] <= 31
+        assert 7 <= counts[3] <= 12
+
+    def test_spreads_across_conversations(self):
+        from benchmarks.locomo.run import stratified_question_sample
+        ds = self.build_dataset()
+        got = stratified_question_sample(ds, list(range(10)), [1, 2, 3, 4], 150, seed=42)
+        convs = {conv for conv, _, _ in got}
+        assert convs == set(range(10)), f"every conversation should appear, got {sorted(convs)}"
+
+    def test_deterministic_for_a_seed(self):
+        from benchmarks.locomo.run import stratified_question_sample
+        ds = self.build_dataset()
+        a = stratified_question_sample(ds, list(range(10)), [1, 2, 3, 4], 150, seed=42)
+        b = stratified_question_sample(ds, list(range(10)), [1, 2, 3, 4], 150, seed=42)
+        assert [(c, i) for c, i, _ in a] == [(c, i) for c, i, _ in b]
+
+    def test_different_seed_gives_different_sample(self):
+        from benchmarks.locomo.run import stratified_question_sample
+        ds = self.build_dataset()
+        a = stratified_question_sample(ds, list(range(10)), [1, 2, 3, 4], 150, seed=42)
+        b = stratified_question_sample(ds, list(range(10)), [1, 2, 3, 4], 150, seed=7)
+        assert [(c, i) for c, i, _ in a] != [(c, i) for c, i, _ in b]
+
+    def test_n_larger_than_population_returns_all(self):
+        from benchmarks.locomo.run import stratified_question_sample
+        ds = self.build_dataset(n_convs=1, per_cat={1: 3, 4: 2})
+        got = stratified_question_sample(ds, [0], [1, 2, 3, 4], 999, seed=42)
+        assert len(got) == 5
+
+    def test_runner_honors_sample(self, tmp_path):
+        cfg = RunConfig(out_dir=tmp_path / "o", results_dir=tmp_path / "r",
+                        project_name="s", conversations=[0], sample=2)
+        agg, _ = None, None
+        backend = StubBackend()
+        agg = run_benchmark(cfg, backend, StubLLM(), StubLLM(), DATASET)
+        assert agg["metrics"]["overall"]["total"] == 2
+        assert agg["metadata"]["scope"]["sample"] == 2

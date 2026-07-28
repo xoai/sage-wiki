@@ -15,6 +15,7 @@ import argparse
 import concurrent.futures
 import json
 import logging
+import random
 import re
 import subprocess
 import threading
@@ -130,6 +131,78 @@ def render_session(session_key: str, date_str: str, turns: list[dict],
 
 
 # ---------------------------------------------------------------------------
+# Sampling
+# ---------------------------------------------------------------------------
+
+
+def stratified_question_sample(dataset: list[dict], conversations: list[int],
+                               categories: list[int], n: int,
+                               seed: int = 42) -> list[tuple[int, int, dict]]:
+    """Draw n questions that mirror the full set's category mix.
+
+    Proportional allocation with largest-remainder (so the parts sum to exactly
+    n), and within each category the draw is spread round-robin across
+    conversations — a plain random draw of 150 from 1,540 can silently
+    over-weight one conversation, and conversation is a strong confound here
+    (per-conversation accuracy ranges 44.7%-86.9%).
+
+    Deterministic for a given seed so a sampled run is reproducible and two
+    configurations can be compared on the identical subset.
+    """
+    pool: dict[int, list[tuple[int, int, dict]]] = {}
+    for conv_idx in conversations:
+        if conv_idx >= len(dataset):
+            continue
+        for qi, qa in enumerate(dataset[conv_idx].get("qa", [])):
+            if qa.get("category") in categories:
+                pool.setdefault(qa["category"], []).append((conv_idx, qi, qa))
+
+    total = sum(len(v) for v in pool.values())
+    if n >= total:
+        return sorted((item for items in pool.values() for item in items),
+                      key=lambda t: (t[0], t[1]))
+
+    # Largest-remainder allocation across categories.
+    exact = {cat: len(items) * n / total for cat, items in pool.items()}
+    alloc = {cat: int(v) for cat, v in exact.items()}
+    for cat in sorted(pool, key=lambda c: (-(exact[c] - alloc[c]), c)):
+        if sum(alloc.values()) >= n:
+            break
+        alloc[cat] += 1
+
+    rng = random.Random(seed)
+    picked: list[tuple[int, int, dict]] = []
+    for cat in sorted(pool):
+        want = alloc.get(cat, 0)
+        if want <= 0:
+            continue
+        # Group this category's questions by conversation, shuffle within each,
+        # then take round-robin so the draw spans conversations evenly.
+        by_conv: dict[int, list[tuple[int, int, dict]]] = {}
+        for item in pool[cat]:
+            by_conv.setdefault(item[0], []).append(item)
+        for items in by_conv.values():
+            rng.shuffle(items)
+        order = sorted(by_conv)
+        rng.shuffle(order)
+        taken, idx = 0, 0
+        while taken < want:
+            progressed = False
+            for conv in order:
+                if taken >= want:
+                    break
+                bucket = by_conv[conv]
+                if idx < len(bucket):
+                    picked.append(bucket[idx])
+                    taken += 1
+                    progressed = True
+            if not progressed:
+                break
+            idx += 1
+    return sorted(picked, key=lambda t: (t[0], t[1]))
+
+
+# ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 
@@ -143,6 +216,8 @@ class RunConfig:
     categories: list[int] = field(default_factory=lambda: list(CATEGORIES_TO_EVALUATE))
     top_k: int = 10
     cutoffs: list[int] | None = None  # parity mode: search at max, judge per cutoff
+    sample: int | None = None         # stratified subset of the in-scope questions
+    sample_seed: int = 42
     max_questions: int | None = None
     workers: int = 4
     heartbeat_every: int = 25
@@ -244,9 +319,18 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
     counter = {"n": 0}
     counter_lock = threading.Lock()
 
+    allowed: set[tuple[int, int]] | None = None
+    if cfg.sample is not None:
+        allowed = {(c, qi) for c, qi, _ in stratified_question_sample(
+            dataset, cfg.conversations, cfg.categories, cfg.sample, cfg.sample_seed)}
+        log.info("stratified sample: %d questions across %d conversations",
+                 len(allowed), len({c for c, _ in allowed}))
+
     def scoped_questions(entry: dict) -> list[tuple[int, dict]]:
+        conv_idx = dataset.index(entry)
         qs = [(qi, qa) for qi, qa in enumerate(entry.get("qa", []))
-              if qa.get("category") in cfg.categories]
+              if qa.get("category") in cfg.categories
+              and (allowed is None or (conv_idx, qi) in allowed)]
         return qs[: cfg.max_questions] if cfg.max_questions is not None else qs
 
     run_total = sum(len(scoped_questions(dataset[c])) for c in cfg.conversations)
@@ -345,7 +429,9 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
                        "judge": getattr(judge_llm, "model", "?")},
             "scope": {"conversations": cfg.conversations,
                       "categories": cfg.categories, "top_k": cfg.top_k,
-                      **({"cutoffs": sorted(cfg.cutoffs)} if cfg.cutoffs else {})},
+                      **({"cutoffs": sorted(cfg.cutoffs)} if cfg.cutoffs else {}),
+                      **({"sample": cfg.sample, "sample_seed": cfg.sample_seed}
+                         if cfg.sample is not None else {})},
             "total_questions": len(rows),
             "judge_parse_errors": sum(1 for r in rows if r.get("judge_parse_error")),
             "compile_stats": compile_stats,
@@ -402,6 +488,10 @@ def main() -> None:
                         help="parity mode: comma-separated cutoffs (search at max, judge per cutoff)")
     parser.add_argument("--projects-dir", default=None,
                         help="reuse compiled projects from another run's projects directory")
+    parser.add_argument("--sample", type=int, default=None,
+                        help="evaluate a stratified random subset of N questions "
+                             "(category mix preserved, spread across conversations)")
+    parser.add_argument("--sample-seed", type=int, default=42)
     parser.add_argument("--max-questions", type=int, default=None)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--smoke", action="store_true",
@@ -424,6 +514,8 @@ def main() -> None:
         categories=[int(c) for c in args.categories.split(",")],
         top_k=args.top_k,
         cutoffs=[int(c) for c in args.top_k_cutoffs.split(",")] if args.top_k_cutoffs else None,
+        sample=args.sample,
+        sample_seed=args.sample_seed,
         max_questions=max_q,
         workers=args.workers,
     )

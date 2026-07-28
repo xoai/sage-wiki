@@ -1,0 +1,362 @@
+{
+ "metadata": {
+  "benchmark": "locomo",
+  "project_name": "gpt5-smoke",
+  "timestamp": "20260728_180309",
+  "binary_version": "sage-wiki dev (commit none, built unknown)",
+  "models": {
+   "answerer": "gpt-5",
+   "judge": "gpt-5"
+  },
+  "scope": {
+   "conversations": [
+    0
+   ],
+   "categories": [
+    1,
+    2,
+    3,
+    4
+   ],
+   "top_k": 10,
+   "cutoffs": [
+    10,
+    50,
+    200
+   ]
+  },
+  "total_questions": 5,
+  "judge_parse_errors": 0,
+  "compile_stats": {
+   "conv0": {
+    "seconds": 0.0,
+    "vector_count": 30,
+    "sources": 19,
+    "skipped": true
+   }
+  },
+  "failed_projects": [],
+  "rate_limit": {
+   "rate_limit_events": 0,
+   "total_wait_seconds": 0.0
+  },
+  "usage": {
+   "answerer": {
+    "prompt_tokens": 371663,
+    "completion_tokens": 21648,
+    "calls": 15
+   },
+   "judge": {
+    "prompt_tokens": 11187,
+    "completion_tokens": 2659,
+    "calls": 15
+   }
+  }
+ },
+ "metrics": {
+  "overall": {
+   "total": 5,
+   "correct": 5,
+   "accuracy": 100.0,
+   "avg_score": 100.0,
+   "infra_errors": 0
+  },
+  "by_group": {
+   "multi-hop": {
+    "total": 2,
+    "correct": 2,
+    "accuracy": 100.0,
+    "avg_score": 100.0
+   },
+   "open-domain": {
+    "total": 1,
+    "correct": 1,
+    "accuracy": 100.0,
+    "avg_score": 100.0
+   },
+   "temporal": {
+    "total": 2,
+    "correct": 2,
+    "accuracy": 100.0,
+    "avg_score": 100.0
+   }
+  }
+ },
+ "metrics_by_cutoff": {
+  "top_10": {
+   "overall": {
+    "total": 5,
+    "correct": 4,
+    "accuracy": 80.0,
+    "avg_score": 80.0,
+    "infra_errors": 0
+   },
+   "by_group": {
+    "multi-hop": {
+     "total": 2,
+     "correct": 2,
+     "accuracy": 100.0,
+     "avg_score": 100.0
+    },
+    "open-domain": {
+     "total": 1,
+     "correct": 1,
+     "accuracy": 100.0,
+     "avg_score": 100.0
+    },
+    "temporal": {
+     "total": 2,
+     "correct": 1,
+     "accuracy": 50.0,
+     "avg_score": 50.0
+    }
+   }
+  },
+  "top_50": {
+   "overall": {
+    "total": 5,
+    "correct": 5,
+    "accuracy": 100.0,
+    "avg_score": 100.0,
+    "infra_errors": 0
+   },
+   "by_group": {
+    "multi-hop": {
+     "total": 2,
+     "correct": 2,
+     "accuracy": 100.0,
+     "avg_score": 100.0
+    },
+    "open-domain": {
+     "total": 1,
+     "correct": 1,
+     "accuracy": 100.0,
+     "avg_score": 100.0
+    },
+    "temporal": {
+     "total": 2,
+     "correct": 2,
+     "accuracy": 100.0,
+     "avg_score": 100.0
+    }
+   }
+  },
+  "top_200": {
+   "overall": {
+    "total": 5,
+    "correct": 5,
+    "accuracy": 100.0,
+    "avg_score": 100.0,
+    "infra_errors": 0
+   },
+   "by_group": {
+    "multi-hop": {
+     "total": 2,
+     "correct": 2,
+     "accuracy": 100.0,
+     "avg_score": 100.0
+    },
+    "open-domain": {
+     "total": 1,
+     "correct": 1,
+     "accuracy": 100.0,
+     "avg_score": 100.0
+    },
+    "temporal": {
+     "total": 2,
+     "correct": 2,
+     "accuracy": 100.0,
+     "avg_score": 100.0
+    }
+   }
+  }
+ },
+ "latency": {
+  "count": 5,
+  "p50_ms": 1412.602379976306,
+  "p95_ms": 1551.5187482058536,
+  "avg_ms": 1334.5976963988505
+ },
+ "per_question": [
+  {
+   "question_id": "conv0_q0",
+   "conversation_idx": 0,
+   "category": 2,
+   "group": "temporal",
+   "question": "When did Caroline go to the LGBTQ support group?",
+   "ground_truth": "7 May 2023",
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1079.8537129885517,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "WRONG",
+     "score": 0.0,
+     "generated_answer": "Tuesday, July 18, 2023 — Caroline said on July 20, 2023 that she joined an LGBTQ group “last Tuesday.”",
+     "memories_evaluated": 10,
+     "judge_reason": "The generated answer gives July 18, 2023, which does not match the gold date of May 7, 2023 and is not within the 14-day tolerance, so none of the gold items are present."
+    },
+    "top_50": {
+     "judgment": "CORRECT",
+     "score": 1.0,
+     "generated_answer": "May 7, 2023. She said on May 8, 2023 that she’d gone to an LGBTQ support group “yesterday,” which is May 7.",
+     "memories_evaluated": 49,
+     "judge_reason": "The generated answer states May 7, 2023, exactly matching the gold date for when Caroline attended the support group."
+    },
+    "top_200": {
+     "judgment": "CORRECT",
+     "score": 1.0,
+     "generated_answer": "May 7, 2023.",
+     "memories_evaluated": 49,
+     "judge_reason": "The generated answer states the exact same date as the gold answer, only with a different format."
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 49
+  },
+  {
+   "question_id": "conv0_q1",
+   "conversation_idx": 0,
+   "category": 2,
+   "group": "temporal",
+   "question": "When did Melanie paint a sunrise?",
+   "ground_truth": "2022",
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1080.2462220017333,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "CORRECT",
+     "score": 1.0,
+     "generated_answer": "2022",
+     "memories_evaluated": 10,
+     "judge_reason": "The generated answer exactly matches the gold answer (2022)."
+    },
+    "top_50": {
+     "judgment": "CORRECT",
+     "score": 1.0,
+     "generated_answer": "2022.",
+     "memories_evaluated": 49,
+     "judge_reason": "The generated answer exactly matches the gold answer year."
+    },
+    "top_200": {
+     "judgment": "CORRECT",
+     "score": 1.0,
+     "generated_answer": "Last year (2022) — she told Caroline on May 8, 2023 that she’d painted a lake sunrise the year before.",
+     "memories_evaluated": 49,
+     "judge_reason": "The generated answer explicitly states 2022, matching the gold answer, with permissible extra context."
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 49
+  },
+  {
+   "question_id": "conv0_q2",
+   "conversation_idx": 0,
+   "category": 3,
+   "group": "open-domain",
+   "question": "What fields would Caroline be likely to pursue in her educaton?",
+   "ground_truth": "Psychology, counseling certification",
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1552.4358580005355,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "CORRECT",
+     "score": 1.0,
+     "generated_answer": "- Clinical Mental Health Counseling or Counseling Psychology — She explicitly wants a counseling/mental health career to support trans people and attended an LGBTQ counseling workshop (27 Jun; 12 Jul 2023).\n- Psychology — Foundational path for her mental health goals with LGBTQ focus.\n- Social Work (LGBTQ and/or child–family focus) — Aligns with advocacy, adoption-related engagement, and community support themes (15 Jul 2023).\n- Art Therapy — She frames art as therapeutic and uses it for identity and healing; this bridges her art practice with mental health aims (23 Aug; 25 Aug 2023).\n- Fine Arts/Visual Arts — Active painter and stained-glass artist with ongoing projects and exhibitions (multiple sessions in July–Aug 2023).\n- Gender/LGBTQ Studies — Ongoing LGBTQ rights advocacy, pride/conference participation, and desire to promote acceptance (July–Aug 2023).\n- Arts Administration/Curatorial Studies — She is organizing an LGBTQ art show, indicating interest in curation and cultural programming (25 Aug 2023).",
+     "memories_evaluated": 10,
+     "judge_reason": "The generated answer includes Psychology and counseling-related fields, which match the gold answer’s items, so it contains correct elements."
+    },
+    "top_50": {
+     "judgment": "CORRECT",
+     "score": 1.0,
+     "generated_answer": "- Counseling and mental health — specifically trans-affirming/LGBTQ+ counseling (clinical mental health counseling focused on supporting transgender and LGBTQ+ individuals).",
+     "memories_evaluated": 49,
+     "judge_reason": "The generated answer mentions counseling/mental health, which aligns with the gold's counseling certification (and overlaps with psychology), so it includes at least one correct item."
+    },
+    "top_200": {
+     "judgment": "CORRECT",
+     "score": 1.0,
+     "generated_answer": "Counseling and mental health—specifically LGBTQ-/trans-affirming mental health counseling.",
+     "memories_evaluated": 49,
+     "judge_reason": "The generated answer includes counseling/mental health, which aligns with the gold answer’s counseling certification (and overlaps with psychology), so it contains at least one correct item."
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 49
+  },
+  {
+   "question_id": "conv0_q3",
+   "conversation_idx": 0,
+   "category": 1,
+   "group": "multi-hop",
+   "question": "What did Caroline research?",
+   "ground_truth": "Adoption agencies",
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1547.850309027126,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "CORRECT",
+     "score": 1.0,
+     "generated_answer": "Adoption agencies. She also looked into counseling and mental health career options.",
+     "memories_evaluated": 10,
+     "judge_reason": "The generated answer includes the exact gold item 'Adoption agencies,' and extra details are allowed."
+    },
+    "top_50": {
+     "judgment": "CORRECT",
+     "score": 1.0,
+     "generated_answer": "- Adoption agencies.\n- Counseling and mental health careers/jobs (she’s been looking into this path).",
+     "memories_evaluated": 49,
+     "judge_reason": "The generated answer includes 'Adoption agencies,' which matches the gold answer, so it's correct even with extra detail."
+    },
+    "top_200": {
+     "judgment": "CORRECT",
+     "score": 1.0,
+     "generated_answer": "Adoption agencies.",
+     "memories_evaluated": 49,
+     "judge_reason": "The generated answer exactly matches the gold answer item about adoption agencies."
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 49
+  },
+  {
+   "question_id": "conv0_q4",
+   "conversation_idx": 0,
+   "category": 1,
+   "group": "multi-hop",
+   "question": "What is Caroline's identity?",
+   "ground_truth": "Transgender woman",
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1412.602379976306,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "CORRECT",
+     "score": 1.0,
+     "generated_answer": "Caroline identifies as a transgender woman.",
+     "memories_evaluated": 10,
+     "judge_reason": "The generated answer exactly matches the gold answer by stating Caroline is a transgender woman."
+    },
+    "top_50": {
+     "judgment": "CORRECT",
+     "score": 1.0,
+     "generated_answer": "Caroline identifies as a transgender woman.",
+     "memories_evaluated": 49,
+     "judge_reason": "The generated answer matches the gold answer by stating Caroline is a transgender woman."
+    },
+    "top_200": {
+     "judgment": "CORRECT",
+     "score": 1.0,
+     "generated_answer": "She identifies as a transgender woman.",
+     "memories_evaluated": 49,
+     "judge_reason": "The generated answer matches the gold answer by stating she is a transgender woman."
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 49
+  }
+ ]
+}
