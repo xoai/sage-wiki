@@ -287,6 +287,7 @@ class RunConfig:
     chat_size: str = "100K"
     conversations: list[int] = field(default_factory=lambda: [0, 1, 2])
     top_k: int = 10
+    cutoffs: list[int] | None = None  # parity mode: search at max, judge per cutoff
     max_questions: int | None = None
     workers: int = 4
     heartbeat_every: int = 25
@@ -307,9 +308,48 @@ def _process_question(cfg: RunConfig, backend, answerer, judge_llm,
         "judge_parse_error": False,
     }
     try:
-        resp = backend.search(key, question_text, limit=cfg.top_k)
+        limit = max(cfg.cutoffs) if cfg.cutoffs else cfg.top_k
+        resp = backend.search(key, question_text, limit=limit)
         record["search_latency_ms"] = resp.latency_ms
         record["retrieval"] = resp.results
+
+        if cfg.cutoffs:
+            # The rubric judge is per-nugget, so every nugget is re-judged at
+            # each depth — cost scales with cutoffs x nuggets, not cutoffs.
+            cutoff_results: dict[str, dict] = {}
+            any_parse_err = False
+            deepest = max(cfg.cutoffs)
+            for c in sorted(cfg.cutoffs):
+                sliced = resp.results[:c]
+                answer_c = answerer.generate("", get_beam_answer_generation_prompt(
+                    question_text, sliced, top_k=c))
+                scores_c, parse_c = judge_nuggets(judge_llm, question_text, nuggets, answer_c)
+                any_parse_err = any_parse_err or parse_c
+                score_c = nugget_question_score([n["score"] for n in scores_c])
+                cutoff_results[f"top_{c}"] = {
+                    "judgment": "PASS" if score_c >= 0.5 else "FAIL",
+                    "score": round(score_c, 4),
+                    "generated_answer": answer_c,
+                    "memories_evaluated": len(sliced),
+                    "nugget_scores": scores_c,
+                }
+                if c == deepest:
+                    record["generated_answer"] = answer_c
+            record.update(cutoff_results=cutoff_results,
+                          judge_parse_error=any_parse_err,
+                          score=cutoff_results[f"top_{deepest}"]["score"],
+                          judgment=cutoff_results[f"top_{deepest}"]["judgment"],
+                          nugget_scores=cutoff_results[f"top_{deepest}"]["nugget_scores"])
+            if q.get("question_type") == "event_ordering":
+                try:
+                    supplement = event_ordering_supplement(
+                        judge_llm, question_text, nuggets, record["generated_answer"])
+                    record["tau_b"] = supplement["tau_b"]
+                    record["event_ordering"] = supplement
+                except LLMError as exc:
+                    record["event_ordering"] = {"error": str(exc)}
+            return record
+
         answer = answerer.generate("", get_beam_answer_generation_prompt(
             question_text, resp.results, top_k=cfg.top_k))
         record["generated_answer"] = answer
@@ -345,7 +385,8 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
                        models={"answerer": getattr(answerer, "model", "?"),
                                "judge": getattr(judge_llm, "model", "?")},
                        scope={"chat_size": cfg.chat_size,
-                              "conversations": cfg.conversations, "top_k": cfg.top_k},
+                              "conversations": cfg.conversations, "top_k": cfg.top_k,
+                      **({"cutoffs": sorted(cfg.cutoffs)} if cfg.cutoffs else {})},
                        status="running")
     done = store.done_ids()
     failed_projects: list[str] = []
@@ -415,6 +456,14 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
 
     rows = [r for r in store.load_all() if r.get("question_id") in set(all_qids)]
     metrics = aggregate_beam(rows)
+    metrics_by_cutoff = None
+    if cfg.cutoffs:
+        metrics_by_cutoff = {}
+        for c in sorted(cfg.cutoffs):
+            label = f"top_{c}"
+            views = [{**r, "score": r.get("cutoff_results", {}).get(label, {}).get(
+                "score", r.get("score", 0.0))} for r in rows]
+            metrics_by_cutoff[label] = aggregate_beam(views)
     aggregate = {
         "metadata": {
             "benchmark": "beam",
@@ -432,6 +481,7 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
             "usage": {"answerer": answerer.usage(), "judge": judge_llm.usage()},
         },
         "metrics": metrics,
+        **({"metrics_by_cutoff": metrics_by_cutoff} if metrics_by_cutoff else {}),
         "latency": latency_stats(rows),
         "per_question": [
             {**{k: v for k, v in r.items() if k != "retrieval"},
@@ -475,6 +525,10 @@ def main() -> None:
     parser.add_argument("--chat-sizes", default="100K")
     parser.add_argument("--conversations", default="0-2")
     parser.add_argument("--top-k", type=int, default=10)
+    parser.add_argument("--top-k-cutoffs", default=None,
+                        help="parity mode: comma-separated cutoffs (search at max, judge per cutoff)")
+    parser.add_argument("--projects-dir", default=None,
+                        help="reuse compiled projects from another run's projects directory")
     parser.add_argument("--max-questions", type=int, default=None,
                         help="cap questions per conversation")
     parser.add_argument("--workers", type=int, default=4)
@@ -495,12 +549,14 @@ def main() -> None:
         chat_size=size,
         conversations=conversations,
         top_k=args.top_k,
+        cutoffs=[int(c) for c in args.top_k_cutoffs.split(",")] if args.top_k_cutoffs else None,
         max_questions=2 if args.smoke else args.max_questions,
         workers=args.workers,
     )
     backend = SageWikiBackend(
         binary=args.binary,
-        root=PKG_ROOT / "runs" / "beam" / args.project_name / "projects",
+        root=Path(args.projects_dir) if args.projects_dir
+        else PKG_ROOT / "runs" / "beam" / args.project_name / "projects",
         model=args.compile_model)
     answerer = LLMClient(model=args.answerer_model, role="answerer", workers=args.workers)
     judge = LLMClient(model=args.judge_model, role="judge", workers=args.workers)

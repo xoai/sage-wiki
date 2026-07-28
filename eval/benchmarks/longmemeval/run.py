@@ -160,9 +160,34 @@ class RunConfig:
     per_type: int = 5
     seed: int = 42
     top_k: int = 10
+    cutoffs: list[int] | None = None  # parity mode: search at max, judge per cutoff
     max_questions: int | None = None
     workers: int = 2
     heartbeat_every: int = 25
+
+
+def _answer_and_judge(cfg, answerer, judge_llm, q, memories, qdate):
+    """Answer from `memories`, then judge. Returns (judgment, score, parse_error, answer)."""
+    gen_prompt = get_answer_generation_prompt(q["question"], memories, qdate)
+    answer = answerer.generate("", gen_prompt)
+    answer = re.sub(r"[<\[]mem_thinking[>\]].*?[<\[]/mem_thinking[>\]]", "",
+                    answer, flags=re.DOTALL).strip()
+    if "ANSWER:" in answer:
+        answer = answer.rsplit("ANSWER:", 1)[-1].strip()
+
+    judge_prompt = get_judge_prompt(
+        question_type=q["question_type"], question_id=q["question_id"],
+        question=q["question"], answer=str(q["answer"]), response=answer,
+        question_date=qdate)
+    verdict = parse_error = None
+    for _ in range(JUDGE_RETRIES):
+        raw = judge_llm.generate("", judge_prompt)
+        verdict, parse_error = parse_yes_no(raw)
+        if not parse_error:
+            break
+    # A parse failure is never a PASS (spec §5).
+    correct = bool(verdict) and not parse_error
+    return ("PASS" if correct else "FAIL"), (1.0 if correct else 0.0), bool(parse_error), answer
 
 
 def _process_question(cfg: RunConfig, backend, answerer, judge_llm, q: dict) -> dict:
@@ -190,48 +215,41 @@ def _process_question(cfg: RunConfig, backend, answerer, judge_llm, q: dict) -> 
         record.update(status="infra_error", error=f"compile: {exc}", score=0.0,
                       search_latency_ms=None, failed_project=key)
         return record
+    limit = max(cfg.cutoffs) if cfg.cutoffs else cfg.top_k
     try:
-        resp = backend.search(key, q["question"], limit=cfg.top_k)
+        resp = backend.search(key, q["question"], limit=limit)
         record["search_latency_ms"] = resp.latency_ms
         record["retrieval"] = resp.results
-        gen_prompt = get_answer_generation_prompt(q["question"], resp.results, qdate)
-        answer = answerer.generate("", gen_prompt)
+
+        if cfg.cutoffs:
+            cutoff_results: dict[str, dict] = {}
+            any_parse_err = False
+            for c in sorted(cfg.cutoffs):
+                sliced = resp.results[:c]
+                judgment, score, parse_err, answer = _answer_and_judge(
+                    cfg, answerer, judge_llm, q, sliced, qdate)
+                any_parse_err = any_parse_err or parse_err
+                cutoff_results[f"top_{c}"] = {
+                    "judgment": judgment, "score": score,
+                    "generated_answer": answer, "memories_evaluated": len(sliced),
+                }
+            record.update(cutoff_results=cutoff_results,
+                          judge_parse_error=any_parse_err,
+                          score=cutoff_results[f"top_{max(cfg.cutoffs)}"]["score"])
+            return record
+
+        judgment, score, parse_err, answer = _answer_and_judge(
+            cfg, answerer, judge_llm, q, resp.results, qdate)
+        record.update(generated_answer=answer, judgment=judgment, score=score,
+                      judge_parse_error=parse_err)
+        return record
     except QuotaExhausted:
         raise  # provider wall: stop the run, do not fabricate a failed question
     except (DegradedSearchError, LLMError, subprocess.TimeoutExpired) as exc:
         record.update(status="infra_error", error=str(exc), score=0.0)
         record.setdefault("search_latency_ms", None)
         return record
-    answer = re.sub(r"[<\[]mem_thinking[>\]].*?[<\[]/mem_thinking[>\]]", "",
-                    answer, flags=re.DOTALL).strip()
-    if "ANSWER:" in answer:
-        answer = answer.rsplit("ANSWER:", 1)[-1].strip()
-    record["generated_answer"] = answer
 
-    judge_prompt = get_judge_prompt(
-        question_type=q["question_type"], question_id=qid, question=q["question"],
-        answer=str(q["answer"]), response=answer, question_date=qdate)
-    verdict = parse_error = None
-    try:
-        for _ in range(JUDGE_RETRIES):
-            raw = judge_llm.generate("", judge_prompt)
-            verdict, parse_error = parse_yes_no(raw)
-            if not parse_error:
-                break
-    except QuotaExhausted:
-        raise
-    except LLMError as exc:
-        record.update(status="infra_error", error=str(exc), score=0.0)
-        return record
-    # A parse failure is never a PASS (spec §5) — parse_yes_no's startswith
-    # fallback could otherwise credit yes-prefixed garbage ("Yesterday…").
-    correct = bool(verdict) and not parse_error
-    record.update(
-        judgment="PASS" if correct else "FAIL",
-        score=1.0 if correct else 0.0,
-        judge_parse_error=bool(parse_error),
-    )
-    return record
 
 
 def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
@@ -280,6 +298,14 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
     failed_projects = sorted({r["failed_project"] for r in rows
                               if r.get("failed_project")})
     metrics = aggregate_accuracy(rows)
+    metrics_by_cutoff = None
+    if cfg.cutoffs:
+        metrics_by_cutoff = {}
+        for c in sorted(cfg.cutoffs):
+            label = f"top_{c}"
+            views = [{**r, "score": r.get("cutoff_results", {}).get(label, {}).get(
+                "score", r.get("score", 0.0))} for r in rows]
+            metrics_by_cutoff[label] = aggregate_accuracy(views)
     aggregate = {
         "metadata": {
             "benchmark": "longmemeval",
@@ -288,7 +314,8 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
             "binary_version": backend.binary_version(),
             "models": {"answerer": getattr(answerer, "model", "?"),
                        "judge": getattr(judge_llm, "model", "?")},
-            "scope": {"per_type": cfg.per_type, "seed": cfg.seed, "top_k": cfg.top_k},
+            "scope": {"per_type": cfg.per_type, "seed": cfg.seed, "top_k": cfg.top_k,
+                      **({"cutoffs": sorted(cfg.cutoffs)} if cfg.cutoffs else {})},
             "total_questions": len(rows),
             "judge_parse_errors": sum(1 for r in rows if r.get("judge_parse_error")),
             "rate_limit": GLOBAL_GATE.stats(),
@@ -296,6 +323,7 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
             "usage": {"answerer": answerer.usage(), "judge": judge_llm.usage()},
         },
         "metrics": metrics,
+        **({"metrics_by_cutoff": metrics_by_cutoff} if metrics_by_cutoff else {}),
         "latency": latency_stats(rows),
         "per_question": [
             {**{k: v for k, v in r.items() if k != "retrieval"},
@@ -327,6 +355,10 @@ def main() -> None:
     parser.add_argument("--per-type", type=int, default=5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--top-k", type=int, default=10)
+    parser.add_argument("--top-k-cutoffs", default=None,
+                        help="parity mode: comma-separated cutoffs (search at max, judge per cutoff)")
+    parser.add_argument("--projects-dir", default=None,
+                        help="reuse compiled projects from another run's projects directory")
     parser.add_argument("--max-questions", type=int, default=None)
     parser.add_argument("--workers", type=int, default=2,
                         help="concurrent questions (each compiles its own project)")
@@ -345,12 +377,14 @@ def main() -> None:
         per_type=args.per_type,
         seed=args.seed,
         top_k=args.top_k,
+        cutoffs=[int(c) for c in args.top_k_cutoffs.split(",")] if args.top_k_cutoffs else None,
         max_questions=1 if args.smoke else args.max_questions,
         workers=args.workers,
     )
     backend = SageWikiBackend(
         binary=args.binary,
-        root=PKG_ROOT / "runs" / "longmemeval" / args.project_name / "projects",
+        root=Path(args.projects_dir) if args.projects_dir
+        else PKG_ROOT / "runs" / "longmemeval" / args.project_name / "projects",
         model=args.compile_model)
     answerer = LLMClient(model=args.answerer_model, role="answerer", workers=args.workers)
     judge = LLMClient(model=args.judge_model, role="judge", workers=args.workers)

@@ -67,6 +67,7 @@ class TestParseYesNo:
 class StubBackend:
     def __init__(self):
         self.projects = {}
+        self.search_limits = []
 
     def init_project(self, key):
         self.projects.setdefault(key, {})
@@ -80,6 +81,7 @@ class StubBackend:
 
     def search(self, key, query, limit=10, timeout_s=0):
         from benchmarks.common.sagewiki import SearchResponse
+        self.search_limits.append(limit)
         return SearchResponse([{"memory": "the answer is 42", "score": 1.0, "id": "m"}], 8.0)
 
     def binary_version(self):
@@ -135,3 +137,32 @@ class TestYesPrefixedGarbageJudge:
         for r in agg["per_question"]:
             assert r["judgment"] == "FAIL" and r["score"] == 0.0
             assert r["judge_parse_error"] is True
+
+
+class TestCutoffMode:
+    def test_cutoffs_search_once_and_judge_per_cutoff(self, tmp_path):
+        cfg = RunConfig(out_dir=tmp_path / "o", results_dir=tmp_path / "r",
+                        project_name="t", per_type=5, cutoffs=[2, 5])
+        backend = StubBackend()
+        agg = run_benchmark(cfg, backend, StubLLM(), StubLLM(), DATASET)
+        assert backend.search_limits == [5] * 4          # one search at max cutoff
+        assert set(agg["metrics_by_cutoff"]) == {"top_2", "top_5"}
+        rows = agg["per_question"]
+        assert all(set(r["cutoff_results"]) == {"top_2", "top_5"} for r in rows)
+        assert agg["metrics_by_cutoff"]["top_2"]["overall"]["total"] == 4
+
+    def test_parse_failure_never_passes_at_any_cutoff(self, tmp_path):
+        cfg = RunConfig(out_dir=tmp_path / "o", results_dir=tmp_path / "r",
+                        project_name="t", per_type=5, cutoffs=[2, 5])
+        agg = run_benchmark(cfg, StubBackend(), StubLLM(),
+                            StubLLM(judge_text="Yesterday's entry confirms it."), DATASET)
+        for r in agg["per_question"]:
+            assert all(c["judgment"] == "FAIL" for c in r["cutoff_results"].values())
+            assert r["judge_parse_error"] is True
+
+    def test_single_cutoff_default_unchanged(self, tmp_path):
+        cfg = RunConfig(out_dir=tmp_path / "o", results_dir=tmp_path / "r",
+                        project_name="t", per_type=5)
+        agg = run_benchmark(cfg, StubBackend(), StubLLM(), StubLLM(), DATASET)
+        assert "metrics_by_cutoff" not in agg
+        assert "cutoff_results" not in agg["per_question"][0]

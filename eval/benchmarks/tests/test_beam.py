@@ -81,6 +81,7 @@ class TestRenderBatch:
 class StubBackend:
     def __init__(self):
         self.projects = {}
+        self.search_limits = []
 
     def init_project(self, key):
         self.projects.setdefault(key, {})
@@ -94,6 +95,7 @@ class StubBackend:
 
     def search(self, key, query, limit=10, timeout_s=0):
         from benchmarks.common.sagewiki import SearchResponse
+        self.search_limits.append(limit)
         return SearchResponse([{"memory": "User switched from tea to coffee.",
                                 "score": 1.0, "id": "m"}], 7.0)
 
@@ -152,3 +154,44 @@ class TestEndToEnd:
         assert agg["metrics"]["overall"]["avg_score"] == 0.0
         assert agg["metadata"]["judge_parse_errors"] == 2
         assert all(r["judge_parse_error"] for r in agg["per_question"])
+
+
+class TestCutoffMode:
+    def test_nuggets_judged_at_each_cutoff(self, tmp_path):
+        cfg = RunConfig(out_dir=tmp_path / "o", results_dir=tmp_path / "r",
+                        project_name="t", conversations=[0], cutoffs=[1, 5])
+        backend = StubBackend()
+        agg = run_benchmark(cfg, backend, StubAnswerer(), StubJudge(),
+                            [normalize_record(RAW_RECORD)])
+        assert backend.search_limits == [5, 5]      # one search at the max cutoff
+        assert set(agg["metrics_by_cutoff"]) == {"top_1", "top_5"}
+        for r in agg["per_question"]:
+            assert set(r["cutoff_results"]) == {"top_1", "top_5"}
+            # nugget mean stays the primary score at every cutoff
+            assert r["cutoff_results"]["top_5"]["score"] == 1.0
+            assert r["cutoff_results"]["top_5"]["nugget_scores"]
+
+    def test_event_ordering_tau_recorded_at_max_cutoff(self, tmp_path):
+        cfg = RunConfig(out_dir=tmp_path / "o", results_dir=tmp_path / "r",
+                        project_name="t", conversations=[0], cutoffs=[1, 5])
+        agg = run_benchmark(cfg, StubBackend(), StubAnswerer(), StubJudge(),
+                            [normalize_record(RAW_RECORD)])
+        eo = [r for r in agg["per_question"] if r["group"] == "event_ordering"][0]
+        assert "tau_b" in eo
+
+    def test_nugget_parse_failure_flags_at_cutoffs(self, tmp_path):
+        cfg = RunConfig(out_dir=tmp_path / "o", results_dir=tmp_path / "r",
+                        project_name="t", conversations=[0], cutoffs=[1, 5])
+        agg = run_benchmark(cfg, StubBackend(), StubAnswerer(),
+                            StubJudge(fail_nuggets=True), [normalize_record(RAW_RECORD)])
+        assert all(r["judge_parse_error"] for r in agg["per_question"])
+        assert all(c["score"] == 0.0
+                   for r in agg["per_question"] for c in r["cutoff_results"].values())
+
+    def test_single_cutoff_default_unchanged(self, tmp_path):
+        cfg = RunConfig(out_dir=tmp_path / "o", results_dir=tmp_path / "r",
+                        project_name="t", conversations=[0])
+        agg = run_benchmark(cfg, StubBackend(), StubAnswerer(), StubJudge(),
+                            [normalize_record(RAW_RECORD)])
+        assert "metrics_by_cutoff" not in agg
+        assert "cutoff_results" not in agg["per_question"][0]
