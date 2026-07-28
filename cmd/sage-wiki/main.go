@@ -206,7 +206,6 @@ func init() {
 	// Search flags
 	searchCmd.Flags().StringSlice("tags", nil, "Filter by tags")
 	searchCmd.Flags().Int("limit", 10, "Maximum results")
-	searchCmd.Flags().String("scope", "local", "Search scope: local, global, or all")
 
 	// Query flags
 	queryCmd.Flags().String("scope", "local", "Query scope: local, global, or all")
@@ -690,6 +689,22 @@ func runLint(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// cliSearchOpts builds the hybrid search options for the CLI path. A nil
+// cfg (config-load failure) leaves the weights zero so hybrid.Search
+// applies its own defaults — the documented degrade, unchanged.
+func cliSearchOpts(cfg *config.Config, query string, tags []string, limit int) hybrid.SearchOpts {
+	opts := hybrid.SearchOpts{
+		Query: query,
+		Tags:  tags,
+		Limit: limit,
+	}
+	if cfg != nil {
+		opts.BM25Weight = cfg.Search.HybridWeightBM25
+		opts.VectorWeight = cfg.Search.HybridWeightVector
+	}
+	return opts
+}
+
 // P1-8: intentionally NOT adopted onto internal/app — runSearch tolerates
 // config-load failure (BM25-only degrade) and honors the global --config
 // flag via resolveConfigPath; both break under app.Open's strict shape.
@@ -708,12 +723,19 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	}
 	defer db.Close()
 
-	memStore := memory.NewStore(db)
-	vecStore := vectors.NewStore(db)
-	searcher := hybrid.NewSearcher(memStore, vecStore)
-
-	// Load config to get embed and search weight settings
+	// Config first: store construction needs the ANN setting, and the
+	// searcher needs the hybrid weights. Load failure degrades to
+	// BM25-only with hybrid's own weight defaults, as before.
 	cfg, cfgErr := config.Load(resolveConfigPath(dir))
+
+	memStore := memory.NewStore(db)
+	var vecStore *vectors.Store
+	if cfgErr == nil {
+		vecStore = vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled()))
+	} else {
+		vecStore = vectors.NewStore(db)
+	}
+	searcher := hybrid.NewSearcher(memStore, vecStore)
 
 	var queryVec []float32
 	if cfgErr == nil {
@@ -727,11 +749,11 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	results, err := searcher.Search(hybrid.SearchOpts{
-		Query: queryStr,
-		Tags:  tags,
-		Limit: limit,
-	}, queryVec)
+	var optsCfg *config.Config
+	if cfgErr == nil {
+		optsCfg = cfg
+	}
+	results, err := searcher.Search(cliSearchOpts(optsCfg, queryStr, tags, limit), queryVec)
 	if err != nil {
 		return err
 	}
