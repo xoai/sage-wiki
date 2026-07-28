@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1304,7 +1305,36 @@ func resumeBatch(
 }
 
 func loadCompileState(path string) (*CompileState, error) {
-	data, err := os.ReadFile(path)
+	return loadCompileStateWith(path, os.ReadFile)
+}
+
+// loadCompileStateWith reads the checkpoint, retrying transient Windows
+// file-sharing failures.
+//
+// The write half of this contract already retries (writeFileAtomicUnique via
+// isTransientRenameError); reads had no equivalent, so a concurrent writer
+// holding the handle surfaced as "The process cannot access the file because
+// it is being used by another process" and aborted the caller outright —
+// observed on windows-latest as a spurious abort in
+// TestBatchCheckpointWriters_Concurrent. A missing file is NOT transient and
+// returns immediately so callers' os.IsNotExist checks keep working.
+//
+// The reader is injectable so the retry is testable on any OS.
+func loadCompileStateWith(path string, read func(string) ([]byte, error)) (*CompileState, error) {
+	var data []byte
+	var err error
+	for attempt := 0; attempt < 6; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(10+rand.Intn(20)) * time.Millisecond)
+		}
+		data, err = read(path)
+		if err == nil {
+			break
+		}
+		if os.IsNotExist(err) || !isTransientRenameError(err) {
+			return nil, err
+		}
+	}
 	if err != nil {
 		return nil, err
 	}

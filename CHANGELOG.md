@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Compile-state reads now retry transient Windows file-sharing failures.**
+  The write half of this contract already retried (`writeFileAtomicUnique` via
+  `isTransientRenameError`), but reads did not — so a concurrent writer
+  holding the handle surfaced as "The process cannot access the file because
+  it is being used by another process" and aborted the caller outright. Same
+  family as the v0.2.2 manifest-lock fix, different code path; present in
+  v0.2.2 and earlier, not a regression.
+
+
 ## 0.2.2 — 2026-07-28
 
 ### Added

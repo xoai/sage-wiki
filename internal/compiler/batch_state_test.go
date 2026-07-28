@@ -1,10 +1,11 @@
 package compiler
 
 import (
-	"sync"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -363,5 +364,75 @@ func TestBatchCheckpointWriters_Concurrent(t *testing.T) {
 	matches, _ := filepath.Glob(filepath.Join(projectDir, ".sage", "*.tmp"))
 	if len(matches) != 0 {
 		t.Errorf("orphan tmp files: %v", matches)
+	}
+}
+
+// TestLoadCompileStateRetriesTransientReads pins the read half of the Windows
+// file-sharing contract. The write half already retries (writeFileAtomicUnique
+// + isTransientRenameError); reads had no equivalent, so a concurrent writer
+// holding the handle made loadCompileState fail outright and aborted the
+// caller. Observed on windows-latest as TestBatchCheckpointWriters_Concurrent:
+// "stripLegacyBatch: load: open ...compile-state.json: The process cannot
+// access the file because it is being used by another process."
+func TestLoadCompileStateRetriesTransientReads(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "compile-state.json")
+	if err := os.WriteFile(path, []byte(`{"completed":["a.md"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sharing := &fs.PathError{Op: "open", Path: path, Err: os.ErrPermission}
+	calls := 0
+	read := func(p string) ([]byte, error) {
+		calls++
+		if calls <= 2 { // two transient sharing violations, then success
+			return nil, sharing
+		}
+		return os.ReadFile(p)
+	}
+
+	state, err := loadCompileStateWith(path, read)
+	if err != nil {
+		t.Fatalf("transient read errors must be retried, got: %v", err)
+	}
+	if calls != 3 {
+		t.Errorf("expected 3 attempts (2 transient + 1 success), got %d", calls)
+	}
+	if len(state.Completed) != 1 || state.Completed[0] != "a.md" {
+		t.Errorf("state not parsed after retry: %+v", state)
+	}
+}
+
+func TestLoadCompileStateDoesNotRetryPersistentErrors(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "compile-state.json")
+
+	calls := 0
+	read := func(p string) ([]byte, error) {
+		calls++
+		return nil, &fs.PathError{Op: "open", Path: p, Err: os.ErrNotExist}
+	}
+
+	_, err := loadCompileStateWith(path, read)
+	if !os.IsNotExist(err) {
+		t.Errorf("a missing file must surface as NotExist, got: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("missing file must not be retried, got %d attempts", calls)
+	}
+}
+
+func TestLoadCompileStateGivesUpOnPersistentSharingViolation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "compile-state.json")
+	calls := 0
+	read := func(string) ([]byte, error) {
+		calls++
+		return nil, &fs.PathError{Op: "open", Path: path, Err: os.ErrPermission}
+	}
+	if _, err := loadCompileStateWith(path, read); err == nil {
+		t.Fatal("a permanently locked file must still fail")
+	}
+	if calls < 2 {
+		t.Errorf("expected several attempts before giving up, got %d", calls)
 	}
 }
