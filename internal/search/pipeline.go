@@ -26,13 +26,24 @@ type EnhancedSearchOpts struct {
 	// RerankMinCoverage is the minimum fraction of candidates the LLM must
 	// have scored for the blend to apply (0 → DefaultRerankMinCoverage).
 	RerankMinCoverage float64
+
+	// Fusion weights (0 → DefaultBM25Weight / DefaultVectorWeight).
+	BM25Weight   float64
+	VectorWeight float64
 }
 
 // DefaultRerankMinCoverage gates blending when the LLM scored fewer than
 // this fraction of the head (ADR-038; sage-memory's measured failure mode).
 const DefaultRerankMinCoverage = 0.5
 
-// fusedChunk is a chunk hit accumulated across the BM25 and vector legs.
+// Default fusion weights — the config defaults (spec §2.2).
+const (
+	DefaultBM25Weight   = 0.7
+	DefaultVectorWeight = 0.3
+)
+
+// fusedChunk is a document accumulated across fusion legs, carrying its
+// best chunk's identity/text (empty chunkID = doc-leg-only hit).
 type fusedChunk struct {
 	chunkID       string
 	docID         string
@@ -42,6 +53,93 @@ type fusedChunk struct {
 	bm25Rank      int
 	vecRank       int
 	retrievalRank int // position in the post-RRF list, used for blending
+}
+
+// legHit is one row of a ranked leg list; rank = position (1-based).
+// docContent is the entry-content fallback carried by doc-granularity legs.
+type legHit struct {
+	docID      string
+	chunkID    string
+	heading    string
+	content    string
+	docContent string
+}
+
+// legList is one (leg, query-variant) ranked list.
+type legList struct {
+	channel Channel
+	hits    []legHit
+}
+
+// fuseLegs runs weighted RRF (k=60) over all leg lists, doc-keyed:
+// score[doc] = Σ_lists w_channel/(60 + rank-in-list). Chunk lists rank a
+// doc at its best chunk's position; the best-ranked chunk across all chunk
+// lists supplies the doc's chunk identity/text; doc-leg-only docs fall
+// back to entry content. Output is sorted deterministically and carries
+// per-channel best ranks for attribution.
+func fuseLegs(lists []legList, wBM25, wVec float64) []fusedChunk {
+	const k = 60.0
+	type acc struct {
+		fusedChunk
+		bestChunkRank int // best in-list rank that supplied chunk info
+		docContent    string
+	}
+	docs := make(map[string]*acc)
+
+	for _, l := range lists {
+		w := wBM25
+		if l.channel == ChannelVector {
+			w = wVec
+		}
+		seen := make(map[string]bool, len(l.hits)) // best (first) hit per doc per list
+		for i, h := range l.hits {
+			rank := i + 1
+			a, ok := docs[h.docID]
+			if !ok {
+				a = &acc{fusedChunk: fusedChunk{docID: h.docID}}
+				docs[h.docID] = a
+			}
+			if !seen[h.docID] {
+				seen[h.docID] = true
+				a.rrfScore += w / (k + float64(rank))
+				switch l.channel {
+				case ChannelBM25:
+					if a.bm25Rank == 0 || rank < a.bm25Rank {
+						a.bm25Rank = rank
+					}
+				case ChannelVector:
+					if a.vecRank == 0 || rank < a.vecRank {
+						a.vecRank = rank
+					}
+				}
+			}
+			if h.chunkID != "" && (a.chunkID == "" || rank < a.bestChunkRank) {
+				a.chunkID, a.bestChunkRank = h.chunkID, rank
+				a.heading, a.content = h.heading, h.content
+			}
+			if h.docContent != "" && a.docContent == "" {
+				a.docContent = h.docContent
+			}
+		}
+	}
+
+	fused := make([]fusedChunk, 0, len(docs))
+	for _, a := range docs {
+		if a.chunkID == "" && a.content == "" {
+			a.content = a.docContent // doc-leg-only fallback text
+		}
+		fused = append(fused, a.fusedChunk)
+	}
+	sort.SliceStable(fused, func(i, j int) bool {
+		if fused[i].rrfScore != fused[j].rrfScore {
+			return fused[i].rrfScore > fused[j].rrfScore
+		}
+		return fused[i].docID < fused[j].docID // deterministic tiebreak
+	})
+	for i := range fused {
+		fused[i].retrievalRank = i + 1
+	}
+	return fused
 }
 
 // blendResults converts fused chunks into final SearchResults. When the
@@ -144,15 +242,45 @@ func EnhancedSearch(opts EnhancedSearchOpts) ([]SearchResult, error) {
 		}
 	}
 
-	// Step 2: Chunk-level BM25 search with all query variants
+	// Step 2: build per-(leg, variant) ranked lists (spec §2.2). Every
+	// list contributes w_leg/(60+rank) per doc; a doc hit by several
+	// lists accumulates them all — doc- and chunk-granularity agreement
+	// is signal (ADR-036). Chunk lists rank a doc at its best chunk.
 	candidateLimit := opts.Limit * 5 // fetch more for fusion
-	bm25Results, err := opts.ChunkStore.SearchChunksMultiQuery(expanded.AllQueries(), candidateLimit)
-	if err != nil {
-		return nil, err
+
+	wBM25, wVec := opts.BM25Weight, opts.VectorWeight
+	if wBM25 <= 0 {
+		wBM25 = DefaultBM25Weight
+	}
+	if wVec <= 0 {
+		wVec = DefaultVectorWeight
 	}
 
-	// Step 3: Chunk-level vector search (if embedder available)
-	var vecResults []vectors.ChunkVectorResult
+	var lists []legList
+	for _, q := range expanded.AllQueries() {
+		// chunk-FTS
+		crs, err := opts.ChunkStore.SearchChunks(q, candidateLimit)
+		if err != nil {
+			return nil, err
+		}
+		l := legList{channel: ChannelBM25}
+		for _, r := range crs {
+			l.hits = append(l.hits, legHit{docID: r.DocID, chunkID: r.ChunkID, heading: r.Heading, content: r.Content})
+		}
+		lists = append(lists, l)
+
+		// doc-FTS
+		ers, err := opts.MemStore.Search(q, nil, candidateLimit)
+		if err != nil {
+			return nil, err
+		}
+		dl := legList{channel: ChannelBM25}
+		for _, e := range ers {
+			dl.hits = append(dl.hits, legHit{docID: e.ID, docContent: e.Content})
+		}
+		lists = append(lists, dl)
+	}
+
 	if opts.Embedder != nil {
 		// Embed all vector-oriented queries: original + vec variants + hyde
 		var queryVecs [][]float32
@@ -161,7 +289,6 @@ func EnhancedSearch(opts EnhancedSearchOpts) ([]SearchResult, error) {
 		if expanded.Hyde != "" {
 			vecQueries = append(vecQueries, expanded.Hyde)
 		}
-
 		for _, q := range vecQueries {
 			vec, err := opts.Embedder.Embed(q)
 			if err != nil {
@@ -170,60 +297,47 @@ func EnhancedSearch(opts EnhancedSearchOpts) ([]SearchResult, error) {
 			queryVecs = append(queryVecs, vec)
 		}
 
-		if len(queryVecs) > 0 {
-			// Always brute-force vector search to support cross-lingual queries where BM25 has zero lexical overlap
-			for _, qv := range queryVecs {
-				vr, err := opts.VecStore.SearchChunks(qv, candidateLimit)
-				if err != nil {
-					log.Warn("chunk vector search failed", "error", err)
-					continue
+		// Always brute-force chunk-vector search to support cross-lingual
+		// queries where BM25 has zero lexical overlap.
+		for _, qv := range queryVecs {
+			// chunk-vec
+			vr, err := opts.VecStore.SearchChunks(qv, candidateLimit)
+			if err != nil {
+				log.Warn("chunk vector search failed", "error", err)
+			} else {
+				l := legList{channel: ChannelVector}
+				for _, r := range vr {
+					l.hits = append(l.hits, legHit{docID: r.DocID, chunkID: r.ChunkID})
 				}
-				vecResults = append(vecResults, vr...)
+				lists = append(lists, l)
+			}
+			// doc-vec
+			dvr, err := opts.VecStore.Search(qv, candidateLimit)
+			if err != nil {
+				log.Warn("doc vector search failed", "error", err)
+			} else {
+				dl := legList{channel: ChannelVector}
+				for _, r := range dvr {
+					dl.hits = append(dl.hits, legHit{docID: r.ID})
+				}
+				lists = append(lists, dl)
 			}
 		}
 	}
 
-	// Step 4: RRF fusion of BM25 + vector chunk results
-	chunkMap := make(map[string]*fusedChunk)
-	const k = 60.0
+	// Step 3: weighted RRF fusion, doc-keyed.
+	deduped := fuseLegs(lists, wBM25, wVec)
 
-	for _, r := range bm25Results {
-		fc, ok := chunkMap[r.ChunkID]
-		if !ok {
-			fc = &fusedChunk{
-				chunkID: r.ChunkID,
-				docID:   r.DocID,
-				heading: r.Heading,
-				content: r.Content,
-			}
-			chunkMap[r.ChunkID] = fc
-		}
-		if fc.bm25Rank == 0 || r.Rank < fc.bm25Rank {
-			fc.bm25Rank = r.Rank
-		}
-	}
-
-	for _, r := range vecResults {
-		fc, ok := chunkMap[r.ChunkID]
-		if !ok {
-			fc = &fusedChunk{
-				chunkID: r.ChunkID,
-				docID:   r.DocID,
-			}
-			chunkMap[r.ChunkID] = fc
-		}
-		if fc.vecRank == 0 || r.Rank < fc.vecRank {
-			fc.vecRank = r.Rank
-		}
-	}
-
-	// Hydrate chunks found only by vector search — they entered the map
-	// without heading/content and would otherwise reach the reranker (and
-	// the caller) as empty passages.
+	// Step 4: hydrate best chunks that arrived without content (vector-only
+	// chunk hits) — they would otherwise reach the reranker as empty
+	// passages. Docs with no chunk at all fall back to entry content.
 	var missing []string
-	for id, fc := range chunkMap {
-		if fc.content == "" && fc.heading == "" {
-			missing = append(missing, id)
+	byChunkID := make(map[string]int)
+	for i := range deduped {
+		fc := &deduped[i]
+		if fc.chunkID != "" && fc.content == "" && fc.heading == "" {
+			missing = append(missing, fc.chunkID)
+			byChunkID[fc.chunkID] = i
 		}
 	}
 	if len(missing) > 0 {
@@ -232,53 +346,10 @@ func EnhancedSearch(opts EnhancedSearchOpts) ([]SearchResult, error) {
 			log.Warn("chunk hydration failed; vector-only hits keep empty content", "error", err)
 		} else {
 			for id, m := range meta {
-				chunkMap[id].heading = m.Heading
-				chunkMap[id].content = m.Content
+				deduped[byChunkID[id]].heading = m.Heading
+				deduped[byChunkID[id]].content = m.Content
 			}
 		}
-	}
-
-	// Compute RRF scores
-	var fused []fusedChunk
-	for _, fc := range chunkMap {
-		if fc.bm25Rank > 0 {
-			fc.rrfScore += 1.0 / (k + float64(fc.bm25Rank))
-		}
-		if fc.vecRank > 0 {
-			fc.rrfScore += 1.0 / (k + float64(fc.vecRank))
-		}
-		fused = append(fused, *fc)
-	}
-
-	sort.Slice(fused, func(i, j int) bool {
-		return fused[i].rrfScore > fused[j].rrfScore
-	})
-
-	// Assign retrieval ranks
-	for i := range fused {
-		fused[i].retrievalRank = i + 1
-	}
-
-	// Step 5: Deduplicate to document level — keep best chunk per doc
-	docBest := make(map[string]*fusedChunk)
-	for i := range fused {
-		fc := &fused[i]
-		if existing, ok := docBest[fc.docID]; !ok || fc.rrfScore > existing.rrfScore {
-			docBest[fc.docID] = fc
-		}
-	}
-
-	var deduped []fusedChunk
-	for _, fc := range docBest {
-		deduped = append(deduped, *fc)
-	}
-	sort.Slice(deduped, func(i, j int) bool {
-		return deduped[i].rrfScore > deduped[j].rrfScore
-	})
-
-	// Assign retrieval ranks after dedup
-	for i := range deduped {
-		deduped[i].retrievalRank = i + 1
 	}
 
 	// Step 6: Optional LLM re-ranking

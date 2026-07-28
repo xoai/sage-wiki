@@ -217,12 +217,14 @@ func buildQueryContext(projectDir string, question string, topK int, cfg *config
 		}
 
 		resp, err := search.Run(search.Deps{
-			Mem:      memStore,
-			Chunks:   chunkStore,
-			Vec:      vecStore,
-			Embedder: embedder,
-			Client:   client,
-			Model:    model,
+			Mem:          memStore,
+			Chunks:       chunkStore,
+			Vec:          vecStore,
+			Embedder:     embedder,
+			Client:       client,
+			Model:        model,
+			BM25Weight:   cfg.Search.HybridWeightBM25,
+			VectorWeight: cfg.Search.HybridWeightVector,
 		}, search.Request{
 			Query:             question,
 			Limit:             topK,

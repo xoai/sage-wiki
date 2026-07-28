@@ -33,7 +33,17 @@ func wiringFixture(t *testing.T) (Deps, *memory.Store) {
 	}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	return Deps{Mem: ms, Chunks: cs, Vec: vs, Embedder: fixedEmbedder{v: []float32{1, 0, 0}}}, ms
+	// Doc vector too, so doc2 accumulates two vector lists exactly as doc1
+	// accumulates two bm25 lists (chunk + doc granularity).
+	if err := vs.Upsert("doc2", []float32{1, 0, 0}); err != nil {
+		t.Fatalf("upsert doc vector: %v", err)
+	}
+	// Equal weights make the two docs a true tie: 2×0.5/61 each.
+	return Deps{
+		Mem: ms, Chunks: cs, Vec: vs,
+		Embedder:   fixedEmbedder{v: []float32{1, 0, 0}},
+		BM25Weight: 0.5, VectorWeight: 0.5,
+	}, ms
 }
 
 // T2.1b: FilterTags is a HARD AND filter — non-matching docs are excluded,

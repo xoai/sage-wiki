@@ -64,6 +64,11 @@ type Deps struct {
 	Client   *llm.Client
 	Model    string
 
+	// Fusion weights (0 → DefaultBM25Weight / DefaultVectorWeight —
+	// the config defaults; spec §2.2 "config weights honored everywhere").
+	BM25Weight   float64
+	VectorWeight float64
+
 	// IncludeDoc, when non-nil, is the trust predicate: results whose
 	// DocID it rejects are excluded. Callers inject their trust
 	// semantics (query's output-trust rules; M5 adapters likewise) —
@@ -125,6 +130,8 @@ func Run(deps Deps, req Request) (Response, error) {
 		QueryExpansion:    req.Expand,
 		RerankEnabled:     req.Rerank,
 		RerankMinCoverage: req.RerankMinCoverage,
+		BM25Weight:        deps.BM25Weight,
+		VectorWeight:      deps.VectorWeight,
 	})
 	if err != nil {
 		return Response{}, err
