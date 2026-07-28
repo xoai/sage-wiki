@@ -84,6 +84,7 @@ func indexAndEmbedSources(
 	bp *BackpressureController,
 	chunkStore store.ChunkStore,
 	chunkSize int,
+	chunkOverlap int,
 	db store.DBHandle,
 	extractOpts ...extract.ExtractOpts,
 ) (indexed, embedded int) {
@@ -184,7 +185,7 @@ func indexAndEmbedSources(
 				return
 			}
 
-			chunks := extract.ChunkText(content.Text, chunkSize)
+			chunks := extract.ChunkText(content.Text, chunkSize, chunkOverlap)
 
 			// Embed each chunk sequentially (same pattern as write.go:250-260)
 			chunkEmbeddings := make([][]float32, len(chunks))

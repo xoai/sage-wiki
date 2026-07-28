@@ -191,6 +191,9 @@ func init() {
 	compileCmd.Flags().Bool("no-cache", false, "Disable prompt caching for this run")
 	compileCmd.Flags().Bool("prune", false, "Delete orphaned articles when their sole source is removed")
 
+	// Reindex flags
+	reindexCmd.Flags().Bool("no-embed", false, "Rebuild chunk FTS rows without regenerating chunk embeddings")
+
 	// Serve flags
 	serveCmd.Flags().String("transport", "stdio", "Transport: stdio or sse")
 	serveCmd.Flags().Int("port", 3333, "SSE/UI port")
@@ -214,7 +217,7 @@ func init() {
 	// Query flags
 	queryCmd.Flags().String("scope", "local", "Query scope: local, global, or all")
 
-	rootCmd.AddCommand(initCmd, compileCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, scribeCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, sourceCmd, hubCmd, skillCmd, packCmd, versionCmd)
+	rootCmd.AddCommand(initCmd, compileCmd, reindexCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, scribeCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, sourceCmd, hubCmd, skillCmd, packCmd, versionCmd)
 
 	// Enables `sage-wiki --version` in addition to the `version` subcommand.
 	rootCmd.Version = version

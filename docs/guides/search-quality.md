@@ -126,6 +126,7 @@ search:
   query_expansion: true       # LLM query expansion (default: true)
   rerank: true                # LLM re-ranking (default: true)
   chunk_size: 800             # tokens per chunk for indexing (100-5000, default: 800)
+  chunk_overlap_tokens: 0     # tokens repeated from the previous chunk (default: 0; recommended opt-in: 80)
   graph_expansion: true       # graph-based context expansion (default: true)
   graph_max_expand: 10        # max articles added via graph
   graph_depth: 2              # ontology traversal depth (1-5)
@@ -182,6 +183,39 @@ The default chunk size of 800 tokens works well for most content. Adjust if:
 search:
   chunk_size: 600   # smaller chunks for technical docs
 ```
+
+### Chunk overlap
+
+A fact that straddles a chunk boundary is easy to lose: neither chunk
+contains the whole of it, so neither ranks for a query that asks about it.
+`chunk_overlap_tokens` repeats the tail of each chunk at the head of the next,
+so boundary-straddling facts are retrievable from either side.
+
+```yaml
+search:
+  chunk_size: 800
+  chunk_overlap_tokens: 80   # ~10% of the chunk — the recommended opt-in
+```
+
+The default is **0** (no overlap — byte-identical to previous versions, so
+upgrading never re-chunks an existing index). The maximum is half of
+`chunk_size`; beyond that a chunk is mostly duplicated text, which grows the
+index without adding recall.
+
+**Changing this value requires a reindex, and the two are one step:**
+
+```bash
+# 1. edit config.yaml   2. rebuild the chunk index
+sage-wiki reindex
+```
+
+`reindex` re-chunks every compiled article on disk with the current
+`chunk_size` and `chunk_overlap_tokens`, replacing the chunk FTS rows and
+chunk vectors (no LLM article writing happens; pass `--no-embed` to skip
+regenerating chunk embeddings). Compiling normally after a config change does
+NOT re-chunk articles that did not change — the index would mix the old and
+new chunkings until every article happened to be rewritten. Change the value
+and reindex together.
 
 ## Cost
 

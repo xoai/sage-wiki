@@ -12,9 +12,9 @@ import (
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
-	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/prompts"
+	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -149,6 +149,7 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 			ArticleFields:      cfg.Compiler.ArticleFields,
 			RelationPatterns:   relPatterns,
 			ChunkSize:          cfg.Search.ChunkSizeOrDefault(),
+			ChunkOverlap:       cfg.Search.ChunkOverlapOrDefault(),
 			Language:           cfg.Language,
 			AntiPatternPhrases: cfg.Compiler.AntiPatternPhrasesOrDefault(),
 			AllConcepts:        manifestConceptRefs(mf.Concepts),

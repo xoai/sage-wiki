@@ -21,6 +21,22 @@
   fewer than `search.rerank_min_coverage` (default 0.5) of the head the
   blend is skipped entirely, keeping RRF order.
 
+### Added
+
+- **`sage-wiki reindex`** rebuilds the chunk index from the compiled
+  articles on disk using the current chunking config — chunk FTS rows and
+  chunk vectors are replaced per article (delete-then-insert), and no LLM
+  article writing happens. `--no-embed` skips regenerating chunk
+  embeddings.
+- **`search.chunk_overlap_tokens`** (default **0**, recommended opt-in
+  **80**, max half of `chunk_size`): each chunk after the first repeats the
+  tail of its predecessor, so a fact straddling a chunk boundary is
+  retrievable from either side. The default 0 is byte-identical to previous
+  chunking — upgrading never re-chunks an existing index. **Changing the
+  value takes effect only via `sage-wiki reindex`**; edit the config and
+  reindex as one step, or the index mixes both chunkings (docs:
+  search-quality.md § Chunk overlap).
+
 ### Changed
 
 - **`sage-wiki query` retrieval was rewritten as a unified weighted

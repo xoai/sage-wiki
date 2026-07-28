@@ -536,7 +536,7 @@ func setupStores(projectDir string, run *compileRun) error {
 	// Backfill chunk index if needed (after migration, before first compile)
 	if run.chunkStore.NeedsBackfill(run.memStore) {
 		log.Info("chunk index empty with existing articles — running backfill")
-		if err := BackfillChunks(projectDir, cfg.Output, cfg.Search.ChunkSizeOrDefault(), run.chunkStore, run.vecStore, run.embedder, db); err != nil {
+		if err := BackfillChunks(projectDir, cfg.Output, cfg.Search.ChunkSizeOrDefault(), cfg.Search.ChunkOverlapOrDefault(), run.chunkStore, run.vecStore, run.embedder, db); err != nil {
 			log.Warn("chunk backfill failed", "error", err)
 		}
 	}
@@ -662,7 +662,7 @@ func runTiers(projectDir string, run *compileRun) {
 		stopHB := startItemHeartbeat(run.itemStore, cliToken, tier1Claimed, cliHeartbeatInterval, cliLeaseTTL)
 		func() {
 			defer stopHB()
-			indexed, embedded = indexAndEmbedSources(projectDir, tier1Claimed, run.memStore, run.vecStore, run.embedder, run.itemStore, run.bp, run.chunkStore, cfg.Search.ChunkSizeOrDefault(), run.db, run.exOpts...)
+			indexed, embedded = indexAndEmbedSources(projectDir, tier1Claimed, run.memStore, run.vecStore, run.embedder, run.itemStore, run.bp, run.chunkStore, cfg.Search.ChunkSizeOrDefault(), cfg.Search.ChunkOverlapOrDefault(), run.db, run.exOpts...)
 		}()
 		releaseClaimed(run.itemStore, cliToken, tier1Claimed, erroredSinceClaim(run.itemStore, tier1Claimed), wc.MaxAttempts)
 		run.result.TierIndexed += indexed
@@ -1220,6 +1220,7 @@ func resumeBatch(
 					ArticleFields:      cfg.Compiler.ArticleFields,
 					RelationPatterns:   relPatterns,
 					ChunkSize:          cfg.Search.ChunkSizeOrDefault(),
+					ChunkOverlap:       cfg.Search.ChunkOverlapOrDefault(),
 					Language:           cfg.Language,
 					AntiPatternPhrases: cfg.Compiler.AntiPatternPhrasesOrDefault(),
 					AllConcepts:        manifestConceptRefs(mf.Concepts),

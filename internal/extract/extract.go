@@ -117,9 +117,35 @@ func isCJK(r rune) bool {
 
 // ChunkText is a convenience wrapper that chunks raw text without needing a SourceContent.
 // It creates a temporary SourceContent, calls ChunkIfNeeded, and returns the resulting chunks.
-func ChunkText(text string, maxTokens int) []Chunk {
+func ChunkText(text string, maxTokens int, overlapTokens ...int) []Chunk {
 	sc := &SourceContent{Text: text}
 	ChunkIfNeeded(sc, maxTokens)
+	// Optional overlap (spec §2.5, T5.6): each chunk after the first is
+	// prefixed with the tail of its predecessor, so boundary-straddling
+	// facts appear in both chunks. Overlap 0 (or absent) is byte-identical
+	// to the historical chunking — changing the config value takes effect
+	// only on the next index/reindex, never retroactively.
+	if len(overlapTokens) > 0 && overlapTokens[0] > 0 && len(sc.Chunks) > 1 {
+		overlapChars := overlapTokens[0] * 4 // same chars/token heuristic as EstimateTokens
+		out := make([]Chunk, len(sc.Chunks))
+		out[0] = sc.Chunks[0]
+		for i := 1; i < len(sc.Chunks); i++ {
+			prev := sc.Chunks[i-1].Text
+			tail := prev
+			if len(prev) > overlapChars {
+				tail = prev[len(prev)-overlapChars:]
+				// Cut at a word boundary so the overlap never starts
+				// mid-word (and mid-rune cuts never survive).
+				if idx := strings.IndexAny(tail, " \n\t"); idx >= 0 && idx+1 < len(tail) {
+					tail = tail[idx+1:]
+				}
+			}
+			c := sc.Chunks[i]
+			c.Text = tail + "\n" + c.Text
+			out[i] = c
+		}
+		return out
+	}
 	return sc.Chunks
 }
 

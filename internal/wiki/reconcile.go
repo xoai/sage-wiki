@@ -50,6 +50,7 @@ func Reconcile(ctx context.Context, projectDir string, cfg *config.Config, db st
 		manifestPath: filepath.Join(projectDir, ".manifest.json"),
 		outputRel:    cfg.Output,
 		chunkSize:    cfg.Search.ChunkSizeOrDefault(),
+		chunkOverlap: cfg.Search.ChunkOverlapOrDefault(),
 		db:           db,
 		mem:          memory.NewStore(db),
 		vec:          vectors.NewStore(db),
@@ -67,6 +68,7 @@ type reconciler struct {
 	manifestPath string
 	outputRel    string
 	chunkSize    int
+	chunkOverlap int
 	db           store.DBHandle
 	mem          *memory.Store
 	vec          *vectors.Store
@@ -231,7 +233,7 @@ func (rc *reconciler) indexText(eo expectedOutput, data []byte) string {
 // not block other writers), then applies the store writes under the lock.
 func (rc *reconciler) lockedReindex(ctx context.Context, eo expectedOutput, data []byte, hash string) error {
 	indexText := rc.indexText(eo, data)
-	chunks := extract.ChunkText(indexText, rc.chunkSize)
+	chunks := extract.ChunkText(indexText, rc.chunkSize, rc.chunkOverlap)
 
 	deferVec := rc.embedder == nil
 	var embs [][]float32

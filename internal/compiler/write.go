@@ -56,6 +56,7 @@ type ArticleWriteOpts struct {
 	ArticleFields      []string
 	RelationPatterns   []ontology.RelationPattern
 	ChunkSize          int // tokens per chunk (default 800)
+	ChunkOverlap       int // tokens of overlap between adjacent chunks (default 0)
 	SplitThreshold     int // chars — enable section-aware writing above this (default 15000)
 	Language           string
 	Backpressure       *BackpressureController // optional; if nil, uses fixed semaphore
@@ -315,7 +316,7 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap m
 			chunkSize = 800
 		}
 		docID := "concept:" + concept.Name
-		chunks := extract.ChunkText(articleContent, chunkSize)
+		chunks := extract.ChunkText(articleContent, chunkSize, opts.ChunkOverlap)
 
 		// Embed all chunks FIRST (API calls outside transaction)
 		var chunkEmbeddings [][]float32

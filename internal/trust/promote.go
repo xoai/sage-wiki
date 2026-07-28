@@ -17,13 +17,14 @@ import (
 )
 
 type IndexStores struct {
-	MemStore   store.EntryStore
-	VecStore   store.VectorStore
-	OntStore   store.OntologyStore
-	ChunkStore store.ChunkStore
-	Embedder   embed.Embedder
-	DB         store.DBHandle
-	ChunkSize  int
+	MemStore     store.EntryStore
+	VecStore     store.VectorStore
+	OntStore     store.OntologyStore
+	ChunkStore   store.ChunkStore
+	Embedder     embed.Embedder
+	DB           store.DBHandle
+	ChunkSize    int
+	ChunkOverlap int
 }
 
 func PromoteOutput(store *Store, id string, projectDir string, stores IndexStores) error {
@@ -100,7 +101,7 @@ func PromoteOutput(store *Store, id string, projectDir string, stores IndexStore
 		if chunkSize <= 0 {
 			chunkSize = 800
 		}
-		chunks := extract.ChunkText(o.Answer, chunkSize)
+		chunks := extract.ChunkText(o.Answer, chunkSize, stores.ChunkOverlap)
 
 		var chunkEmbeddings [][]float32
 		if stores.Embedder != nil {

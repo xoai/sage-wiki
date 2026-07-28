@@ -151,7 +151,7 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 	}
 	chunkStore := memory.NewChunkStore(db)
 	trustCfg := cfg.Trust
-	outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode(), TrustCfg: &trustCfg, Client: client, Model: model, ChunksUsed: chunkIDs})
+	outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), ChunkOverlap: cfg.Search.ChunkOverlapOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode(), TrustCfg: &trustCfg, Client: client, Model: model, ChunksUsed: chunkIDs})
 	if err != nil {
 		log.Warn("auto-filing failed", "error", err)
 	} else {
@@ -621,19 +621,20 @@ func SaveAnswer(projectDir string, question string, answer string, sources []str
 		saveClient, _ = auth.NewLLMClient(cfg)
 	}
 	saveTrustCfg := cfg.Trust
-	return autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode(), TrustCfg: &saveTrustCfg, Client: saveClient, Model: saveModel})
+	return autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), ChunkOverlap: cfg.Search.ChunkOverlapOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode(), TrustCfg: &saveTrustCfg, Client: saveClient, Model: saveModel})
 }
 
 // autoFileOpts holds optional stores for chunk indexing in autoFile.
 type autoFileOpts struct {
-	TrustMode  string // "false", "verified", "true" — when not "true", skip indexing
-	ChunkStore *memory.ChunkStore
-	DB         store.DBHandle
-	ChunkSize  int // tokens per chunk (0 = default 800)
-	TrustCfg   *config.TrustConfig
-	Client     *llm.Client
-	Model      string
-	ChunksUsed []string
+	TrustMode    string // "false", "verified", "true" — when not "true", skip indexing
+	ChunkStore   *memory.ChunkStore
+	DB           store.DBHandle
+	ChunkSize    int // tokens per chunk (0 = default 800)
+	ChunkOverlap int // tokens of overlap between adjacent chunks (0 = none)
+	TrustCfg     *config.TrustConfig
+	Client       *llm.Client
+	Model        string
+	ChunksUsed   []string
 }
 
 // autoFile saves the query result to wiki/outputs/ with frontmatter.
@@ -668,7 +669,7 @@ func autoFile(projectDir string, outputDir string, result *QueryResult,
 				Stores: trust.IndexStores{
 					MemStore: memStore, VecStore: vecStore, OntStore: ontStore,
 					ChunkStore: opts[0].ChunkStore, DB: opts[0].DB,
-					ChunkSize: opts[0].ChunkSize,
+					ChunkSize: opts[0].ChunkSize, ChunkOverlap: opts[0].ChunkOverlap,
 				},
 				UserNow: userNow,
 			})
@@ -750,7 +751,7 @@ format: %s
 		if opts[0].ChunkSize > 0 {
 			chunkSize = opts[0].ChunkSize
 		}
-		chunks := extract.ChunkText(result.Answer, chunkSize)
+		chunks := extract.ChunkText(result.Answer, chunkSize, opts[0].ChunkOverlap)
 
 		// Embed chunks outside transaction
 		var chunkEmbeddings [][]float32
@@ -882,7 +883,7 @@ func StreamQuery(ctx context.Context, projectDir string, question string, topK i
 		}
 		chunkStore := memory.NewChunkStore(db)
 		streamTrustCfg := cfg.Trust
-		if outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode(), TrustCfg: &streamTrustCfg, Client: client, Model: model, ChunksUsed: streamChunkIDs}); err != nil {
+		if outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), ChunkOverlap: cfg.Search.ChunkOverlapOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode(), TrustCfg: &streamTrustCfg, Client: client, Model: model, ChunksUsed: streamChunkIDs}); err != nil {
 			log.Warn("stream auto-filing failed", "error", err)
 		} else {
 			log.Info("stream query result filed", "path", outputPath)

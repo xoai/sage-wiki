@@ -17,7 +17,7 @@ import (
 // BackfillChunks scans existing articles and indexes them at chunk level.
 // This is called once after migration to populate the chunk index without
 // requiring a full recompile.
-func BackfillChunks(projectDir string, outputDir string, chunkSize int,
+func BackfillChunks(projectDir string, outputDir string, chunkSize int, chunkOverlap int,
 	chunkStore store.ChunkStore, vecStore store.VectorStore,
 	embedder embed.Embedder, db store.DBHandle) error {
 
@@ -77,7 +77,7 @@ func BackfillChunks(projectDir string, outputDir string, chunkSize int,
 			}
 
 			text := string(data)
-			chunks := extract.ChunkText(text, chunkSize)
+			chunks := extract.ChunkText(text, chunkSize, chunkOverlap)
 
 			// Embed chunks outside transaction
 			var chunkEmbeddings [][]float32

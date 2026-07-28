@@ -375,6 +375,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		ArticleFields:      cfg.Compiler.ArticleFields,
 		RelationPatterns:   relPatterns,
 		ChunkSize:          cfg.Search.ChunkSizeOrDefault(),
+		ChunkOverlap:       cfg.Search.ChunkOverlapOrDefault(),
 		SplitThreshold:     cfg.Compiler.SplitThreshold,
 		Language:           cfg.Language,
 		Backpressure:       opts.Backpressure,
