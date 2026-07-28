@@ -129,7 +129,7 @@ search:
   hybrid_weight_bm25: 0.7 # BM25 vs vector weight
   hybrid_weight_vector: 0.3
   # hybrid_weight_graph: 0.2  # graph-channel fusion weight (0.2 default; ontology proximity joins ranking)
-  # graph_relation_weights:   # per-relation-type graph weights (built-ins: contradicts 1.1, cites 0.7, others 1.0)
+  # graph_relation_weights:   # per-relation-type graph weights (built-ins: contradicts 1.1, cites 0.7, others 1.0; 0 excludes a relation from traversal)
   #   my_custom_relation: 1.2
   default_limit: 10
   # query_expansion: true     # LLM query expansion for Q&A (default: true)
