@@ -60,6 +60,49 @@ func (s *entryStore) Get(id string) (*store.Entry, error) {
 		"SELECT id, content, tags, article_path FROM entries WHERE id=$1", id))
 }
 
+// GetMany — pg twin of the batched entry hydration (M5). Missing IDs are
+// absent from the map; batched to stay under bind limits.
+func (s *entryStore) GetMany(ids []string) (map[string]*store.Entry, error) {
+	const batchSize = 500
+	out := make(map[string]*store.Entry, len(ids))
+	for start := 0; start < len(ids); start += batchSize {
+		end := start + batchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[start:end]
+		placeholders := make([]string, len(batch))
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			placeholders[i] = fmt.Sprintf("$%d", i+1)
+			args[i] = id
+		}
+		rows, err := s.b.pool.Query(
+			"SELECT id, content, tags, article_path FROM entries WHERE id IN ("+strings.Join(placeholders, ",")+")", args...)
+		if err != nil {
+			return nil, fmt.Errorf("pg entries.GetMany: %w", err)
+		}
+		for rows.Next() {
+			var id, content, tags, ap sql.NullString
+			if err := rows.Scan(&id, &content, &tags, &ap); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			e := &store.Entry{ID: id.String, Content: content.String, ArticlePath: ap.String}
+			if tags.String != "" {
+				e.Tags = strings.Split(tags.String, ",")
+			}
+			out[e.ID] = e
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+	}
+	return out, nil
+}
+
 // SetSourceDate — pg twin of the sqlite sidecar upsert (ADR-039).
 func (s *entryStore) SetSourceDate(id string, ts int64) error {
 	if ts <= 0 {

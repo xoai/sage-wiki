@@ -12,7 +12,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
-func openBenchDB(b *testing.B) *storage.DB {
+func openBenchDB(b testing.TB) *storage.DB {
 	b.Helper()
 	dir := b.TempDir()
 	db, err := storage.Open(filepath.Join(dir, "bench.db"))
@@ -25,7 +25,7 @@ func openBenchDB(b *testing.B) *storage.DB {
 
 // benchCorpus builds a ~1k-entry corpus with chunks and vectors — the M2
 // interim latency tripwire fixture (plan M2 exit; V-M5c's eventual corpus).
-func benchCorpus(b *testing.B) (Deps, *hybrid.Searcher) {
+func benchCorpus(b testing.TB) (Deps, *hybrid.Searcher) {
 	b.Helper()
 	db := openBenchDB(b)
 	cs := memory.NewChunkStore(db)

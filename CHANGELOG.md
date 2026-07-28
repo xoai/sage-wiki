@@ -39,6 +39,12 @@
 
 ### Changed
 
+- **Result hydration is a single batched query** (`EntryStore.GetMany`)
+  instead of one lookup per result document — it was the unified
+  pipeline's dominant per-query cost, and removing it puts the unified
+  path at parity with (slightly under) the legacy doc-level path's
+  latency on a 1k-entry corpus despite searching both chunks and
+  documents.
 - **Search entry points now apply the `trust.include_outputs` rule**
   (MCP `wiki_search`, CLI `search`, web `/api/search`, TUI): `output:`
   documents — LLM-generated answers auto-filed back into the wiki — are

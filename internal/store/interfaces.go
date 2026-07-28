@@ -15,6 +15,10 @@ type EntryStore interface {
 	Update(e Entry) error
 	Delete(id string) error
 	Get(id string) (*Entry, error)
+	// GetMany is Get for a result set: one batched round trip instead of
+	// N (M5 — per-doc Get was the facade's dominant cost). Missing IDs are
+	// absent from the map, exactly as a nil Get result is today.
+	GetMany(ids []string) (map[string]*Entry, error)
 	Search(query string, tags []string, limit int) ([]SearchResult, error)
 	Count() (int, error)
 	// T8 additions (D3 moves).

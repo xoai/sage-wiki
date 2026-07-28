@@ -63,6 +63,27 @@ func EntriesConformance(new BackendFactory) func(*testing.T) {
 		if err := es.Add(store.Entry{ID: "src:b.md", Content: "zebra striped"}); err != nil {
 			t.Fatal(err)
 		}
+
+		// GetMany is the batch twin of Get (M5 result-set hydration): same
+		// fields, duplicates collapse, absent IDs are absent from the map
+		// (mirroring Get's nil), and an empty request is not an error.
+		many, err := es.GetMany([]string{"src:a.md", "src:a.md", "src:b.md", "src:nope.md"})
+		if err != nil {
+			t.Fatalf("GetMany: %v", err)
+		}
+		if len(many) != 2 {
+			t.Errorf("GetMany returned %d entries, want 2: %+v", len(many), many)
+		}
+		if a := many["src:a.md"]; a == nil || a.Content != e.Content ||
+			a.ArticlePath != e.ArticlePath || len(a.Tags) != 1 || a.Tags[0] != "t1" {
+			t.Errorf("GetMany entry differs from Get: %+v", a)
+		}
+		if _, ok := many["src:nope.md"]; ok {
+			t.Error("GetMany returned an absent ID")
+		}
+		if empty, err := es.GetMany(nil); err != nil || len(empty) != 0 {
+			t.Errorf("GetMany(nil) = %v, %v; want empty, nil", empty, err)
+		}
 		hits, err := es.Search("zebra", nil, 10)
 		if err != nil || len(hits) != 2 {
 			t.Fatalf("Search: %v %v", hits, err)

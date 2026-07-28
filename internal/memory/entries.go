@@ -76,6 +76,51 @@ func (s *Store) Get(id string) (*Entry, error) {
 	return &e, nil
 }
 
+// GetMany retrieves entries by ID in batches of sourceDateBatch, so a
+// result-set hydration costs one round trip per batch rather than one per
+// doc. IDs with no row are absent from the map (the batch twin of Get's
+// nil result); duplicate IDs collapse.
+func (s *Store) GetMany(ids []string) (map[string]*Entry, error) {
+	out := make(map[string]*Entry, len(ids))
+	for start := 0; start < len(ids); start += sourceDateBatch {
+		end := start + sourceDateBatch
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[start:end]
+		placeholders := strings.Repeat("?,", len(batch))
+		placeholders = placeholders[:len(placeholders)-1]
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			args[i] = id
+		}
+		rows, err := s.db.ReadDB().Query(
+			"SELECT id, content, tags, article_path FROM entries WHERE id IN ("+placeholders+")", args...)
+		if err != nil {
+			return nil, fmt.Errorf("memory.GetMany: %w", err)
+		}
+		for rows.Next() {
+			var e Entry
+			var tags string
+			if err := rows.Scan(&e.ID, &e.Content, &tags, &e.ArticlePath); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			if tags != "" {
+				e.Tags = strings.Split(tags, ",")
+			}
+			entry := e
+			out[e.ID] = &entry
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+	}
+	return out, nil
+}
+
 // SearchResult represents a BM25 search hit.
 type SearchResult = store.SearchResult
 

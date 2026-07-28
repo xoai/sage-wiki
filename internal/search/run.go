@@ -285,28 +285,23 @@ func Run(deps Deps, req Request) (Response, error) {
 // excludes a doc because its lookup FAILED must not be indistinguishable
 // from one that excluded an untagged doc (F-050; failure stays closed).
 func fetchDocEntries(mem store.EntryStore, results []SearchResult) map[string]*store.Entry {
-	out := make(map[string]*store.Entry, len(results))
-	errCount := 0
-	var firstErr error
+	ids := make([]string, 0, len(results))
+	seen := make(map[string]bool, len(results))
 	for _, r := range results {
-		if _, seen := out[r.DocID]; seen {
+		if seen[r.DocID] {
 			continue
 		}
-		e, err := mem.Get(r.DocID)
-		if err != nil {
-			errCount++
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		if e != nil {
-			out[r.DocID] = e
-		}
+		seen[r.DocID] = true
+		ids = append(ids, r.DocID)
 	}
-	if errCount > 0 {
-		log.Warn("entry lookup failed for some result docs — hard filters treat them as unmatched",
-			"failed", errCount, "first_error", firstErr)
+	out, err := mem.GetMany(ids)
+	if err != nil {
+		// One failed batch is not a reason to drop every doc: hard filters
+		// treat an unhydrated doc as unmatched, so an empty map degrades
+		// loudly (warning + no results) rather than silently mis-filtering.
+		log.Warn("entry lookup failed for result docs — hard filters treat them as unmatched",
+			"docs", len(ids), "error", err)
+		return map[string]*store.Entry{}
 	}
 	return out
 }
