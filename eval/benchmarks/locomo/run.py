@@ -141,6 +141,7 @@ class RunConfig:
     conversations: list[int] = field(default_factory=lambda: list(range(10)))
     categories: list[int] = field(default_factory=lambda: list(CATEGORIES_TO_EVALUATE))
     top_k: int = 10
+    cutoffs: list[int] | None = None  # parity mode: search at max, judge per cutoff
     max_questions: int | None = None
     workers: int = 4
     heartbeat_every: int = 25
@@ -174,10 +175,37 @@ def _process_question(cfg: RunConfig, backend, answerer, judge_llm,
         "status": "ok",
         "judge_parse_error": False,
     }
+    limit = max(cfg.cutoffs) if cfg.cutoffs else cfg.top_k
     try:
-        resp = backend.search(f"conv{conv_idx}", qa["question"], limit=cfg.top_k)
+        resp = backend.search(f"conv{conv_idx}", qa["question"], limit=limit)
         record["search_latency_ms"] = resp.latency_ms
         record["retrieval"] = resp.results
+
+        if cfg.cutoffs:
+            # Parity mode (mem0 pipeline shape): answer + judge at each cutoff.
+            cutoff_results: dict[str, dict] = {}
+            any_parse_err = False
+            for c in sorted(cfg.cutoffs):
+                sliced = resp.results[:c]
+                gen_prompt = get_answer_generation_prompt(
+                    qa["question"], sliced, reference_date=ref_date)
+                answer = answerer.generate("", gen_prompt)
+                if "ANSWER:" in answer:
+                    answer = answer.rsplit("ANSWER:", 1)[-1].strip()
+                judgment, score, parse_err, reason = _judge(
+                    judge_llm, category, qa["question"], qa["answer"], answer)
+                any_parse_err = any_parse_err or parse_err
+                cutoff_results[f"top_{c}"] = {
+                    "judgment": judgment, "score": score,
+                    "generated_answer": answer,
+                    "memories_evaluated": len(sliced),
+                    "judge_reason": reason,
+                }
+            record.update(cutoff_results=cutoff_results,
+                          judge_parse_error=any_parse_err,
+                          score=cutoff_results[f"top_{max(cfg.cutoffs)}"]["score"])
+            return record
+
         gen_prompt = get_answer_generation_prompt(qa["question"], resp.results,
                                                   reference_date=ref_date)
         answer = answerer.generate("", gen_prompt)
@@ -277,6 +305,17 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
     # -- aggregate -------------------------------------------------------------
     rows = [r for r in store.load_all() if r.get("question_id") in set(all_qids)]
     metrics = aggregate_accuracy(rows)
+    metrics_by_cutoff = None
+    if cfg.cutoffs:
+        metrics_by_cutoff = {}
+        for c in sorted(cfg.cutoffs):
+            label = f"top_{c}"
+            views = [
+                {**r, "score": r.get("cutoff_results", {}).get(label, {}).get(
+                    "score", r.get("score", 0.0))}
+                for r in rows
+            ]
+            metrics_by_cutoff[label] = aggregate_accuracy(views)
     latency = latency_stats(rows)
     usage = {"answerer": answerer.usage(), "judge": judge_llm.usage()}
     aggregate = {
@@ -288,7 +327,8 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
             "models": {"answerer": getattr(answerer, "model", "?"),
                        "judge": getattr(judge_llm, "model", "?")},
             "scope": {"conversations": cfg.conversations,
-                      "categories": cfg.categories, "top_k": cfg.top_k},
+                      "categories": cfg.categories, "top_k": cfg.top_k,
+                      **({"cutoffs": sorted(cfg.cutoffs)} if cfg.cutoffs else {})},
             "total_questions": len(rows),
             "judge_parse_errors": sum(1 for r in rows if r.get("judge_parse_error")),
             "compile_stats": compile_stats,
@@ -296,6 +336,7 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
             "usage": usage,
         },
         "metrics": metrics,
+        **({"metrics_by_cutoff": metrics_by_cutoff} if metrics_by_cutoff else {}),
         "latency": latency,
         "per_question": [
             {**{k: v for k, v in r.items() if k != "retrieval"},
@@ -339,6 +380,10 @@ def main() -> None:
     parser.add_argument("--conversations", default="0-9")
     parser.add_argument("--categories", default="1,2,3,4")
     parser.add_argument("--top-k", type=int, default=10)
+    parser.add_argument("--top-k-cutoffs", default=None,
+                        help="parity mode: comma-separated cutoffs (search at max, judge per cutoff)")
+    parser.add_argument("--projects-dir", default=None,
+                        help="reuse compiled projects from another run's projects directory")
     parser.add_argument("--max-questions", type=int, default=None)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--smoke", action="store_true",
@@ -360,11 +405,13 @@ def main() -> None:
         conversations=conversations,
         categories=[int(c) for c in args.categories.split(",")],
         top_k=args.top_k,
+        cutoffs=[int(c) for c in args.top_k_cutoffs.split(",")] if args.top_k_cutoffs else None,
         max_questions=max_q,
         workers=args.workers,
     )
     backend = SageWikiBackend(binary=args.binary,
-                              root=PKG_ROOT / "runs" / "locomo" / args.project_name / "projects",
+                              root=Path(args.projects_dir) if args.projects_dir
+                              else PKG_ROOT / "runs" / "locomo" / args.project_name / "projects",
                               model=args.compile_model)
     answerer = LLMClient(model=args.answerer_model, role="answerer", workers=args.workers)
     judge = LLMClient(model=args.judge_model, role="judge", workers=args.workers)

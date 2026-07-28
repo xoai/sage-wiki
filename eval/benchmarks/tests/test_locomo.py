@@ -38,6 +38,7 @@ class StubBackend:
         self.compiled = []
         self.sessions = {}
         self.degrade = set(degrade_qids)
+        self.search_limits = []
 
     def init_project(self, key):
         self.sessions[key] = {}
@@ -53,6 +54,7 @@ class StubBackend:
 
     def search(self, key, query, limit=10, timeout_s=0):
         from benchmarks.common.sagewiki import DegradedSearchError, SearchResponse
+        self.search_limits.append(limit)
         if query in self.degrade:
             raise DegradedSearchError("degraded")
         return SearchResponse(
@@ -164,3 +166,40 @@ class TestCompileFailureAccounting:
         meta = json.loads((tmp_path / "out" / "_run_metadata.json").read_text())
         assert meta["failed_projects"] == ["conv0"]
         assert agg["metrics"]["overall"]["infra_errors"] == 2
+
+
+class TestCutoffMode:
+    """Parity mode (mem0-style): search once at max cutoff, answer+judge per cutoff."""
+
+    def test_cutoffs_search_once_and_judge_per_cutoff(self, tmp_path):
+        cfg = RunConfig(out_dir=tmp_path / "out", results_dir=tmp_path / "results",
+                        project_name="parity", conversations=[0],
+                        cutoffs=[2, 5])
+        backend = StubBackend()
+        judge = StubLLM()
+        agg = run_benchmark(cfg, backend, StubLLM(), judge, DATASET)
+        # one search per question at the max cutoff
+        assert backend.search_limits == [5, 5]
+        # per-cutoff results on each record and per-cutoff metrics in aggregate
+        rows = agg["per_question"]
+        assert all(set(r["cutoff_results"]) == {"top_2", "top_5"} for r in rows)
+        assert set(agg["metrics_by_cutoff"]) == {"top_2", "top_5"}
+        m2 = agg["metrics_by_cutoff"]["top_2"]["overall"]
+        assert m2["total"] == 2 and m2["accuracy"] == 100.0
+        # judge called once per cutoff per question
+        assert judge.json_calls == 4
+
+    def test_cutoff_mode_writes_results_and_flags_parse_errors(self, tmp_path):
+        cfg = RunConfig(out_dir=tmp_path / "out", results_dir=tmp_path / "results",
+                        project_name="parity", conversations=[0], cutoffs=[2, 5])
+        judge = StubLLM(judge_returns_none_for={"What is the dog's name?"})
+        agg = run_benchmark(cfg, StubBackend(), StubLLM(), judge, DATASET)
+        bad = [r for r in agg["per_question"]
+               if r["question"] == "What is the dog's name?"][0]
+        assert bad["cutoff_results"]["top_2"]["judgment"] == "WRONG"
+        assert bad["judge_parse_error"] is True
+
+    def test_single_cutoff_default_unchanged(self, tmp_path):
+        agg, backend = run_with(tmp_path)
+        assert "metrics" in agg and "cutoff_results" not in agg["per_question"][0]
+        assert backend.search_limits == [10, 10]
