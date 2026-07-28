@@ -3,7 +3,6 @@ package memory
 import (
 	"database/sql"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/xoai/sage-wiki/internal/store"
@@ -73,7 +72,12 @@ func (s *ChunkStore) SearchChunks(query string, limit int) ([]ChunkResult, error
 		limit = 20
 	}
 
-	ftsQuery := formatFTSTerms(dfPruneTerms(s.db, "chunks_fts", buildFTSTerms(query)))
+	// DF pruning counts DISTINCT docs (not chunk rows) so both fusion
+	// legs prune on identical doc-ratio semantics (Gate-3 F-047).
+	ftsQuery := formatFTSTerms(dfPruneTerms(s.db,
+		"SELECT COUNT(DISTINCT doc_id) FROM chunks_meta",
+		"SELECT COUNT(DISTINCT m.doc_id) FROM chunks_fts f JOIN chunks_meta m ON m.chunk_id = f.chunk_id WHERE chunks_fts MATCH ?",
+		buildFTSTerms(query)))
 	if ftsQuery == "" {
 		return nil, nil
 	}
@@ -159,61 +163,6 @@ func DocIDs(results []ChunkResult) []string {
 	return ids
 }
 
-// SearchChunksMultiQuery runs BM25 search for multiple query variants and merges via RRF.
-func (s *ChunkStore) SearchChunksMultiQuery(queries []string, limit int) ([]ChunkResult, error) {
-	if len(queries) == 0 {
-		return nil, nil
-	}
-	if len(queries) == 1 {
-		return s.SearchChunks(queries[0], limit)
-	}
-
-	// Search each variant
-	type scoredChunk struct {
-		result ChunkResult
-		rrf    float64
-	}
-	chunkMap := make(map[string]*scoredChunk)
-	const k = 60.0
-
-	for _, q := range queries {
-		results, err := s.SearchChunks(q, limit)
-		if err != nil {
-			return nil, err
-		}
-		for _, r := range results {
-			sc, ok := chunkMap[r.ChunkID]
-			if !ok {
-				sc = &scoredChunk{result: r}
-				chunkMap[r.ChunkID] = sc
-			}
-			sc.rrf += 1.0 / (k + float64(r.Rank))
-		}
-	}
-
-	// Sort by RRF score
-	sorted := make([]ChunkResult, 0, len(chunkMap))
-	for _, sc := range chunkMap {
-		sc.result.BM25Score = sc.rrf
-		sorted = append(sorted, sc.result)
-	}
-
-	// Sort descending by score
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].BM25Score > sorted[j].BM25Score
-	})
-
-	// Re-rank
-	for i := range sorted {
-		sorted[i].Rank = i + 1
-	}
-
-	if len(sorted) > limit {
-		sorted = sorted[:limit]
-	}
-	return sorted, nil
-}
-
 // NeedsBackfill returns true if chunk index is empty but entries exist.
 func (s *ChunkStore) NeedsBackfill(memStore Countable) bool {
 	chunkCount, err := s.Count()
@@ -223,7 +172,6 @@ func (s *ChunkStore) NeedsBackfill(memStore Countable) bool {
 	entryCount, err := memStore.Count()
 	return err == nil && entryCount > 0
 }
-
 
 // ListAll returns every chunk, fully populated, ordered for determinism
 // (P2-1: absorbs reembed's raw chunks_meta scan). Unbounded by design.

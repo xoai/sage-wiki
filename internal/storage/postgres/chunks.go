@@ -3,7 +3,6 @@ package postgres
 import (
 	"database/sql"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/xoai/sage-wiki/internal/store"
@@ -42,7 +41,10 @@ func (s *chunkStore) DeleteDocChunks(tx *sql.Tx, docID string) error {
 
 func (s *chunkStore) SearchChunks(query string, limit int) ([]store.ChunkResult, error) {
 	limit = normLimit(limit, 20)
-	terms := s.b.dfPruneTerms("chunks_meta", "tsv", queryTerms(query))
+	terms := s.b.dfPruneTerms(
+		"SELECT count(DISTINCT doc_id) FROM chunks_meta",
+		"SELECT count(DISTINCT doc_id) FROM chunks_meta WHERE tsv @@ to_tsquery('sage_fts', $1)",
+		queryTerms(query))
 	if len(terms) == 0 {
 		return nil, nil
 	}
@@ -56,47 +58,6 @@ func (s *chunkStore) SearchChunks(query string, limit int) ([]store.ChunkResult,
 		"SELECT chunk_id, doc_id, heading, content, %s FROM chunks_meta WHERE %s ORDER BY %s LIMIT $%d",
 		rankSel, plan.where, plan.rank, plan.next)
 	return s.scanChunkResults(sqlText, args...)
-}
-
-func (s *chunkStore) SearchChunksMultiQuery(queries []string, limit int) ([]store.ChunkResult, error) {
-	if len(queries) == 0 {
-		return nil, nil // memory/chunks.go:131-133 parity
-	}
-	limit = normLimit(limit, 20)
-	// Single variant returns raw BM25 scores (memory/chunks.go:134 parity —
-	// no RRF rescaling for the common single-query case).
-	if len(queries) == 1 {
-		return s.SearchChunks(queries[0], limit)
-	}
-	// RRF merge parity with sqlite (chunks.go:138): run each query, fuse by
-	// reciprocal rank in Go — the DB-side queries are independent.
-	const rrfK = 60.0
-	scores := map[string]float64{}
-	var byID map[string]store.ChunkResult = map[string]store.ChunkResult{}
-	for _, q := range queries {
-		res, err := s.SearchChunks(q, limit)
-		if err != nil {
-			return nil, err
-		}
-		for i, r := range res {
-			scores[r.ChunkID] += 1.0 / (rrfK + float64(i+1))
-			byID[r.ChunkID] = r
-		}
-	}
-	out := make([]store.ChunkResult, 0, len(scores))
-	for id := range scores {
-		r := byID[id]
-		r.BM25Score = scores[id]
-		out = append(out, r)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].BM25Score > out[j].BM25Score })
-	if len(out) > limit {
-		out = out[:limit]
-	}
-	for i := range out {
-		out[i].Rank = i + 1
-	}
-	return out, nil
 }
 
 // GetChunksMeta returns heading and content for the given chunk IDs —

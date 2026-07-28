@@ -64,7 +64,10 @@ func (s *entryStore) Search(query string, tags []string, limit int) ([]store.Sea
 	if limit <= 0 {
 		limit = 10 // memory/entries.go:84-86 parity
 	}
-	terms := s.b.dfPruneTerms("entries", "tsv", queryTerms(query))
+	terms := s.b.dfPruneTerms(
+		"SELECT count(*) FROM entries",
+		"SELECT count(*) FROM entries WHERE tsv @@ to_tsquery('sage_fts', $1)",
+		queryTerms(query))
 	if len(terms) == 0 {
 		return nil, nil
 	}

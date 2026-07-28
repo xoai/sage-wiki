@@ -86,7 +86,10 @@ func (s *Store) Search(query string, tags []string, limit int) ([]SearchResult, 
 	}
 
 	// Build FTS5 query: OR-joined prefix terms, DF-pruned on large corpora
-	ftsQuery := formatFTSTerms(dfPruneTerms(s.db, "entries", buildFTSTerms(query)))
+	ftsQuery := formatFTSTerms(dfPruneTerms(s.db,
+		"SELECT COUNT(*) FROM entries",
+		"SELECT COUNT(*) FROM entries WHERE entries MATCH ?",
+		buildFTSTerms(query)))
 	if ftsQuery == "" {
 		return nil, nil
 	}
@@ -209,25 +212,24 @@ const (
 	DFPruneKeepFirst = 3
 )
 
-// dfPruneTerms drops over-frequent terms using per-term COUNT probes on
-// the given FTS table. Probe failure keeps the term (never silently
-// narrows the query on error).
-func dfPruneTerms(db store.DBHandle, ftsTable string, terms []string) []string {
+// dfPruneTerms drops over-frequent terms using the given COUNT probes.
+// totalQuery yields the corpus size (documents, never chunks — both legs
+// must prune on the same doc-ratio semantics or they diverge); termQuery
+// takes the FTS match argument and yields the term's doc frequency.
+// Probe failure keeps the term (never silently narrows the query on error).
+func dfPruneTerms(db store.DBHandle, totalQuery, termQuery string, terms []string) []string {
 	if len(terms) == 0 {
 		return terms
 	}
 	var total int
-	if err := db.ReadDB().QueryRow("SELECT COUNT(*) FROM " + ftsTable).Scan(&total); err != nil || total <= DFPruneMinCorpus {
+	if err := db.ReadDB().QueryRow(totalQuery).Scan(&total); err != nil || total <= DFPruneMinCorpus {
 		return terms
 	}
 	maxDF := int(float64(total) * DFPruneMaxRatio)
 	kept := terms[:0:0]
 	for _, t := range terms {
 		var n int
-		err := db.ReadDB().QueryRow(
-			"SELECT COUNT(*) FROM "+ftsTable+" WHERE "+ftsTable+" MATCH ?",
-			"\""+t+"\"*",
-		).Scan(&n)
+		err := db.ReadDB().QueryRow(termQuery, "\""+t+"\"*").Scan(&n)
 		if err != nil || n <= maxDF {
 			kept = append(kept, t)
 		}
