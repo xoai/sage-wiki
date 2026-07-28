@@ -2,6 +2,9 @@ package manifest
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
@@ -196,4 +199,83 @@ func TestLockLiveHolderNotReclaimed(t *testing.T) {
 		t.Fatalf("acquire l2 after release: %v", err)
 	}
 	_ = l2.Unlock()
+}
+
+// TestLockContentionClassification pins the portable contention predicate.
+//
+// A contended exclusive-create must be retried, never reported as fatal:
+// treating it as fatal aborts the caller's Mutate and silently loses its
+// update. POSIX signals contention with EEXIST; Windows signals it with
+// ERROR_ACCESS_DENIED (target pending-delete while Unlock's Remove is in
+// flight) or ERROR_SHARING_VIOLATION (another handle open) — both of which
+// surface as fs.ErrPermission and neither of which os.IsExist matches.
+// Regression: TestIngestConcurrentNoLostSource failing on windows-latest with
+// "acquire lock ...: Access is denied" → "lost update: expected 10, got 9".
+func TestLockContentionClassification(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		goos string
+		want bool
+	}{
+		{"eexist on linux", fs.ErrExist, "linux", true},
+		{"eexist on windows", fs.ErrExist, "windows", true},
+		{"wrapped eexist", fmt.Errorf("open x: %w", fs.ErrExist), "linux", true},
+		{"access denied on windows is contention", fs.ErrPermission, "windows", true},
+		{"wrapped access denied on windows", fmt.Errorf("open x: %w", fs.ErrPermission), "windows", true},
+		{"permission denied on linux is NOT contention", fs.ErrPermission, "linux", false},
+		{"unrelated error is never contention", errors.New("disk on fire"), "windows", false},
+		{"not-exist is never contention", fs.ErrNotExist, "windows", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := lockContended(tc.err, tc.goos); got != tc.want {
+				t.Errorf("lockContended(%v, %q) = %v, want %v", tc.err, tc.goos, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestLockConcurrentAcquireNoLostAcquisition drives the fast path under real
+// contention: every goroutine must eventually hold the lock exactly once, and
+// none may fail because a rival held it at the moment it tried.
+func TestLockConcurrentAcquireNoLostAcquisition(t *testing.T) {
+	dir := t.TempDir()
+	mfPath := filepath.Join(dir, ".manifest.json")
+
+	const n = 12
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var held int
+	errs := make([]error, 0, n)
+
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			opts := fastLockOpts()
+			opts.timeout = 10 * time.Second
+			// A live holder must never look stale while 11 rivals spin on it.
+			opts.staleThreshold = time.Minute
+			lock, err := acquireLockOpts(context.Background(), mfPath, opts)
+			if err != nil {
+				mu.Lock()
+				errs = append(errs, err)
+				mu.Unlock()
+				return
+			}
+			mu.Lock()
+			held++
+			mu.Unlock()
+			_ = lock.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	if len(errs) != 0 {
+		t.Errorf("contended acquire must retry, not fail: %d error(s), first: %v", len(errs), errs[0])
+	}
+	if held != n {
+		t.Errorf("lost acquisition: %d of %d goroutines held the lock", held, n)
+	}
 }
