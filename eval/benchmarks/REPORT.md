@@ -13,9 +13,17 @@ Numbers in this report are machine-verified against the JSONs in
 
 | Benchmark | Scope | Score | Infra errors |
 |---|---|---|---|
-| **LOCOMO** | 10 conversations, categories 1–4, **1,540 questions** | **76.8%** LLM-judge accuracy | 0 |
-| **LongMemEval-S** | stratified 5/type (seed 42), **30 questions** | **63.3%** LLM-judge accuracy | 0 |
-| **BEAM** | 100K bucket, conversations 0–2, **60 questions** | **27.1%** mean nugget score | 0 |
+| **LOCOMO** | stratified 150 q (seed 42), gpt-5 judge, top-50 | **92.0%** LLM-judge accuracy | 0 |
+| **LongMemEval-S** | 5/type (seed 42), 30 q, gpt-5 judge, top-50 | **93.3%** LLM-judge accuracy | 0 |
+| **BEAM** | 100K bucket, 60 q, gpt-5 judge, top-200 | **69.1%** mean nugget score | 0 |
+
+These are the current numbers, measured after the `arch/search-upgrade`
+pipeline landed and with gpt-5 as judge/answerer (mem0's configuration). The
+earlier figures — LOCOMO 76.8%, LongMemEval 63.3%, BEAM 27.1% — were taken
+with the pre-upgrade search and a gpt-4o-mini judge, and are kept below for
+provenance. Both variables changed between the two sets, so the improvement
+cannot be attributed to search alone; the depth-curve analysis is what
+isolates retrieval.
 
 The pattern is consistent across all three: sage-wiki's compile-then-search
 pipeline is **strong at semantic/factual recall** (LOCOMO single-hop 83.2%,
@@ -113,6 +121,57 @@ change, not a re-compile.
 | multi-hop | 28 | 89.3% | 85.7% | 89.3% |
 | temporal | 31 | 87.1% | 96.8% | 90.3% |
 | open-domain | 9 | 55.6% | 77.8% | 77.8% |
+
+#### LongMemEval and BEAM, same configuration
+
+Both were re-run with gpt-5 on both roles at the same cutoffs, reusing their
+compiled projects. **These corpora are 460–860 chunks**, so unlike LOCOMO
+(35–100 chunks, where top-200 returned everything) top-200 is a genuine
+retrieval cutoff here — which makes their depth curves the stronger evidence.
+
+| Benchmark | top-10 | top-50 | top-200 | prior published |
+|---|---:|---:|---:|---:|
+| LongMemEval (30 q, accuracy) | **90.0%** | **93.3%** | **90.0%** | 63.3% |
+| BEAM 100K (60 q, mean nugget) | **68.6%** | **67.2%** | **69.1%** | 27.1% |
+
+<!-- check:longmemeval_gpt5 metrics_by_cutoff.top_10.overall.accuracy = 90.0 -->
+<!-- check:longmemeval_gpt5 metrics_by_cutoff.top_50.overall.accuracy = 93.3 -->
+<!-- check:longmemeval_gpt5 metrics_by_cutoff.top_200.overall.accuracy = 90.0 -->
+<!-- check:beam_gpt5 metrics_by_cutoff.top_10.overall.avg_score = 68.6 -->
+<!-- check:beam_gpt5 metrics_by_cutoff.top_50.overall.avg_score = 67.2 -->
+<!-- check:beam_gpt5 metrics_by_cutoff.top_200.overall.avg_score = 69.1 -->
+
+Depth sensitivity is **+0.0pp** (LongMemEval) and **+0.5pp** (BEAM) from
+top-10 to top-200. Finding the needed material in the first ten of ~500
+candidates is a real retrieval result, not a corpus-size artifact.
+
+BEAM's per-ability movement is where the character of the change shows:
+
+| Ability | now (top-200) | prior |
+|---|---:|---:|
+| information_extraction | **100.0%** | 0.0% |
+| instruction_following | **100.0%** | 58.3% |
+| knowledge_update | **91.7%** | 16.7% |
+| preference_following | **83.3%** | 70.8% |
+| multi_session_reasoning | **72.9%** | 16.7% |
+| event_ordering | **67.8%** | 27.2% |
+| summarization | **67.4%** | 35.6% |
+| temporal_reasoning | **54.2%** | 0.0% |
+| contradiction_resolution | **37.5%** | 12.5% |
+| abstention | **16.7%** | 33.3% |
+
+The two abilities that scored 0.0% before — information_extraction and
+temporal_reasoning — were the report's headline evidence that compilation
+discards verbatim detail. They now read 100% and 54.2%. That claim needs
+revising: the detail was in the compiled wiki, and the old retrieval could
+not reach it. **Abstention is the one regression** (33.3% → 16.7%), and it is
+the ability where retrieving *more* plausible-looking context makes a model
+likelier to answer when it should decline — consistent with caveat 3's note
+that this judge is noisy in both directions on abstention rubrics.
+
+Costs: LongMemEval $11.05 (30 q), BEAM $34.28 (60 q, 469 judge calls — its
+rubric judge re-scores every nugget at every cutoff). Zero infra errors,
+zero judge parse errors, zero rate-limit events across both.
 
 **The headline is the shape, not the level.** In the pre-upgrade study below,
 accuracy climbed **+51.4pp** from top-10 to top-200 — the answers were in the
@@ -422,14 +481,17 @@ it adds roughly **$2–4**. Total wall time: ~2.5 h for the initial runs plus
    is absent scored 1.0 while praising the answer for providing it). Treat
    BEAM absolute numbers as judge-noisy; the per-type ordering is more
    robust than the levels.
-4. **The compile step is the memory bottleneck, by design.** sage-wiki is a
-   knowledge compiler, not a verbatim log store. These results measure
-   sage-wiki's full retrieval surface — compiled articles and summaries
-   plus the raw source chunks its index intentionally retains — which
-   trades verbatim recall for organized, interlinked knowledge. The
-   94.7%→44.7% conv0 delta between pure-transcript retrieval and the
-   designed compiled-dominant mix (see the integrity incident) is a direct
-   measurement of that trade-off on detail-heavy questions.
+4. **The compile step is the memory bottleneck, by design** — *this claim
+   was substantially wrong and the post-upgrade runs corrected it.* The
+   pre-upgrade sections below argue that compilation discards verbatim
+   detail, citing BEAM's information_extraction and temporal_reasoning at
+   0.0%. Both now score 100% and 54.2% against the *same compiled
+   projects*, changing only retrieval. The detail was in the compiled wiki;
+   the old search could not reach it. sage-wiki is still a knowledge
+   compiler rather than a verbatim log store, and the 94.7%→44.7% conv0
+   delta still shows compiled-vs-raw retrieval differs — but "compilation
+   loses the details" is not what the earlier numbers were measuring.
+   Retrieval was.
 5. Compile used `gpt-4o-mini` for all passes — a stronger compile model
    would likely lift every number; that axis is unexplored here.
 

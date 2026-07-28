@@ -1,0 +1,1229 @@
+{
+ "metadata": {
+  "benchmark": "longmemeval",
+  "project_name": "gpt5",
+  "timestamp": "20260728_190144",
+  "binary_version": "sage-wiki dev (commit none, built unknown)",
+  "models": {
+   "answerer": "gpt-5",
+   "judge": "gpt-5"
+  },
+  "scope": {
+   "per_type": 5,
+   "seed": 42,
+   "top_k": 10,
+   "cutoffs": [
+    10,
+    50,
+    200
+   ]
+  },
+  "total_questions": 30,
+  "judge_parse_errors": 0,
+  "rate_limit": {
+   "rate_limit_events": 0,
+   "total_wait_seconds": 0.0
+  },
+  "failed_projects": [],
+  "usage": {
+   "answerer": {
+    "prompt_tokens": 7667112,
+    "completion_tokens": 83612,
+    "calls": 90
+   },
+   "judge": {
+    "prompt_tokens": 143043,
+    "completion_tokens": 45424,
+    "calls": 90
+   }
+  }
+ },
+ "metrics": {
+  "overall": {
+   "total": 30,
+   "correct": 27,
+   "accuracy": 90.0,
+   "avg_score": 90.0,
+   "infra_errors": 0
+  },
+  "by_group": {
+   "knowledge-update": {
+    "total": 5,
+    "correct": 4,
+    "accuracy": 80.0,
+    "avg_score": 80.0
+   },
+   "multi-session": {
+    "total": 5,
+    "correct": 4,
+    "accuracy": 80.0,
+    "avg_score": 80.0
+   },
+   "single-session-assistant": {
+    "total": 5,
+    "correct": 5,
+    "accuracy": 100.0,
+    "avg_score": 100.0
+   },
+   "single-session-preference": {
+    "total": 5,
+    "correct": 4,
+    "accuracy": 80.0,
+    "avg_score": 80.0
+   },
+   "single-session-user": {
+    "total": 5,
+    "correct": 5,
+    "accuracy": 100.0,
+    "avg_score": 100.0
+   },
+   "temporal-reasoning": {
+    "total": 5,
+    "correct": 5,
+    "accuracy": 100.0,
+    "avg_score": 100.0
+   }
+  }
+ },
+ "metrics_by_cutoff": {
+  "top_10": {
+   "overall": {
+    "total": 30,
+    "correct": 27,
+    "accuracy": 90.0,
+    "avg_score": 90.0,
+    "infra_errors": 0
+   },
+   "by_group": {
+    "knowledge-update": {
+     "total": 5,
+     "correct": 4,
+     "accuracy": 80.0,
+     "avg_score": 80.0
+    },
+    "multi-session": {
+     "total": 5,
+     "correct": 3,
+     "accuracy": 60.0,
+     "avg_score": 60.0
+    },
+    "single-session-assistant": {
+     "total": 5,
+     "correct": 5,
+     "accuracy": 100.0,
+     "avg_score": 100.0
+    },
+    "single-session-preference": {
+     "total": 5,
+     "correct": 5,
+     "accuracy": 100.0,
+     "avg_score": 100.0
+    },
+    "single-session-user": {
+     "total": 5,
+     "correct": 5,
+     "accuracy": 100.0,
+     "avg_score": 100.0
+    },
+    "temporal-reasoning": {
+     "total": 5,
+     "correct": 5,
+     "accuracy": 100.0,
+     "avg_score": 100.0
+    }
+   }
+  },
+  "top_50": {
+   "overall": {
+    "total": 30,
+    "correct": 28,
+    "accuracy": 93.33333333333333,
+    "avg_score": 93.33333333333333,
+    "infra_errors": 0
+   },
+   "by_group": {
+    "knowledge-update": {
+     "total": 5,
+     "correct": 5,
+     "accuracy": 100.0,
+     "avg_score": 100.0
+    },
+    "multi-session": {
+     "total": 5,
+     "correct": 4,
+     "accuracy": 80.0,
+     "avg_score": 80.0
+    },
+    "single-session-assistant": {
+     "total": 5,
+     "correct": 5,
+     "accuracy": 100.0,
+     "avg_score": 100.0
+    },
+    "single-session-preference": {
+     "total": 5,
+     "correct": 4,
+     "accuracy": 80.0,
+     "avg_score": 80.0
+    },
+    "single-session-user": {
+     "total": 5,
+     "correct": 5,
+     "accuracy": 100.0,
+     "avg_score": 100.0
+    },
+    "temporal-reasoning": {
+     "total": 5,
+     "correct": 5,
+     "accuracy": 100.0,
+     "avg_score": 100.0
+    }
+   }
+  },
+  "top_200": {
+   "overall": {
+    "total": 30,
+    "correct": 27,
+    "accuracy": 90.0,
+    "avg_score": 90.0,
+    "infra_errors": 0
+   },
+   "by_group": {
+    "knowledge-update": {
+     "total": 5,
+     "correct": 4,
+     "accuracy": 80.0,
+     "avg_score": 80.0
+    },
+    "multi-session": {
+     "total": 5,
+     "correct": 4,
+     "accuracy": 80.0,
+     "avg_score": 80.0
+    },
+    "single-session-assistant": {
+     "total": 5,
+     "correct": 5,
+     "accuracy": 100.0,
+     "avg_score": 100.0
+    },
+    "single-session-preference": {
+     "total": 5,
+     "correct": 4,
+     "accuracy": 80.0,
+     "avg_score": 80.0
+    },
+    "single-session-user": {
+     "total": 5,
+     "correct": 5,
+     "accuracy": 100.0,
+     "avg_score": 100.0
+    },
+    "temporal-reasoning": {
+     "total": 5,
+     "correct": 5,
+     "accuracy": 100.0,
+     "avg_score": 100.0
+    }
+   }
+  }
+ },
+ "latency": {
+  "count": 30,
+  "p50_ms": 1165.6344854854979,
+  "p95_ms": 1677.5791912339628,
+  "avg_ms": 1243.010823133712
+ },
+ "per_question": [
+  {
+   "question_id": "06878be2",
+   "group": "single-session-preference",
+   "question": "Can you suggest some accessories that would complement my current photography setup?",
+   "ground_truth": "The user would prefer suggestions of Sony-compatible accessories or high-quality photography gear that can enhance their photography experience. They may not prefer suggestions of other brands' equipment or low-quality gear.",
+   "question_date": "2023/05/30 (Tue) 16:40",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1722.6595130050555,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Here are smart add-ons for your Sony A7R IV + 24–70 f/2.8 (and your planned Godox V1/tripod):\n\n- Flash system\n  - Godox AK-R1 magnetic modifier kit (dome, grid, gels) for the V1\n  - Extra Godox VB26 battery + dual charger\n  - Godox XPro-S (or X2T-S) radio trigger for off-camera use\n  - Godox S2 bracket + 60 cm softbox for portable soft light\n\n- Power and storage\n  - 2× Sony NP-FZ100 spares + a USB-C dual charger\n  - USB-C PD power bank and cable (to top up the A7R IV on the go)\n  - Fast UHS-II V90 SD cards for bursts and 4K\n\n- Support and mounting\n  - Solid ball head for the Gitzo GT3543LS (e.g., Gitzo GH3382QD or similar)\n  - Arca-Swiss L‑bracket for the A7R IV (easier portrait shots on tripod)\n  - Arca quick-release plate if you skip the L‑bracket\n\n- Optics and control\n  - Quality circular polarizer and ND filters (match your lens thread size)\n  - ColorChecker/gray card for accurate color\n\n- Carry and protection\n  - Camera bag from Think Tank, Lowepro, Peak Design, F‑Stop, or MindShift (pick style: backpack vs. sling)\n  - Peak Design Capture Clip for secure carry on a strap\n  - Compact rain cover for body + 24–70\n\n- Cleaning and care\n  - Rocket blower, lens pen, and microfiber cloths\n  - Sensor swab kit for occasional sensor dust\n  - Pouch/case for the V1 (e.g., Godox hard case or Think Tank Flash Pouch)\n\n- Convenience\n  - Sony RMT‑P1BT Bluetooth remote\n  - USB‑C tether cable for studio/live view shooting\n\nIf you tell me how you usually shoot (studio, travel, events), I can trim this to a tighter, prioritized list.",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Great add-ons for your A7R IV + 24–70/2.8 and Godox V1:\n\nLighting\n- Godox XPro-S (Sony) trigger for reliable off‑camera V1 control\n- Godox AK-R1 magnetic kit (domes, grids, gels) for the V1 round head\n- Godox S2 bracket + 60–85 cm Bowens‑mount octa/softbox + sturdy air‑cushioned light stand\n\nPower\n- Extra NP‑FZ100 batteries + dual USB‑C charger\n- USB‑C PD power bank you liked (e.g., Anker PowerCore 20000 PD) for camera/phone top‑ups\n\nSupport\n- Ball head for your Gitzo GT3543LS (e.g., Gitzo GH3382QD or any solid Arca‑type)\n- Arca‑type L‑bracket for A7R IV (better portrait/landscape swaps)\n\nOptics\n- Circular polarizer + 3–6 stop ND to fit your lens thread (likely 82 mm—confirm yours)\n- Step‑up ring set if you plan to standardize on one filter size\n\nRemote/tether\n- Sony RMT‑P1BT Bluetooth remote\n- USB‑C to USB‑C 10 Gbps tether cable (with right‑angle end)\n\nStorage\n- Fast UHS‑II SD cards (e.g., Sony Tough/SanDisk Extreme Pro), UHS‑II reader\n- Rugged portable SSD for on‑trip backups\n\nCarry/protection\n- Camera bag from Think Tank, Peak Design, or Lowepro sized for body + 24–70 + V1 + room for a softbox\n- Rain cover for body/lens; screen protector\n- Case/pouch for the V1 (you considered these already)\n\nCleaning\n- Rocket blower, quality microfiber cloths, LensPen; lens cleaning fluid (used sparingly)",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Here are accessories that fit your Sony A7R IV + Godox V1 + 24–70mm f/2.8 setup:\n\n- Flash system add‑ons (for Godox V1, Sony mount):\n  - Godox XPro‑S (or X2T‑S) radio trigger for reliable off‑camera TTL/HSS\n  - Godox AK‑R1 round‑head modifier kit (magnetic dome, grid, bounce card, gels)\n  - Godox S2 bracket + 60–90 cm softbox (Bowens mount) for portable off‑camera light\n  - Spare VB26 battery + dual USB charger for the V1\n\n- Power and storage for A7R IV:\n  - Extra Sony NP‑FZ100 batteries\n  - USB‑C PD power bank you can already use (the one you asked about) and a short 60–100W cable\n  - UHS‑II V90 SD cards (fast write for bursts and 61MP raws); dual identical cards for slot backup\n\n- Stability and mounting:\n  - Arca‑Swiss L‑bracket for the A7R IV (quick swap portrait/landscape)\n  - Solid ball head for your Gitzo Series 3 legs (e.g., Gitzo GH3382QD, RRS BH‑40 class)\n  - Bluetooth remote (Sony RMT‑P1BT) or intervalometer for long exposures and timelapse\n\n- Optics and color:\n  - 82 mm circular polarizer (for your 24–70 f/2.8) and a 3–6 stop ND for daylight control\n  - ColorChecker Passport (for custom profiles) and a simple gray card for quick white balance\n\n- Protection, carry, and weather:\n  - Peak Design Slide strap (or similar quick‑adjust sling)\n  - Rain cover for camera + lens and a compact microfiber rain hood for the V1\n  - Camera bag options you were exploring: Peak Design Everyday Backpack 20/30L, Think Tank or Lowepro shoulder/messenger—pick dividers sized for the 24–70 + flash\n\n- Cleaning and maintenance (for your 24–70 and body):\n  - Rocket blower, soft microfiber cloths, lens pen, and lens-safe wipes/solution\n  - Sensor swabs + Eclipse fluid for occasional A7R IV sensor cleaning\n\n- Tethering/workflow:\n  - Tether Tools USB‑C cable (right‑angle at camera) and a cable anchor to protect the port\n  - Fast SD card reader (UHS‑II) for quicker ingest\n\nIf you tell me what you shoot most (portraits, travel, landscape, events), I can trim this to a short “buy next” list.",
+     "memories_evaluated": 148
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "06db6396",
+   "group": "knowledge-update",
+   "question": "How many projects have I completed since starting painting classes?",
+   "ground_truth": "5",
+   "question_date": "2023/11/08 (Wed) 09:08",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1695.9421589854173,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "5",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "5.",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "5 projects.",
+     "memories_evaluated": 153
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "0bb5a684",
+   "group": "temporal-reasoning",
+   "question": "How many days before the team meeting I was preparing for did I attend the workshop on 'Effective Communication in the Workplace'?",
+   "ground_truth": "7 days. 8 days (including the last day) is also acceptable.",
+   "question_date": "2023/01/13 (Fri) 12:09",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1655.135563982185,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "7 days.",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "7 days.",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "7 days.",
+     "memories_evaluated": 133
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "10d9b85a",
+   "group": "multi-session",
+   "question": "How many days did I spend attending workshops, lectures, and conferences in April?",
+   "ground_truth": "3 days",
+   "question_date": "2023/05/01 (Mon) 23:15",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1612.3044929699972,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "3 days.",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "3 days (Apr 10 lecture + Apr 17–18 workshop).",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "3 days.",
+     "memories_evaluated": 130
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "1568498a",
+   "group": "single-session-assistant",
+   "question": "I'm looking back at our previous chess game and I was wondering, what was the move you made after 27. Kg2 Bd5+?",
+   "ground_truth": "28. Kg3",
+   "question_date": "2023/05/30 (Tue) 23:35",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1254.4696290278807,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "28. Kg3.",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "28. Kg3",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "28. Kg3",
+     "memories_evaluated": 148
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "18bc8abd",
+   "group": "knowledge-update",
+   "question": "What brand of BBQ sauce am I currently obsessed with?",
+   "ground_truth": "Kansas City Masterpiece",
+   "question_date": "2023/07/15 (Sat) 07:37",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1313.7873020023108,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Kansas City Masterpiece BBQ sauce.",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Kansas City Masterpiece BBQ sauce.",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Kansas City Masterpiece.",
+     "memories_evaluated": 130
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "195a1a1b",
+   "group": "single-session-preference",
+   "question": "Can you suggest some activities that I can do in the evening?",
+   "ground_truth": "The user would prefer suggestions that involve relaxing activities that can be done in the evening, preferably before 9:30 pm. They would not prefer suggestions that involve using their phone or watching TV, as these activities have been affecting their sleep quality.",
+   "question_date": "2023/05/30 (Tue) 22:28",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1312.2371300123632,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Here are calm, screen-light evening options that fit your 9:30 pm wind‑down:\n\n- 30–45 min art session on your cityscape (fabric stamping/drybrushing), then clean up by ~8:30.\n- Gentle movement: light hip‑hop grooves, yoga/stretch flow, or foam rolling for legs.\n- Cook a simple kale + carrot dinner/soup, or prep tomorrow’s lunch.\n- Short sunset walk, then devices away.\n- 10–15 min tomorrow planning (task list), then close email/screens.\n- Guided practice: Headspace Sleep or Insight Timer Body Scan; optionally grief imagery (e.g., Belleruth Naparstek).\n- Dream + gratitude journaling (keep the journal bedside).\n- Read a light book or listen to calming music/sounds.\n- Warm shower/bath, dim lights, and breathe quietly before bed.",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "FAIL",
+     "score": 0.0,
+     "generated_answer": "Here are some easy, personalized evening options you can mix and match:\n\n- 30–45 min studio time: add stamped building layers or foliage to your cityscape, then a quick drybrush pass.\n- Knit a few rounds on your beanie under warm lamps; cue a mellow playlist.\n- Short Shimokitazawa stroll: grab a tea and do a quick photo-walk for textures/murals; keep it light and local.\n- 20–30 min low‑impact movement: mini hip‑hop practice to your Dance Workout/Hip Hop Workout playlists, or a gentle core/yoga flow.\n- Plant time: pot a small herb (basil/mint) for the windowsill, or water/trim your succulents.\n- Watch an indie pick (e.g., The Farewell) and jot 3–5 discussion prompts for your next community screening.\n- Writing/journaling: one page of reflections or revise a poem; log today’s words in WriteTrack.\n- Quick kitchen wind‑down: kale–carrot ginger soup or a banana–almond‑milk smoothie for a light nightcap.\n\nWind‑down by 9:30:\n- 10–15 min Body Scan on Insight Timer or Headspace Sleep session, dim lights, no screens the last 30 minutes.",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "FAIL",
+     "score": 0.0,
+     "generated_answer": "Here are some low-effort, wind‑down friendly evening ideas you might enjoy:\n\n- Light movement (early evening)\n  - Gentle home yoga or a short neighborhood stroll around Shimokitazawa\n  - 10–15 minutes of mobility/core (planks, side planks, boat pose light holds)\n\n- Creative/reflective\n  - Add a layer to your cityscape (fabric stamping/drybrushing) or knit a few rounds on your beanie\n  - Journal an evening reflection or capture poem ideas; log progress in WriteTrack\n\n- Cozy entertainment\n  - Watch an indie film you’ve been considering (e.g., The Farewell) and sketch a few Q&A prompts for your next community screening\n  - Read a chapter of a book or explore street‑art essays/images for inspiration\n\n- Simple food prep\n  - Blend a quick protein banana smoothie or prep kale/carrot soup for tomorrow\n  - Pack smoothie freezer packs for the week\n\n- Wind‑down to lights‑out by 9:30\n  - 10–15 min guided Body Scan or Sleep meditation (Headspace or Insight Timer)\n  - Screen‑off 30–45 min before bed; dim lights, stretch, and breathe\n\nIf you want, tell me your evening window and I’ll stack these into a 60–90 minute mini-routine.",
+     "memories_evaluated": 138
+    }
+   },
+   "score": 0.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "1b9b7252",
+   "group": "single-session-assistant",
+   "question": "I wanted to follow up on our previous conversation about mindfulness techniques. You mentioned some great resources for guided imagery exercises, can you remind me of the website that had free exercises like 'The Mountain Meditation' and 'The Body Scan Meditation'?",
+   "ground_truth": "Mindful.org.",
+   "question_date": "2023/05/30 (Tue) 18:29",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1146.200600953307,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Mindful.org (https://www.mindful.org)",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Mindful.org — they have free practices like The Mountain Meditation and the Body Scan Meditation.",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Mindful.org.",
+     "memories_evaluated": 136
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "2b8f3739",
+   "group": "multi-session",
+   "question": "What is the total amount of money I earned from selling my products at the markets?",
+   "ground_truth": "$495",
+   "question_date": "2023/06/01 (Thu) 23:37",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1169.868678029161,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "FAIL",
+     "score": 0.0,
+     "generated_answer": "$270 total ($150 from 20 potted plants at $7.50 each + $120 from 12 herb bunches on May 15).",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "$495 total (Summer Solstice plants $150 + May 15 farmers’ market herbs $120 + May 29 Homemade & Handmade Market jam $225).",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "$495",
+     "memories_evaluated": 140
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "37f165cf",
+   "group": "multi-session",
+   "question": "What was the page count of the two novels I finished in January and March?",
+   "ground_truth": "856",
+   "question_date": "2023/05/30 (Tue) 19:21",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1212.4989139847457,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "FAIL",
+     "score": 0.0,
+     "generated_answer": "January: 341 pages.\nMarch: The information provided is not enough.",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "FAIL",
+     "score": 0.0,
+     "generated_answer": "The information provided is not enough. I don’t have records of which novels you finished in January and March. Known page counts you’ve mentioned: 341 (The Power, December), 416 (unnamed, recent), and 440 (The Nightingale, May).",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "FAIL",
+     "score": 0.0,
+     "generated_answer": "341 pages in January; 416 pages in March.",
+     "memories_evaluated": 134
+    }
+   },
+   "score": 0.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "41275add",
+   "group": "single-session-assistant",
+   "question": "I wanted to follow up on our previous conversation about YouTube videos for workplace posture. Can you remind me of the Mayo Clinic video you recommended?",
+   "ground_truth": "The video is 'How to Sit Properly at a Desk to Avoid Back Pain' and the link is https://www.youtube.com/watch?v=UfOvNlX9Hh0.",
+   "question_date": "2023/05/30 (Tue) 14:25",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1312.8297080402263,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Mayo Clinic: “How to Sit Properly at a Desk to Avoid Back Pain”\nhttps://www.youtube.com/watch?v=UfOvNlX9Hh0",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "The Mayo Clinic video: “How to Sit Properly at a Desk to Avoid Back Pain”\nLink: https://www.youtube.com/watch?v=UfOvNlX9Hh0",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "“How to Sit Properly at a Desk to Avoid Back Pain” by Mayo Clinic: https://www.youtube.com/watch?v=UfOvNlX9Hh0",
+     "memories_evaluated": 155
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "4388e9dd",
+   "group": "single-session-assistant",
+   "question": "I was going through our previous chat and I was wondering, what was Andy wearing in the script you wrote for the comedy movie scene?",
+   "ground_truth": "Andy was wearing an untidy, stained white shirt.",
+   "question_date": "2023/05/30 (Tue) 20:43",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1515.3118230518885,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "An untidy, stained white shirt.",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "An untidy, stained white shirt.",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "An untidy, stained white shirt.",
+     "memories_evaluated": 120
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "5025383b",
+   "group": "multi-session",
+   "question": "What are the two hobbies that led me to join online communities?",
+   "ground_truth": "photography and cooking",
+   "question_date": "2023/05/30 (Tue) 19:49",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1100.9812069823965,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Cooking and photography.",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Cooking and photography.",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Cooking and photography.",
+     "memories_evaluated": 140
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "50635ada",
+   "group": "knowledge-update",
+   "question": "What was my previous frequent flyer status on United Airlines before I got the current status?",
+   "ground_truth": "Premier Silver",
+   "question_date": "2023/06/29 (Thu) 04:09",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1167.9198269848712,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Premier Silver.",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Premier Silver.",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Premier Silver.",
+     "memories_evaluated": 144
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "5a4f22c0",
+   "group": "knowledge-update",
+   "question": "What company is Rachel, an old colleague from my previous company, currently working at?",
+   "ground_truth": "TechCorp",
+   "question_date": "2023/06/21 (Wed) 13:02",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1105.0252800341696,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "TechCorp.",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "TechCorp.",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "TechCorp.",
+     "memories_evaluated": 149
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "60d45044",
+   "group": "single-session-user",
+   "question": "What type of rice is my favorite?",
+   "ground_truth": "Japanese short-grain rice",
+   "question_date": "2023/05/30 (Tue) 20:46",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1098.4996150364168,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Japanese short-grain rice.",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Japanese short-grain rice.",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Japanese short-grain rice.",
+     "memories_evaluated": 157
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "618f13b2",
+   "group": "knowledge-update",
+   "question": "How many times have I worn my new black Converse Chuck Taylor All Star sneakers?",
+   "ground_truth": "six",
+   "question_date": "2023/06/18 (Sun) 22:29",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1067.9277500021271,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "FAIL",
+     "score": 0.0,
+     "generated_answer": "Four times.",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Six times.",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "FAIL",
+     "score": 0.0,
+     "generated_answer": "4 times.",
+     "memories_evaluated": 138
+    }
+   },
+   "score": 0.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "6b7dfb22",
+   "group": "single-session-preference",
+   "question": "I've been feeling a bit stuck with my paintings lately. Do you have any ideas on how I can find new inspiration?",
+   "ground_truth": "The user would prefer responses that build upon their existing sources of inspiration, such as revisiting Instagram art accounts or exploring new techniques from online tutorials. They might also appreciate suggestions that revisit previous themes they found enjoyable, like painting flowers. The user would not prefer generic or vague suggestions for finding inspiration, and would likely appreciate responses that utilize their recent 30-day painting challenge experience.",
+   "question_date": "2023/05/30 (Tue) 13:57",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1087.4083749949932,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Here are fast, personal ways to spark new ideas:\n- Do a 7‑day micro‑theme inside your 30‑day challenge: “Green Week” (herbs, leaves, stems) or “Night Lights” (low‑key palettes).\n- Paint from life: quick 20‑minute studies of your balcony herbs (top, side, macro of veins), 3 angles each.\n- Texture sprint: palette‑knife only miniatures (4x4 in), 10 pieces, no brushes, focus on edges and impasto.\n- Denim experiments: press jean fabric into gesso/gel for imprint, or collage a pocket as a focal shape; try an indigo/oxide limited palette.\n- Alhambra set: 6 small panels exploring one tile geometry each (circle, star, lattice), then a larger remix; try a dusk/night color scheme.\n- Photo scavenger hunt at home: shoot 10 macro textures (fabric, wood, metal, leaves), convert to value studies in acrylic.\n- Limited‑palette days: 2 colors + white (e.g., ultramarine + burnt sienna) to force fresh decisions.\n- Community nudge: ask your IG followers (or the 3 acquaintances you’re reconnecting with) for one-word prompts; paint the top 5.\n- Studio refresh: swap your easel position and change lighting for one week; new view = new choices.\n- “No‑judgment 10s”: make ten 5‑minute thumbnails per idea before committing to a canvas.\n\nWant me to pick one and turn it into a 7‑day plan with daily prompts and time boxes?",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Here are fast, personal ways to spark new ideas:\n\n- Limit yourself: 3‑color palette only, or “palette knife only” for one week.\n- 20‑minute daily studies: set a timer (Pomodoro) and stop when it rings.\n- Paint your life: balcony herbs (macro studies), your bookshelf vignette (vases + clock), a denim-texture study from your pocket organizer, a roasted‑chickpea food still life.\n- Fandom still lifes: Miles Morales color study, or chiaroscuro setups with your vintage Star Wars figures.\n- Travel memories: Shibuya crossing at night, Tsukiji scallops on the grill, Alhambra arches (day vs. illuminated night diptych).\n- Music mini‑series: ukulele/harmonica close‑ups—focus on wood/metal textures and reflections.\n- Change the surface/scale: tiny 4x4s all week, or one oversized panel; try a toned ground.\n- Value first: do 5 quick monochrome thumbnails before any color.\n- Negative painting flowers to refresh your floral work.\n- Field sketch: grab a coffee at The Cozy Cup and do 3 gesture sketches of people/objects.\n- Remix your work: crop 4 squares from older paintings and repaint them larger.\n- Crowdsource prompts: ask IG for 5 words; put them in a jar and pull one per day.\n\nIf you want, I can draft a 7‑day micro-brief (subjects + constraints) tailored to your setup.",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Here are quick, personalized ways to spark new ideas:\n\n- Do a 7‑day texture sprint\n  - Day themes: denim scrap imprint, palette‑knife impasto, drybrush fabric weave, herb leaf prints (basil/rosemary), sand+gel paste, scraped underpainting, sgraffito linework.\n  - Constraint: 2–3 colors only. Photograph each under consistent light.\n\n- Culture palettes\n  - Indian festivals: Holi (neon magenta/ultramarine/yellow), Diwali (saffron/marigold/indigo).\n  - Music studies: small studies of sitar/tabla curves or raga “mood” abstracts.\n  - Title each piece with the raga/festival for focus.\n\n- Paint from your own archives\n  - Pull 10 favorites in Google Photos (Haleakala sunrise, Shibuya crossing, Alhambra night, graduation dinner, herb still life).\n  - Do 20‑minute value thumbnails, then 1 finished painting from the best two.\n\n- Still‑life with meaning\n  - Arrange: your J‑45 + a rosemary sprig + cocktail glass; or Spider‑Man figure + comic; or denim organizer + tools. One light source; high‑contrast shadows.\n\n- Remix your 30‑day challenge\n  - Shuffle 10 old prompts; redo each in a different medium/approach (e.g., knife only, monochrome, collage with denim).\n\n- Micro‑series ideas (pick one and do 3 pieces)\n  - “Holi Bursts” abstracts\n  - “City Nights”: Shibuya reflections/Alhambra glow\n  - “Kitchen Close‑ups”: roasted chickpeas, herbs, lime\n  - “Strings”: close crops of the J‑45—bridge, rosette, headstock\n\n- Fast constraint games\n  - 10 strokes max, 10 minutes max, or paint with your non‑dominant hand.\n  - One color + white for a whole piece.\n\n- Community spark\n  - Post two WIPs to Instagram and let followers vote on the next direction; keeps momentum without overthinking.\n\nIf you want, tell me one photo (or object) you’ll start with today, and I’ll give you a tight 3‑step plan and palette for it.",
+     "memories_evaluated": 128
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "75499fd8",
+   "group": "single-session-user",
+   "question": "What breed is my dog?",
+   "ground_truth": "Golden Retriever",
+   "question_date": "2023/05/30 (Tue) 20:25",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1078.8113009766676,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Golden Retriever.",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Golden Retriever.",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Golden Retriever.",
+     "memories_evaluated": 156
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "75f70248",
+   "group": "single-session-preference",
+   "question": "I've been sneezing quite a bit lately. Do you think it might be my living room?",
+   "ground_truth": "The user would prefer responses that consider the potential impact of their cat, Luna, and her shedding on their sneezing, as well as the recent deep clean of the living room and its possible effect on stirring up dust. They might not prefer responses that fail to take into account these specific details previously mentioned, such as generic suggestions or unrelated factors.",
+   "question_date": "2023/05/30 (Tue) 17:51",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1191.062904021237,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Yes—very possible. With a shedding cat, dust and dander in the living room are prime triggers.\n\nDo this:\n- HEPA vacuum carpets/sofa and damp-microfiber dust all surfaces.\n- Wash cat bedding/throws; use a lint roller on upholstery.\n- Replace your home air filter if it’s >1–3 months old.\n- Run a dehumidifier to keep humidity around 40–50%.\n- Reduce soft-surface clutter; consider a HEPA air purifier trial in the room.\n\nQuick check: After a deep clean, spend the evening in another room. If sneezing drops there, the living room’s the source.\n\nWhen did you last change the air filter, and have you added any new rug/plants recently?",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Possibly. Given your shedding cat, the living room is a prime spot for dust, dander, and dust mites. Quick checklist:\n- Vacuum with a HEPA vac (carpet, rugs, sofa, cat tree) 2–3x/week\n- Dust with a damp microfiber (not dry) and mop hard floors\n- Wash throws, pillow covers, and the cat’s bedding weekly (hot water)\n- Replace/upgrade your HVAC filter (MERV 11–13) if it’s >1–3 months old\n- Keep humidity ~40–50% (dust mites thrive higher); use a dehumidifier if needed\n- Groom the cat regularly to cut shedding\n- Add a True HEPA air purifier sized for the room\n- Check for mold around windows/AC and avoid candles/incense/sprays\n- If you’ve added plants, avoid overwatering (soil mold can trigger sneezing)\n\nTry a 48-hour reset: deep clean + fresh filter + run a HEPA purifier continuously. If sneezing eases, the room’s the likely culprit. If symptoms persist, consider an allergy check.",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Yes—very possible, especially with your shedding cat. Quick fixes:\n- Vacuum rugs/sofa with a HEPA-filter vac 2–3x/week; damp-dust with microfiber (no feather dusters).\n- Wash throws, curtains, and your cat’s bedding weekly; lint-roll upholstery.\n- Change your HVAC/room filter (aim every 1–3 months); consider a HEPA air purifier for the living room.\n- Groom your cat regularly and keep the litter area clean/contained.\n- On high-pollen days, keep windows closed and shoes off at the door.\n\nWant a 10‑minute weekly checklist or a short list of HEPA purifiers to try?",
+     "memories_evaluated": 127
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "8752c811",
+   "group": "single-session-assistant",
+   "question": "I remember you provided a list of 100 prompt parameters that I can specify to influence your output. Can you remind me what was the 27th parameter on that list?",
+   "ground_truth": "The 27th parameter was 'Sound effects (e.g., ambient, diegetic, non-diegetic, etc.)'.",
+   "question_date": "2023/05/30 (Tue) 21:25",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1108.2741199643351,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Sound effects (e.g., ambient, diegetic, non-diegetic).",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Sound effects (e.g., ambient, diegetic, non-diegetic)",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Sound effects.",
+     "memories_evaluated": 165
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "a89d7624",
+   "group": "single-session-preference",
+   "question": "I'm planning a trip to Denver soon. Any suggestions on what to do there?",
+   "ground_truth": "The user would prefer responses that take into account their previous experience in Denver, specifically their interest in live music and memorable encounter with Brandon Flowers. They might appreciate suggestions that revisit or build upon this experience, such as revisiting the same bar or exploring similar music venues in the area. The user may not prefer general tourist recommendations or activities unrelated to their interest in live music.",
+   "question_date": "2023/05/30 (Tue) 21:17",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1128.3049829653464,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Here are Denver picks tailored to your music vibe:\n\n- Catch a show at Red Rocks Amphitheatre. Arrive early for sunset; grab dinner at Ship Rock Grille (patio views) or hit the Red Rocks food trucks.\n- Pre-show BBQ nearby: GQue BBQ (Golden) or Moe’s Original BBQ (Wheat Ridge).\n- Other great venues: Ogden Theatre, Bluebird Theater, Fillmore Auditorium, Larimer Lounge, hi-dive, and the Marquis Theater.\n- Festivals to watch for: Westword Music Showcase, Denver Folk Festival, and Denver Jazz Festival.\n- Browse Twist & Shout Records for a deep dig through vinyl.\n\nTo line up the best nights, track artists on Songkick or Bandsintown and follow those venue calendars.\n\nWant me to scan upcoming Denver shows that match your Killers-style taste?",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Here’s a Denver plan tailored to your music vibe:\n\n- Catch a show\n  - Red Rocks Amphitheatre (arrive early). Track dates with Songkick or Bandsintown.\n  - Other great venues: Ogden Theatre, Bluebird Theater, Fillmore Auditorium, Larimer Lounge, hi-dive.\n\n- Pre-show eats at Red Rocks\n  - Ship Rock Grille (patio with Red Rocks views). On busy nights, go early.\n  - Venue food trucks/concessions are solid if you’re short on time.\n\n- Record stop\n  - Twist & Shout Records for crate-digging.\n\n- Festivals\n  - Check if Westword Music Showcase, Denver Folk/Jazz festivals, Grandoozy, or Riot Fest line up with your dates.\n\nWant me to scan upcoming Denver shows around your travel window and sketch a one-night Red Rocks plan (dinner + set times + parking)?",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Here are quick, Denver-ready picks based on your music vibes and past Red Rocks trip:\n\n- Catch a show\n  - Red Rocks Park & Amphitheatre (go early for sunset)\n  - The Ogden Theatre, The Bluebird Theater, The Fillmore Auditorium, Larimer Lounge\n  - Track artists/dates with Songkick or Bandsintown; follow venue newsletters\n\n- Festivals (check dates while you’re in town)\n  - Westword Music Showcase, Denver Folk Festival, Denver Jazz Festival, Grandoozy, Riot Fest Denver\n\n- Dig for vinyl\n  - Twist & Shout Records (plus the hi-dive and The Marquis Theater nearby for gigs)\n\n- Eat near Red Rocks (pre/post-show)\n  - On-site/nearby: Ship Rock Grille (patio views), The Village Tavern, Morrison Inn; concert-night food trucks\n  - BBQ runs: GQue BBQ (Golden), Moe’s Original BBQ (Wheat Ridge), Big B’s Delicious BBQ (Arvada), Wayne’s Smoke Shack (Morrison)\n\nWant me to line up a show list for your dates or map these spots?",
+     "memories_evaluated": 146
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "bc8a6e93_abs",
+   "group": "single-session-user",
+   "question": "What did I bake for my uncle's birthday party?",
+   "ground_truth": "You did not mention this information. You mentioned baking for your niece's birthday party but not your uncle's",
+   "question_date": "2023/05/30 (Tue) 15:26",
+   "is_abstention": true,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1362.9062020336278,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "The information provided is not enough—I don’t have a record of what you baked for your uncle’s birthday party.",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "The information provided is not enough. I don’t have any record of what you baked for your uncle’s birthday party.",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "The information provided is not enough.",
+     "memories_evaluated": 143
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "c8c3f81d",
+   "group": "single-session-user",
+   "question": "What brand are my favorite running shoes?",
+   "ground_truth": "Nike",
+   "question_date": "2023/05/30 (Tue) 23:27",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1014.4365879823454,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Nike.",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Nike.",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "Nike",
+     "memories_evaluated": 159
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "e4e14d04",
+   "group": "temporal-reasoning",
+   "question": "How long had I been a member of 'Book Lovers Unite' when I attended the meetup?",
+   "ground_truth": "Two weeks",
+   "question_date": "2023/05/28 (Sun) 15:46",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1163.3491439861245,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "About two weeks.",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "About two weeks.",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "About two weeks.",
+     "memories_evaluated": 140
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "eeda8a6d",
+   "group": "multi-session",
+   "question": "How many fish are there in total in both of my aquariums?",
+   "ground_truth": "17",
+   "question_date": "2023/05/30 (Tue) 20:36",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1116.003829985857,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "17",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "17 fish total: 16 in the 20-gallon (10 neon tetras, 5 honey gouramis, 1 pleco) and 1 betta (Bubbles) in the 10-gallon.",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "17",
+     "memories_evaluated": 142
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "faba32e5",
+   "group": "single-session-user",
+   "question": "How long did Alex marinate the BBQ ribs in special sauce?",
+   "ground_truth": "24 hours",
+   "question_date": "2023/05/30 (Tue) 22:10",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1129.4999259989709,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "24 hours.",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "24 hours.",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "24 hours.",
+     "memories_evaluated": 141
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "gpt4_4ef30696",
+   "group": "temporal-reasoning",
+   "question": "How many days passed between the day I finished reading 'The Nightingale' and the day I started reading 'The Hitchhiker's Guide to the Galaxy'?",
+   "ground_truth": "1 day. 2 days (including the last day) is also acceptable.",
+   "question_date": "2022/05/01 (Sun) 04:58",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1293.8823660369962,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "1 day.",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "1 day.",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "1 day.",
+     "memories_evaluated": 147
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "gpt4_78cf46a3",
+   "group": "temporal-reasoning",
+   "question": "Which event happened first, the narrator losing their phone charger or the narrator receiving their new phone case?",
+   "ground_truth": "Receiving the new phone case",
+   "question_date": "2023/05/26 (Fri) 12:55",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1031.1323939822614,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "The narrator received their new phone case first.",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "You received your new phone case first.",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "The narrator received their new phone case first.",
+     "memories_evaluated": 142
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  },
+  {
+   "question_id": "gpt4_af6db32f",
+   "group": "temporal-reasoning",
+   "question": "How many days ago did I watch the Super Bowl?",
+   "ground_truth": "17 days ago. 18 days (including the last day) is also acceptable.",
+   "question_date": "2023/03/01 (Wed) 19:28",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1121.6533679980785,
+   "cutoff_results": {
+    "top_10": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "17 days ago.",
+     "memories_evaluated": 10
+    },
+    "top_50": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "17 days ago (on Sunday, Feb 12, 2023).",
+     "memories_evaluated": 50
+    },
+    "top_200": {
+     "judgment": "PASS",
+     "score": 1.0,
+     "generated_answer": "17 days ago.",
+     "memories_evaluated": 130
+    }
+   },
+   "score": 1.0,
+   "retrieved_count": 0
+  }
+ ]
+}
