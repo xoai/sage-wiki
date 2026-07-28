@@ -37,10 +37,11 @@ case "$CMD" in
     ;;
   status)
     case "$MODE" in
-      no-vectors) VC=0 ;;
-      *) VC=42 ;;
+      no-vectors) SC=1; VC=0 ;;
+      noop-compile) SC=0; VC=1 ;;   # interrupted-then-no-op resume: nothing compiled, one stray vector
+      *) SC=999; VC=42 ;;
     esac
-    echo "{\"ok\":true,\"data\":{\"sources\":1,\"concepts\":3,\"vector_count\":$VC}}"
+    echo "{\"ok\":true,\"data\":{\"source_count\":$SC,\"concepts\":3,\"vector_count\":$VC}}"
     ;;
   search)
     n=$(bump search-calls)

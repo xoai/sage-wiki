@@ -167,3 +167,33 @@ class TestGarbageStdout:
         backend.init_project("conv0")
         with pytest.raises(DegradedSearchError, match="undecodable"):
             backend.search("conv0", "q", limit=10)
+
+
+class TestNoopCompileGuard:
+    """C-1/M-1 regression: an interrupted compile followed by a no-op resume
+    (exit 0, '0 summarized', one stray vector) must FAIL the compile gate —
+    it silently benchmarks raw transcripts otherwise."""
+
+    def test_noop_compile_with_stray_vector_fails(self, backend, tmp_path, monkeypatch):
+        set_fixture(tmp_path, monkeypatch, "noop-compile")
+        backend.init_project("conv0")
+        for i in range(3):
+            backend.write_session("conv0", f"s{i}", "hi")
+        with pytest.raises(CompileError, match="compiled source count"):
+            backend.compile("conv0")
+        assert not (backend.project_dir("conv0") / ".compiled").exists()
+
+    def test_healthy_compile_passes_hardened_guard(self, backend, tmp_path, monkeypatch):
+        set_fixture(tmp_path, monkeypatch, "ok")
+        backend.init_project("conv0")
+        backend.write_session("conv0", "s1", "hi")
+        assert backend.compile("conv0").vector_count == 42
+
+    def test_poisoned_marker_does_not_skip_the_gate(self, backend, tmp_path, monkeypatch):
+        set_fixture(tmp_path, monkeypatch, "noop-compile")
+        backend.init_project("conv0")
+        for i in range(3):
+            backend.write_session("conv0", f"s{i}", "hi")
+        (backend.project_dir("conv0") / ".compiled").write_text("3")
+        with pytest.raises(CompileError, match="marker present but project is"):
+            backend.compile("conv0")

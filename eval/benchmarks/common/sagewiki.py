@@ -148,22 +148,35 @@ class SageWikiBackend:
             capture_output=True, text=True, timeout=timeout_s,
         )
 
-    def vector_count(self, key: str) -> int:
+    def project_stats(self, key: str) -> dict:
         proc = self._run(key, "status", "--format", "json", timeout_s=120)
         try:
             data = json.loads(proc.stdout).get("data") or {}
         except json.JSONDecodeError:
-            return 0
-        return int(data.get("vector_count") or 0)
+            return {}
+        return data
+
+    def vector_count(self, key: str) -> int:
+        return int(self.project_stats(key).get("vector_count") or 0)
 
     def compile(self, key: str, timeout_s: int = 7200) -> CompileStats:
         proj = self.project_dir(key)
         marker = proj / ".compiled"
         n_sources = self._source_count(key)
         if marker.is_file() and marker.read_text().strip() == str(n_sources):
+            # Re-validate on resume — a marker written by a run with a weaker
+            # predicate (or a corrupted project) must not skip the gate.
+            stats = self.project_stats(key)
+            compiled = int(stats.get("source_count") or 0)
+            vc = int(stats.get("vector_count") or 0)
+            if compiled < n_sources or vc < n_sources:
+                raise CompileError(
+                    f"resume for {key}: .compiled marker present but project is "
+                    f"invalid (compiled source count {compiled}/{n_sources}, "
+                    f"vectors {vc}) — delete the project directory and rerun."
+                )
             return CompileStats(skipped=True, seconds=0.0,
-                                vector_count=self.vector_count(key),
-                                source_count=n_sources)
+                                vector_count=vc, source_count=n_sources)
 
         start = time.monotonic()
         log = proj / "compile.log"
@@ -182,11 +195,28 @@ class SageWikiBackend:
                 f"see {log}. stderr tail: {last.stderr[-300:]}"
             )
 
-        vc = self.vector_count(key)
-        if vc <= 0:
+        # Hardened success predicate (C-1/M-1 regression): exit 0 is NOT proof of
+        # work. An interrupted compile whose resume no-ops (leased queue items,
+        # "0 summarized") exits 0 with the raw sources FTS-indexed and a stray
+        # vector — passing a bare vector_count>0 check and then benchmarking raw
+        # transcripts. Require the manifest's COMPILED source count to match the
+        # raw file count, and at least one vector per source (healthy projects
+        # run ~1.5-2x).
+        stats = self.project_stats(key)
+        compiled = int(stats.get("source_count") or 0)
+        vc = int(stats.get("vector_count") or 0)
+        if compiled < n_sources:
             raise CompileError(
-                f"compile for {key} produced no vector entries — embeddings are not "
-                f"live; refusing to run questions against a BM25-only project."
+                f"compile for {key} exited 0 but compiled source count is "
+                f"{compiled} of {n_sources} raw sources — a no-op/interrupted "
+                f"compile; refusing to run questions against uncompiled content. "
+                f"Delete the project directory (incl. .compiled) and recompile."
+            )
+        if vc < n_sources:
+            raise CompileError(
+                f"compile for {key} produced {vc} vector entries for {n_sources} "
+                f"sources — embeddings are not live for all compiled content; "
+                f"refusing to run questions against a raw/BM25-dominated project."
             )
         marker.write_text(str(n_sources), encoding="utf-8")
         return CompileStats(skipped=False, seconds=time.monotonic() - start,
