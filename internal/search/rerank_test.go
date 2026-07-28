@@ -14,7 +14,7 @@ func TestParseRerankJSON_Valid(t *testing.T) {
 	if len(scores) != 3 {
 		t.Fatalf("expected 3 scores, got %d", len(scores))
 	}
-	if scores[0] != 8 || scores[1] != 3 || scores[2] != 6 {
+	if *scores[0] != 8 || *scores[1] != 3 || *scores[2] != 6 {
 		t.Errorf("unexpected scores: %v", scores)
 	}
 }
@@ -25,7 +25,7 @@ func TestParseRerankJSON_CodeFenced(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if scores[0] != 9 || scores[1] != 1 {
+	if *scores[0] != 9 || *scores[1] != 1 {
 		t.Errorf("unexpected scores: %v", scores)
 	}
 }
@@ -44,11 +44,11 @@ func TestParseRerankJSON_OutOfRange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if scores[0] != 8 {
-		t.Errorf("expected score 8 for id 1, got %f", scores[0])
+	if *scores[0] != 8 {
+		t.Errorf("expected score 8 for id 1, got %f", *scores[0])
 	}
-	if scores[1] != 0 || scores[2] != 0 {
-		t.Errorf("out-of-range entries should not affect scores: %v", scores)
+	if scores[1] != nil || scores[2] != nil {
+		t.Errorf("out-of-range entries should leave candidates unscored: %v", scores)
 	}
 }
 

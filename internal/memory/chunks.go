@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/xoai/sage-wiki/internal/store"
 )
@@ -104,6 +105,38 @@ func (s *ChunkStore) SearchChunks(query string, limit int) ([]ChunkResult, error
 		results = append(results, r)
 	}
 	return results, rows.Err()
+}
+
+// GetChunksMeta returns heading and content for the given chunk IDs.
+// Missing IDs are simply absent from the map.
+func (s *ChunkStore) GetChunksMeta(ids []string) (map[string]ChunkEntry, error) {
+	if len(ids) == 0 {
+		return map[string]ChunkEntry{}, nil
+	}
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := s.db.ReadDB().Query(
+		"SELECT chunk_id, chunk_index, heading, content FROM chunks_meta WHERE chunk_id IN ("+placeholders+")",
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("chunks.GetChunksMeta: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]ChunkEntry, len(ids))
+	for rows.Next() {
+		var c ChunkEntry
+		if err := rows.Scan(&c.ChunkID, &c.ChunkIndex, &c.Heading, &c.Content); err != nil {
+			return nil, fmt.Errorf("chunks.GetChunksMeta scan: %w", err)
+		}
+		out[c.ChunkID] = c
+	}
+	return out, rows.Err()
 }
 
 // Count returns the total number of indexed chunks.

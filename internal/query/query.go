@@ -227,6 +227,8 @@ func buildQueryContext(projectDir string, question string, topK int, cfg *config
 			VecStore:       vecStore,
 			QueryExpansion: cfg.Search.QueryExpansionEnabled(),
 			RerankEnabled:  rerankEnabled,
+
+			RerankMinCoverage: cfg.Search.RerankMinCoverageOrDefault(),
 		})
 		if err != nil {
 			log.Warn("enhanced search failed, falling back to doc-level", "error", err)

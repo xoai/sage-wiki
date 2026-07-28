@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **CLI `search` now honors the configured hybrid weights** (default
+  0.7 BM25 / 0.3 vector) **and the `search.ann.enabled` setting** — it
+  previously fused with 1.0/1.0 and always brute-forced. The dead
+  `--scope` flag (parsed, never read) is removed.
+- **Web `/api/search` now embeds the query** and passes the configured
+  hybrid weights — it previously passed a nil vector, silently running
+  BM25-only regardless of embedding configuration.
+- **Chunks found only by vector search are hydrated** with their real
+  heading and content before reranking/output — they previously flowed
+  through fusion as empty passages.
+- **Rerank blending is now safe under partial LLM coverage**: candidates
+  the LLM never scored keep their normalized [0,1] relevance instead of
+  being coerced to zero, blending operates in normalized space on both
+  sides (never raw RRF ~0.016 vs LLM [0,1]), and when the LLM scores
+  fewer than `search.rerank_min_coverage` (default 0.5) of the head the
+  blend is skipped entirely, keeping RRF order.
+
 ### Changed
 
 - **README diagrams refreshed** (architecture, compiler pipeline,

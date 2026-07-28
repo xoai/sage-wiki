@@ -131,6 +131,7 @@ search:
   default_limit: 10
   # query_expansion: true     # LLM query expansion for Q&A (default: true)
   # rerank: true              # LLM re-ranking for Q&A (default: true)
+  # rerank_min_coverage: 0.5  # min fraction of candidates the LLM must score for the rerank blend to apply; below it, RRF order is kept (default: 0.5)
   # chunk_size: 800           # tokens per chunk for indexing (100-5000)
   # graph_expansion: true     # graph-based context expansion for Q&A (default: true)
   # graph_max_expand: 10      # max articles added via graph expansion

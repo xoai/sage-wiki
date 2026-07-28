@@ -22,7 +22,15 @@ type EnhancedSearchOpts struct {
 	VecStore       *vectors.Store
 	QueryExpansion bool // enable query expansion
 	RerankEnabled  bool // enable LLM re-ranking
+
+	// RerankMinCoverage is the minimum fraction of candidates the LLM must
+	// have scored for the blend to apply (0 → DefaultRerankMinCoverage).
+	RerankMinCoverage float64
 }
+
+// DefaultRerankMinCoverage gates blending when the LLM scored fewer than
+// this fraction of the head (ADR-038; sage-memory's measured failure mode).
+const DefaultRerankMinCoverage = 0.5
 
 // SearchResult represents a document-level search result from the enhanced pipeline.
 type SearchResult struct {
@@ -141,6 +149,27 @@ func EnhancedSearch(opts EnhancedSearchOpts) ([]SearchResult, error) {
 		}
 	}
 
+	// Hydrate chunks found only by vector search — they entered the map
+	// without heading/content and would otherwise reach the reranker (and
+	// the caller) as empty passages.
+	var missing []string
+	for id, fc := range chunkMap {
+		if fc.content == "" && fc.heading == "" {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) > 0 {
+		meta, err := opts.ChunkStore.GetChunksMeta(missing)
+		if err != nil {
+			log.Warn("chunk hydration failed; vector-only hits keep empty content", "error", err)
+		} else {
+			for id, m := range meta {
+				chunkMap[id].heading = m.Heading
+				chunkMap[id].content = m.Content
+			}
+		}
+	}
+
 	// Compute RRF scores
 	var fused []fusedChunk
 	for _, fc := range chunkMap {
@@ -202,30 +231,46 @@ func EnhancedSearch(opts EnhancedSearchOpts) ([]SearchResult, error) {
 		}
 
 		if len(reranked) > 0 {
-			// Build results with blended scores
-			rerankMap := make(map[string]float64)
-			for _, rr := range reranked {
-				rerankMap[rr.ID] = rr.Score
+			// Blend in normalized [0,1] space (never raw RRF vs LLM —
+			// the scale conflation ADR-038 closes), gated on coverage.
+			rrf := make([]float64, len(deduped))
+			for i, fc := range deduped {
+				rrf[i] = fc.rrfScore
 			}
+			rels := NormalizeRelevance(rrf)
 
-			for _, fc := range deduped {
-				rerankScore := rerankMap[fc.docID]
-				finalScore := BlendScore(fc.rrfScore, rerankScore, fc.retrievalRank)
-				results = append(results, SearchResult{
-					DocID:       fc.docID,
-					ChunkID:     fc.chunkID,
-					ChunkText:   fc.content,
-					Heading:     fc.heading,
-					RRFScore:    fc.rrfScore,
-					RerankScore: rerankScore,
-					FinalScore:  finalScore,
-					Rank:        fc.retrievalRank,
+			minCov := opts.RerankMinCoverage
+			if minCov <= 0 {
+				minCov = DefaultRerankMinCoverage
+			}
+			finals, applied := BlendReranked(rels, reranked, minCov)
+			if !applied {
+				log.Warn("rerank coverage below threshold, keeping RRF order",
+					"candidates", len(reranked), "min_coverage", minCov)
+			} else {
+				rerankScores := make(map[string]float64)
+				for _, rr := range reranked {
+					if rr.Scored {
+						rerankScores[rr.ID] = rr.Score
+					}
+				}
+				for i, fc := range deduped {
+					results = append(results, SearchResult{
+						DocID:       fc.docID,
+						ChunkID:     fc.chunkID,
+						ChunkText:   fc.content,
+						Heading:     fc.heading,
+						RRFScore:    fc.rrfScore,
+						RerankScore: rerankScores[fc.docID],
+						FinalScore:  finals[i],
+						Rank:        fc.retrievalRank,
+					})
+				}
+
+				sort.Slice(results, func(i, j int) bool {
+					return results[i].FinalScore > results[j].FinalScore
 				})
 			}
-
-			sort.Slice(results, func(i, j int) bool {
-				return results[i].FinalScore > results[j].FinalScore
-			})
 		}
 	}
 

@@ -307,13 +307,14 @@ func (c CompilerConfig) StripBrokenLinksEnabled() bool {
 }
 
 type SearchConfig struct {
-	HybridWeightBM25   float64 `yaml:"hybrid_weight_bm25"`
-	HybridWeightVector float64 `yaml:"hybrid_weight_vector"`
-	DefaultLimit       int     `yaml:"default_limit"`
-	QueryExpansion     *bool   `yaml:"query_expansion,omitempty"`  // enable LLM query expansion (default: true)
-	Rerank             *bool   `yaml:"rerank,omitempty"`           // enable LLM re-ranking (default: true)
-	ChunkSize          int     `yaml:"chunk_size,omitempty"`       // tokens per chunk for indexing (default: 800)
-	ResultMaxChars     int     `yaml:"result_max_chars,omitempty"` // max chars (runes) of content per wiki_search result before truncation (default: 2000; set very high to effectively disable)
+	HybridWeightBM25   float64  `yaml:"hybrid_weight_bm25"`
+	HybridWeightVector float64  `yaml:"hybrid_weight_vector"`
+	DefaultLimit       int      `yaml:"default_limit"`
+	QueryExpansion     *bool    `yaml:"query_expansion,omitempty"`     // enable LLM query expansion (default: true)
+	Rerank             *bool    `yaml:"rerank,omitempty"`              // enable LLM re-ranking (default: true)
+	RerankMinCoverage  *float64 `yaml:"rerank_min_coverage,omitempty"` // min fraction of candidates the LLM must score for blending (default: 0.5)
+	ChunkSize          int      `yaml:"chunk_size,omitempty"`          // tokens per chunk for indexing (default: 800)
+	ResultMaxChars     int      `yaml:"result_max_chars,omitempty"`    // max chars (runes) of content per wiki_search result before truncation (default: 2000; set very high to effectively disable)
 
 	// Graph-enhanced retrieval
 	GraphExpansion       *bool    `yaml:"graph_expansion,omitempty"`        // enable graph-based context expansion (default: true)
@@ -346,6 +347,15 @@ func (s SearchConfig) QueryExpansionEnabled() bool {
 		return true
 	}
 	return *s.QueryExpansion
+}
+
+// RerankMinCoverageOrDefault returns the minimum scored-candidate fraction
+// required for rerank blending (default 0.5 — ADR-038's coverage gate).
+func (s SearchConfig) RerankMinCoverageOrDefault() float64 {
+	if s.RerankMinCoverage == nil || *s.RerankMinCoverage <= 0 {
+		return 0.5
+	}
+	return *s.RerankMinCoverage
 }
 
 // RerankEnabled returns whether re-ranking is enabled (default: true).
