@@ -7,7 +7,7 @@ import (
 )
 
 // currentSchemaVersion tracks len(schemaMigrations).
-const currentSchemaVersion = 6
+const currentSchemaVersion = 7
 
 // schemaMigrations is the append-only Postgres V-series. Each entry is ONE
 // statement per Exec (pgx stdlib rejects multi-statement prepared calls).
@@ -305,6 +305,16 @@ var schemaMigrations = [][]string{
 		) STORED`,
 		`CREATE INDEX IF NOT EXISTS idx_entries_tsv ON entries USING GIN (tsv)`,
 		`INSERT INTO schema_version (version) SELECT 6 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = 6)`,
+	},
+	// v7 — entry_dates sidecar (sqlite twin: migrationV13; ADR-039).
+	// source_date is a unix timestamp meaning "when the knowledge
+	// originated" — never a row/compile timestamp. Missing row = no date.
+	{
+		`CREATE TABLE IF NOT EXISTS entry_dates (
+			id          TEXT PRIMARY KEY,
+			source_date BIGINT NOT NULL
+		)`,
+		`INSERT INTO schema_version (version) SELECT 7 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = 7)`,
 	},
 }
 

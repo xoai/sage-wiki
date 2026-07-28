@@ -155,7 +155,24 @@ var schemaMigrations = []migration{
 	{sql: migrationV10},
 	{sql: migrationV11},
 	{sql: migrationV12},
+	{sql: migrationV13},
 }
+
+// migrationV13 adds the entry_dates sidecar (20260728-search-upgrade M3,
+// ADR-039). A sidecar because entries is an FTS5 virtual table that cannot
+// take ALTER TABLE ADD COLUMN, and a rebuild (the V8 precedent) re-indexes
+// the whole corpus; the sidecar is purely additive and leaves BM25 term
+// statistics untouched. source_date is a unix timestamp meaning "when the
+// knowledge originated" (source frontmatter date > ingest mtime > manifest
+// first-seen; Q&A outputs stamp creation time) — NEVER a row/compile
+// timestamp. A missing row means "no date": no recency contribution, no
+// date emitted.
+const migrationV13 = `
+CREATE TABLE IF NOT EXISTS entry_dates (
+	id          TEXT PRIMARY KEY,
+	source_date INTEGER NOT NULL
+);
+`
 
 // migrate runs schema migrations.
 func (db *DB) migrate() error {
