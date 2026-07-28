@@ -87,6 +87,58 @@ func TestBlendReranked_UnscoredKeepsNormalizedRelevance(t *testing.T) {
 	}
 }
 
+// V-M1d (order half): when the coverage gate fires, blendResults — the
+// exact function the pipeline consumes — must return results in RRF order,
+// not empty and not reordered.
+func TestBlendResults_GateKeepsRRFOrder(t *testing.T) {
+	deduped := make([]fusedChunk, 15)
+	reranked := make([]RerankResult, 15)
+	for i := range deduped {
+		deduped[i] = fusedChunk{
+			docID:         string(rune('a' + i)),
+			rrfScore:      1.0 - float64(i)*0.05, // strictly descending RRF
+			retrievalRank: i + 1,
+		}
+		reranked[i] = RerankResult{ID: deduped[i].docID, RetrievalRank: i + 1}
+	}
+	// The LLM scored only one candidate — and gave the LAST one a huge
+	// score, which would catapult it to the top if the gate failed to skip.
+	reranked[14].Scored = true
+	reranked[14].Score = 1.0
+
+	results := blendResults(deduped, reranked, 0.5)
+	if len(results) != 15 {
+		t.Fatalf("gate case returned %d results, want all 15 in RRF order", len(results))
+	}
+	for i, r := range results {
+		if r.DocID != deduped[i].docID {
+			t.Fatalf("order broken at %d: got %s, want %s (RRF order must survive the gate)",
+				i, r.DocID, deduped[i].docID)
+		}
+	}
+}
+
+// Above the gate, blending applies and re-sorts by blended score.
+func TestBlendResults_AppliedSortsByBlend(t *testing.T) {
+	deduped := []fusedChunk{
+		{docID: "a", rrfScore: 0.020, retrievalRank: 1},
+		{docID: "b", rrfScore: 0.010, retrievalRank: 2},
+	}
+	reranked := []RerankResult{
+		{ID: "a", RetrievalRank: 1, Scored: true, Score: 0.0},
+		{ID: "b", RetrievalRank: 2, Scored: true, Score: 1.0},
+	}
+	// rels = [1.0, 0.0]; both ranks are in the 75/25 bucket:
+	// a = 0.75*1.0 + 0.25*0 = 0.75; b = 0.75*0 + 0.25*1.0 = 0.25.
+	results := blendResults(deduped, reranked, 0.5)
+	if results[0].DocID != "a" || results[0].FinalScore != 0.75 {
+		t.Errorf("top = %s (%v), want a (0.75)", results[0].DocID, results[0].FinalScore)
+	}
+	if results[1].FinalScore != 0.25 {
+		t.Errorf("b final = %v, want 0.25", results[1].FinalScore)
+	}
+}
+
 // Failure fallback carries no scores at all — coverage 0 ⇒ gate always skips.
 func TestFallbackRerankIsUnscored(t *testing.T) {
 	res := fallbackRerank([]RerankCandidate{{ID: "a", RetrievalRank: 1}, {ID: "b", RetrievalRank: 2}})

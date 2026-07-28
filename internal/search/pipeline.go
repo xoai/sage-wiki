@@ -32,13 +32,82 @@ type EnhancedSearchOpts struct {
 // this fraction of the head (ADR-038; sage-memory's measured failure mode).
 const DefaultRerankMinCoverage = 0.5
 
+// fusedChunk is a chunk hit accumulated across the BM25 and vector legs.
+type fusedChunk struct {
+	chunkID       string
+	docID         string
+	heading       string
+	content       string
+	rrfScore      float64
+	bm25Rank      int
+	vecRank       int
+	retrievalRank int // position in the post-RRF list, used for blending
+}
+
+// blendResults converts fused chunks into final SearchResults. When the
+// LLM scored at least minCov of the reranked head, scores blend in
+// normalized [0,1] space (never raw RRF vs LLM — the scale conflation
+// ADR-038 closes) and results sort by blended score. Below the coverage
+// gate, results keep pure RRF order — V-M1d's contract, pinned by test.
+func blendResults(deduped []fusedChunk, reranked []RerankResult, minCoverage float64) []SearchResult {
+	rrf := make([]float64, len(deduped))
+	for i, fc := range deduped {
+		rrf[i] = fc.rrfScore
+	}
+	rels := NormalizeRelevance(rrf)
+
+	if minCoverage <= 0 {
+		minCoverage = DefaultRerankMinCoverage
+	}
+	finals, applied := BlendReranked(rels, reranked, minCoverage)
+	if !applied {
+		log.Warn("rerank coverage below threshold, keeping RRF order",
+			"candidates", len(reranked), "min_coverage", minCoverage)
+	}
+
+	rerankScores := make(map[string]float64)
+	for _, rr := range reranked {
+		if rr.Scored {
+			rerankScores[rr.ID] = rr.Score
+		}
+	}
+
+	results := make([]SearchResult, 0, len(deduped))
+	for i, fc := range deduped {
+		final := rels[i]
+		if applied {
+			final = finals[i]
+		}
+		results = append(results, SearchResult{
+			DocID:       fc.docID,
+			ChunkID:     fc.chunkID,
+			ChunkText:   fc.content,
+			Heading:     fc.heading,
+			RRFScore:    fc.rrfScore,
+			RerankScore: rerankScores[fc.docID],
+			FinalScore:  final,
+			Rank:        fc.retrievalRank,
+		})
+	}
+	if applied {
+		sort.SliceStable(results, func(i, j int) bool {
+			return results[i].FinalScore > results[j].FinalScore
+		})
+	}
+	return results
+}
+
 // SearchResult represents a document-level search result from the enhanced pipeline.
 type SearchResult struct {
-	DocID       string
-	ChunkID     string
-	ChunkText   string
-	Heading     string
-	RRFScore    float64
+	DocID     string
+	ChunkID   string
+	ChunkText string
+	Heading   string
+	RRFScore  float64
+	// RerankScore is 0 both for a genuine LLM score of 0 and for a
+	// candidate the LLM never scored — consumers must not distinguish
+	// the two through this field (the Scored bit lives on RerankResult
+	// inside the pipeline; ADR-038).
 	RerankScore float64
 	FinalScore  float64
 	Rank        int
@@ -106,16 +175,6 @@ func EnhancedSearch(opts EnhancedSearchOpts) ([]SearchResult, error) {
 	}
 
 	// Step 4: RRF fusion of BM25 + vector chunk results
-	type fusedChunk struct {
-		chunkID       string
-		docID         string
-		heading       string
-		content       string
-		rrfScore      float64
-		bm25Rank      int
-		vecRank       int
-		retrievalRank int // position in the post-RRF list, used for blending
-	}
 	chunkMap := make(map[string]*fusedChunk)
 	const k = 60.0
 
@@ -231,46 +290,7 @@ func EnhancedSearch(opts EnhancedSearchOpts) ([]SearchResult, error) {
 		}
 
 		if len(reranked) > 0 {
-			// Blend in normalized [0,1] space (never raw RRF vs LLM —
-			// the scale conflation ADR-038 closes), gated on coverage.
-			rrf := make([]float64, len(deduped))
-			for i, fc := range deduped {
-				rrf[i] = fc.rrfScore
-			}
-			rels := NormalizeRelevance(rrf)
-
-			minCov := opts.RerankMinCoverage
-			if minCov <= 0 {
-				minCov = DefaultRerankMinCoverage
-			}
-			finals, applied := BlendReranked(rels, reranked, minCov)
-			if !applied {
-				log.Warn("rerank coverage below threshold, keeping RRF order",
-					"candidates", len(reranked), "min_coverage", minCov)
-			} else {
-				rerankScores := make(map[string]float64)
-				for _, rr := range reranked {
-					if rr.Scored {
-						rerankScores[rr.ID] = rr.Score
-					}
-				}
-				for i, fc := range deduped {
-					results = append(results, SearchResult{
-						DocID:       fc.docID,
-						ChunkID:     fc.chunkID,
-						ChunkText:   fc.content,
-						Heading:     fc.heading,
-						RRFScore:    fc.rrfScore,
-						RerankScore: rerankScores[fc.docID],
-						FinalScore:  finals[i],
-						Rank:        fc.retrievalRank,
-					})
-				}
-
-				sort.Slice(results, func(i, j int) bool {
-					return results[i].FinalScore > results[j].FinalScore
-				})
-			}
+			results = blendResults(deduped, reranked, opts.RerankMinCoverage)
 		}
 	}
 
