@@ -36,4 +36,5 @@ After completing work that produced new knowledge:
 - Entity types available: {{range $i, $e := .EntityTypes}}{{if $i}}, {{end}}{{$e}}{{end}}{{if .HasOntology}}
 - Query relationships: `wiki_ontology_query` with entity ID and relation type
 - Relation types: {{range $i, $r := .RelationTypes}}{{if $i}}, {{end}}{{$r}}{{end}}{{end}}
-- Filter searches with tags: `wiki_search("topic", tags="tag-name")`
+- Filter searches with tags: `wiki_search("topic", tags="tag-name")` (hard filter)
+- Rank tagged results higher without excluding others: `wiki_search("topic", boost_tags="tag-name")`

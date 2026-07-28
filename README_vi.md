@@ -145,7 +145,8 @@ Bề mặt lệnh cốt lõi; chạy `sage-wiki <command> --help` để xem các
 | `sage-wiki init [--vault] [--skill <agent>] [--pack <name>] [--prompts]` | Khởi tạo dự án (greenfield hoặc lớp phủ vault) |
 | `sage-wiki compile [--watch] [--batch] [--estimate] [--dry-run] [--no-cache] [--fresh] [--re-embed] [--re-extract] [--prune]` | Biên dịch nguồn thành bài viết wiki |
 | `sage-wiki serve [--transport stdio\|sse] [--ui] [--port 3333]` | Máy chủ MCP / web UI |
-| `sage-wiki search "query" [--tags ...]` | Tìm kiếm lai (BM25 + vector) |
+| `sage-wiki reindex [--drop-chunk-vectors]` | Dựng lại chỉ mục chunk từ các tài liệu trên đĩa với `chunk_size` / `chunk_overlap_tokens` hiện tại |
+| `sage-wiki search "query" [--tags ...] [--boost-tags ...] [--limit N] [--channels bm25,vector,graph] [--expand] [--rerank]` | Tìm kiếm lai (BM25 + vector + đồ thị ontology) |
 | `sage-wiki query "question"` | Hỏi đáp trên wiki với trích dẫn |
 | `sage-wiki tui` | Bảng điều khiển terminal tương tác |
 | `sage-wiki ontology <query\|list\|add\|resolve>` | Truy vấn, quản lý, và phân giải đồ thị ontology |
@@ -335,7 +336,7 @@ python3 -m unittest discover eval    # kiểm thử tự thân của bộ công 
 
 - **Lưu trữ:** SQLite với FTS5 (tìm kiếm BM25) + vector BLOB (cosine similarity) + bảng compile_items để theo dõi tầng/trạng thái theo từng nguồn
 - **Ontology:** Đồ thị thực thể-quan hệ có kiểu với duyệt BFS và phát hiện chu trình
-- **Tìm kiếm:** Pipeline nâng cao với FTS5 cấp chunk + lập chỉ mục vector, mở rộng truy vấn LLM, xếp hạng lại bằng LLM, kết hợp RRF, và mở rộng đồ thị 4 tín hiệu. Phản hồi tìm kiếm báo hiệu nguồn chưa biên dịch để biên dịch theo yêu cầu.
+- **Tìm kiếm:** Pipeline hợp nhất — FTS5 và vector ở cả cấp tài liệu lẫn cấp chunk được kết hợp bằng RRF có trọng số, với đồ thị ontology là kênh thứ ba; kèm loại bỏ từ phổ biến thích ứng theo ngữ liệu, trọng số cột đóng vai trò tiêu đề, và ưu tiên độ mới cho tài liệu có ngày gốc đã biết. Mở rộng truy vấn LLM và xếp hạng lại (có ngưỡng độ phủ) là tùy chọn theo từng lệnh gọi trên các bề mặt tìm kiếm và bật mặc định cho Q&A, vốn còn dùng mở rộng ngữ cảnh đồ thị 4 tín hiệu. Phản hồi tìm kiếm báo hiệu nguồn chưa biên dịch để biên dịch theo yêu cầu.
 - **Trình biên dịch:** Pipeline phân tầng (Tầng 0: chỉ mục, Tầng 1: embed, Tầng 2: phân tích mã, Tầng 3: biên dịch LLM đầy đủ) với backpressure thích ứng, trích xuất Pass 2 đồng thời, cache prompt, Batch API (Anthropic + OpenAI + Gemini), theo dõi chi phí, biên dịch theo yêu cầu qua MCP, chấm điểm chất lượng, và nhận biết cascade. Embedding bao gồm thử lại với backoff lũy thừa, giới hạn tốc độ tùy chọn, và mean-pooling cho đầu vào dài. 10 trình phân tích mã tích hợp (Go qua go/ast, 8 ngôn ngữ qua regex, trích xuất khóa dữ liệu có cấu trúc).
 - **MCP:** 18 công cụ (7 đọc, 9 ghi, 2 kết hợp) qua stdio hoặc SSE, bao gồm `wiki_graph_query` cho hỏi đáp đồ thị nhiều bước có trích dẫn nguồn gốc, `wiki_compile_topic` cho biên dịch theo yêu cầu và `wiki_capture` cho trích xuất tri thức
 - **TUI:** Bảng điều khiển terminal 4 tab bằng bubbletea + glamour (duyệt, tìm kiếm, hỏi đáp, biên dịch) với hiển thị phân bố tầng

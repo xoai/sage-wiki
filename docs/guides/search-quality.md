@@ -359,7 +359,7 @@ sage-wiki's enhanced search pipeline was inspired by analyzing [qmd](https://git
 
 Key differences:
 
-- **sage-wiki uses dual-channel retrieval** (BM25 + vector) at both document and chunk level, while qmd relies primarily on vector similarity. BM25 excels at exact keyword matches that vector search misses.
+- **sage-wiki uses three-channel retrieval** (BM25 + vector + ontology graph) at both document and chunk level, while qmd relies primarily on vector similarity. BM25 excels at exact keyword matches that vector search misses; the graph channel reaches documents connected to the query's entities even when neither lexical nor vector similarity finds them.
 - **sage-wiki's position-aware blending** protects high-confidence retrieval results from reranker noise, using different weight tiers based on pre-rerank position.
 - **sage-wiki adds graph-enhanced context** — after search, a 4-signal scorer (direct relations, source overlap, Adamic-Adar neighbors, type affinity) finds structurally related articles and adds them to the LLM synthesis context. This goes beyond simple 1-hop traversal — it discovers concepts that share source documents or have common ontology neighbors.
 - **Both support local models for free inference.** qmd uses GGUF via llama.cpp; sage-wiki supports Ollama (or any OpenAI-compatible local server). With Ollama, sage-wiki's enhanced search is completely free — chunk indexing, query expansion, and BM25+vector search all run locally. Re-ranking is auto-disabled for local models but can be force-enabled for capable ones. With cloud LLMs, the additional cost per query is negligible (~$0.0006).

@@ -144,7 +144,8 @@ Wikiは標準でキーワード近接からナレッジグラフを構築しま�
 | `sage-wiki init [--vault] [--skill <agent>] [--pack <name>] [--prompts]` | プロジェクトの初期化（グリーンフィールドまたはボールトオーバーレイ） |
 | `sage-wiki compile [--watch] [--batch] [--estimate] [--dry-run] [--no-cache] [--fresh] [--re-embed] [--re-extract] [--prune]` | ソースをWiki記事にコンパイル |
 | `sage-wiki serve [--transport stdio\|sse] [--ui] [--port 3333]` | MCPサーバー / Web UI |
-| `sage-wiki search "query" [--tags ...]` | ハイブリッド検索（BM25 + ベクトル） |
+| `sage-wiki reindex [--drop-chunk-vectors]` | 現在の `chunk_size` / `chunk_overlap_tokens` でディスク上のドキュメントからチャンクインデックスを再構築 |
+| `sage-wiki search "query" [--tags ...] [--boost-tags ...] [--limit N] [--channels bm25,vector,graph] [--expand] [--rerank]` | ハイブリッド検索（BM25 + ベクトル + オントロジーグラフ） |
 | `sage-wiki query "question"` | Wikiに対する引用付きQ&A |
 | `sage-wiki tui` | インタラクティブターミナルダッシュボード |
 | `sage-wiki ontology <query\|list\|add\|resolve>` | オントロジーグラフの照会、管理、解決 |
@@ -335,7 +336,7 @@ python3 -m unittest discover eval    # ハーネスのセルフテスト
 
 - **ストレージ：** FTS5（BM25検索）+ BLOBベクトル（コサイン類似度）+ ソースごとのティア/状態追跡用のcompile_itemsテーブルを備えたSQLite
 - **オントロジー：** BFS走査とサイクル検出を備えた型付きエンティティ-関係グラフ
-- **検索：** チャンクレベルのFTS5 + ベクトルインデックス、LLMクエリ拡張、LLMリランキング、RRFフュージョン、4シグナルグラフ拡張を備えた強化パイプライン。検索レスポンスはオンデマンドコンパイルのために未コンパイルソースを通知します。
+- **検索：** 統合パイプライン——ドキュメントレベルとチャンクレベルのFTS5およびベクトルを重み付きRRFで融合し、オントロジーグラフを第3のチャネルとして加えます。コーパス適応型ストップワード除去、タイトル代理となるカラム重み付け、既知の起点日を持つドキュメントへの新しさによるタイブレークを含みます。LLMクエリ拡張とカバレッジゲート付きリランキングは検索面では呼び出しごとのオプトイン、Q&Aではデフォルト有効で、Q&Aはさらに4シグナルのグラフコンテキスト拡張を使います。検索レスポンスはオンデマンドコンパイルのために未コンパイルソースを通知します。
 - **コンパイラ：** 適応的バックプレッシャー、並行Pass 2抽出、プロンプトキャッシュ、Batch API（Anthropic + OpenAI + Gemini）、コスト追跡、MCP経由のオンデマンドコンパイル、品質スコアリング、カスケード認識を備えたティアードパイプライン（ティア0：インデックス、ティア1：エンベッド、ティア2：コードパース、ティア3：フルLLMコンパイル）。エンベディングには指数バックオフ付きリトライ、オプションのレート制限、長い入力向けのミーンプーリングが含まれます。10の組み込みコードパーサー（go/ast経由のGo、正規表現経由の8言語、構造化データキー抽出）。
 - **MCP：** stdioまたはSSE経由の18ツール（7読み取り、9書き込み、2複合）。来歴引用付きマルチホップグラフQA用の`wiki_graph_query`、オンデマンドコンパイル用の`wiki_compile_topic`、知識抽出用の`wiki_capture`を含みます
 - **TUI：** ティア分布表示付きのbubbletea + glamour 4タブターミナルダッシュボード（ブラウズ、検索、Q&A、コンパイル）

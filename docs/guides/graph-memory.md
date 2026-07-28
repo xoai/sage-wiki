@@ -5,6 +5,14 @@ claims, artifacts) joined by typed relations. This guide covers the two pieces
 that turn it from a label graph into a graph you can cite: **evidenced
 relations** and **LLM triple extraction**.
 
+The graph also feeds retrieval directly: it is the **third channel of the
+fused ranking** on every search surface — query terms seed entities, a bounded
+traversal ranks their neighborhoods, and those results fuse with the lexical
+and vector channels at `search.hybrid_weight_graph`. Per-relation traversal
+weights (`search.graph_relation_weights`) and how to ablate the channel per
+call live in [search-quality.md](search-quality.md); an empty ontology costs
+nothing and leaves results byte-identical.
+
 ## Evidenced relations
 
 Every relation can carry:
