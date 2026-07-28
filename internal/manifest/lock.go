@@ -2,9 +2,12 @@ package manifest
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"time"
 )
@@ -77,6 +80,29 @@ func WithLock(ctx context.Context, manifestPath string, fn func() error) error {
 	return fn()
 }
 
+// lockContended reports whether a failed exclusive-create means "another
+// acquirer holds it" rather than a genuine error worth aborting for.
+//
+// POSIX signals contention with EEXIST. Windows signals it two other ways that
+// os.IsExist does NOT match: ERROR_ACCESS_DENIED when the target sits in a
+// pending-delete state (a rival's Unlock removed it while our Create was in
+// flight) and ERROR_SHARING_VIOLATION when another handle is still open. Both
+// surface through Go as fs.ErrPermission. Reporting either as fatal aborts the
+// caller's whole Mutate and silently drops the update it was making — observed
+// as TestIngestConcurrentNoLostSource failing on windows-latest with
+// "acquire lock ...: Access is denied" followed by "lost update: expected 10
+// sources, got 9".
+//
+// The Windows widening is bounded: a real permission problem still fails, just
+// via the acquire timeout (which reports the underlying error) instead of
+// immediately.
+func lockContended(err error, goos string) bool {
+	if errors.Is(err, fs.ErrExist) {
+		return true
+	}
+	return goos == "windows" && errors.Is(err, fs.ErrPermission)
+}
+
 // acquireLockOpts is acquireLock with explicit timing (used by tests).
 func acquireLockOpts(ctx context.Context, manifestPath string, opts lockOptions) (*manifestLock, error) {
 	lockPath := manifestPath + ".lock"
@@ -96,14 +122,19 @@ func acquireLockOpts(ctx context.Context, manifestPath string, opts lockOptions)
 	}
 
 	deadline := time.Now().Add(opts.timeout)
+	// Kept so a timeout can name the error we retried on — the difference
+	// between "someone held it" and a real permission problem.
+	var lastContendErr error
 	for {
 		// Fast path: create the lock exclusively. Only one creator wins.
 		if f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600); err == nil {
 			_, _ = f.WriteString(token)
 			f.Close()
 			return newHeldLock(lockPath, token, opts), nil
-		} else if !os.IsExist(err) {
+		} else if !lockContended(err, runtime.GOOS) {
 			return nil, fmt.Errorf("manifest: acquire lock %s: %w", lockPath, err)
+		} else {
+			lastContendErr = err
 		}
 
 		// The lock exists. If it is stale (a crashed holder no longer heartbeating
@@ -143,6 +174,10 @@ func acquireLockOpts(ctx context.Context, manifestPath string, opts lockOptions)
 		case <-time.After(opts.retryInterval):
 		}
 		if time.Now().After(deadline) {
+			if lastContendErr != nil {
+				return nil, fmt.Errorf("manifest: timed out acquiring lock %s after %s (last: %w)",
+					lockPath, opts.timeout, lastContendErr)
+			}
 			return nil, fmt.Errorf("manifest: timed out acquiring lock %s after %s", lockPath, opts.timeout)
 		}
 	}

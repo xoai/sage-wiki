@@ -2,6 +2,11 @@
 
 Performance benchmarks and quality evaluation for any sage-wiki project. The eval suite is **read-only** — it never modifies your wiki or database.
 
+> Looking for the **memory benchmarks** (LOCOMO, LongMemEval, BEAM — sage-wiki
+> as a conversational memory system, judged by an LLM against published
+> datasets)? Those live in [benchmarks/](benchmarks/README.md), with results in
+> [benchmarks/REPORT.md](benchmarks/REPORT.md).
+
 ## Quick start
 
 ```bash

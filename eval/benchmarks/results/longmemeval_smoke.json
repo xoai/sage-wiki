@@ -1,0 +1,71 @@
+{
+ "metadata": {
+  "benchmark": "longmemeval",
+  "project_name": "smoke",
+  "timestamp": "20260728_042354",
+  "binary_version": "sage-wiki dev (commit none, built unknown)",
+  "models": {
+   "answerer": "gpt-4o-mini",
+   "judge": "gpt-4o-mini"
+  },
+  "scope": {
+   "per_type": 5,
+   "seed": 42,
+   "top_k": 10
+  },
+  "total_questions": 1,
+  "judge_parse_errors": 0,
+  "usage": {
+   "answerer": {
+    "prompt_tokens": 12072,
+    "completion_tokens": 136,
+    "calls": 1
+   },
+   "judge": {
+    "prompt_tokens": 1554,
+    "completion_tokens": 175,
+    "calls": 1
+   }
+  }
+ },
+ "metrics": {
+  "overall": {
+   "total": 1,
+   "correct": 0,
+   "accuracy": 0.0,
+   "avg_score": 0.0,
+   "infra_errors": 0
+  },
+  "by_group": {
+   "single-session-preference": {
+    "total": 1,
+    "correct": 0,
+    "accuracy": 0.0,
+    "avg_score": 0.0
+   }
+  }
+ },
+ "latency": {
+  "count": 1,
+  "p50_ms": 962.3086130013689,
+  "p95_ms": 962.3086130013689,
+  "avg_ms": 962.3086130013689
+ },
+ "per_question": [
+  {
+   "question_id": "06878be2",
+   "group": "single-session-preference",
+   "question": "Can you suggest some accessories that would complement my current photography setup?",
+   "ground_truth": "The user would prefer suggestions of Sony-compatible accessories or high-quality photography gear that can enhance their photography experience. They may not prefer suggestions of other brands' equipment or low-quality gear.",
+   "question_date": "2023/05/30 (Tue) 16:40",
+   "is_abstention": false,
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 962.3086130013689,
+   "generated_answer": "The information provided is not enough.",
+   "judgment": "FAIL",
+   "score": 0.0,
+   "retrieved_count": 10
+  }
+ ]
+}

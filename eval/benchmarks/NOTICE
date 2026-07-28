@@ -1,0 +1,13 @@
+This directory vendors code and prompt templates adapted from the
+mem0ai/memory-benchmarks project (https://github.com/mem0ai/memory-benchmarks),
+licensed under the Apache License, Version 2.0
+(http://www.apache.org/licenses/LICENSE-2.0).
+
+Vendored/adapted files:
+  - locomo/prompts.py, longmemeval/prompts.py, beam/prompts.py (verbatim
+    prompt templates and formatters; attribution headers added)
+  - Portions of the runner pipelines (dataset download/parsing, session
+    chunking, judging flow, metrics) are re-implemented following the
+    upstream design; the memory backend is replaced by sage-wiki.
+
+The sage-wiki project's own license applies to all other files.

@@ -1,0 +1,104 @@
+{
+ "metadata": {
+  "benchmark": "beam",
+  "project_name": "smoke",
+  "timestamp": "20260728_042824",
+  "binary_version": "sage-wiki dev (commit none, built unknown)",
+  "models": {
+   "answerer": "gpt-4o-mini",
+   "judge": "gpt-4o-mini"
+  },
+  "scope": {
+   "chat_size": "100K",
+   "conversations": [
+    0
+   ],
+   "top_k": 10
+  },
+  "total_questions": 2,
+  "judge_parse_errors": 0,
+  "usage": {
+   "answerer": {
+    "prompt_tokens": 13585,
+    "completion_tokens": 451,
+    "calls": 2
+   },
+   "judge": {
+    "prompt_tokens": 2213,
+    "completion_tokens": 74,
+    "calls": 2
+   }
+  }
+ },
+ "metrics": {
+  "overall": {
+   "total": 2,
+   "correct": 0,
+   "accuracy": 0.0,
+   "avg_score": 0.0,
+   "infra_errors": 0
+  },
+  "by_group": {
+   "abstention": {
+    "total": 2,
+    "correct": 0,
+    "accuracy": 0.0,
+    "avg_score": 0.0
+   }
+  }
+ },
+ "latency": {
+  "count": 2,
+  "p50_ms": 1154.9969739862718,
+  "p95_ms": 1345.064562081825,
+  "avg_ms": 1154.9969739862718
+ },
+ "per_question": [
+  {
+   "question_id": "conv0_q0",
+   "conversation_idx": 0,
+   "group": "abstention",
+   "question": "How did the user feedback influence the UI/UX improvements I made before the public launch?",
+   "rubric_nuggets": [
+    "Based on the provided chat, there is no information related to how user feedback influenced UI/UX improvements"
+   ],
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 943.8107649912126,
+   "generated_answer": "I don't have enough information to answer this question.",
+   "nugget_scores": [
+    {
+     "nugget": "Based on the provided chat, there is no information related to how user feedback influenced UI/UX improvements",
+     "score": 0.0,
+     "reason": "The response does not address the influence of user feedback on UI/UX improvements at all, indicating a clear non-compliance with the criterion."
+    }
+   ],
+   "score": 0.0,
+   "judgment": "FAIL",
+   "retrieved_count": 10
+  },
+  {
+   "question_id": "conv0_q1",
+   "conversation_idx": 0,
+   "group": "abstention",
+   "question": "Can you tell me about my background and previous development projects?",
+   "rubric_nuggets": [
+    "Based on the provided chat, there is no information related to your background or previous development projects"
+   ],
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1366.183182981331,
+   "generated_answer": "Your background in software development includes a focus on web applications, notably through your work on a budget tracker application built using the Flask framework. This project showcases several key aspects of your expertise:\n\n1. **Modular Application Structure**: You implemented a modular structure using Flask blueprints, which helps organize code into smaller, manageable components. This approach allows different modules to handle specific functionalities independently, enhancing separation of concerns and maintainability.\n\n2. **Core Features of the Budget Tracker**:\n   - **Transaction Management (CRUD operations)**: You utilized SQLAlchemy for database interactions, enabling the management of financial transactions (Create, Read, Update, Delete).\n   - **User Authentication**: You implemented user registration and login functionality using Flask-Login, ensuring secure session management.\n   - **Dynamic Data Visualization**: The application incorporates analytics features that help track income and expenses, enhanced by using Chart.js for visual representation.\n\n3. **Development Best Practices**: Your development process emphasizes best practices such as:\n   - **Error Handling**: Implementing robust error handling mechanisms for various HTTP status codes.\n   - **Performance Optimization**: Enhancing database performance through indexing and implementing caching techniques where necessary.\n   - **Security Measures**: Employing password hashing with Argon2 to protect user credentials and validating inputs rigorously.\n\n4. **Deployment and Git Management**: You are familiar with deploying web applications, focusing on security practices like setting up HTTPS and managing Git repositories effectively. This includes applying branching strategies, using pull requests for code reviews, and ensuring quality through standardized commit messages and branch access controls.\n\n5. **Technologies and Methodologies Used**: Your expertise encompasses various technologies, including:\n   - **Flask** for building the application.\n   - **SQLAlchemy** for object-relational mapping.\n   - **Bootstrap** for responsive user interface design.\n   - **Flask-Migrate** for managing database migrations.\n   - **RESTful API development** for backend communication and operations.\n\nOverall, your background indicates a strong foundation in developing, managing, and deploying web applications with a focus on best practices in software engineering. This experience positions you well for future projects requiring similar technical skills and methodologies.",
+   "nugget_scores": [
+    {
+     "nugget": "Based on the provided chat, there is no information related to your background or previous development projects",
+     "score": 0.0,
+     "reason": "The LLM response completely misinterprets the question and does not provide any information related to the user's background or previous development projects."
+    }
+   ],
+   "score": 0.0,
+   "judgment": "FAIL",
+   "retrieved_count": 10
+  }
+ ]
+}
