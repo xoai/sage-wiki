@@ -376,9 +376,21 @@
       "idempotentHint": false,
       "openWorldHint": true
     },
-    "description": "Search the wiki using hybrid BM25 + vector search. Returns ranked results.",
+    "description": "Search the wiki with hybrid retrieval: BM25 + vector over documents and chunks, fused with ontology-graph proximity. Returns ranked results with per-channel ranks and source dates. LLM expansion and reranking are off unless requested.",
     "inputSchema": {
       "properties": {
+        "boost_tags": {
+          "description": "Comma-separated tags to rank higher (+3% each, cap 15%) WITHOUT excluding untagged results",
+          "type": "string"
+        },
+        "channels": {
+          "description": "Comma-separated channel subset: bm25, vector, graph (default: all)",
+          "type": "string"
+        },
+        "expand": {
+          "description": "LLM query expansion (default false)",
+          "type": "boolean"
+        },
         "limit": {
           "description": "Maximum results (default 10)",
           "type": "number"
@@ -386,6 +398,10 @@
         "query": {
           "description": "Search query",
           "type": "string"
+        },
+        "rerank": {
+          "description": "LLM reranking (default false)",
+          "type": "boolean"
         },
         "tags": {
           "description": "Comma-separated tag filter",

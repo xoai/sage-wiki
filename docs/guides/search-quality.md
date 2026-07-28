@@ -1,6 +1,8 @@
 # Enhanced Search & Query Quality
 
-sage-wiki v0.1.3 introduces an enhanced search pipeline with chunk-level indexing, LLM query expansion, and LLM re-ranking. These features significantly improve retrieval quality for natural language Q&A queries.
+sage-wiki's search pipeline fuses document- and chunk-level lexical and vector
+retrieval with the ontology graph, then optionally expands and re-ranks with an
+LLM. This guide covers how it works and every knob that shapes it.
 
 ## How it works
 
@@ -10,20 +12,27 @@ The enhanced pipeline replaces the document-level search with a multi-stage proc
 User Query
   -> Strong-signal probe (fast BM25, skip expansion if confident)
   -> Query expansion (LLM: keyword + semantic + hypothetical answer variants)
-  -> Parallel search:
-     +-- BM25 on original + keyword variants (chunk-level FTS5)
-     +-- Vector search on semantic/hyde variants (chunk-level, brute-force cosine)
-  -> RRF fusion (reciprocal rank fusion)
-  -> Deduplicate to document level (best chunk per doc)
+  -> Parallel legs, per query variant:
+     +-- BM25 chunk-level FTS5   +  BM25 document-level FTS5
+     +-- Vector chunk-level      +  Vector document-level (cosine)
+     +-- Graph proximity (ontology, <=2 hops, per-relation weights)
+  -> Weighted RRF fusion, document-keyed: w_channel / (60 + rank)
+  -> Hydration (legs that returned an ID but no text fetch it)
   -> LLM re-ranking (top-15 candidates scored for relevance)
-  -> Position-aware blending (retrieval + rerank scores)
-  -> Graph-expanded context (4-signal relevance: relations, sources, neighbors, types)
-  -> Read full articles + ontology traversal (depth-1 fallback)
-  -> Token budget control (greedy fill up to context_max_tokens)
-  -> LLM synthesis
+  -> Normalized [0,1] blending (retrieval + rerank), behind a coverage gate
+  -> Tag filter/boost -> recency tie-breaker -> trust rule -> limit
+  -> [Q&A only] graph-expanded context, article reads, token budget, synthesis
 ```
 
-The original document-level pipeline remains as a fallback when chunk data is unavailable. Graph expansion works on both paths.
+Fusion is document-keyed from the start: a document hit by several legs sums
+their contributions, so agreement across granularities (the same document
+matching both as a whole and in one passage) ranks above a single strong hit.
+Every channel weight comes from config, and a query can narrow the channel set
+per call (see **Per-call ablation** below).
+
+The document-level-only pipeline remains available as `search.pipeline: legacy`
+for rollback. Graph *context expansion* for Q&A works on both paths; the graph
+*ranking channel* is part of the unified pipeline only.
 
 ## Key features
 
@@ -116,16 +125,31 @@ search:
 
 ## Configuration
 
-All features are enabled by default with zero config. Add these to `config.yaml` to customize:
+All retrieval features are enabled by default with zero config. The two **LLM
+stages are the exception**: `sage-wiki query` runs expansion and re-ranking by
+default, while the search surfaces (MCP `wiki_search`, `sage-wiki search`,
+`/api/search`, the TUI) leave them **off** and opt in per call — they cost an
+LLM round trip per query, which a search call should not spend without being
+asked. `search.query_expansion` and `search.rerank` therefore govern
+`sage-wiki query` only.
+
+Add these to `config.yaml` to customize:
 
 ```yaml
 search:
-  hybrid_weight_bm25: 0.7    # BM25 vs vector weight (doc-level fallback)
-  hybrid_weight_vector: 0.3
+  hybrid_weight_bm25: 0.7     # lexical channel weight in the fused ranking (all surfaces)
+  hybrid_weight_vector: 0.3   # vector channel weight
+  hybrid_weight_graph: 0.2    # ontology-graph channel weight
+  graph_relation_weights:     # per-relation traversal weights (0 excludes a relation)
+    contradicts: 1.1          # built-in defaults: contradicts 1.1, cites 0.7, others 1.0
+  pipeline: unified           # "unified" (default) or "legacy" (doc-level rollback)
   default_limit: 10
-  query_expansion: true       # LLM query expansion (default: true)
-  rerank: true                # LLM re-ranking (default: true)
+  query_expansion: true       # LLM query expansion (sage-wiki query only; default: true)
+  rerank: true                # LLM re-ranking (sage-wiki query only; default: true)
+  rerank_min_coverage: 0.5    # 0.0-1.0 — min fraction of candidates the LLM must score
+                              # for the rerank blend to apply; below it, RRF order stands
   chunk_size: 800             # tokens per chunk for indexing (100-5000, default: 800)
+  chunk_overlap_tokens: 0     # tokens repeated from the previous chunk (default: 0; recommended opt-in: 80)
   graph_expansion: true       # graph-based context expansion (default: true)
   graph_max_expand: 10        # max articles added via graph
   graph_depth: 2              # ontology traversal depth (1-5)
@@ -136,7 +160,10 @@ search:
   weight_type_affinity: 1.0
 ```
 
-### Disabling features
+### Disabling the Q&A LLM stages
+
+These affect `sage-wiki query` only — the search surfaces never run the LLM
+stages unless a call asks for them.
 
 ```yaml
 # Disable expansion (saves ~1 LLM call per query)
@@ -183,6 +210,121 @@ search:
   chunk_size: 600   # smaller chunks for technical docs
 ```
 
+### Chunk overlap
+
+A fact that straddles a chunk boundary is easy to lose: neither chunk
+contains the whole of it, so neither ranks for a query that asks about it.
+`chunk_overlap_tokens` repeats the tail of each chunk at the head of the next,
+so boundary-straddling facts are retrievable from either side.
+
+```yaml
+search:
+  chunk_size: 800
+  chunk_overlap_tokens: 80   # ~10% of the chunk — the recommended opt-in
+```
+
+The default is **0** (no overlap — byte-identical to previous versions, so
+upgrading never re-chunks an existing index). The maximum is half of
+`chunk_size`; beyond that a chunk is mostly duplicated text, which grows the
+index without adding recall.
+
+**Changing this value requires a reindex, and the two are one step:**
+
+```bash
+# 1. edit config.yaml   2. rebuild the chunk index
+sage-wiki reindex
+```
+
+`reindex` re-chunks every document that carries chunks — compiled articles in
+`concepts/`, `summaries/` and `outputs/`, plus raw sources indexed as
+`src:<path>` — with the current `chunk_size` and `chunk_overlap_tokens`,
+replacing the chunk FTS rows and chunk vectors. No LLM article writing
+happens; the only API cost is re-embedding the new chunks.
+
+Re-chunking changes chunk IDs, so the old chunk vectors cannot be carried
+over. Without a working embedding provider the command stops rather than
+leave the chunk-vector leg empty; `--drop-chunk-vectors` rebuilds the text
+index anyway and leaves chunk-level vector search off until the next
+`sage-wiki compile --re-embed`.
+
+Compiling normally after a config change does NOT re-chunk documents that did
+not change — the index would mix the old and new chunkings until every
+document happened to be rewritten. Change the value and reindex together.
+
+### Recency
+
+A document with a known origin date receives a small ranking bonus:
+
+```
+bonus = 0.05 x 2^(-age_days / 14)
+```
+
+At most 5% of a normalized score, halving every two weeks — a tie-breaker
+between comparably relevant documents, never a driver. Undated documents get
+nothing at all: there is no fallback timestamp, because a made-up date would
+rank a document it knows nothing about above one it does.
+
+The origin date is resolved **once, at index time**, in this order:
+
+1. the source's YAML frontmatter `date:` (`date: 2024-03-01`, or any RFC-3339
+   / `2006-01-02` / `2006/01/02` form — timezone optional),
+2. the source file's modification time,
+3. the manifest's first-seen time for that source.
+
+So `date:` in a source's frontmatter is a **ranking input you control**: set it
+when a file's mtime lies about the content's age (a re-exported note, a
+restored backup, a bulk import). Q&A outputs stamp their creation time. Dates
+land on both the compiled article and the raw-source entry, and are returned
+with results (`SourceDate` in CLI/MCP JSON, `source_date` on the web API).
+
+Existing vaults gain dates without a recompile: the `entry_dates` sidecar
+backfills on the next compile, and until then those documents simply receive
+no recency bonus.
+
+### Per-call ablation
+
+Every search surface can narrow the channel set for a single call, without
+touching config — useful for diagnosing whether a bad ranking came from the
+lexical, vector, or graph side:
+
+```bash
+sage-wiki search "quantum error correction" --tags physics           # hard filter: only tagged docs
+sage-wiki search "quantum error correction" --boost-tags physics     # soft boost: tagged docs rank higher
+sage-wiki search "quantum error correction" --channels bm25          # lexical only
+sage-wiki search "quantum error correction" --channels bm25,vector   # no graph
+sage-wiki search "quantum error correction" --expand --rerank        # opt into the LLM stages
+```
+
+`--tags` and `--boost-tags` are different tools: the filter excludes
+everything untagged, while the boost adds +3% per matching tag (capped at
+15%) and changes only the order. MCP `wiki_search` takes all of these as
+tool arguments (`tags`, `boost_tags`, `channels`, `expand`, `rerank`). An unknown channel name is an error, not a silent
+ignore. `--expand`/`--rerank` need a usable LLM client; if the call cannot
+build one it fails rather than quietly searching without them.
+
+Note that `hybrid_weight_graph: 0` does **not** disable the graph channel —
+`0` means "use the default" for every weight key, since an omitted key is
+also zero. Use `--channels bm25,vector` (or `channels` on MCP) to turn the
+graph channel off for a call.
+
+### Corpus-adaptive stopwording
+
+Above **100 documents**, a query term that prefix-matches more than **20%** of
+documents is dropped from the lexical query: on a large corpus such a term
+carries no discriminating signal and only dilutes BM25. If every term would be
+pruned, the first three are kept, so a query of nothing but common words still
+returns something. Both the document and chunk legs prune on identical
+document-ratio semantics, so the two legs never disagree about which terms
+matter.
+
+### Title-proxy column weights
+
+Entry matching weights the `id` and `article_path` columns **3x** over body
+content (tags 1.5x). A concept's slug and its article path are title proxies,
+so a query naming a concept ranks that concept's own article above articles
+that merely mention it. Postgres applies the same weighting through
+`setweight` (A: id + path, B: tags, D: content).
+
 ## Cost
 
 **With local models (Ollama): free.** Chunk-level indexing and query expansion run locally at no cost. Re-ranking is auto-disabled for local models (see above), so the enhanced pipeline adds zero API cost. You still get chunk-level BM25+vector search and LLM query expansion — just no re-ranking.
@@ -209,7 +351,7 @@ sage-wiki's enhanced search pipeline was inspired by analyzing [qmd](https://git
 | **Query expansion** | LLM-based (lex/vec/hyde) | LLM-based |
 | **Re-ranking** | LLM batch scoring + position-aware blending | Cross-encoder |
 | **Vector search** | Brute-force cosine (cross-lingual safe) | Brute-force |
-| **Hybrid search** | RRF fusion (BM25 + vector) | Vector-only |
+| **Hybrid search** | Weighted RRF over 3 channels (BM25 + vector + ontology graph), at both document and chunk granularity | Vector-only |
 | **Strong-signal skip** | Yes (normalized BM25 threshold) | No |
 | **Graph context** | 4-signal expansion (relations, sources, neighbors, types) + 1-hop fallback | No graph |
 | **Model dependency** | Any provider (cloud or local via Ollama) | Local GGUF models |
@@ -235,4 +377,21 @@ The enhanced pipeline degrades gracefully:
 
 ## Migration
 
-Upgrading to v0.1.3 adds chunk tables automatically (`migrationV3`). No manual steps needed. On the first `sage-wiki compile` after upgrading, existing articles are chunk-indexed via backfill — this runs once and is transparent.
+Schema migrations apply automatically on the first writer command after an
+upgrade; no manual steps are needed.
+
+- **Chunk tables** (SQLite `migrationV3`): added when chunk-level indexing
+  shipped. On the first `sage-wiki compile` after upgrading, existing articles
+  are chunk-indexed via backfill — once, and transparently.
+- **Origin dates** (SQLite `migrationV13`, Postgres `v7`): adds the
+  `entry_dates` sidecar behind the recency signal. Nothing is re-indexed;
+  documents gain dates as they are next compiled, and undated documents simply
+  receive no recency bonus.
+- **Weighted search vector** (Postgres `v6`): rebuilds the generated `tsv`
+  column with `setweight`, so Postgres ranks id/path above body content like
+  SQLite does. This rewrites the `entries` table under an exclusive lock — on a
+  large vault, run the first writer command in a maintenance window.
+
+Changing `search.chunk_size` or `search.chunk_overlap_tokens` is the one
+case that is **not** automatic: run `sage-wiki reindex` (see
+[Chunk overlap](#chunk-overlap)).

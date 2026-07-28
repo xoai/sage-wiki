@@ -1,14 +1,20 @@
 package dashboard
 
 import (
+	"context"
+
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-		"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/memory"
+	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/search"
+	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/tui"
 	"github.com/xoai/sage-wiki/internal/tui/browse"
 	"github.com/xoai/sage-wiki/internal/tui/compile"
@@ -46,9 +52,74 @@ type Model struct {
 // New creates the dashboard with all tabs.
 func New(projectDir string, cfg *config.Config, db store.DBHandle) Model {
 	memStore := memory.NewStore(db)
-	vecStore := vectors.NewStore(db)
-	searcher := hybrid.NewSearcher(memStore, vecStore)
+	vecStore := vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled()))
 	sourcePaths := cfg.ResolveSources(projectDir)
+
+	// Pipeline-aware search seam (M5): unified by default, legacy behind
+	// the config switch. The TUI was the fifth entry point the spec's
+	// fork table missed (Gate-3 F-041) — it previously ran BM25-only
+	// with default weights.
+	var searchFn searchTab.SearchFn
+	if cfg.Search.PipelineOrDefault() == "unified" {
+		mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
+		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+		trustMode := cfg.Trust.IncludeOutputsMode()
+		var trustStore *trust.Store
+		if trustMode == "verified" {
+			trustStore = trust.NewStore(db)
+		}
+		deps := search.Deps{
+			Mem:                  memStore,
+			Chunks:               memory.NewChunkStore(db),
+			Vec:                  vecStore,
+			Embedder:             embed.NewFromConfig(cfg), // without it search.Run runs no vector leg at all
+			BM25Weight:           cfg.Search.HybridWeightBM25,
+			VectorWeight:         cfg.Search.HybridWeightVector,
+			Ont:                  ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes)),
+			GraphWeight:          cfg.Search.HybridWeightGraph,
+			GraphRelationWeights: cfg.Search.GraphRelationWeights,
+			IncludeDoc:           trust.IncludePredicate(trustMode, trustStore),
+		}
+		searchFn = func(query string, limit int) ([]search.DocResult, error) {
+			// The TUI has no per-keystroke context; the stage timeouts inside
+			// Run are the bound here.
+			resp, err := search.Run(context.Background(), deps, search.Request{Query: query, Limit: limit, Granularity: search.Docs})
+			if err != nil {
+				return nil, err
+			}
+			return search.DocResults(resp.Results), nil
+		}
+	} else {
+		searcher := hybrid.NewSearcher(memStore, vecStore)
+		// Trust filtering applies here too: the pipeline pin rolls back
+		// ranking, not the rule about which documents may appear.
+		trustMode := cfg.Trust.IncludeOutputsMode()
+		var trustStore *trust.Store
+		if trustMode == "verified" {
+			trustStore = trust.NewStore(db)
+		}
+		includeDoc := trust.IncludePredicate(trustMode, trustStore)
+		searchFn = func(query string, limit int) ([]search.DocResult, error) {
+			legacy, err := searcher.Search(hybrid.SearchOpts{
+				Query:        query,
+				Limit:        limit,
+				BM25Weight:   cfg.Search.HybridWeightBM25,
+				VectorWeight: cfg.Search.HybridWeightVector,
+			}, nil)
+			if err != nil {
+				return nil, err
+			}
+			out := make([]search.DocResult, 0, len(legacy))
+			for _, r := range legacy {
+				if !includeDoc(r.ID) {
+					continue
+				}
+				out = append(out, search.DocResult{ID: r.ID, Content: r.Content, Tags: r.Tags,
+					ArticlePath: r.ArticlePath, BM25Rank: r.BM25Rank, VectorRank: r.VectorRank, RRFScore: r.RRFScore})
+			}
+			return out, nil
+		}
+	}
 
 	sb := components.NewStatusBar(80)
 	sb.SetHints([]components.KeyHint{
@@ -60,7 +131,7 @@ func New(projectDir string, cfg *config.Config, db store.DBHandle) Model {
 	return Model{
 		activeTab: tabBrowse,
 		browse:    browse.New(projectDir, cfg.Output),
-		search:    searchTab.New(projectDir, cfg.Output, searcher, ""),
+		search:    searchTab.New(projectDir, cfg.Output, searchFn, ""),
 		query:     queryTab.New(projectDir, db),
 		compile:   compile.New(projectDir, cfg.Output, sourcePaths, 2),
 		statusBar: sb,

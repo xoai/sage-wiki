@@ -32,9 +32,11 @@ import (
 	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/query"
 	"github.com/xoai/sage-wiki/internal/scribe"
+	"github.com/xoai/sage-wiki/internal/search"
 	"github.com/xoai/sage-wiki/internal/skill"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/storedial"
+	"github.com/xoai/sage-wiki/internal/trust"
 	tuidashboard "github.com/xoai/sage-wiki/internal/tui/dashboard"
 	"github.com/xoai/sage-wiki/internal/vectors"
 	"github.com/xoai/sage-wiki/internal/web"
@@ -190,6 +192,9 @@ func init() {
 	compileCmd.Flags().Bool("no-cache", false, "Disable prompt caching for this run")
 	compileCmd.Flags().Bool("prune", false, "Delete orphaned articles when their sole source is removed")
 
+	// Reindex flags
+	reindexCmd.Flags().Bool("drop-chunk-vectors", false, "Rebuild the text index without an embedder — chunk vectors are deleted, not rebuilt")
+
 	// Serve flags
 	serveCmd.Flags().String("transport", "stdio", "Transport: stdio or sse")
 	serveCmd.Flags().Int("port", 3333, "SSE/UI port")
@@ -205,13 +210,16 @@ func init() {
 
 	// Search flags
 	searchCmd.Flags().StringSlice("tags", nil, "Filter by tags")
+	searchCmd.Flags().StringSlice("boost-tags", nil, "Rank documents carrying these tags higher (+3% each, cap 15%) without excluding others")
 	searchCmd.Flags().Int("limit", 10, "Maximum results")
-	searchCmd.Flags().String("scope", "local", "Search scope: local, global, or all")
+	searchCmd.Flags().String("channels", "", "Comma-separated channel subset: bm25, vector, graph (default: all)")
+	searchCmd.Flags().Bool("expand", false, "LLM query expansion (default off)")
+	searchCmd.Flags().Bool("rerank", false, "LLM reranking (default off)")
 
 	// Query flags
 	queryCmd.Flags().String("scope", "local", "Query scope: local, global, or all")
 
-	rootCmd.AddCommand(initCmd, compileCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, scribeCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, sourceCmd, hubCmd, skillCmd, packCmd, versionCmd)
+	rootCmd.AddCommand(initCmd, compileCmd, reindexCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, scribeCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, sourceCmd, hubCmd, skillCmd, packCmd, versionCmd)
 
 	// Enables `sage-wiki --version` in addition to the `version` subcommand.
 	rootCmd.Version = version
@@ -690,6 +698,22 @@ func runLint(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// cliSearchOpts builds the hybrid search options for the CLI path. A nil
+// cfg (config-load failure) leaves the weights zero so hybrid.Search
+// applies its own defaults — the documented degrade, unchanged.
+func cliSearchOpts(cfg *config.Config, query string, tags []string, limit int) hybrid.SearchOpts {
+	opts := hybrid.SearchOpts{
+		Query: query,
+		Tags:  tags,
+		Limit: limit,
+	}
+	if cfg != nil {
+		opts.BM25Weight = cfg.Search.HybridWeightBM25
+		opts.VectorWeight = cfg.Search.HybridWeightVector
+	}
+	return opts
+}
+
 // P1-8: intentionally NOT adopted onto internal/app — runSearch tolerates
 // config-load failure (BM25-only degrade) and honors the global --config
 // flag via resolveConfigPath; both break under app.Open's strict shape.
@@ -698,6 +722,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
 	queryStr := strings.Join(args, " ")
 	tags, _ := cmd.Flags().GetStringSlice("tags")
+	boostTags, _ := cmd.Flags().GetStringSlice("boost-tags")
 	limit, _ := cmd.Flags().GetInt("limit")
 
 	// P2-1 skip-list: runSearch must tolerate config-load failure (P1-8
@@ -708,33 +733,165 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	}
 	defer db.Close()
 
+	// Config first: store construction needs the ANN setting, and the
+	// searcher needs the hybrid weights. Auto-discovery load failure
+	// degrades to BM25-only with hybrid's own weight defaults; an
+	// EXPLICIT --config that fails to load is a hard error — exit 0
+	// would mask a typo'd path (F-043).
+	cfg, cfgErr := config.Load(resolveConfigPath(dir))
+	if cfgErr != nil {
+		if configPath != "" {
+			return fmt.Errorf("explicit --config failed to load: %w", cfgErr)
+		}
+		fmt.Fprintf(os.Stderr, "warning: config load failed (%v): default fusion weights, ANN off, BM25-only\n", cfgErr)
+	}
+
 	memStore := memory.NewStore(db)
-	vecStore := vectors.NewStore(db)
+	var vecStore *vectors.Store
+	if cfgErr == nil {
+		vecStore = vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled()))
+		if cfg.Search.ANNEnabled() {
+			log.Debug("vector search: ANN (HNSW) index enabled") // F-044 observability
+		}
+	} else {
+		vecStore = vectors.NewStore(db)
+	}
+
+	var embedder embed.Embedder
+	if cfgErr == nil {
+		embedder = embed.NewFromConfig(cfg)
+	}
+
+	// Unified pipeline (ADR-036, M5) unless config pins legacy or the
+	// config failed to load (legacy is the only path without a config).
+	if cfgErr == nil && cfg.Search.PipelineOrDefault() == "unified" {
+		channelsFlag, _ := cmd.Flags().GetString("channels")
+		expand, _ := cmd.Flags().GetBool("expand")
+		rerank, _ := cmd.Flags().GetBool("rerank")
+		var channels []search.Channel
+		if channelsFlag != "" {
+			// Trim like the MCP adapter's splitTags — `--channels "bm25, vector"`
+			// must not be a hard error on one surface and fine on the other.
+			raw := strings.Split(channelsFlag, ",")
+			names := make([]string, 0, len(raw))
+			for _, c := range raw {
+				if c = strings.TrimSpace(c); c != "" {
+					names = append(names, c)
+				}
+			}
+			parsed, unknown := search.ParseChannels(names)
+			if len(unknown) > 0 {
+				return fmt.Errorf("unknown channels: %v (valid: bm25, vector, graph)", unknown)
+			}
+			channels = parsed
+		}
+		var client *llm.Client
+		if expand || rerank {
+			c, err := auth.NewLLMClient(cfg)
+			if err != nil {
+				return fmt.Errorf("--expand/--rerank need an LLM client: %w", err)
+			}
+			client = c
+		}
+		mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
+		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+		trustMode := cfg.Trust.IncludeOutputsMode()
+		var trustStore *trust.Store
+		if trustMode == "verified" {
+			trustStore = trust.NewStore(db)
+		}
+		resp, err := search.Run(cmd.Context(), search.Deps{
+			Mem:                  memStore,
+			Chunks:               memory.NewChunkStore(db),
+			Vec:                  vecStore,
+			Embedder:             embedder,
+			Client:               client,
+			Model:                cfg.Models.Query,
+			BM25Weight:           cfg.Search.HybridWeightBM25,
+			VectorWeight:         cfg.Search.HybridWeightVector,
+			Ont:                  ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes)),
+			GraphWeight:          cfg.Search.HybridWeightGraph,
+			GraphRelationWeights: cfg.Search.GraphRelationWeights,
+			IncludeDoc:           trust.IncludePredicate(trustMode, trustStore),
+		}, search.Request{
+			Query:             queryStr,
+			Limit:             limit,
+			Channels:          channels,
+			Expand:            expand,
+			Rerank:            rerank,
+			FilterTags:        tags,
+			Tags:              boostTags,
+			Granularity:       search.Docs,
+			RerankMinCoverage: cfg.Search.RerankMinCoverageOrDefault(),
+		})
+		if err != nil {
+			return err
+		}
+		docs := search.DocResults(resp.Results)
+		if outputFormat == "json" {
+			fmt.Println(cli.FormatJSON(true, docs, ""))
+			return nil
+		}
+		if len(docs) == 0 {
+			fmt.Println("No results found.")
+			return nil
+		}
+		for i, r := range docs {
+			fmt.Printf("%d. [%.4f] %s\n", i+1, r.FinalScore, r.ArticlePath)
+			content := r.Content
+			if len(content) > 120 {
+				content = content[:120] + "..."
+			}
+			fmt.Printf("   %s\n", content)
+			if len(r.Tags) > 0 {
+				fmt.Printf("   tags: %s\n", strings.Join(r.Tags, ", "))
+			}
+			fmt.Println()
+		}
+		return nil
+	}
+
+	// Legacy doc-level path (config pin or config-load degrade).
 	searcher := hybrid.NewSearcher(memStore, vecStore)
 
-	// Load config to get embed and search weight settings
-	cfg, cfgErr := config.Load(resolveConfigPath(dir))
-
 	var queryVec []float32
-	if cfgErr == nil {
-		embedder := embed.NewFromConfig(cfg)
-		if embedder != nil {
-			var embedErr error
-			queryVec, embedErr = embedder.Embed(queryStr)
-			if embedErr != nil {
-				fmt.Fprintf(os.Stderr, "warning: embed failed, using BM25-only: %v\n", embedErr)
-			}
+	if embedder != nil {
+		var embedErr error
+		queryVec, embedErr = embedder.Embed(queryStr)
+		if embedErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: embed failed, using BM25-only: %v\n", embedErr)
 		}
 	}
 
-	results, err := searcher.Search(hybrid.SearchOpts{
-		Query: queryStr,
-		Tags:  tags,
-		Limit: limit,
-	}, queryVec)
+	var optsCfg *config.Config
+	if cfgErr == nil {
+		optsCfg = cfg
+	}
+	results, err := searcher.Search(cliSearchOpts(optsCfg, queryStr, tags, limit), queryVec)
 	if err != nil {
 		return err
 	}
+
+	// Trust filtering is not part of the pipeline rollback: `pipeline:
+	// legacy` (or a config-load degrade) must not re-admit unverified
+	// `output:` docs. With no loadable config the conservative "false"
+	// mode applies, which is what an unconfigured project would get.
+	legacyMode := "false"
+	var legacyTrust *trust.Store
+	if cfgErr == nil {
+		legacyMode = cfg.Trust.IncludeOutputsMode()
+		if legacyMode == "verified" {
+			legacyTrust = trust.NewStore(db)
+		}
+	}
+	legacyInclude := trust.IncludePredicate(legacyMode, legacyTrust)
+	kept := results[:0]
+	for _, r := range results {
+		if legacyInclude(r.ID) {
+			kept = append(kept, r)
+		}
+	}
+	results = kept
 
 	if outputFormat == "json" {
 		fmt.Println(cli.FormatJSON(true, results, ""))

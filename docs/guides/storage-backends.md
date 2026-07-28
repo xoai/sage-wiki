@@ -45,6 +45,14 @@ On first writer open, sage-wiki runs its own migration set (V1: tables,
 database. Migrations are append-only; readers never migrate — a reader
 whose schema is behind fails with "run any writer command once."
 
+**Upgrade note (schema v6-v7).** v6 rebuilds the generated `entries.tsv`
+column so Postgres weights id/article_path above body content (`setweight`
+A/B/D), matching SQLite's BM25 column weights; v7 adds the `entry_dates`
+sidecar behind the recency signal. The v6 column rebuild rewrites the
+`entries` table under an `ACCESS EXCLUSIVE` lock — on a large vault, run the
+first writer command in a maintenance window, since readers fail with "run any
+writer command once" until it finishes.
+
 ## Switching an existing vault to postgres
 
 The database is a rebuildable index; **files are the truth**. There is no

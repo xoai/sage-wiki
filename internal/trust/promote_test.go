@@ -57,6 +57,19 @@ func TestPromoteOutputIndexes(t *testing.T) {
 	if entity.Name != "What is X?" {
 		t.Errorf("entity name = %q", entity.Name)
 	}
+
+	// F-062: the DEFAULT output path stamps the creation time as the
+	// origin date (ADR-039) — promoted outputs must never be dateless.
+	dates, err := memStore.GetSourceDates([]string{"output:test.md"})
+	if err != nil {
+		t.Fatalf("GetSourceDates: %v", err)
+	}
+	if dates["output:test.md"] <= 0 {
+		t.Error("promoted output has no source date — the trust path stamp is missing")
+	}
+	if got.CreatedAt.Unix() != dates["output:test.md"] {
+		t.Errorf("output date = %d, want CreatedAt %d", dates["output:test.md"], got.CreatedAt.Unix())
+	}
 }
 
 func TestDemoteOutputDeindexes(t *testing.T) {

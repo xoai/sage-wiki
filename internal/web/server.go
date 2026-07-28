@@ -21,14 +21,18 @@ import (
 	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
+	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/pathsafe"
 	"github.com/xoai/sage-wiki/internal/query"
+	"github.com/xoai/sage-wiki/internal/search"
 	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/internal/trust"
 )
 
 // WebServer serves the web UI and REST API.
@@ -40,6 +44,7 @@ type WebServer struct {
 	vec          store.VectorStore
 	ont          store.OntologyStore
 	searcher     *hybrid.Searcher
+	embedder     embed.Embedder
 	cfg          *config.Config
 	wsClients    map[chan string]bool
 	wsMu         sync.Mutex
@@ -80,6 +85,7 @@ func NewWebServer(projectDir string, progress ...*compiler.Progress) (*WebServer
 		vec:        a.Vec,
 		ont:        a.Ont,
 		searcher:   a.Searcher,
+		embedder:   a.Embedder(),
 		cfg:        a.Config,
 		wsClients:  make(map[chan string]bool),
 	}
@@ -631,37 +637,110 @@ func (s *WebServer) handleSearch(w http.ResponseWriter, r *http.Request) {
 		tags = strings.Split(t, ",")
 	}
 
-	results, err := s.searcher.Search(hybrid.SearchOpts{
-		Query: query,
-		Tags:  tags,
-		Limit: limit,
-	}, nil)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	type webResult struct {
+		id, content, articlePath string
+		score                    float64
+		sourceDate               int64
+	}
+	var results []webResult
+
+	// The trust rule applies on both branches — `search.pipeline: legacy`
+	// rolls back ranking, never the rule about which documents may appear.
+	trustMode := s.cfg.Trust.IncludeOutputsMode()
+	var trustStore *trust.Store
+	if trustMode == "verified" {
+		trustStore = trust.NewStore(s.db)
+	}
+	includeDoc := trust.IncludePredicate(trustMode, trustStore)
+
+	if s.cfg.Search.PipelineOrDefault() == "unified" {
+		// Unified pipeline (ADR-036, M5). LLM stages stay off on the
+		// web surface.
+		var chunkStore store.ChunkStore
+		if s.backend != nil {
+			chunkStore = s.backend.Chunks()
+		} else {
+			chunkStore = memory.NewChunkStore(s.db)
+		}
+		resp, err := search.Run(r.Context(), search.Deps{
+			Mem:                  s.mem,
+			Chunks:               chunkStore,
+			Vec:                  s.vec,
+			Embedder:             s.embedder,
+			BM25Weight:           s.cfg.Search.HybridWeightBM25,
+			VectorWeight:         s.cfg.Search.HybridWeightVector,
+			Ont:                  s.ont,
+			GraphWeight:          s.cfg.Search.HybridWeightGraph,
+			GraphRelationWeights: s.cfg.Search.GraphRelationWeights,
+			IncludeDoc:           includeDoc,
+		}, search.Request{
+			Query:       query,
+			Limit:       limit,
+			FilterTags:  tags,
+			Granularity: search.Docs,
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		for _, r := range resp.Results {
+			results = append(results, webResult{id: r.DocID, content: r.ChunkText,
+				articlePath: r.ArticlePath, score: r.FinalScore, sourceDate: r.SourceDate})
+		}
+	} else {
+		// Legacy doc-level path (config pin).
+		var queryVec []float32
+		if s.embedder != nil {
+			v, embedErr := s.embedder.Embed(query)
+			if embedErr != nil {
+				log.Warn("web search embed failed, falling back to BM25-only", "error", embedErr)
+			} else {
+				queryVec = v
+			}
+		}
+		legacy, err := s.searcher.Search(hybrid.SearchOpts{
+			Query:        query,
+			Tags:         tags,
+			Limit:        limit,
+			BM25Weight:   s.cfg.Search.HybridWeightBM25,
+			VectorWeight: s.cfg.Search.HybridWeightVector,
+		}, queryVec)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		for _, r := range legacy {
+			if !includeDoc(r.ID) {
+				continue
+			}
+			results = append(results, webResult{id: r.ID, content: r.Content,
+				articlePath: r.ArticlePath, score: r.RRFScore})
+		}
 	}
 
 	type searchHit struct {
-		ID      string  `json:"id"`
-		Path    string  `json:"path"`
-		Snippet string  `json:"snippet"`
-		Score   float64 `json:"score"`
+		ID         string  `json:"id"`
+		Path       string  `json:"path"`
+		Snippet    string  `json:"snippet"`
+		Score      float64 `json:"score"`
+		SourceDate int64   `json:"source_date,omitempty"`
 	}
 
 	var hits []searchHit
 	outputPrefix := s.cfg.Output + "/"
 	for _, r := range results {
-		snippet := r.Content
+		snippet := r.content
 		if len(snippet) > 200 {
 			snippet = snippet[:200] + "..."
 		}
 		// Strip output dir prefix so paths are relative (e.g. "summaries/foo.md" not "_wiki/summaries/foo.md")
-		articlePath := strings.TrimPrefix(r.ArticlePath, outputPrefix)
+		articlePath := strings.TrimPrefix(r.articlePath, outputPrefix)
 		hits = append(hits, searchHit{
-			ID:      r.ID,
-			Path:    articlePath,
-			Snippet: snippet,
-			Score:   r.RRFScore,
+			ID:         r.id,
+			Path:       articlePath,
+			Snippet:    snippet,
+			SourceDate: r.sourceDate,
+			Score:      r.score,
 		})
 	}
 

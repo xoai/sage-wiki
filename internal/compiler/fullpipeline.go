@@ -14,6 +14,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/sourcedate"
 	"github.com/xoai/sage-wiki/internal/store"
 )
 
@@ -197,6 +198,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 			Tags:        []string{TypeForFile(opts.ProjectDir, sr.SourcePath, cfg)},
 			ArticlePath: sr.SummaryPath,
 		})
+		sourcedate.RecordForSource(opts.MemStore, opts.ProjectDir, sr.SourcePath, mf.Sources[sr.SourcePath].AddedAt)
 
 		// Generate embedding
 		if opts.Embedder != nil {
@@ -373,6 +375,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		ArticleFields:      cfg.Compiler.ArticleFields,
 		RelationPatterns:   relPatterns,
 		ChunkSize:          cfg.Search.ChunkSizeOrDefault(),
+		ChunkOverlap:       cfg.Search.ChunkOverlapOrDefault(),
 		SplitThreshold:     cfg.Compiler.SplitThreshold,
 		Language:           cfg.Language,
 		Backpressure:       opts.Backpressure,

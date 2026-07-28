@@ -7,7 +7,7 @@ import (
 )
 
 // currentSchemaVersion tracks len(schemaMigrations).
-const currentSchemaVersion = 5
+const currentSchemaVersion = 7
 
 // schemaMigrations is the append-only Postgres V-series. Each entry is ONE
 // statement per Exec (pgx stdlib rejects multi-statement prepared calls).
@@ -285,6 +285,36 @@ var schemaMigrations = [][]string{
 		`CREATE INDEX IF NOT EXISTS idx_derived_target ON derived_relations(target_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_derived_alias  ON derived_relations(alias_id)`,
 		`INSERT INTO schema_version (version) SELECT 5 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = 5)`,
+	},
+	// v6 — weighted entries tsvector (spec §2.5, 20260728-search-upgrade
+	// T2.5). The generated column is REBUILT with setweight: A = id +
+	// article_path (title proxies), B = tags, D = content — ts_rank's
+	// default weight vector {D:0.1, C:0.2, B:0.4, A:1.0} then boosts the
+	// same fields sqlite boosts via bm25(entries, 3.0, 1.0, 1.5, 3.0)
+	// (ratios differ; direction and test contract match — V-M2e).
+	//
+	// Re-run tolerance: DROP IF EXISTS + re-ADD converge on the same
+	// definition; the index re-creates IF NOT EXISTS. Dropping a
+	// generated column loses no data (it is derived).
+	{
+		`ALTER TABLE entries DROP COLUMN IF EXISTS tsv`,
+		`ALTER TABLE entries ADD COLUMN tsv TSVECTOR GENERATED ALWAYS AS (
+			setweight(to_tsvector('sage_fts', coalesce(id,'') || ' ' || coalesce(article_path,'')), 'A') ||
+			setweight(to_tsvector('sage_fts', coalesce(tags,'')), 'B') ||
+			setweight(to_tsvector('sage_fts', coalesce(content,'')), 'D')
+		) STORED`,
+		`CREATE INDEX IF NOT EXISTS idx_entries_tsv ON entries USING GIN (tsv)`,
+		`INSERT INTO schema_version (version) SELECT 6 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = 6)`,
+	},
+	// v7 — entry_dates sidecar (sqlite twin: migrationV13; ADR-039).
+	// source_date is a unix timestamp meaning "when the knowledge
+	// originated" — never a row/compile timestamp. Missing row = no date.
+	{
+		`CREATE TABLE IF NOT EXISTS entry_dates (
+			id          TEXT PRIMARY KEY,
+			source_date BIGINT NOT NULL
+		)`,
+		`INSERT INTO schema_version (version) SELECT 7 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = 7)`,
 	},
 }
 

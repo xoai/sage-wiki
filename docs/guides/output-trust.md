@@ -57,6 +57,14 @@ trust:
 The default is `"false"` -- the safest option. Set to `"verified"` when
 you want trusted outputs to contribute to future queries.
 
+**Where the rule applies.** `include_outputs` governs every surface that
+returns documents: `sage-wiki query`, MCP `wiki_search`, `sage-wiki search`,
+the web `/api/search`, the TUI search tab, and `sage-wiki hub search`. It is a
+property of the wiki, not of the retrieval pipeline, so `search.pipeline:
+legacy` (the ranking rollback) does not change it. Every surface applies the
+same rule: non-output documents always pass; `output:` documents pass only as
+the mode allows.
+
 ### Thresholds
 
 **consensus_threshold** -- How many independent confirmations are needed

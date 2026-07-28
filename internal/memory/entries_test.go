@@ -144,9 +144,9 @@ func TestBuildFTSQuery(t *testing.T) {
 		{"is are", `"is"* OR "are"*`}, // all stopwords: use them anyway
 	}
 	for _, tt := range tests {
-		got := buildFTSQuery(tt.input)
+		got := formatFTSTerms(BuildFTSTerms(tt.input))
 		if got != tt.expected {
-			t.Errorf("buildFTSQuery(%q) = %q, want %q", tt.input, got, tt.expected)
+			t.Errorf("formatFTSTerms(BuildFTSTerms(%q) = %q, want %q", tt.input, got, tt.expected)
 		}
 	}
 }
@@ -159,12 +159,12 @@ func TestSanitizeFTSPreservesCJK(t *testing.T) {
 		{"重大资产重组", "重大资产重组"},
 		{"hello世界", "hello世界"},
 		{"注意力机制", "注意力机制"},
-		{"トランスフォーマー", "トランスフォーマー"},       // katakana
-		{"ひらがな", "ひらがな"},                       // hiragana
-		{"변환기", "변환기"},                         // hangul
-		{"𠀀古字", "𠀀古字"},                         // CJK Extension B (U+20000+)
-		{"test*注入\"attack", "test注入attack"},     // strips FTS operators, keeps CJK
-		{"「引号」标点", "引号标点"},                     // strips CJK punctuation U+300x
+		{"トランスフォーマー", "トランスフォーマー"},          // katakana
+		{"ひらがな", "ひらがな"},                    // hiragana
+		{"변환기", "변환기"},                      // hangul
+		{"𠀀古字", "𠀀古字"},                      // CJK Extension B (U+20000+)
+		{"test*注入\"attack", "test注入attack"}, // strips FTS operators, keeps CJK
+		{"「引号」标点", "引号标点"},                  // strips CJK punctuation U+300x
 	}
 	for _, tt := range tests {
 		got := SanitizeFTS(tt.input)
@@ -184,9 +184,9 @@ func TestBuildFTSQueryCJK(t *testing.T) {
 		{"transformer 注意力", `"transformer"* OR "注意力"*`},
 	}
 	for _, tt := range tests {
-		got := buildFTSQuery(tt.input)
+		got := formatFTSTerms(BuildFTSTerms(tt.input))
 		if got != tt.expected {
-			t.Errorf("buildFTSQuery(%q) = %q, want %q", tt.input, got, tt.expected)
+			t.Errorf("formatFTSTerms(BuildFTSTerms(%q) = %q, want %q", tt.input, got, tt.expected)
 		}
 	}
 }
@@ -228,10 +228,10 @@ func TestBuildFTSQueryInjection(t *testing.T) {
 		{`{col1 col2}: test`},
 	}
 	for _, tt := range tests {
-		got := buildFTSQuery(tt.input)
+		got := formatFTSTerms(BuildFTSTerms(tt.input))
 		// Should not contain raw FTS5 operators
 		if strings.Contains(got, "NEAR") || strings.Contains(got, "NOT ") || strings.Contains(got, "{") || strings.Contains(got, "tags:") {
-			t.Errorf("buildFTSQuery(%q) contains FTS5 operator: %q", tt.input, got)
+			t.Errorf("formatFTSTerms(BuildFTSTerms(%q) contains FTS5 operator: %q", tt.input, got)
 		}
 	}
 }

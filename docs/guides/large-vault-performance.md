@@ -138,6 +138,14 @@ At very large chunk counts, ANN vector search (HNSW, opt-in) trades exact
 search for speed — it is a search-accuracy decision first, so it lives in
 [search-quality.md](search-quality.md#ann-vector-search-opt-in).
 
+**Corpus-adaptive stopwording (automatic, above 100 documents).** A query term
+that prefix-matches more than 20% of documents is dropped from the lexical
+query: past a certain corpus size such a term carries no discriminating signal
+and only dilutes BM25. If every term would be pruned, the first three are kept,
+so a query of nothing but common words still returns results. Both the
+document and chunk legs prune the same term set, so the two never disagree
+about which terms matter. Nothing to configure — the thresholds are fixed.
+
 ## Compile-on-Demand
 
 The wiki grows organically around topics you actually query. When you

@@ -27,7 +27,7 @@ func defaultPassHooks() passHooks {
 		},
 		indexTier1: func(projectDir string, items []CompileItem, cr *compileRun) (int, int) {
 			return indexAndEmbedSources(projectDir, items, cr.memStore, cr.vecStore, cr.embedder,
-				cr.itemStore, cr.bp, cr.chunkStore, cr.cfg.Search.ChunkSizeOrDefault(), cr.db, cr.exOpts...)
+				cr.itemStore, cr.bp, cr.chunkStore, cr.cfg.Search.ChunkSizeOrDefault(), cr.cfg.Search.ChunkOverlapOrDefault(), cr.db, cr.exOpts...)
 		},
 		fullPipeline: runFullPipeline,
 	}

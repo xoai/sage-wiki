@@ -3,7 +3,6 @@ package postgres
 import (
 	"database/sql"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/xoai/sage-wiki/internal/store"
@@ -42,7 +41,13 @@ func (s *chunkStore) DeleteDocChunks(tx *sql.Tx, docID string) error {
 
 func (s *chunkStore) SearchChunks(query string, limit int) ([]store.ChunkResult, error) {
 	limit = normLimit(limit, 20)
-	terms := queryTerms(query)
+	// Probes the DOCUMENT corpus, matching the sqlite twin: identical
+	// doc-ratio semantics across both fusion legs by construction, and a
+	// far cheaper probe than counting distinct docs among chunk rows.
+	terms := s.b.dfPruneTerms(
+		"SELECT count(*) FROM entries",
+		"SELECT count(*) FROM entries WHERE tsv @@ to_tsquery('sage_fts', $1)",
+		queryTerms(query))
 	if len(terms) == 0 {
 		return nil, nil
 	}
@@ -58,45 +63,38 @@ func (s *chunkStore) SearchChunks(query string, limit int) ([]store.ChunkResult,
 	return s.scanChunkResults(sqlText, args...)
 }
 
-func (s *chunkStore) SearchChunksMultiQuery(queries []string, limit int) ([]store.ChunkResult, error) {
-	if len(queries) == 0 {
-		return nil, nil // memory/chunks.go:131-133 parity
+// GetChunksMeta returns heading and content for the given chunk IDs —
+// the pg twin of the sqlite hydration read. Missing IDs are absent.
+func (s *chunkStore) GetChunksMeta(ids []string) (map[string]store.ChunkEntry, error) {
+	if len(ids) == 0 {
+		return map[string]store.ChunkEntry{}, nil
 	}
-	limit = normLimit(limit, 20)
-	// Single variant returns raw BM25 scores (memory/chunks.go:134 parity —
-	// no RRF rescaling for the common single-query case).
-	if len(queries) == 1 {
-		return s.SearchChunks(queries[0], limit)
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
 	}
-	// RRF merge parity with sqlite (chunks.go:138): run each query, fuse by
-	// reciprocal rank in Go — the DB-side queries are independent.
-	const rrfK = 60.0
-	scores := map[string]float64{}
-	var byID map[string]store.ChunkResult = map[string]store.ChunkResult{}
-	for _, q := range queries {
-		res, err := s.SearchChunks(q, limit)
-		if err != nil {
-			return nil, err
+	rows, err := s.b.pool.Query(
+		"SELECT chunk_id, chunk_index, heading, content FROM chunks_meta WHERE chunk_id IN ("+strings.Join(placeholders, ",")+")",
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("pg chunks.GetChunksMeta: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]store.ChunkEntry, len(ids))
+	for rows.Next() {
+		var c store.ChunkEntry
+		var heading, content sql.NullString
+		if err := rows.Scan(&c.ChunkID, &c.ChunkIndex, &heading, &content); err != nil {
+			return nil, fmt.Errorf("pg chunks.GetChunksMeta scan: %w", err)
 		}
-		for i, r := range res {
-			scores[r.ChunkID] += 1.0 / (rrfK + float64(i+1))
-			byID[r.ChunkID] = r
-		}
+		c.Heading, c.Content = heading.String, content.String
+		out[c.ChunkID] = c
 	}
-	out := make([]store.ChunkResult, 0, len(scores))
-	for id := range scores {
-		r := byID[id]
-		r.BM25Score = scores[id]
-		out = append(out, r)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].BM25Score > out[j].BM25Score })
-	if len(out) > limit {
-		out = out[:limit]
-	}
-	for i := range out {
-		out[i].Rank = i + 1
-	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (s *chunkStore) scanChunkResults(sqlText string, args ...any) ([]store.ChunkResult, error) {
@@ -136,6 +134,25 @@ func (s *chunkStore) NeedsBackfill(memStore store.Countable) bool {
 		return false
 	}
 	return cc == 0
+}
+
+// ListDocIDs — pg twin: distinct doc IDs that currently have chunks.
+func (s *chunkStore) ListDocIDs() ([]string, error) {
+	rows, err := s.b.pool.Query("SELECT DISTINCT doc_id FROM chunks_meta ORDER BY doc_id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 func (s *chunkStore) ListAll() ([]store.ChunkEntryWithDoc, error) {

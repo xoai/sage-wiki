@@ -25,6 +25,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/prompts"
+	"github.com/xoai/sage-wiki/internal/sourcedate"
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/trust"
@@ -535,7 +536,7 @@ func setupStores(projectDir string, run *compileRun) error {
 	// Backfill chunk index if needed (after migration, before first compile)
 	if run.chunkStore.NeedsBackfill(run.memStore) {
 		log.Info("chunk index empty with existing articles — running backfill")
-		if err := BackfillChunks(projectDir, cfg.Output, cfg.Search.ChunkSizeOrDefault(), run.chunkStore, run.vecStore, run.embedder, db); err != nil {
+		if _, err := BackfillChunks(projectDir, cfg.Output, cfg.Search.ChunkSizeOrDefault(), cfg.Search.ChunkOverlapOrDefault(), run.chunkStore, run.vecStore, run.embedder, db); err != nil {
 			log.Warn("chunk backfill failed", "error", err)
 		}
 	}
@@ -661,7 +662,7 @@ func runTiers(projectDir string, run *compileRun) {
 		stopHB := startItemHeartbeat(run.itemStore, cliToken, tier1Claimed, cliHeartbeatInterval, cliLeaseTTL)
 		func() {
 			defer stopHB()
-			indexed, embedded = indexAndEmbedSources(projectDir, tier1Claimed, run.memStore, run.vecStore, run.embedder, run.itemStore, run.bp, run.chunkStore, cfg.Search.ChunkSizeOrDefault(), run.db, run.exOpts...)
+			indexed, embedded = indexAndEmbedSources(projectDir, tier1Claimed, run.memStore, run.vecStore, run.embedder, run.itemStore, run.bp, run.chunkStore, cfg.Search.ChunkSizeOrDefault(), cfg.Search.ChunkOverlapOrDefault(), run.db, run.exOpts...)
 		}()
 		releaseClaimed(run.itemStore, cliToken, tier1Claimed, erroredSinceClaim(run.itemStore, tier1Claimed), wc.MaxAttempts)
 		run.result.TierIndexed += indexed
@@ -705,22 +706,22 @@ func runTiers(projectDir string, run *compileRun) {
 		func() {
 			defer stopHB()
 			pipelineResult = runFullPipeline(run.toProcess, FullPipelineOpts{
-			Ctx:          opts.Ctx,
-			ProjectDir:   projectDir,
-			Config:       cfg,
-			Client:       run.client,
-			Manifest:     run.mf,
-			DB:           run.db,
-			MemStore:     run.memStore,
-			VecStore:     run.vecStore,
-			ChunkStore:   run.chunkStore,
-			OntStore:     run.pipelineOntStore,
-			Embedder:     run.embedder,
-			Backpressure: run.bp,
-			ItemStore:    run.itemStore,
-			CacheEnabled: cacheEnabled,
-			Progress:     run.progress,
-		})
+				Ctx:          opts.Ctx,
+				ProjectDir:   projectDir,
+				Config:       cfg,
+				Client:       run.client,
+				Manifest:     run.mf,
+				DB:           run.db,
+				MemStore:     run.memStore,
+				VecStore:     run.vecStore,
+				ChunkStore:   run.chunkStore,
+				OntStore:     run.pipelineOntStore,
+				Embedder:     run.embedder,
+				Backpressure: run.bp,
+				ItemStore:    run.itemStore,
+				CacheEnabled: cacheEnabled,
+				Progress:     run.progress,
+			})
 		}()
 		run.result.Summarized = pipelineResult.Summarized
 		run.result.ConceptsExtracted = pipelineResult.ConceptsExtracted
@@ -1123,6 +1124,7 @@ func resumeBatch(
 			Tags:        []string{resolvedType},
 			ArticlePath: summaryPath,
 		})
+		sourcedate.RecordForSource(memStore, projectDir, path, mf.Sources[path].AddedAt)
 
 		if embedder != nil {
 			vec, err := embedder.Embed(summaryText)
@@ -1218,6 +1220,7 @@ func resumeBatch(
 					ArticleFields:      cfg.Compiler.ArticleFields,
 					RelationPatterns:   relPatterns,
 					ChunkSize:          cfg.Search.ChunkSizeOrDefault(),
+					ChunkOverlap:       cfg.Search.ChunkOverlapOrDefault(),
 					Language:           cfg.Language,
 					AntiPatternPhrases: cfg.Compiler.AntiPatternPhrasesOrDefault(),
 					AllConcepts:        manifestConceptRefs(mf.Concepts),

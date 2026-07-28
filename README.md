@@ -142,7 +142,8 @@ The core surface; run `sage-wiki <command> --help` for flags.
 | `sage-wiki init [--vault] [--skill <agent>] [--pack <name>] [--prompts]` | Initialize project (greenfield or vault overlay) |
 | `sage-wiki compile [--watch] [--batch] [--estimate] [--dry-run] [--no-cache] [--fresh] [--re-embed] [--re-extract] [--prune]` | Compile sources into wiki articles |
 | `sage-wiki serve [--transport stdio\|sse] [--ui] [--port 3333]` | MCP server / web UI |
-| `sage-wiki search "query" [--tags ...]` | Hybrid search (BM25 + vector) |
+| `sage-wiki reindex [--drop-chunk-vectors]` | Rebuild the chunk index from documents on disk with the current `chunk_size`/`chunk_overlap_tokens` |
+| `sage-wiki search "query" [--tags ...] [--boost-tags ...] [--limit N] [--channels bm25,vector,graph] [--expand] [--rerank]` | Hybrid search (BM25 + vector + ontology graph) |
 | `sage-wiki query "question"` | Q&A against the wiki with citations |
 | `sage-wiki tui` | Interactive terminal dashboard |
 | `sage-wiki ontology <query\|list\|add\|resolve>` | Query, manage, and resolve the ontology graph |
@@ -332,7 +333,7 @@ python3 -m unittest discover eval    # harness self-tests
 
 - **Storage:** SQLite with FTS5 (BM25 search) + BLOB vectors (cosine similarity) + compile_items table for per-source tier/state tracking
 - **Ontology:** Typed entity-relation graph with BFS traversal and cycle detection
-- **Search:** Enhanced pipeline with chunk-level FTS5 + vector indexing, LLM query expansion, LLM re-ranking, RRF fusion, and 4-signal graph expansion. Search responses signal uncompiled sources for compile-on-demand.
+- **Search:** Unified pipeline — document- and chunk-level FTS5 and vectors fused by weighted RRF with the ontology graph as a third channel, corpus-adaptive stopwording, title-proxy column weights, and a recency tie-breaker on documents with a known origin date. LLM query expansion and coverage-gated re-ranking are opt-in per call on the search surfaces and on by default for Q&A, which also gets 4-signal graph context expansion. Search responses signal uncompiled sources for compile-on-demand.
 - **Compiler:** Tiered pipeline (Tier 0: index, Tier 1: embed, Tier 2: code parse, Tier 3: full LLM compile) with adaptive backpressure, concurrent Pass 2 extraction, prompt caching, batch API (Anthropic + OpenAI + Gemini), cost tracking, compile-on-demand via MCP, quality scoring, and cascade awareness. Embedding includes retry with exponential backoff, optional rate limiting, and mean-pooling for long inputs. 10 built-in code parsers (Go via go/ast, 8 languages via regex, structured data key extraction).
 - **MCP:** 18 tools (7 read, 9 write, 2 compound) via stdio or SSE, including `wiki_graph_query` for provenance-cited multi-hop graph QA, `wiki_compile_topic` for on-demand compilation and `wiki_capture` for knowledge extraction
 - **TUI:** bubbletea + glamour 4-tab terminal dashboard (browse, search, Q&A, compile) with tier distribution display

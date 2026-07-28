@@ -13,15 +13,16 @@ import (
 	"sync/atomic"
 	"time"
 
-		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/extract"
 	"github.com/xoai/sage-wiki/internal/fsutil"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/memory"
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/prompts"
+	"github.com/xoai/sage-wiki/internal/sourcedate"
 	"github.com/xoai/sage-wiki/internal/store"
 )
 
@@ -55,6 +56,7 @@ type ArticleWriteOpts struct {
 	ArticleFields      []string
 	RelationPatterns   []ontology.RelationPattern
 	ChunkSize          int // tokens per chunk (default 800)
+	ChunkOverlap       int // tokens of overlap between adjacent chunks (default 0)
 	SplitThreshold     int // chars — enable section-aware writing above this (default 15000)
 	Language           string
 	Backpressure       *BackpressureController // optional; if nil, uses fixed semaphore
@@ -282,6 +284,21 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap m
 		log.Error("failed to index article", "concept", concept.Name, "error", err)
 	}
 
+	// Origin date: a compiled article is as fresh as its newest evidence —
+	// the max source_date over its contributing sources (ADR-039; no
+	// contributing date ⇒ no row, never a compile timestamp).
+	srcIDs := make([]string, len(concept.Sources))
+	for i, s := range concept.Sources {
+		srcIDs[i] = "src:" + s
+	}
+	if dates, err := opts.MemStore.GetSourceDates(srcIDs); err != nil {
+		log.Warn("source dates unavailable for article", "concept", concept.Name, "error", err)
+	} else if ts := sourcedate.Max(dates, srcIDs); ts > 0 {
+		if err := opts.MemStore.SetSourceDate("concept:"+concept.Name, ts); err != nil {
+			log.Warn("article source date not recorded", "concept", concept.Name, "error", err)
+		}
+	}
+
 	// Generate embedding
 	if opts.Embedder != nil {
 		vec, err := opts.Embedder.Embed(articleContent)
@@ -299,7 +316,7 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap m
 			chunkSize = 800
 		}
 		docID := "concept:" + concept.Name
-		chunks := extract.ChunkText(articleContent, chunkSize)
+		chunks := extract.ChunkText(articleContent, chunkSize, opts.ChunkOverlap)
 
 		// Embed all chunks FIRST (API calls outside transaction)
 		var chunkEmbeddings [][]float32

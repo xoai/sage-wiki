@@ -1,6 +1,7 @@
 package query
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -78,7 +79,7 @@ func TestQueryFallbackCarriesEdgeProvenance(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		ctx, _, _, err := buildQueryContext(dir, "quantum flux", 5, cfg, db)
+		ctx, _, _, err := buildQueryContext(context.Background(), dir, "quantum flux", 5, cfg, db)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -99,7 +100,7 @@ func TestQueryFallbackCarriesEdgeProvenance(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		ctx, _, _, err := buildQueryContext(dir, "quantum flux", 5, cfg, db)
+		ctx, _, _, err := buildQueryContext(context.Background(), dir, "quantum flux", 5, cfg, db)
 		if err != nil {
 			t.Fatal(err)
 		}

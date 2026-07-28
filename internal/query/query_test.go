@@ -1,8 +1,9 @@
 package query
 
 import (
-	"github.com/xoai/sage-wiki/internal/metrics"
+	"context"
 	"database/sql"
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"os"
 	"path/filepath"
 	"strings"
@@ -214,7 +215,7 @@ func preambleHarness(t *testing.T) (string, *config.Config, *storage.DB) {
 
 func TestBuildQueryContext_EmptyStaysEmpty(t *testing.T) {
 	dir, cfg, db := preambleHarness(t)
-	ctx, _, _, err := buildQueryContext(dir, "anything", 5, cfg, db)
+	ctx, _, _, err := buildQueryContext(context.Background(), dir, "anything", 5, cfg, db)
 	if err != nil {
 		t.Fatalf("buildQueryContext: %v", err)
 	}
@@ -236,7 +237,7 @@ func TestBuildQueryContext_PreambleDocLevel(t *testing.T) {
 		t.Fatalf("mem.Add: %v", err)
 	}
 
-	ctx, _, _, err := buildQueryContext(dir, "attention", 5, cfg, db)
+	ctx, _, _, err := buildQueryContext(context.Background(), dir, "attention", 5, cfg, db)
 	if err != nil {
 		t.Fatalf("buildQueryContext: %v", err)
 	}
@@ -260,14 +261,14 @@ func TestBuildQueryContext_PreambleEnhanced(t *testing.T) {
 	if err := db.WriteTx(func(tx *sql.Tx) error {
 		return chunks.IndexChunks(tx, "concept:beta", []memory.ChunkEntry{{
 			ChunkID: "concept:beta:0", ChunkIndex: 0, Heading: "Beta",
-			Content: "gradient descent optimization attention networks",
+			Content:     "gradient descent optimization attention networks",
 			StartOffset: 0, EndOffset: 50,
 		}})
 	}); err != nil {
 		t.Fatalf("IndexChunks: %v", err)
 	}
 
-	ctx, _, _, err := buildQueryContext(dir, "gradient descent", 5, cfg, db)
+	ctx, _, _, err := buildQueryContext(context.Background(), dir, "gradient descent", 5, cfg, db)
 	if err != nil {
 		t.Fatalf("buildQueryContext: %v", err)
 	}

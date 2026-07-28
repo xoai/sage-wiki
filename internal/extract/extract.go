@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // SourceContent holds extracted text from a source file.
@@ -117,10 +118,46 @@ func isCJK(r rune) bool {
 
 // ChunkText is a convenience wrapper that chunks raw text without needing a SourceContent.
 // It creates a temporary SourceContent, calls ChunkIfNeeded, and returns the resulting chunks.
-func ChunkText(text string, maxTokens int) []Chunk {
+func ChunkText(text string, maxTokens int, overlapTokens ...int) []Chunk {
 	sc := &SourceContent{Text: text}
 	ChunkIfNeeded(sc, maxTokens)
+	// Optional overlap (spec §2.5, T5.6): each chunk after the first is
+	// prefixed with the tail of its predecessor, so boundary-straddling
+	// facts appear in both chunks. Overlap 0 (or absent) is byte-identical
+	// to the historical chunking — changing the config value takes effect
+	// only on the next index/reindex, never retroactively.
+	if len(overlapTokens) > 0 && overlapTokens[0] > 0 && len(sc.Chunks) > 1 {
+		overlapChars := overlapTokens[0] * 4 // same chars/token heuristic as EstimateTokens
+		out := make([]Chunk, len(sc.Chunks))
+		out[0] = sc.Chunks[0]
+		for i := 1; i < len(sc.Chunks); i++ {
+			c := sc.Chunks[i]
+			c.Text = overlapTail(sc.Chunks[i-1].Text, overlapChars) + "\n" + c.Text
+			out[i] = c
+		}
+		return out
+	}
 	return sc.Chunks
+}
+
+// overlapTail returns the last maxChars bytes of text, trimmed forward to a
+// rune boundary and then, when one exists, to the next word boundary. The
+// rune-boundary step is not cosmetic: a paragraph with no interior whitespace
+// (CJK is the common case) leaves the word-boundary search with nothing to
+// find, and a raw byte cut would put invalid UTF-8 into the chunk index and
+// into the embedding request.
+func overlapTail(text string, maxChars int) string {
+	if len(text) <= maxChars {
+		return text
+	}
+	tail := text[len(text)-maxChars:]
+	for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+		tail = tail[1:]
+	}
+	if idx := strings.IndexAny(tail, " \n\t"); idx >= 0 && idx+1 < len(tail) {
+		tail = tail[idx+1:]
+	}
+	return tail
 }
 
 // ChunkIfNeeded splits content into chunks if it exceeds maxTokens.

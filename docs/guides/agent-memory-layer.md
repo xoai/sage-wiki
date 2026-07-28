@@ -413,6 +413,31 @@ The AI extracts items like:
 
 These become source files that the compiler weaves into your wiki's knowledge graph. Next time an agent encounters a database performance question, `wiki_search("connection pooling")` surfaces these findings — the wiki remembers what you learned.
 
+## Search parameters
+
+`wiki_search` takes `query`, plus:
+
+| Parameter | Meaning |
+|---|---|
+| `tags` | Comma-separated hard filter — every listed tag must be present |
+| `boost_tags` | Comma-separated soft boost — +3% per matching tag (cap 15%), excludes nothing |
+| `limit` | Result count (default 10) |
+| `channels` | Subset of `bm25,vector,graph` — narrows the fused ranking for one call |
+| `expand` | LLM query expansion for this call (default **off**) |
+| `rerank` | LLM re-ranking for this call (default **off**) |
+
+The two LLM stages are off regardless of `search.query_expansion` /
+`search.rerank`, which govern `sage-wiki query` only: they cost an LLM round
+trip per call, which an agent's search should spend deliberately. Results
+carry per-channel ranks (`BM25Rank`, `VectorRank`, `GraphRank`), the fused
+`RRFScore` and normalized `FinalScore`, `SourceDate` when the document's
+origin date is known, and `AliasOf` when the graph reached it through an
+entity alias.
+
+Which documents may appear is governed by `trust.include_outputs` — see
+[output-trust.md](output-trust.md). By default, LLM-generated `output:`
+documents are excluded from search, exactly as they are from Q&A.
+
 ## Untrusted Content Handling
 
 Everything the wiki serves your agent is **data derived from user

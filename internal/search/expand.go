@@ -6,9 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/llm"
-	"github.com/xoai/sage-wiki/internal/memory"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 // ExpandedQuery holds LLM-generated query variants for enhanced search.
@@ -30,7 +31,20 @@ func (eq *ExpandedQuery) AllQueries() []string {
 // Returns an ExpandedQuery with lex (keyword rewrites), vec (semantic rewrites),
 // and hyde (hypothetical answer) variants. On any failure, returns the original
 // query only — no degradation.
-func ExpandQuery(question string, client *llm.Client, model string) (*ExpandedQuery, error) {
+// expandTimeout bounds one expansion call. Expansion is an optimization —
+// a slow provider must not hold a search open for the transport's 120s.
+const expandTimeout = 20 * time.Second
+
+// ExpandQuery is bounded by expandTimeout and by the caller's context: an
+// MCP client that cancels wiki_search{expand:true}, or a Ctrl-C on the CLI,
+// must actually stop the call rather than wait out the transport timeout.
+func ExpandQuery(ctx context.Context, question string, client *llm.Client, model string) (*ExpandedQuery, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, expandTimeout)
+	defer cancel()
+
 	prompt := fmt.Sprintf(`Given the search query: %q
 Generate search variants to improve retrieval:
 - lex: 2 keyword-rich rewrites (for full-text search, use technical terms)
@@ -42,7 +56,7 @@ Respond ONLY with JSON, no explanation:
 
 	// P2-4: schema-guaranteed JSON where supported; graceful degrade to
 	// fallbackExpansion on any error — exactly today's failure contract.
-	payload, _, err := client.StructuredCompletion(context.Background(), []llm.Message{
+	payload, _, err := client.StructuredCompletion(ctx, []llm.Message{
 		{Role: "user", Content: prompt},
 	}, ExpansionSchema, llm.CallOpts{Model: model, MaxTokens: 300})
 	if err != nil {
@@ -84,7 +98,7 @@ var ExpansionSchema = llm.JSONSchema{
 // StrongSignal checks if the top BM25 result is confident enough to skip expansion.
 // Returns true if BOTH: (a) top-1 normalized score >= 0.4, AND (b) top-1 >= 2x top-2.
 // A single result above the floor is also a strong signal.
-func StrongSignal(query string, memStore *memory.Store) bool {
+func StrongSignal(query string, memStore store.EntryStore) bool {
 	results, err := memStore.Search(query, nil, 2)
 	if err != nil || len(results) == 0 {
 		return false

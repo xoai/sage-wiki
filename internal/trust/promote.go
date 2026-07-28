@@ -10,19 +10,21 @@ import (
 
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/extract"
+	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/store"
 )
 
 type IndexStores struct {
-	MemStore   store.EntryStore
-	VecStore   store.VectorStore
-	OntStore   store.OntologyStore
-	ChunkStore store.ChunkStore
-	Embedder   embed.Embedder
-	DB         store.DBHandle
-	ChunkSize  int
+	MemStore     store.EntryStore
+	VecStore     store.VectorStore
+	OntStore     store.OntologyStore
+	ChunkStore   store.ChunkStore
+	Embedder     embed.Embedder
+	DB           store.DBHandle
+	ChunkSize    int
+	ChunkOverlap int
 }
 
 func PromoteOutput(store *Store, id string, projectDir string, stores IndexStores) error {
@@ -58,6 +60,14 @@ func PromoteOutput(store *Store, id string, projectDir string, stores IndexStore
 	}); err != nil {
 		return fmt.Errorf("trust: FTS5 index: %w", err)
 	}
+	// Q&A outputs carry their creation time as origin date (ADR-039) —
+	// this is the DEFAULT output path (include_outputs=false), so the
+	// stamp must live here, not only on the legacy autoFile branch.
+	if !o.CreatedAt.IsZero() {
+		if err := stores.MemStore.SetSourceDate(docID, o.CreatedAt.Unix()); err != nil {
+			log.Warn("trust: output source date not recorded", "id", docID, "error", err)
+		}
+	}
 
 	if stores.Embedder != nil {
 		if vec, err := stores.Embedder.Embed(o.Answer); err == nil {
@@ -91,7 +101,7 @@ func PromoteOutput(store *Store, id string, projectDir string, stores IndexStore
 		if chunkSize <= 0 {
 			chunkSize = 800
 		}
-		chunks := extract.ChunkText(o.Answer, chunkSize)
+		chunks := extract.ChunkText(o.Answer, chunkSize, stores.ChunkOverlap)
 
 		var chunkEmbeddings [][]float32
 		if stores.Embedder != nil {

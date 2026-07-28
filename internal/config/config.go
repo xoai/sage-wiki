@@ -309,11 +309,24 @@ func (c CompilerConfig) StripBrokenLinksEnabled() bool {
 type SearchConfig struct {
 	HybridWeightBM25   float64 `yaml:"hybrid_weight_bm25"`
 	HybridWeightVector float64 `yaml:"hybrid_weight_vector"`
-	DefaultLimit       int     `yaml:"default_limit"`
-	QueryExpansion     *bool   `yaml:"query_expansion,omitempty"`  // enable LLM query expansion (default: true)
-	Rerank             *bool   `yaml:"rerank,omitempty"`           // enable LLM re-ranking (default: true)
-	ChunkSize          int     `yaml:"chunk_size,omitempty"`       // tokens per chunk for indexing (default: 800)
-	ResultMaxChars     int     `yaml:"result_max_chars,omitempty"` // max chars (runes) of content per wiki_search result before truncation (default: 2000; set very high to effectively disable)
+	// HybridWeightGraph fuses the graph channel (ADR-037; 0 → 0.2 default,
+	// flat key matching its two siblings above).
+	HybridWeightGraph float64 `yaml:"hybrid_weight_graph,omitempty"`
+	// GraphRelationWeights overrides per-relation-type graph-leg weights
+	// (config-extensible relation types default to 1.0).
+	GraphRelationWeights map[string]float64 `yaml:"graph_relation_weights,omitempty"`
+	// Pipeline selects the retrieval pipeline for the entry-point
+	// adapters: "unified" (default — search.Run) or "legacy" (the
+	// pre-M5 doc-level path, retained through this release as the
+	// rollback per ADR-036; deleted after M6 validates).
+	Pipeline           string   `yaml:"pipeline,omitempty"`
+	DefaultLimit       int      `yaml:"default_limit"`
+	QueryExpansion     *bool    `yaml:"query_expansion,omitempty"`      // enable LLM query expansion (default: true)
+	Rerank             *bool    `yaml:"rerank,omitempty"`               // enable LLM re-ranking (default: true)
+	RerankMinCoverage  *float64 `yaml:"rerank_min_coverage,omitempty"`  // min fraction of candidates the LLM must score for blending (default: 0.5)
+	ChunkSize          int      `yaml:"chunk_size,omitempty"`           // tokens per chunk for indexing (default: 800)
+	ChunkOverlapTokens int      `yaml:"chunk_overlap_tokens,omitempty"` // tokens of overlap between adjacent chunks (default: 0; recommended opt-in: 80). Takes effect only on reindex.
+	ResultMaxChars     int      `yaml:"result_max_chars,omitempty"`     // max chars (runes) of content per wiki_search result before truncation (default: 2000; set very high to effectively disable)
 
 	// Graph-enhanced retrieval
 	GraphExpansion       *bool    `yaml:"graph_expansion,omitempty"`        // enable graph-based context expansion (default: true)
@@ -346,6 +359,34 @@ func (s SearchConfig) QueryExpansionEnabled() bool {
 		return true
 	}
 	return *s.QueryExpansion
+}
+
+// ChunkOverlapOrDefault returns the chunk overlap in tokens (default 0 —
+// byte-identical to historical chunking; recommended opt-in: 80).
+func (s SearchConfig) ChunkOverlapOrDefault() int {
+	if s.ChunkOverlapTokens > 0 {
+		return s.ChunkOverlapTokens
+	}
+	return 0
+}
+
+// PipelineOrDefault resolves the adapter pipeline: "unified" (default)
+// or "legacy". Any other value is rejected by Validate — a rollback switch
+// that silently ignores a typo is worse than no switch at all.
+func (s SearchConfig) PipelineOrDefault() string {
+	if s.Pipeline == "legacy" {
+		return "legacy"
+	}
+	return "unified"
+}
+
+// RerankMinCoverageOrDefault returns the minimum scored-candidate fraction
+// required for rerank blending (default 0.5 — ADR-038's coverage gate).
+func (s SearchConfig) RerankMinCoverageOrDefault() float64 {
+	if s.RerankMinCoverage == nil || *s.RerankMinCoverage <= 0 {
+		return 0.5
+	}
+	return *s.RerankMinCoverage
 }
 
 // RerankEnabled returns whether re-ranking is enabled (default: true).
@@ -968,8 +1009,22 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("config: ontology.entity_types: invalid name %q (must match [a-z][a-z0-9_]*)", et.Name)
 		}
 	}
+	if c.Search.Pipeline != "" && c.Search.Pipeline != "unified" && c.Search.Pipeline != "legacy" {
+		return fmt.Errorf("config: search.pipeline must be \"unified\" or \"legacy\", got %q", c.Search.Pipeline)
+	}
 	if c.Search.ChunkSize != 0 && (c.Search.ChunkSize < 100 || c.Search.ChunkSize > 5000) {
 		return fmt.Errorf("config: search.chunk_size must be 100-5000, got %d", c.Search.ChunkSize)
+	}
+	// Overlap must leave the chunk mostly its own content — at half the chunk
+	// size every chunk would be one-third duplicate text, which inflates the
+	// index without adding recall.
+	if c.Search.ChunkOverlapTokens != 0 {
+		if c.Search.ChunkOverlapTokens < 0 {
+			return fmt.Errorf("config: search.chunk_overlap_tokens must be >= 0, got %d", c.Search.ChunkOverlapTokens)
+		}
+		if max := c.Search.ChunkSizeOrDefault() / 2; c.Search.ChunkOverlapTokens > max {
+			return fmt.Errorf("config: search.chunk_overlap_tokens must be <= half of search.chunk_size (%d), got %d", max, c.Search.ChunkOverlapTokens)
+		}
 	}
 	for i, ts := range c.TypeSignals {
 		if ts.Type == "" {

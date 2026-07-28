@@ -3,7 +3,7 @@ package memory
 import (
 	"database/sql"
 	"fmt"
-	"sort"
+	"strings"
 
 	"github.com/xoai/sage-wiki/internal/store"
 )
@@ -72,7 +72,18 @@ func (s *ChunkStore) SearchChunks(query string, limit int) ([]ChunkResult, error
 		limit = 20
 	}
 
-	ftsQuery := buildFTSQuery(query)
+	// DF pruning probes the DOCUMENT corpus (`entries`), not the chunk
+	// tables. Two reasons, both load-bearing: the legs must prune on
+	// identical doc-ratio semantics or they diverge (Gate-3 F-047), which
+	// probing the same table guarantees by construction rather than by
+	// matching two queries; and the chunk-side probe was a COUNT(DISTINCT)
+	// over a chunks_fts/chunks_meta join per term — ~66% of unified search
+	// time in the V-M5c profile, for a ratio the entries table answers with
+	// a plain FTS count.
+	ftsQuery := formatFTSTerms(dfPruneTerms(s.db,
+		"SELECT COUNT(*) FROM entries",
+		"SELECT COUNT(*) FROM entries WHERE entries MATCH ?",
+		BuildFTSTerms(query)))
 	if ftsQuery == "" {
 		return nil, nil
 	}
@@ -106,6 +117,38 @@ func (s *ChunkStore) SearchChunks(query string, limit int) ([]ChunkResult, error
 	return results, rows.Err()
 }
 
+// GetChunksMeta returns heading and content for the given chunk IDs.
+// Missing IDs are simply absent from the map.
+func (s *ChunkStore) GetChunksMeta(ids []string) (map[string]ChunkEntry, error) {
+	if len(ids) == 0 {
+		return map[string]ChunkEntry{}, nil
+	}
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := s.db.ReadDB().Query(
+		"SELECT chunk_id, chunk_index, heading, content FROM chunks_meta WHERE chunk_id IN ("+placeholders+")",
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("chunks.GetChunksMeta: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]ChunkEntry, len(ids))
+	for rows.Next() {
+		var c ChunkEntry
+		if err := rows.Scan(&c.ChunkID, &c.ChunkIndex, &c.Heading, &c.Content); err != nil {
+			return nil, fmt.Errorf("chunks.GetChunksMeta scan: %w", err)
+		}
+		out[c.ChunkID] = c
+	}
+	return out, rows.Err()
+}
+
 // Count returns the total number of indexed chunks.
 func (s *ChunkStore) Count() (int, error) {
 	var count int
@@ -126,61 +169,6 @@ func DocIDs(results []ChunkResult) []string {
 	return ids
 }
 
-// SearchChunksMultiQuery runs BM25 search for multiple query variants and merges via RRF.
-func (s *ChunkStore) SearchChunksMultiQuery(queries []string, limit int) ([]ChunkResult, error) {
-	if len(queries) == 0 {
-		return nil, nil
-	}
-	if len(queries) == 1 {
-		return s.SearchChunks(queries[0], limit)
-	}
-
-	// Search each variant
-	type scoredChunk struct {
-		result ChunkResult
-		rrf    float64
-	}
-	chunkMap := make(map[string]*scoredChunk)
-	const k = 60.0
-
-	for _, q := range queries {
-		results, err := s.SearchChunks(q, limit)
-		if err != nil {
-			return nil, err
-		}
-		for _, r := range results {
-			sc, ok := chunkMap[r.ChunkID]
-			if !ok {
-				sc = &scoredChunk{result: r}
-				chunkMap[r.ChunkID] = sc
-			}
-			sc.rrf += 1.0 / (k + float64(r.Rank))
-		}
-	}
-
-	// Sort by RRF score
-	sorted := make([]ChunkResult, 0, len(chunkMap))
-	for _, sc := range chunkMap {
-		sc.result.BM25Score = sc.rrf
-		sorted = append(sorted, sc.result)
-	}
-
-	// Sort descending by score
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].BM25Score > sorted[j].BM25Score
-	})
-
-	// Re-rank
-	for i := range sorted {
-		sorted[i].Rank = i + 1
-	}
-
-	if len(sorted) > limit {
-		sorted = sorted[:limit]
-	}
-	return sorted, nil
-}
-
 // NeedsBackfill returns true if chunk index is empty but entries exist.
 func (s *ChunkStore) NeedsBackfill(memStore Countable) bool {
 	chunkCount, err := s.Count()
@@ -191,9 +179,27 @@ func (s *ChunkStore) NeedsBackfill(memStore Countable) bool {
 	return err == nil && entryCount > 0
 }
 
-
 // ListAll returns every chunk, fully populated, ordered for determinism
 // (P2-1: absorbs reembed's raw chunks_meta scan). Unbounded by design.
+// ListDocIDs returns the distinct doc IDs that currently have chunks.
+func (s *ChunkStore) ListDocIDs() ([]string, error) {
+	rows, err := s.db.ReadDB().Query("SELECT DISTINCT doc_id FROM chunks_meta ORDER BY doc_id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 func (s *ChunkStore) ListAll() ([]ChunkEntryWithDoc, error) {
 	rows, err := s.db.ReadDB().Query(
 		"SELECT chunk_id, doc_id, chunk_index, heading, content, start_offset, end_offset FROM chunks_meta ORDER BY doc_id, chunk_index")

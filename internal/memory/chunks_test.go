@@ -112,32 +112,6 @@ func TestChunkStore_DeleteDocChunks(t *testing.T) {
 	}
 }
 
-func TestChunkStore_MultiQuery(t *testing.T) {
-	db := openTestDB(t)
-	cs := NewChunkStore(db)
-
-	db.WriteTx(func(tx *sql.Tx) error {
-		cs.IndexChunks(tx, "doc1", []ChunkEntry{
-			{ChunkID: "d1c0", ChunkIndex: 0, Content: "transformer attention mechanism"},
-		})
-		cs.IndexChunks(tx, "doc2", []ChunkEntry{
-			{ChunkID: "d2c0", ChunkIndex: 0, Content: "flash attention optimization"},
-		})
-		return cs.IndexChunks(tx, "doc3", []ChunkEntry{
-			{ChunkID: "d3c0", ChunkIndex: 0, Content: "recurrent neural network lstm"},
-		})
-	})
-
-	// Multi-query should merge results
-	results, err := cs.SearchChunksMultiQuery([]string{"attention", "neural network"}, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(results) < 3 {
-		t.Errorf("expected at least 3 results from multi-query, got %d", len(results))
-	}
-}
-
 func TestChunkStore_DocIDs(t *testing.T) {
 	results := []ChunkResult{
 		{DocID: "doc1"},

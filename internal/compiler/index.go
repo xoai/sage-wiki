@@ -13,6 +13,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/memory"
+	"github.com/xoai/sage-wiki/internal/sourcedate"
 	"github.com/xoai/sage-wiki/internal/store"
 )
 
@@ -60,6 +61,7 @@ func indexRawSources(projectDir string, sources []CompileItem, memStore store.En
 			Content: entryContent,
 			Tags:    tags,
 		})
+		sourcedate.RecordForSource(memStore, projectDir, src.SourcePath, "")
 
 		if err := items.MarkPass(src.SourcePath, "indexed"); err != nil {
 			log.Warn("mark pass failed", "path", src.SourcePath, "pass", "indexed", "error", err)
@@ -82,6 +84,7 @@ func indexAndEmbedSources(
 	bp *BackpressureController,
 	chunkStore store.ChunkStore,
 	chunkSize int,
+	chunkOverlap int,
 	db store.DBHandle,
 	extractOpts ...extract.ExtractOpts,
 ) (indexed, embedded int) {
@@ -129,6 +132,7 @@ func indexAndEmbedSources(
 			Content: entryContent,
 			Tags:    tags,
 		})
+		sourcedate.RecordForSource(memStore, projectDir, src.SourcePath, "")
 
 		if err := items.MarkPass(src.SourcePath, "indexed"); err != nil {
 			log.Warn("mark pass failed", "path", src.SourcePath, "pass", "indexed", "error", err)
@@ -181,7 +185,7 @@ func indexAndEmbedSources(
 				return
 			}
 
-			chunks := extract.ChunkText(content.Text, chunkSize)
+			chunks := extract.ChunkText(content.Text, chunkSize, chunkOverlap)
 
 			// Embed each chunk sequentially (same pattern as write.go:250-260)
 			chunkEmbeddings := make([][]float32, len(chunks))

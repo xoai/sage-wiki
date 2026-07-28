@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 
@@ -35,7 +36,7 @@ func TestEnhancedSearch_BasicChunkSearch(t *testing.T) {
 		{ChunkID: "doc2:c0", ChunkIndex: 0, Heading: "Asyncio", Content: "python asyncio provides event loop for async io"},
 	})
 
-	results, err := EnhancedSearch(EnhancedSearchOpts{
+	results, err := EnhancedSearch(context.Background(), EnhancedSearchOpts{
 		Query:          "goroutines concurrent",
 		Limit:          5,
 		ChunkStore:     cs,
@@ -69,7 +70,7 @@ func TestEnhancedSearch_Deduplication(t *testing.T) {
 		{ChunkID: "doc1:c2", ChunkIndex: 2, Content: "keyword gamma"},
 	})
 
-	results, err := EnhancedSearch(EnhancedSearchOpts{
+	results, err := EnhancedSearch(context.Background(), EnhancedSearchOpts{
 		Query:          "keyword",
 		Limit:          10,
 		ChunkStore:     cs,
@@ -100,7 +101,7 @@ func TestEnhancedSearch_NoExpansionNoRerank(t *testing.T) {
 		{ChunkID: "doc1:c0", ChunkIndex: 0, Content: "test content here"},
 	})
 
-	results, err := EnhancedSearch(EnhancedSearchOpts{
+	results, err := EnhancedSearch(context.Background(), EnhancedSearchOpts{
 		Query:          "test",
 		Limit:          5,
 		ChunkStore:     cs,
@@ -123,7 +124,7 @@ func TestEnhancedSearch_EmptyIndex(t *testing.T) {
 	ms := memory.NewStore(db)
 	vs := vectors.NewStore(db)
 
-	results, err := EnhancedSearch(EnhancedSearchOpts{
+	results, err := EnhancedSearch(context.Background(), EnhancedSearchOpts{
 		Query:          "anything",
 		Limit:          5,
 		ChunkStore:     cs,

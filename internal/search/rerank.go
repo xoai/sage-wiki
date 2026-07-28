@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/extract"
 	"github.com/xoai/sage-wiki/internal/llm"
@@ -19,10 +20,14 @@ type RerankCandidate struct {
 	RetrievalRank int // position in the pre-rerank RRF list
 }
 
-// RerankResult is a re-ranked search result.
+// RerankResult is a re-ranked search result. Scored distinguishes a
+// genuine LLM score (including 0) from a candidate the LLM never scored —
+// conflating the two is the zero-coercion failure sage-memory measured at
+// 25-50pp R@1 (ADR-038).
 type RerankResult struct {
 	ID            string
-	Score         float64 // normalized 0-1
+	Score         float64 // normalized 0-1, meaningful only when Scored
+	Scored        bool
 	RetrievalRank int
 }
 
@@ -35,7 +40,21 @@ const (
 // Rerank calls the LLM to re-score candidates by relevance to the query.
 // Returns results sorted by LLM score descending. On LLM failure, returns
 // candidates in original order with zero scores.
-func Rerank(query string, candidates []RerankCandidate, client *llm.Client, model string) ([]RerankResult, error) {
+// rerankTimeout bounds one rerank call. Reranking is an optimization over
+// an already-usable RRF ordering, so failing back to that order beats
+// holding the caller for the transport timeout.
+const rerankTimeout = 30 * time.Second
+
+// Rerank is bounded by rerankTimeout and by the caller's context (ADR-038's
+// "timeout bounded per call" — the transport's 120s was the only bound
+// before, which is not a bound a search surface can offer).
+func Rerank(ctx context.Context, query string, candidates []RerankCandidate, client *llm.Client, model string) ([]RerankResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, rerankTimeout)
+	defer cancel()
+
 	if len(candidates) == 0 {
 		return nil, nil
 	}
@@ -73,7 +92,7 @@ Respond ONLY with a JSON array, no explanation:
 
 	// P2-4: schema-guaranteed JSON where supported; graceful degrade to
 	// fallbackRerank on any error — today's failure contract.
-	payload, _, err := client.StructuredCompletion(context.Background(), []llm.Message{
+	payload, _, err := client.StructuredCompletion(ctx, []llm.Message{
 		{Role: "user", Content: prompt},
 	}, RerankSchema, llm.CallOpts{Model: model, MaxTokens: 500})
 	if err != nil {
@@ -88,39 +107,108 @@ Respond ONLY with a JSON array, no explanation:
 		return fallbackRerank(candidates), nil
 	}
 
-	// Build results with normalized scores
+	// Build results with normalized scores; unscored candidates are
+	// marked, never coerced to 0.
 	results := make([]RerankResult, len(candidates))
 	for i, c := range candidates {
-		score := 0.0
-		if i < len(scores) {
-			score = scores[i] / 10.0 // normalize 0-10 → 0-1
+		r := RerankResult{ID: c.ID, RetrievalRank: c.RetrievalRank}
+		if i < len(scores) && scores[i] != nil {
+			r.Score = *scores[i] / 10.0 // normalize 0-10 → 0-1
+			r.Scored = true
 		}
-		results[i] = RerankResult{
-			ID:            c.ID,
-			Score:         score,
-			RetrievalRank: c.RetrievalRank,
-		}
+		results[i] = r
 	}
 
-	// Sort by score descending
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Score > results[j].Score
+	// Sort by score descending, RetrievalRank as the deterministic
+	// tiebreak (unscored sort below any scored candidate here; the blend
+	// stage restores their normalized relevance).
+	sort.SliceStable(results, func(i, j int) bool {
+		if results[i].Scored != results[j].Scored {
+			return results[i].Scored
+		}
+		if results[i].Score != results[j].Score {
+			return results[i].Score > results[j].Score
+		}
+		return results[i].RetrievalRank < results[j].RetrievalRank
 	})
 
 	return results, nil
 }
 
-// fallbackRerank returns candidates in original order with zero scores.
+// fallbackRerank returns candidates in original order, all unscored —
+// downstream, zero coverage means the blend never applies.
 func fallbackRerank(candidates []RerankCandidate) []RerankResult {
 	results := make([]RerankResult, len(candidates))
 	for i, c := range candidates {
 		results[i] = RerankResult{
 			ID:            c.ID,
-			Score:         0,
 			RetrievalRank: c.RetrievalRank,
 		}
 	}
 	return results
+}
+
+// NormalizeRelevance min-max normalizes RRF scores to [0,1]. All-equal
+// inputs (including a single candidate) normalize to 1.0 — order preserved,
+// no division by zero.
+func NormalizeRelevance(scores []float64) []float64 {
+	if len(scores) == 0 {
+		return nil
+	}
+	lo, hi := scores[0], scores[0]
+	for _, s := range scores[1:] {
+		if s < lo {
+			lo = s
+		}
+		if s > hi {
+			hi = s
+		}
+	}
+	out := make([]float64, len(scores))
+	if hi == lo {
+		for i := range out {
+			out[i] = 1.0
+		}
+		return out
+	}
+	for i, s := range scores {
+		out[i] = (s - lo) / (hi - lo)
+	}
+	return out
+}
+
+// BlendReranked computes final scores in normalized [0,1] space.
+// rels is indexed by RetrievalRank-1. If the LLM scored fewer than
+// minCoverage of the candidates, the blend is skipped entirely (returns
+// applied=false) and callers keep pure RRF order — a no-op beats a silent
+// partial-coverage regression (ADR-038). Unscored candidates keep their
+// normalized relevance untouched.
+func BlendReranked(rels []float64, reranked []RerankResult, minCoverage float64) ([]float64, bool) {
+	if len(reranked) == 0 || len(rels) == 0 {
+		return nil, false
+	}
+	scored := 0
+	for _, rr := range reranked {
+		if rr.Scored {
+			scored++
+		}
+	}
+	if float64(scored)/float64(len(reranked)) < minCoverage {
+		return nil, false
+	}
+
+	finals := make([]float64, len(rels))
+	copy(finals, rels)
+	for _, rr := range reranked {
+		idx := rr.RetrievalRank - 1
+		if idx < 0 || idx >= len(finals) {
+			continue
+		}
+		if rr.Scored {
+			finals[idx] = BlendScore(rels[idx], rr.Score, rr.RetrievalRank)
+		}
+	}
+	return finals, true
 }
 
 // RerankSchema is the canonical schema for rerank (P2-4). minItems: 1 —
@@ -151,8 +239,9 @@ type rerankEntry struct {
 }
 
 // parseRerankJSON extracts scores from LLM rerank response.
-// Returns a slice of scores indexed by candidate position (0-based).
-func parseRerankJSON(text string, numCandidates int) ([]float64, error) {
+// Returns a slice indexed by candidate position (0-based); nil entries are
+// candidates the LLM did not score — distinct from a genuine 0 score.
+func parseRerankJSON(text string, numCandidates int) ([]*float64, error) {
 	text = strings.TrimSpace(text)
 
 	// Strip code fences
@@ -184,11 +273,12 @@ func parseRerankJSON(text string, numCandidates int) ([]float64, error) {
 		return nil, err
 	}
 
-	scores := make([]float64, numCandidates)
+	scores := make([]*float64, numCandidates)
 	for _, e := range entries {
 		idx := e.ID - 1 // LLM uses 1-based IDs
 		if idx >= 0 && idx < numCandidates {
-			scores[idx] = e.Score
+			s := e.Score
+			scores[idx] = &s
 		}
 	}
 	return scores, nil

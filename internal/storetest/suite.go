@@ -3,6 +3,7 @@ package storetest
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -63,6 +64,28 @@ func EntriesConformance(new BackendFactory) func(*testing.T) {
 		if err := es.Add(store.Entry{ID: "src:b.md", Content: "zebra striped"}); err != nil {
 			t.Fatal(err)
 		}
+
+		// GetMany is the batch twin of Get (M5 result-set hydration): same
+		// fields, duplicates collapse, absent IDs are absent from the map
+		// (mirroring Get's nil), and an empty request is not an error.
+		many, err := es.GetMany([]string{"src:a.md", "src:a.md", "src:b.md", "src:nope.md"})
+		if err != nil {
+			t.Fatalf("GetMany: %v", err)
+		}
+		if len(many) != 2 {
+			t.Errorf("GetMany returned %d entries, want 2: %+v", len(many), many)
+		}
+		if a := many["src:a.md"]; a == nil || a.Content != e.Content ||
+			a.ArticlePath != e.ArticlePath || len(a.Tags) != 1 || a.Tags[0] != "t1" {
+			t.Errorf("GetMany entry differs from Get: %+v", a)
+		}
+		if _, ok := many["src:nope.md"]; ok {
+			t.Error("GetMany returned an absent ID")
+		}
+		if empty, err := es.GetMany(nil); err != nil || len(empty) != 0 {
+			t.Errorf("GetMany(nil) = %v, %v; want empty, nil", empty, err)
+		}
+
 		hits, err := es.Search("zebra", nil, 10)
 		if err != nil || len(hits) != 2 {
 			t.Fatalf("Search: %v %v", hits, err)
@@ -112,6 +135,31 @@ func EntriesConformance(new BackendFactory) func(*testing.T) {
 			t.Errorf("hyphenated query errored: %v", err)
 		}
 
+		// SourceDate sidecar round-trip (M3, ADR-039): upsert, missing-ID
+		// absence, ts<=0 no-op — identical on both backends (F-068).
+		if err := es.SetSourceDate("src:a.md", 1700000000); err != nil {
+			t.Fatalf("SetSourceDate: %v", err)
+		}
+		if err := es.SetSourceDate("src:a.md", 1800000000); err != nil {
+			t.Fatalf("SetSourceDate upsert: %v", err)
+		}
+		if err := es.SetSourceDate("src:noop.md", 0); err != nil {
+			t.Fatalf("SetSourceDate ts<=0 must no-op, got %v", err)
+		}
+		sd, err := es.GetSourceDates([]string{"src:a.md", "src:noop.md", "src:absent.md"})
+		if err != nil {
+			t.Fatalf("GetSourceDates: %v", err)
+		}
+		if sd["src:a.md"] != 1800000000 {
+			t.Errorf("upserted date = %d, want 1800000000", sd["src:a.md"])
+		}
+		if _, ok := sd["src:noop.md"]; ok {
+			t.Error("ts<=0 wrote a row — must be a no-op")
+		}
+		if _, ok := sd["src:absent.md"]; ok {
+			t.Error("absent ID returned a date")
+		}
+
 		// CountUncompiled: entries join compile_items tier<3 (seeded via
 		// WriteTx raw SQL to avoid an import cycle).
 		if err := b.WriteTx(func(tx *sql.Tx) error {
@@ -145,6 +193,25 @@ func EntriesConformance(new BackendFactory) func(*testing.T) {
 		n, _ := es.Count()
 		if n != 1 {
 			t.Errorf("Count = %d, want 1", n)
+		}
+
+		// Past the driver bind limit the IN clause must be batched: an
+		// unbatched clause errors the whole call, and result hydration —
+		// which asks for every result doc at once — would return nothing.
+		// Last in this suite because it adds an entry.
+		bulk := make([]string, 1200)
+		for i := range bulk {
+			bulk[i] = fmt.Sprintf("src:bulk%d.md", i)
+		}
+		if err := es.Add(store.Entry{ID: bulk[900], Content: "bulk hydration probe"}); err != nil {
+			t.Fatal(err)
+		}
+		big, err := es.GetMany(bulk)
+		if err != nil {
+			t.Fatalf("GetMany(1200 ids): %v", err)
+		}
+		if len(big) != 1 || big[bulk[900]] == nil {
+			t.Errorf("GetMany(1200 ids) = %d entries, want the 1 that exists", len(big))
 		}
 	}
 }
@@ -181,12 +248,6 @@ func ChunksConformance(new BackendFactory) func(*testing.T) {
 		hits, err := cs.SearchChunks("zebra", 10)
 		if err != nil || len(hits) != 1 || hits[0].ChunkID != "c1" {
 			t.Errorf("SearchChunks: %+v %v", hits, err)
-		}
-
-		// Multi-query RRF: both queries' docs present.
-		mq, err := cs.SearchChunksMultiQuery([]string{"zebra", "quill"}, 10)
-		if err != nil || len(mq) != 2 {
-			t.Errorf("MultiQuery: %+v %v", mq, err)
 		}
 
 		// ListAll.

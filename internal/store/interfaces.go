@@ -15,22 +15,33 @@ type EntryStore interface {
 	Update(e Entry) error
 	Delete(id string) error
 	Get(id string) (*Entry, error)
+	// GetMany is Get for a result set: one batched round trip instead of
+	// N (M5 — per-doc Get was the facade's dominant cost). Missing IDs are
+	// absent from the map, exactly as a nil Get result is today.
+	GetMany(ids []string) (map[string]*Entry, error)
 	Search(query string, tags []string, limit int) ([]SearchResult, error)
 	Count() (int, error)
 	// T8 additions (D3 moves).
 	ListAll() ([]Entry, error)
 	CountUncompiled(query string) (int, error)
+	// M3 (20260728-search-upgrade, ADR-039): entry_dates sidecar.
+	SetSourceDate(id string, ts int64) error
+	GetSourceDates(ids []string) (map[string]int64, error)
 }
 
 type ChunkStore interface {
 	IndexChunks(tx *sql.Tx, docID string, chunks []ChunkEntry) error
 	DeleteDocChunks(tx *sql.Tx, docID string) error
 	SearchChunks(query string, limit int) ([]ChunkResult, error)
-	SearchChunksMultiQuery(queries []string, limit int) ([]ChunkResult, error)
 	Count() (int, error)
 	NeedsBackfill(memStore Countable) bool
 	// T8 additions.
 	ListAll() ([]ChunkEntryWithDoc, error)
+	// M1 (20260728-search-upgrade): hydration of vector-only chunk hits.
+	GetChunksMeta(ids []string) (map[string]ChunkEntry, error)
+	// M5: the doc IDs currently carrying chunks — reindex needs them to
+	// re-chunk doc families that have no article file on disk (src: docs).
+	ListDocIDs() ([]string, error)
 }
 
 type VectorStore interface {

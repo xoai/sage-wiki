@@ -2,7 +2,117 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **CLI `search` now honors the configured hybrid weights** (default
+  0.7 BM25 / 0.3 vector) **and the `search.ann.enabled` setting** — it
+  previously fused with 1.0/1.0 and always brute-forced. The dead
+  `--scope` flag (parsed, never read) is removed.
+- **Web `/api/search` now embeds the query** and passes the configured
+  hybrid weights — it previously passed a nil vector, silently running
+  BM25-only regardless of embedding configuration.
+- **Chunks found only by vector search are hydrated** with their real
+  heading and content before reranking/output — they previously flowed
+  through fusion as empty passages.
+- **Rerank blending is now safe under partial LLM coverage**: candidates
+  the LLM never scored keep their normalized [0,1] relevance instead of
+  being coerced to zero, blending operates in normalized space on both
+  sides (never raw RRF ~0.016 vs LLM [0,1]), and when the LLM scores
+  fewer than `search.rerank_min_coverage` (default 0.5) of the head the
+  blend is skipped entirely, keeping RRF order.
+
+### Added
+
+- **`sage-wiki reindex`** rebuilds the chunk index from the documents on
+  disk using the current chunking config — compiled articles
+  (`concepts/`, `summaries/`, `outputs/`) and chunk-indexed raw sources
+  alike, replaced per document (delete-then-insert). No LLM article
+  writing happens. Re-chunking changes chunk IDs, so old chunk vectors
+  cannot be kept: without an embedding provider the command stops rather
+  than empty the chunk-vector leg, and `--drop-chunk-vectors` rebuilds the
+  text index anyway (chunk-level vector search stays off until the next
+  `compile --re-embed`).
+- **Soft tag boost**: `sage-wiki search --boost-tags a,b` and MCP
+  `wiki_search{boost_tags}` rank documents carrying those tags +3% each
+  (capped at 15%) **without excluding anything** — the complement to
+  `--tags`/`tags`, which filter. The boost was specified and implemented
+  but had no caller until now.
+- **`search.chunk_overlap_tokens`** (default **0**, recommended opt-in
+  **80**, max half of `chunk_size`): each chunk after the first repeats the
+  tail of its predecessor, so a fact straddling a chunk boundary is
+  retrievable from either side. The default 0 is byte-identical to previous
+  chunking — upgrading never re-chunks an existing index. **Changing the
+  value takes effect only via `sage-wiki reindex`**; edit the config and
+  reindex as one step, or the index mixes both chunkings (docs:
+  search-quality.md § Chunk overlap).
+
 ### Changed
+
+- **Web `/api/search` `score` is now the normalized [0,1] fused score**, not
+  the raw RRF score (~0.016 scale) — a client thresholding on it needs new
+  thresholds. New field: `source_date` (unix seconds; omitted when the
+  document has no known origin date).
+- **`sage-wiki search --config <path>` now fails when that file cannot be
+  loaded** instead of silently searching with default weights and no
+  vectors; auto-discovered config still degrades with a warning.
+  `--expand`/`--rerank` fail when no LLM client can be built, and
+  `sage-wiki reindex` refuses to run against an unloadable config.
+- **Query-term stopwording is corpus-adaptive**: above 100 documents, terms
+  matching more than 20% of documents are dropped from the lexical query,
+  and both the document and chunk legs prune the same term set (they now
+  probe the same corpus, which also removed the chunk leg's per-term
+  `COUNT(DISTINCT)` join — the single largest cost in unified search).
+- **Every search surface now runs the unified retrieval pipeline**
+  (MCP `wiki_search`, CLI `search`, web `/api/search`, and the TUI —
+  `sage-wiki query` moved in M2): chunk-level and document-level hits fuse
+  with the configured weights, the ontology graph contributes as a third
+  channel, and dated documents get the recency tie-breaker. **Result
+  ordering changes on all of them.** Results gain `FinalScore`,
+  `GraphRank`, `SourceDate` and `AliasOf` (web: `source_date`) alongside
+  the existing fields, and MCP/CLI gain per-call `channels`, `expand` and
+  `rerank` options — the LLM stages stay OFF unless asked for. The TUI ran
+  BM25-only with default weights before; it now uses the configured
+  weights, vectors and graph like every other surface.
+- **`search.pipeline: legacy`** pins any surface back to the previous
+  doc-level path if the new ranking is disruptive; the value is validated,
+  so a typo is rejected rather than silently resolved to `unified`.
+- **Result hydration is a single batched query** (`EntryStore.GetMany`)
+  instead of one lookup per result document — it was the unified
+  pipeline's dominant per-query cost, and removing it puts the unified
+  path at parity with (slightly under) the legacy doc-level path's
+  latency on a 1k-entry corpus despite searching both chunks and
+  documents.
+- **Search entry points now apply the `trust.include_outputs` rule**
+  (MCP `wiki_search`, CLI `search`, web `/api/search`, TUI, and
+  `hub search`): `output:`
+  documents — LLM-generated answers auto-filed back into the wiki — are
+  excluded unless the mode admits them (`true` always, `verified` only
+  once confirmed). The default is `false`, so by default these surfaces
+  no longer return outputs. Previously only the Q&A path enforced this,
+  and an agent searching the wiki could read what a Q&A answer would
+  refuse to cite. Set `trust.include_outputs: true` to restore the old
+  search behavior.
+- **`sage-wiki query` retrieval was rewritten as a unified weighted
+  fusion** (20260728-search-upgrade M2): document- and chunk-level hits
+  now both contribute (agreement across granularities ranks higher),
+  the configured hybrid weights apply on this path for the first time,
+  multi-query expansion variants sum instead of taking the best rank,
+  and rankings will shift accordingly.
+- **The ontology graph now joins retrieval ranking as a third fused
+  channel** (`sage-wiki query` path): query terms seed entities (alias
+  links included), a depth-2 traversal with per-relation weights
+  (`contradicts` 1.1, `cites` 0.7) ranks their neighborhoods, and the
+  results fuse at `search.hybrid_weight_graph` (default 0.2). Articles
+  reachable only through the graph can now surface; results carry
+  their graph rank and an `alias_of` note when reached via an alias.
+  An empty ontology costs nothing (byte-identical results).
+- **All search surfaces (query, MCP, CLI, web, TUI, hub) inherit two
+  lexical upgrades** through the shared query builder: on corpora over
+  100 documents, query terms matching more than 20% of documents are
+  pruned (corpus-adaptive stopwording), and entry matching now weights
+  the id/article-path columns 3× over body content (title-proxy boost;
+  Postgres schema migration v6 rebuilds the search vector). Result
+  rankings on every surface change accordingly.
 
 - **README diagrams refreshed** (architecture, compiler pipeline,
   interfaces) — higher-resolution replacements for the three PNGs.

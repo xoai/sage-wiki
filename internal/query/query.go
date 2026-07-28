@@ -81,7 +81,7 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 	}
 	defer closeDB()
 
-	contextStr, sources, chunkIDs, err := buildQueryContext(projectDir, question, topK, cfg, db)
+	contextStr, sources, chunkIDs, err := buildQueryContext(context.Background(), projectDir, question, topK, cfg, db)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +151,7 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 	}
 	chunkStore := memory.NewChunkStore(db)
 	trustCfg := cfg.Trust
-	outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode(), TrustCfg: &trustCfg, Client: client, Model: model, ChunksUsed: chunkIDs})
+	outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), ChunkOverlap: cfg.Search.ChunkOverlapOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode(), TrustCfg: &trustCfg, Client: client, Model: model, ChunksUsed: chunkIDs})
 	if err != nil {
 		log.Warn("auto-filing failed", "error", err)
 	} else {
@@ -179,7 +179,7 @@ func withContextPreamble(ctx string) string {
 
 // buildQueryContext runs hybrid search + ontology traversal and assembles
 // the article context string. Returns ("", nil, nil, nil) if no results found.
-func buildQueryContext(projectDir string, question string, topK int, cfg *config.Config, db store.DBHandle) (string, []string, []string, error) {
+func buildQueryContext(reqCtx context.Context, projectDir string, question string, topK int, cfg *config.Config, db store.DBHandle) (string, []string, []string, error) {
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled()))
 	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
@@ -216,18 +216,27 @@ func buildQueryContext(projectDir string, question string, topK int, cfg *config
 			model = cfg.Models.Write
 		}
 
-		enhanced, err := search.EnhancedSearch(search.EnhancedSearchOpts{
-			Query:          question,
-			Limit:          topK,
-			Client:         client,
-			Model:          model,
-			Embedder:       embedder,
-			ChunkStore:     chunkStore,
-			MemStore:       memStore,
-			VecStore:       vecStore,
-			QueryExpansion: cfg.Search.QueryExpansionEnabled(),
-			RerankEnabled:  rerankEnabled,
+		resp, err := search.Run(reqCtx, search.Deps{
+			Mem:                  memStore,
+			Chunks:               chunkStore,
+			Vec:                  vecStore,
+			Embedder:             embedder,
+			Client:               client,
+			Model:                model,
+			BM25Weight:           cfg.Search.HybridWeightBM25,
+			VectorWeight:         cfg.Search.HybridWeightVector,
+			Ont:                  ontStore,
+			GraphWeight:          cfg.Search.HybridWeightGraph,
+			GraphRelationWeights: cfg.Search.GraphRelationWeights,
+		}, search.Request{
+			Query:             question,
+			Limit:             topK,
+			Expand:            cfg.Search.QueryExpansionEnabled(),
+			Rerank:            rerankEnabled,
+			Granularity:       search.Chunks,
+			RerankMinCoverage: cfg.Search.RerankMinCoverageOrDefault(),
 		})
+		enhanced := resp.Results
 		if err != nil {
 			log.Warn("enhanced search failed, falling back to doc-level", "error", err)
 		} else if len(enhanced) > 0 {
@@ -547,21 +556,7 @@ func buildDocLevelContext(projectDir string, question string, topK int,
 }
 
 func shouldIncludeOutput(id string, mode string, ts *trust.Store) bool {
-	if !strings.HasPrefix(id, "output:") {
-		return true
-	}
-	switch mode {
-	case "true":
-		return true
-	case "verified":
-		if ts == nil {
-			return false
-		}
-		docID := strings.TrimPrefix(id, "output:")
-		return ts.IsConfirmed(docID)
-	default:
-		return false
-	}
+	return trust.IncludePredicate(mode, ts)(id)
 }
 
 // docIDToArticlePath converts a doc ID like "concept:my-concept" to "{outputDir}/concepts/my-concept.md".
@@ -612,19 +607,20 @@ func SaveAnswer(projectDir string, question string, answer string, sources []str
 		saveClient, _ = auth.NewLLMClient(cfg)
 	}
 	saveTrustCfg := cfg.Trust
-	return autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode(), TrustCfg: &saveTrustCfg, Client: saveClient, Model: saveModel})
+	return autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), ChunkOverlap: cfg.Search.ChunkOverlapOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode(), TrustCfg: &saveTrustCfg, Client: saveClient, Model: saveModel})
 }
 
 // autoFileOpts holds optional stores for chunk indexing in autoFile.
 type autoFileOpts struct {
-	TrustMode  string // "false", "verified", "true" — when not "true", skip indexing
-	ChunkStore *memory.ChunkStore
-	DB         store.DBHandle
-	ChunkSize  int // tokens per chunk (0 = default 800)
-	TrustCfg   *config.TrustConfig
-	Client     *llm.Client
-	Model      string
-	ChunksUsed []string
+	TrustMode    string // "false", "verified", "true" — when not "true", skip indexing
+	ChunkStore   *memory.ChunkStore
+	DB           store.DBHandle
+	ChunkSize    int // tokens per chunk (0 = default 800)
+	ChunkOverlap int // tokens of overlap between adjacent chunks (0 = none)
+	TrustCfg     *config.TrustConfig
+	Client       *llm.Client
+	Model        string
+	ChunksUsed   []string
 }
 
 // autoFile saves the query result to wiki/outputs/ with frontmatter.
@@ -659,7 +655,7 @@ func autoFile(projectDir string, outputDir string, result *QueryResult,
 				Stores: trust.IndexStores{
 					MemStore: memStore, VecStore: vecStore, OntStore: ontStore,
 					ChunkStore: opts[0].ChunkStore, DB: opts[0].DB,
-					ChunkSize: opts[0].ChunkSize,
+					ChunkSize: opts[0].ChunkSize, ChunkOverlap: opts[0].ChunkOverlap,
 				},
 				UserNow: userNow,
 			})
@@ -702,6 +698,10 @@ format: %s
 		Tags:        []string{"output"},
 		ArticlePath: relPath,
 	})
+	// Q&A outputs stamp creation time as their origin date (ADR-039).
+	if err := memStore.SetSourceDate("output:"+filename, time.Now().Unix()); err != nil {
+		log.Warn("output source date not recorded", "output", filename, "error", err)
+	}
 
 	// Embed
 	if embedder != nil {
@@ -737,7 +737,7 @@ format: %s
 		if opts[0].ChunkSize > 0 {
 			chunkSize = opts[0].ChunkSize
 		}
-		chunks := extract.ChunkText(result.Answer, chunkSize)
+		chunks := extract.ChunkText(result.Answer, chunkSize, opts[0].ChunkOverlap)
 
 		// Embed chunks outside transaction
 		var chunkEmbeddings [][]float32
@@ -813,7 +813,7 @@ func StreamQuery(ctx context.Context, projectDir string, question string, topK i
 		defer a.Close()
 	}
 
-	contextStr, sources, streamChunkIDs, err := buildQueryContext(projectDir, question, topK, cfg, db)
+	contextStr, sources, streamChunkIDs, err := buildQueryContext(ctx, projectDir, question, topK, cfg, db)
 	if err != nil {
 		return nil, err
 	}
@@ -869,7 +869,7 @@ func StreamQuery(ctx context.Context, projectDir string, question string, topK i
 		}
 		chunkStore := memory.NewChunkStore(db)
 		streamTrustCfg := cfg.Trust
-		if outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode(), TrustCfg: &streamTrustCfg, Client: client, Model: model, ChunksUsed: streamChunkIDs}); err != nil {
+		if outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), ChunkOverlap: cfg.Search.ChunkOverlapOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode(), TrustCfg: &streamTrustCfg, Client: client, Model: model, ChunksUsed: streamChunkIDs}); err != nil {
 			log.Warn("stream auto-filing failed", "error", err)
 		} else {
 			log.Info("stream query result filed", "path", outputPath)

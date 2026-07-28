@@ -36,7 +36,7 @@ func CompileBuckets() []float64 { return append([]float64{}, compileBuckets...) 
 
 type series struct {
 	name      string
-	labels    string // pre-rendered `{k="v",...}` or ""
+	labels    string   // pre-rendered `{k="v",...}` or ""
 	rawLabels []string // raw k,v pairs at creation (ValidateLabels uses these — rendered re-parse would break on values containing , or =)
 	help      string
 	typ       string
@@ -314,17 +314,17 @@ func registered(s *series) bool {
 // helpText derives a HELP line; families without an entry get a
 // placeholder (Prometheus requires the line, spec §6).
 var helpTexts = map[string]string{
-	"compile_pass_duration_seconds":   "Compile pass wall-clock duration in seconds.",
-	"llm_tokens_total":                "LLM tokens by provider, pass, and direction.",
-	"llm_retries_total":               "LLM retry attempts.",
-	"llm_rate_limited_total":          "LLM HTTP 429 responses.",
-	"compile_backpressure_limit":      "Current backpressure concurrency limit.",
-	"compile_backpressure_in_flight":  "Current backpressure in-flight count.",
-	"search_duration_seconds":         "Search stage latency in seconds.",
-	"query_duration_seconds":          "End-to-end query latency in seconds.",
-	"embed_calls_total":               "Embedding API calls.",
-	"vector_cache_hits_total":         "Vector cache searches served from the loaded matrix.",
-	"vector_cache_misses_total":       "Vector cache reloads triggered.",
+	"compile_pass_duration_seconds":  "Compile pass wall-clock duration in seconds.",
+	"llm_tokens_total":               "LLM tokens by provider, pass, and direction.",
+	"llm_retries_total":              "LLM retry attempts.",
+	"llm_rate_limited_total":         "LLM HTTP 429 responses.",
+	"compile_backpressure_limit":     "Current backpressure concurrency limit.",
+	"compile_backpressure_in_flight": "Current backpressure in-flight count.",
+	"search_duration_seconds":        "Search stage latency in seconds.",
+	"query_duration_seconds":         "End-to-end query latency in seconds.",
+	"embed_calls_total":              "Embedding API calls.",
+	"vector_cache_hits_total":        "Vector cache searches served from the loaded matrix.",
+	"vector_cache_misses_total":      "Vector cache reloads triggered.",
 }
 
 func helpText(name string) string {
@@ -337,8 +337,10 @@ func helpText(name string) string {
 // allowedLabelKV is the D3 cardinality inventory — the ONLY permitted
 // label keys and their permitted values.
 var allowedLabelKV = map[string]map[string]bool{
-	"pass":      {"summarize": true, "extract": true, "write": true, "triples": true, "resolve": true},
-	"stage":     {"bm25": true, "vector": true, "rrf": true},
+	"pass": {"summarize": true, "extract": true, "write": true, "triples": true, "resolve": true},
+	// "total" is the request-scoped end-to-end stage the search facade
+	// emits (search.Run); the three others are per-leg.
+	"stage":     {"bm25": true, "vector": true, "rrf": true, "total": true},
 	"direction": {"input": true, "output": true, "cached": true},
 	"cache":     {"doc": true, "chunk": true},
 	// provider values come from the config enum and are validated by key only.
