@@ -556,21 +556,7 @@ func buildDocLevelContext(projectDir string, question string, topK int,
 }
 
 func shouldIncludeOutput(id string, mode string, ts *trust.Store) bool {
-	if !strings.HasPrefix(id, "output:") {
-		return true
-	}
-	switch mode {
-	case "true":
-		return true
-	case "verified":
-		if ts == nil {
-			return false
-		}
-		docID := strings.TrimPrefix(id, "output:")
-		return ts.IsConfirmed(docID)
-	default:
-		return false
-	}
+	return trust.IncludePredicate(mode, ts)(id)
 }
 
 // docIDToArticlePath converts a doc ID like "concept:my-concept" to "{outputDir}/concepts/my-concept.md".

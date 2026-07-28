@@ -32,6 +32,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/query"
 	"github.com/xoai/sage-wiki/internal/search"
 	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/internal/trust"
 )
 
 // WebServer serves the web UI and REST API.
@@ -652,6 +653,11 @@ func (s *WebServer) handleSearch(w http.ResponseWriter, r *http.Request) {
 		} else {
 			chunkStore = memory.NewChunkStore(s.db)
 		}
+		trustMode := s.cfg.Trust.IncludeOutputsMode()
+		var trustStore *trust.Store
+		if trustMode == "verified" {
+			trustStore = trust.NewStore(s.db)
+		}
 		resp, err := search.Run(search.Deps{
 			Mem:                  s.mem,
 			Chunks:               chunkStore,
@@ -662,6 +668,7 @@ func (s *WebServer) handleSearch(w http.ResponseWriter, r *http.Request) {
 			Ont:                  s.ont,
 			GraphWeight:          s.cfg.Search.HybridWeightGraph,
 			GraphRelationWeights: s.cfg.Search.GraphRelationWeights,
+			IncludeDoc:           trust.IncludePredicate(trustMode, trustStore),
 		}, search.Request{
 			Query:       query,
 			Limit:       limit,

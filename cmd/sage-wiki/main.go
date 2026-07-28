@@ -36,6 +36,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/skill"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/storedial"
+	"github.com/xoai/sage-wiki/internal/trust"
 	tuidashboard "github.com/xoai/sage-wiki/internal/tui/dashboard"
 	"github.com/xoai/sage-wiki/internal/vectors"
 	"github.com/xoai/sage-wiki/internal/web"
@@ -783,6 +784,11 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		}
 		mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
 		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+		trustMode := cfg.Trust.IncludeOutputsMode()
+		var trustStore *trust.Store
+		if trustMode == "verified" {
+			trustStore = trust.NewStore(db)
+		}
 		resp, err := search.Run(search.Deps{
 			Mem:                  memStore,
 			Chunks:               memory.NewChunkStore(db),
@@ -795,6 +801,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 			Ont:                  ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes)),
 			GraphWeight:          cfg.Search.HybridWeightGraph,
 			GraphRelationWeights: cfg.Search.GraphRelationWeights,
+			IncludeDoc:           trust.IncludePredicate(trustMode, trustStore),
 		}, search.Request{
 			Query:             queryStr,
 			Limit:             limit,

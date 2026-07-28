@@ -39,6 +39,15 @@
 
 ### Changed
 
+- **Search entry points now apply the `trust.include_outputs` rule**
+  (MCP `wiki_search`, CLI `search`, web `/api/search`, TUI): `output:`
+  documents — LLM-generated answers auto-filed back into the wiki — are
+  excluded unless the mode admits them (`true` always, `verified` only
+  once confirmed). The default is `false`, so by default these surfaces
+  no longer return outputs. Previously only the Q&A path enforced this,
+  and an agent searching the wiki could read what a Q&A answer would
+  refuse to cite. Set `trust.include_outputs: true` to restore the old
+  search behavior.
 - **`sage-wiki query` retrieval was rewritten as a unified weighted
   fusion** (20260728-search-upgrade M2): document- and chunk-level hits
   now both contribute (agreement across granularities ranks higher),

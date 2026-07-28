@@ -11,6 +11,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/search"
 	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/tui"
 	"github.com/xoai/sage-wiki/internal/tui/browse"
 	"github.com/xoai/sage-wiki/internal/tui/compile"
@@ -59,6 +60,11 @@ func New(projectDir string, cfg *config.Config, db store.DBHandle) Model {
 	if cfg.Search.PipelineOrDefault() == "unified" {
 		mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
 		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+		trustMode := cfg.Trust.IncludeOutputsMode()
+		var trustStore *trust.Store
+		if trustMode == "verified" {
+			trustStore = trust.NewStore(db)
+		}
 		deps := search.Deps{
 			Mem:                  memStore,
 			Chunks:               memory.NewChunkStore(db),
@@ -68,6 +74,7 @@ func New(projectDir string, cfg *config.Config, db store.DBHandle) Model {
 			Ont:                  ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes)),
 			GraphWeight:          cfg.Search.HybridWeightGraph,
 			GraphRelationWeights: cfg.Search.GraphRelationWeights,
+			IncludeDoc:           trust.IncludePredicate(trustMode, trustStore),
 		}
 		searchFn = func(query string, limit int) ([]search.DocResult, error) {
 			resp, err := search.Run(deps, search.Request{Query: query, Limit: limit, Granularity: search.Docs})

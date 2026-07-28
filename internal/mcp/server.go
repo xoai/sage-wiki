@@ -25,6 +25,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/pathsafe"
 	"github.com/xoai/sage-wiki/internal/search"
 	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
 
@@ -279,6 +280,14 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 		} else {
 			chunkStore = memory.NewChunkStore(s.db)
 		}
+		// Trust semantics are the Q&A path's, injected as a predicate
+		// (spec §2.1): an agent searching the wiki must not see outputs
+		// a Q&A answer would refuse to cite.
+		trustMode := s.cfg.Trust.IncludeOutputsMode()
+		var trustStore *trust.Store
+		if trustMode == "verified" {
+			trustStore = trust.NewStore(s.db)
+		}
 		resp, err := search.Run(search.Deps{
 			Mem:                  s.mem,
 			Chunks:               chunkStore,
@@ -291,6 +300,7 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 			Ont:                  s.ont,
 			GraphWeight:          s.cfg.Search.HybridWeightGraph,
 			GraphRelationWeights: s.cfg.Search.GraphRelationWeights,
+			IncludeDoc:           trust.IncludePredicate(trustMode, trustStore),
 		}, search.Request{
 			Query:             query,
 			Limit:             limit,
