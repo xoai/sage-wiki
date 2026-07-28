@@ -30,7 +30,9 @@ python3 eval/eval.py --json . > report.json
 
 - **Python 3.10+**
 - **numpy** (optional, speeds up vector benchmarks ~10x)
-- A compiled sage-wiki project (must have `.sage/wiki.db` and `_wiki/` directory)
+- A compiled sage-wiki project (must have `.sage/wiki.db` and a compiled
+  output directory — resolved from `config.yaml`'s `output:` value, falling
+  back to `wiki/` then `_wiki/`)
 
 ```bash
 pip install numpy  # optional but recommended
@@ -265,9 +267,16 @@ These are typical numbers on a wiki with ~1000 concepts and ~3000 chunks:
 ```
 eval/
 ├── README.md          # this file
+├── REPORT.md          # measured results on real compiled wikis
 ├── eval.py            # main eval script (perf + quality)
-└── eval_test.py       # test suite with synthetic fixture generator
+├── eval_test.py       # test suite with synthetic fixture generator
+└── benchmarks/        # memory benchmarks (LOCOMO, LongMemEval, BEAM)
 ```
+
+**Fixtures vs real wikis.** `eval_test.py`'s generator exists to test
+`eval.py`, not to characterise sage-wiki. Numbers produced from fixtures
+describe the generator's parameters; only a run against a compiled project
+says anything about the system. `REPORT.md` uses real wikis for this reason.
 
 ## Tips
 

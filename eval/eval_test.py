@@ -574,6 +574,59 @@ class TestEvalEdgeCases(unittest.TestCase):
 
 # ─── CLI: generate-fixture ─────────────────────────────────────────────────────
 
+
+class TestFactExtractionAgainstRealFormat(unittest.TestCase):
+    """Fact extraction must count claims the real compiler actually writes.
+
+    Regression: the metric counted only bullet lines inside `## Key claims`,
+    but sage-wiki's summarize pass emits prose paragraphs. Every real wiki
+    therefore scored 0.0% fact extraction while simultaneously scoring 100%
+    on "Structural - Key claims" (which only checks the heading exists) — two
+    outputs of the same run contradicting each other. The synthetic fixture
+    wrote bullets, which is why the suite never caught it.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _project_with_summary(self, key_claims_body):
+        root = os.path.join(self.tmpdir, "proj")
+        generate_fixture(root, n_sources=3, n_concepts=4, n_summaries=3,
+                         n_vectors=3, n_entities=4, n_relations=3, seed=2)
+        sdir = os.path.join(root, "_wiki", "summaries")
+        for fn in os.listdir(sdir):
+            with open(os.path.join(sdir, fn), "w", encoding="utf-8") as fh:
+                fh.write("---\nsource: raw/x.md\n---\n\n"
+                         f"## Key claims\n{key_claims_body}\n\n"
+                         "## Concepts\nalpha, beta\n")
+        return root
+
+    def _rate(self, root):
+        r = subprocess.run([sys.executable, EVAL_SCRIPT, root, "--quality-only", "--json"],
+                           capture_output=True, text=True, timeout=180)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)["quality"]["fact_extraction"]["rate"]
+
+    def test_prose_claims_are_counted(self):
+        """What sage-wiki actually writes: a prose paragraph."""
+        prose = ("The conversation reveals that John is pursuing local politics. "
+                 "He has witnessed inadequate educational resources firsthand.")
+        self.assertEqual(self._rate(self._project_with_summary(prose)), 1.0)
+
+    def test_bullet_claims_still_counted(self):
+        bullets = "* Claim one about alpha\n* Claim two about beta"
+        self.assertEqual(self._rate(self._project_with_summary(bullets)), 1.0)
+
+    def test_empty_section_is_not_counted(self):
+        self.assertEqual(self._rate(self._project_with_summary("")), 0.0)
+
+    def test_whitespace_only_section_is_not_counted(self):
+        self.assertEqual(self._rate(self._project_with_summary("   \n  \n")), 0.0)
+
+
 if __name__ == "__main__":
     if "--generate-fixture" in sys.argv:
         idx = sys.argv.index("--generate-fixture")
@@ -588,3 +641,99 @@ if __name__ == "__main__":
         sys.exit(0)
 
     unittest.main()
+
+class TestOutputDirResolution(unittest.TestCase):
+    """eval.py must find the wiki wherever config.yaml says it is.
+
+    Regression: eval.py hardcoded `_wiki/` while sage-wiki's scaffold emits
+    `output: wiki`, so it exited 1 on every real project. The fixtures
+    generated `_wiki/` too, which is why the suite stayed green while the tool
+    was unusable on actual wikis. These tests exercise the real layouts.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _project(self, output_dir_name, config_text=None):
+        root = os.path.join(self.tmpdir, "proj")
+        generate_fixture(root, n_sources=3, n_concepts=4, n_summaries=3,
+                         n_vectors=3, n_entities=4, n_relations=3, seed=1)
+        if output_dir_name != "_wiki":
+            os.rename(os.path.join(root, "_wiki"),
+                      os.path.join(root, output_dir_name))
+        cfg = os.path.join(root, "config.yaml")
+        if config_text is None:
+            if os.path.exists(cfg):
+                os.remove(cfg)
+        else:
+            with open(cfg, "w") as fh:
+                fh.write(config_text)
+        return root
+
+    def _run(self, root, *extra):
+        return subprocess.run(
+            [sys.executable, EVAL_SCRIPT, root, "--quality-only", *extra],
+            capture_output=True, text=True, timeout=180,
+        )
+
+    def test_real_sage_wiki_layout_succeeds(self):
+        """`output: wiki` is what the shipped scaffold writes."""
+        root = self._project("wiki", "version: 1\nproject: t\noutput: wiki\n")
+        r = self._run(root)
+        self.assertEqual(r.returncode, 0, f"failed on real layout:\n{r.stderr}")
+        self.assertIn("OVERALL", r.stdout)
+
+    def test_custom_output_name_from_config(self):
+        root = self._project("kb", "version: 1\nproject: t\noutput: kb\n")
+        r = self._run(root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("OVERALL", r.stdout)
+
+    def test_legacy_underscore_wiki_still_works(self):
+        root = self._project("_wiki")
+        r = self._run(root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_bare_wiki_without_config(self):
+        root = self._project("wiki")
+        r = self._run(root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_config_output_wins_over_stale_legacy_dir(self):
+        root = self._project("wiki", "version: 1\nproject: t\noutput: wiki\n")
+        os.makedirs(os.path.join(root, "_wiki", "concepts"), exist_ok=True)
+        r = self._run(root, "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        data = json.loads(r.stdout)
+        # concepts come from wiki/, not the empty stale _wiki/
+        self.assertGreater(data["dataset"]["concept_files"], 0)
+
+    def test_missing_wiki_reports_searched_locations(self):
+        root = os.path.join(self.tmpdir, "empty")
+        os.makedirs(os.path.join(root, ".sage"))
+        open(os.path.join(root, ".sage", "wiki.db"), "w").close()
+        r = self._run(root)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("wiki", r.stderr.lower())
+
+
+
+if __name__ == "__main__":
+    if "--generate-fixture" in sys.argv:
+        idx = sys.argv.index("--generate-fixture")
+        path = sys.argv[idx + 1] if idx + 1 < len(sys.argv) else "./test-fixture"
+        print(f"Generating fixture at {path}...")
+        expected = generate_fixture(path, n_sources=50, n_concepts=80,
+                                     n_summaries=50, n_vectors=40, vec_dims=128,
+                                     n_entities=100, n_relations=120)
+        print(f"Done. {expected['n_concepts']} concepts, {expected['n_summaries']} summaries, "
+              f"{expected['n_entities']} entities, {expected['n_relations']} relations.")
+        print(f"\nRun eval: python3 eval.py {path}")
+        sys.exit(0)
+
+    unittest.main()
+
+

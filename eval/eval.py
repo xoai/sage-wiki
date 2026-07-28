@@ -69,13 +69,51 @@ run_quality = not args.perf_only
 DATA_DIR = os.path.abspath(args.path)
 DB_PATH = os.path.join(DATA_DIR, ".sage", "wiki.db")
 MANIFEST_PATH = os.path.join(DATA_DIR, ".manifest.json")
-WIKI_DIR = os.path.join(DATA_DIR, "_wiki")
 
-for p, label in [(DB_PATH, ".sage/wiki.db"), (WIKI_DIR, "_wiki/")]:
-    if not os.path.exists(p):
-        print(f"Error: {label} not found at {p}", file=sys.stderr)
-        print(f"Are you pointing to a sage-wiki project directory?", file=sys.stderr)
-        sys.exit(1)
+
+def resolve_wiki_dir(root):
+    """Locate the compiled wiki: config.yaml's `output:` first, then defaults.
+
+    sage-wiki's scaffold writes `output: wiki`, and the value is user-editable,
+    so a hardcoded directory name misses most real projects. `_wiki` remains in
+    the fallback list for projects predating the rename.
+    """
+    candidates = []
+    cfg = os.path.join(root, "config.yaml")
+    if os.path.isfile(cfg):
+        try:
+            with open(cfg, encoding="utf-8") as fh:
+                for line in fh:
+                    stripped = line.strip()
+                    if stripped.startswith("output:"):
+                        value = stripped.split(":", 1)[1].strip().strip("'\"")
+                        value = value.split("#", 1)[0].strip()
+                        if value:
+                            candidates.append(value)
+                        break
+        except OSError:
+            pass
+    candidates += ["wiki", "_wiki"]
+
+    for name in candidates:
+        path = os.path.join(root, name)
+        if os.path.isdir(path):
+            return path
+    return None
+
+
+WIKI_DIR = resolve_wiki_dir(DATA_DIR)
+
+if not os.path.exists(DB_PATH):
+    print(f"Error: .sage/wiki.db not found at {DB_PATH}", file=sys.stderr)
+    print("Are you pointing to a sage-wiki project directory?", file=sys.stderr)
+    sys.exit(1)
+if WIKI_DIR is None:
+    print(f"Error: no compiled wiki directory found under {DATA_DIR}", file=sys.stderr)
+    print("Looked for config.yaml's `output:` value, then wiki/ and _wiki/.",
+          file=sys.stderr)
+    print("Has this project been compiled (`sage-wiki compile`)?", file=sys.stderr)
+    sys.exit(1)
 
 # ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -525,13 +563,30 @@ if run_quality:
 
     section("Quality: Fact extraction density")
 
+    def count_claims(section_text):
+        """Claims in a `## Key claims` body, however the model formatted it.
+
+        sage-wiki's summarize pass writes prose paragraphs; earlier versions of
+        this metric counted only bullet lines, so every real wiki scored 0%
+        while the bullet-emitting synthetic fixture scored ~72%. Bullets are
+        counted as one claim each; prose falls back to sentence count.
+        """
+        bullets = [l for l in section_text.split("\n")
+                   if l.strip().startswith(("*", "-", "•"))]
+        if bullets:
+            return len(bullets)
+        prose = section_text.strip()
+        if not prose:
+            return 0
+        return len([sent for sent in re.split(r'(?<=[.!?])\s+', prose) if sent.strip()])
+
     summary_claims = {}
     for name, d in summary_data.items():
-        m = re.search(r'## Key claims\s*\n(.*?)(?=\n##|\Z)', d["text"], re.DOTALL)
-        if m:
-            summary_claims[name] = len([l for l in m.group(1).split("\n") if l.strip().startswith(("*", "-", "•"))])
-        else:
-            summary_claims[name] = 0
+        # `[ \t]*\r?\n` (not `\s*\n`): \s swallows the blank lines after an
+        # EMPTY section and captures the NEXT heading's body instead. Bullet-only
+        # counting hid that; sentence counting would have scored those as claims.
+        m = re.search(r'## Key claims[ \t]*\r?\n(.*?)(?=\n##|\Z)', d["text"], re.DOTALL)
+        summary_claims[name] = count_claims(m.group(1)) if m else 0
 
     concept_facts = {}
     for name, d in concept_data.items():
