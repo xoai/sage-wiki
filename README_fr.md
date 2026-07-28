@@ -323,36 +323,26 @@ hub — plus la revue de confiance en équipe et la gestion des coûts : [Config
 
 ## Benchmarks
 
-Évaluation actuelle ([eval/REPORT.md](eval/REPORT.md), avril 2026) : score de
-qualité global **85.9–86.7%** (un composite de métriques de recherche,
-d'extraction, de citation et d'intégrité du graphe), recall@1 en recherche
-**97.5–99.7%**, recall@10 100% sur la suite de benchmarks synthétiques. La
-surcharge de compilation hors LLM (hachage + analyse de dépendances) reste
-sous la seconde — le temps réel est dominé par les appels API LLM.
-Reproduisez avec le harnais dans
-[eval/](eval/README.md) :
+Deux suites répondent à des questions différentes. Détail complet :
+[eval/benchmarks/REPORT.md](eval/benchmarks/REPORT.md) · [eval/REPORT.md](eval/REPORT.md)
+
+**Benchmarks mémoire** — sait-il répondre à des questions sur une longue conversation ? Jeux de données publiés, jugés par LLM, avec les prompts et la procédure de
+[mem0ai/memory-benchmarks](https://github.com/mem0ai/memory-benchmarks) et sage-wiki comme backend (gpt-5 comme répondeur/juge, échantillons réduits) :
+
+| Benchmark | Score | Mem0 Platform |
+|---|---|---|
+| LOCOMO (150 q) | **92.0%** @ top-50 | 91.8% @ top-50 |
+| LongMemEval-S (30 q) | **93.3%** @ top-50 | 94.8% @ top-50 |
+| BEAM 100K (60 q) | **0.691** mean nugget | 0.641 @ 1M |
+
+Ce n'est pas un classement strictement comparable : mem0 exécute sa plateforme gérée sur les jeux complets, il s'agit ici d'échantillons (±4–5 pts), et les pipelines de compilation diffèrent. Les réserves sont détaillées dans le rapport.
+
+**Évaluation qualité + performance** — le wiki est-il bien formé et rapide ? Fonctionne sur n'importe quel wiki compilé, sans clé API, en quelques secondes. Médiane sur 10 wikis réels : score global **87,4 %**, extraction de faits 100 %, rappel@10 100 %, intégrité des références croisées 100 %. Récupération en mémoire : FTS5 top-10 **0,035 ms**, RRF hybride **4,9 ms**, BFS graphe **0,001 ms**.
 
 ```bash
-python3 eval/eval.py .               # évaluation complète sur votre wiki
-python3 -m unittest discover eval    # auto-tests du harnais
+python3 eval/eval.py .                      # qualité + perf sur votre wiki
+python3 -m pytest eval/eval_test.py -q      # auto-tests du harnais
 ```
-
-## Architecture
-
-![Architecture Sage-Wiki](sage-wiki-architecture.png)
-
-- **Stockage :** SQLite avec FTS5 (recherche BM25) + vecteurs BLOB (similarité cosinus) + table compile_items pour le suivi palier/état par source
-- **Ontologie :** Graphe entité-relation typé avec parcours BFS et détection de cycles
-- **Recherche :** Pipeline unifié — FTS5 et vecteurs, au niveau des documents comme des fragments, fusionnés par RRF pondéré avec le graphe ontologique comme troisième canal ; avec suppression des termes trop fréquents adaptée au corpus, pondération des colonnes servant de proxy de titre, et départage par fraîcheur pour les documents dont la date d'origine est connue. L'expansion de requête et le re-classement par LLM (soumis à un seuil de couverture) sont activables appel par appel sur les surfaces de recherche et activés par défaut pour les questions-réponses, qui utilisent aussi l'expansion de contexte par graphe à 4 signaux. Les réponses de recherche signalent les sources non compilées pour la compilation à la demande.
-- **Compilateur :** Pipeline par paliers (Palier 0 : indexation, Palier 1 : embedding, Palier 2 : analyse de code, Palier 3 : compilation LLM complète) avec contre-pression adaptative, extraction Pass 2 concurrente, cache de prompts, API batch (Anthropic + OpenAI + Gemini), suivi des coûts, compilation à la demande via MCP, scoring de qualité et conscience des cascades. L'embedding inclut une reprise avec backoff exponentiel, une limitation de débit optionnelle et le mean-pooling pour les entrées longues. 10 analyseurs de code intégrés (Go via go/ast, 8 langages via regex, extraction de clés de données structurées).
-- **MCP :** 18 outils (7 lecture, 9 écriture, 2 composés) via stdio ou SSE, dont `wiki_graph_query` pour les Q&R de graphe multi-sauts avec citations de provenance, `wiki_compile_topic` pour la compilation à la demande et `wiki_capture` pour l'extraction de connaissances
-- **TUI :** tableau de bord terminal bubbletea + glamour à 4 onglets (parcourir, rechercher, Q&R, compiler) avec affichage de la distribution par paliers
-- **Interface web :** Preact + Tailwind CSS intégrée via `go:embed` avec build tag (`-tags webui`)
-- **Scribe :** Interface extensible pour l'ingestion de connaissances depuis les conversations. Le scribe de session traite les transcriptions JSONL de Claude Code.
-- **Packs :** Système de packs de contribution avec 8 packs intégrés, registre basé sur Git, cycle de vie installation/application/suppression/mise à jour, application transactionnelle avec restauration par snapshot, fusion en remplissage seul et sécurité par liste blanche de config.
-- **Parseurs externes :** Parseurs de formats de fichiers enfichables à l'exécution via protocole subprocess stdin/stdout. Exécution en bac à sable avec timeout, suppression d'environnement et isolation réseau (Linux).
-
-Zéro CGO. Go pur. Multi-plateforme.
 
 ## Licence
 

@@ -264,29 +264,26 @@ sage-wiki compile               # 轮询状态，完成后取回结果
 
 ## 基准测试
 
-当前评估（[eval/REPORT.md](eval/REPORT.md)，2026 年 4 月）：在合成基准套件上，综合质量分数 **85.9–86.7%**（由搜索、抽取、引用与图完整性指标合成），搜索召回率 recall@1 **97.5–99.7%**，recall@10 达 100%。非 LLM 编译开销（哈希 + 依赖分析）保持在一秒以内——总耗时主要由 LLM API 调用决定。可用 [eval/](eval/README.md) 中的评测框架复现：
+两套评测回答不同的问题。完整细节：
+[eval/benchmarks/REPORT.md](eval/benchmarks/REPORT.md) · [eval/REPORT.md](eval/REPORT.md)
+
+**记忆基准** — 能否回答关于长对话的问题？采用公开数据集、LLM 评判，沿用
+[mem0ai/memory-benchmarks](https://github.com/mem0ai/memory-benchmarks) 的提示词与流程，仅将后端换成 sage-wiki（回答与评判均为 gpt-5，抽样）：
+
+| 基准 | Score | Mem0 Platform |
+|---|---|---|
+| LOCOMO (150 q) | **92.0%** @ top-50 | 91.8% @ top-50 |
+| LongMemEval-S (30 q) | **93.3%** @ top-50 | 94.8% @ top-50 |
+| BEAM 100K (60 q) | **0.691** mean nugget | 0.641 @ 1M |
+
+这并非严格对等的排名：mem0 在其托管平台上跑完整题库，这里是抽样（±4–5 个百分点），编译管线也不同。报告中已列明各项前提。
+
+**质量与性能评估** — wiki 是否结构良好且快速？可在任何已编译的 wiki 上运行，无需 API key，数秒完成。10 个真实 wiki 的中位数：总分 **87.4%**，事实抽取 100%，recall@10 100%，交叉引用完整性 100%。进程内检索：FTS5 top-10 **0.035 ms**，混合 RRF **4.9 ms**，图 BFS **0.001 ms**。
 
 ```bash
-python3 eval/eval.py .               # 对你的 wiki 进行完整评估
-python3 -m unittest discover eval    # 评测框架自测
+python3 eval/eval.py .                      # wiki 的质量与性能
+python3 -m pytest eval/eval_test.py -q      # 工具自测
 ```
-
-## 架构
-
-![Sage-Wiki 架构](sage-wiki-architecture.png)
-
-- **存储：** SQLite 搭配 FTS5（BM25 搜索）+ BLOB 向量（余弦相似度）+ compile_items 表用于每个源文件的层级/状态追踪
-- **本体：** 类型化实体-关系图，支持 BFS 遍历与环检测
-- **搜索：** 统一管线——文档级与 chunk 级的 FTS5 和向量通过加权 RRF 融合，并以本体图作为第三个通道；含语料自适应停用词、标题代理列权重，以及对已知起始日期文档的新近度决胜。LLM 查询扩展与带覆盖率门控的重排序在搜索接口上按调用选择开启，在问答中默认开启（问答还使用 4 信号图上下文扩展）。搜索响应会提示未编译的源文件以支持按需编译。
-- **编译器：** 分层管线（层级 0：索引，层级 1：向量嵌入，层级 2：代码解析，层级 3：完整 LLM 编译），支持自适应背压、并发 Pass 2 抽取、prompt 缓存、batch API（Anthropic + OpenAI + Gemini）、费用追踪、经 MCP 的按需编译、质量评分与级联感知。Embedding 支持指数退避重试、可选限速与长输入的均值池化。内置 10 个代码解析器（Go 使用 go/ast，8 种语言使用正则，结构化数据键提取）。
-- **MCP：** 18 个工具（7 读、9 写、2 复合），通过 stdio 或 SSE 提供，包括用于带溯源引用的多跳图问答的 `wiki_graph_query`、用于按需编译的 `wiki_compile_topic`，以及用于知识提取的 `wiki_capture`
-- **TUI：** bubbletea + glamour 4 标签页终端面板（浏览、搜索、问答、编译），带层级分布显示
-- **Web UI：** Preact + Tailwind CSS，通过 `go:embed` 与构建标签（`-tags webui`）嵌入
-- **Scribe：** 从对话中摄取知识的可扩展接口。会话 scribe 处理 Claude Code 的 JSONL 转录记录。
-- **包：** 贡献包系统，含 8 个内置包、基于 Git 的注册表、安装/应用/移除/更新生命周期、带快照回滚的事务性应用、仅填充式合并与配置允许列表安全机制。
-- **外部解析器：** 通过 stdin/stdout 子进程协议的运行时可插拔文件格式解析器。沙箱化执行，包括超时、环境变量清理与网络隔离（Linux）。
-
-零 CGO。纯 Go。跨平台。
 
 ## 许可证
 

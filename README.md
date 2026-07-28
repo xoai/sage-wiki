@@ -314,17 +314,34 @@ team trust review and cost management: [Team Setup](docs/guides/team-setup.md).
 
 ## Benchmarks
 
-Current evaluation ([eval/REPORT.md](eval/REPORT.md), April 2026): overall
-quality score **85.9–86.7%** (a composite of search, extraction, citation,
-and graph-integrity metrics), search recall@1 **97.5–99.7%**, recall@10
-100% on the synthetic benchmark suite. Non-LLM compile overhead (hashing +
-dependency analysis) stays under a second — wall time is dominated by LLM
-API calls. Reproduce with the harness in
-[eval/](eval/README.md):
+Two suites answer different questions. Full detail:
+[eval/benchmarks/REPORT.md](eval/benchmarks/REPORT.md) and
+[eval/REPORT.md](eval/REPORT.md).
+
+**Memory benchmarks** — can it answer questions about a long conversation?
+Published datasets, LLM-judged, using the prompts and procedure from
+[mem0ai/memory-benchmarks](https://github.com/mem0ai/memory-benchmarks) with
+sage-wiki as the backend (gpt-5 answerer/judge, scoped samples):
+
+| Benchmark | Score | Mem0 Platform (published) |
+|---|---|---|
+| LOCOMO (150 q) | **92.0%** @ top-50 | 91.8% @ top-50 |
+| LongMemEval-S (30 q) | **93.3%** @ top-50 | 94.8% @ top-50 |
+| BEAM 100K (60 q) | **0.691** mean nugget | 0.641 @ 1M bucket |
+
+Not a like-for-like ranking: mem0 runs their managed platform on full question
+sets, these are scoped samples (±4–5pp), and the compile pipelines differ. The
+caveats are spelled out in the report.
+
+**Quality + performance eval** — is the wiki well-formed and fast? Runs on any
+compiled wiki, no API keys, seconds. Median across 10 real wikis: overall
+**87.4%**, fact extraction 100%, search recall@10 100%, cross-reference
+integrity 100%. In-process retrieval: FTS5 top-10 **0.035 ms**, hybrid RRF
+**4.9 ms**, graph BFS **0.001 ms**.
 
 ```bash
-python3 eval/eval.py .               # full evaluation against your wiki
-python3 -m unittest discover eval    # harness self-tests
+python3 eval/eval.py .                      # quality + perf on your wiki
+python3 -m pytest eval/eval_test.py -q      # harness self-tests
 ```
 
 ## Architecture

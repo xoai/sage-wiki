@@ -317,35 +317,26 @@ rà soát tin cậy theo nhóm và quản lý chi phí: [Thiết lập nhóm](do
 
 ## Đánh giá hiệu năng
 
-Đánh giá hiện tại ([eval/REPORT.md](eval/REPORT.md), tháng 4 năm 2026): điểm
-chất lượng tổng thể **85.9–86.7%** (tổng hợp từ các chỉ số tìm kiếm, trích xuất,
-trích dẫn, và toàn vẹn đồ thị), recall@1 tìm kiếm **97.5–99.7%**, recall@10
-100% trên bộ benchmark tổng hợp. Chi phí biên dịch không dùng LLM (băm +
-phân tích phụ thuộc) luôn dưới một giây — thời gian thực tế bị chi phối bởi
-các cuộc gọi API LLM. Tái tạo bằng bộ công cụ trong
-[eval/](eval/README.md):
+Hai bộ đánh giá trả lời hai câu hỏi khác nhau. Chi tiết:
+[eval/benchmarks/REPORT.md](eval/benchmarks/REPORT.md) · [eval/REPORT.md](eval/REPORT.md)
+
+**Đánh giá bộ nhớ** — nó có trả lời được câu hỏi về một cuộc hội thoại dài không? Dữ liệu công bố, chấm bằng LLM, dùng đúng prompt và quy trình của
+[mem0ai/memory-benchmarks](https://github.com/mem0ai/memory-benchmarks) với sage-wiki làm backend (gpt-5 vừa trả lời vừa chấm, mẫu rút gọn):
+
+| Bộ đánh giá | Score | Mem0 Platform |
+|---|---|---|
+| LOCOMO (150 q) | **92.0%** @ top-50 | 91.8% @ top-50 |
+| LongMemEval-S (30 q) | **93.3%** @ top-50 | 94.8% @ top-50 |
+| BEAM 100K (60 q) | **0.691** mean nugget | 0.641 @ 1M |
+
+Đây không phải so sánh ngang hàng: mem0 chạy nền tảng có quản lý trên toàn bộ câu hỏi, còn đây là mẫu rút gọn (±4–5 điểm phần trăm), và pipeline biên dịch cũng khác. Các lưu ý được nêu rõ trong báo cáo.
+
+**Đánh giá chất lượng + hiệu năng** — wiki có chuẩn và nhanh không? Chạy trên bất kỳ wiki đã biên dịch nào, không cần API key, chỉ vài giây. Trung vị trên 10 wiki thật: tổng thể **87,4%**, trích xuất dữ kiện 100%, recall@10 100%, toàn vẹn liên kết chéo 100%. Truy xuất trong tiến trình: FTS5 top-10 **0,035 ms**, RRF lai **4,9 ms**, BFS đồ thị **0,001 ms**.
 
 ```bash
-python3 eval/eval.py .               # đánh giá đầy đủ trên wiki của bạn
-python3 -m unittest discover eval    # kiểm thử tự thân của bộ công cụ
+python3 eval/eval.py .                      # chất lượng + hiệu năng wiki
+python3 -m pytest eval/eval_test.py -q      # tự kiểm thử bộ công cụ
 ```
-
-## Kiến trúc
-
-![Kiến trúc Sage-Wiki](sage-wiki-architecture.png)
-
-- **Lưu trữ:** SQLite với FTS5 (tìm kiếm BM25) + vector BLOB (cosine similarity) + bảng compile_items để theo dõi tầng/trạng thái theo từng nguồn
-- **Ontology:** Đồ thị thực thể-quan hệ có kiểu với duyệt BFS và phát hiện chu trình
-- **Tìm kiếm:** Pipeline hợp nhất — FTS5 và vector ở cả cấp tài liệu lẫn cấp chunk được kết hợp bằng RRF có trọng số, với đồ thị ontology là kênh thứ ba; kèm loại bỏ từ phổ biến thích ứng theo ngữ liệu, trọng số cột đóng vai trò tiêu đề, và ưu tiên độ mới cho tài liệu có ngày gốc đã biết. Mở rộng truy vấn LLM và xếp hạng lại (có ngưỡng độ phủ) là tùy chọn theo từng lệnh gọi trên các bề mặt tìm kiếm và bật mặc định cho Q&A, vốn còn dùng mở rộng ngữ cảnh đồ thị 4 tín hiệu. Phản hồi tìm kiếm báo hiệu nguồn chưa biên dịch để biên dịch theo yêu cầu.
-- **Trình biên dịch:** Pipeline phân tầng (Tầng 0: chỉ mục, Tầng 1: embed, Tầng 2: phân tích mã, Tầng 3: biên dịch LLM đầy đủ) với backpressure thích ứng, trích xuất Pass 2 đồng thời, cache prompt, Batch API (Anthropic + OpenAI + Gemini), theo dõi chi phí, biên dịch theo yêu cầu qua MCP, chấm điểm chất lượng, và nhận biết cascade. Embedding bao gồm thử lại với backoff lũy thừa, giới hạn tốc độ tùy chọn, và mean-pooling cho đầu vào dài. 10 trình phân tích mã tích hợp (Go qua go/ast, 8 ngôn ngữ qua regex, trích xuất khóa dữ liệu có cấu trúc).
-- **MCP:** 18 công cụ (7 đọc, 9 ghi, 2 kết hợp) qua stdio hoặc SSE, bao gồm `wiki_graph_query` cho hỏi đáp đồ thị nhiều bước có trích dẫn nguồn gốc, `wiki_compile_topic` cho biên dịch theo yêu cầu và `wiki_capture` cho trích xuất tri thức
-- **TUI:** Bảng điều khiển terminal 4 tab bằng bubbletea + glamour (duyệt, tìm kiếm, hỏi đáp, biên dịch) với hiển thị phân bố tầng
-- **Web UI:** Preact + Tailwind CSS nhúng qua `go:embed` với build tag (`-tags webui`)
-- **Scribe:** Giao diện có thể mở rộng để tiếp nhận tri thức từ hội thoại. Session scribe xử lý bản ghi JSONL của Claude Code.
-- **Gói:** Hệ thống gói đóng góp với 8 gói đi kèm, registry dựa trên Git, vòng đời cài đặt/áp dụng/gỡ/cập nhật, áp dụng có tính giao dịch với rollback bằng snapshot, hợp nhất chỉ-điền (fill-only), và bảo mật allowlist cấu hình.
-- **Trình phân tích ngoài:** Trình phân tích định dạng tệp có thể cắm lúc chạy qua giao thức subprocess stdin/stdout. Thực thi sandbox với timeout, loại bỏ biến môi trường, và cách ly mạng (Linux).
-
-Không CGO. Thuần Go. Đa nền tảng.
 
 ## Giấy phép
 

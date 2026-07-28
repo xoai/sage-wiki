@@ -627,21 +627,6 @@ class TestFactExtractionAgainstRealFormat(unittest.TestCase):
         self.assertEqual(self._rate(self._project_with_summary("   \n  \n")), 0.0)
 
 
-if __name__ == "__main__":
-    if "--generate-fixture" in sys.argv:
-        idx = sys.argv.index("--generate-fixture")
-        path = sys.argv[idx + 1] if idx + 1 < len(sys.argv) else "./test-fixture"
-        print(f"Generating fixture at {path}...")
-        expected = generate_fixture(path, n_sources=50, n_concepts=80,
-                                     n_summaries=50, n_vectors=40, vec_dims=128,
-                                     n_entities=100, n_relations=120)
-        print(f"Done. {expected['n_concepts']} concepts, {expected['n_summaries']} summaries, "
-              f"{expected['n_entities']} entities, {expected['n_relations']} relations.")
-        print(f"\nRun eval: python3 eval.py {path}")
-        sys.exit(0)
-
-    unittest.main()
-
 class TestOutputDirResolution(unittest.TestCase):
     """eval.py must find the wiki wherever config.yaml says it is.
 
@@ -720,7 +705,6 @@ class TestOutputDirResolution(unittest.TestCase):
         self.assertIn("wiki", r.stderr.lower())
 
 
-
 if __name__ == "__main__":
     if "--generate-fixture" in sys.argv:
         idx = sys.argv.index("--generate-fixture")
@@ -735,5 +719,3 @@ if __name__ == "__main__":
         sys.exit(0)
 
     unittest.main()
-
-
