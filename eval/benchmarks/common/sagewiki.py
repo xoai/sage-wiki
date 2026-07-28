@@ -24,7 +24,13 @@ from pathlib import Path
 
 from benchmarks.common.ratelimit import GLOBAL_GATE
 
-EMBED_WARNING = "warning: embed failed, using BM25-only"
+# Degrade markers, one per sage-wiki search generation. The pipeline rewrite in
+# arch/search-upgrade replaced the original single-line warning with a slog
+# record whose wording shares no substring with it, so both must be matched or
+# the stderr guard silently goes blind against one of the two binaries.
+EMBED_WARNING = "warning: embed failed, using BM25-only"          # pre-upgrade
+EMBED_WARNING_V2 = "query embedding failed for every variant"     # post-upgrade
+EMBED_WARNINGS = (EMBED_WARNING, EMBED_WARNING_V2)
 RATE_LIMIT_MARKERS = ("rate limited", "http 429", "429", "quota")
 SEARCH_RETRIES = 2        # retries after the initial attempt (permanent degrade)
 SEARCH_RATE_RETRIES = 6   # a rate-limited embedder is transient — wait it out
@@ -232,7 +238,7 @@ class SageWikiBackend:
 
     @staticmethod
     def _degraded(stderr: str, rows: list[dict]) -> bool:
-        if EMBED_WARNING in stderr:
+        if any(marker in stderr for marker in EMBED_WARNINGS):
             return True
         if rows and not any((r.get("VectorRank") or 0) > 0 for r in rows):
             return True  # silent config-load degrade: vector branch contributed nothing
@@ -243,7 +249,8 @@ class SageWikiBackend:
         """The embedder degraded because the provider is throttling us — a
         transient condition worth waiting out, unlike a config-load degrade."""
         low = stderr.lower()
-        return EMBED_WARNING in stderr and any(m in low for m in RATE_LIMIT_MARKERS)
+        degraded = any(marker in stderr for marker in EMBED_WARNINGS)
+        return degraded and any(m in low for m in RATE_LIMIT_MARKERS)
 
     def search(self, key: str, query: str, limit: int = 10,
                timeout_s: int = 300) -> SearchResponse:
@@ -284,7 +291,11 @@ class SageWikiBackend:
                     last_reason = "BM25-only degrade detected"
                 continue
             results = [
-                {"memory": r.get("Content", ""), "score": r.get("RRFScore", 0.0),
+                {"memory": r.get("Content", ""),
+                 # Post-upgrade the pipeline ranks by FinalScore; RRFScore is
+                 # the pre-upgrade field and stays as the fallback so one
+                 # harness scores both binaries by whatever they ranked on.
+                 "score": r["FinalScore"] if "FinalScore" in r else r.get("RRFScore", 0.0),
                  "id": r.get("ID", "")}
                 for r in rows
             ]

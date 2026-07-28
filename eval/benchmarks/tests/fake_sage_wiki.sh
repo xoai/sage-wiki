@@ -52,6 +52,9 @@ case "$CMD" in
       garbage-stdout)
         echo 'this is not json at all'
         ;;
+      final-score)
+        echo '{"ok":true,"data":[{"ID":"m1","Content":"a","Tags":null,"ArticlePath":"a.md","BM25Rank":1,"VectorRank":2,"RRFScore":0.03,"FinalScore":1.0},{"ID":"m2","Content":"b","Tags":null,"ArticlePath":"b.md","BM25Rank":2,"VectorRank":1,"RRFScore":0.02,"FinalScore":0.4919}]}'
+        ;;
       embed-warning)
         echo "warning: embed failed, using BM25-only: dial tcp: timeout" >&2
         echo "$BM25_JSON"

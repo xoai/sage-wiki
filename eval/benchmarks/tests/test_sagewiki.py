@@ -263,3 +263,46 @@ class TestFakeBinaryIsExecutableInGit:
             f"{FAKE} is not executable — run: "
             f"git update-index --chmod=+x {FAKE.relative_to(Path.cwd()) if FAKE.is_relative_to(Path.cwd()) else FAKE}"
         )
+
+
+class TestNewSearchPipelineContract:
+    """The arch/search-upgrade pipeline changed the degrade warning text and
+    added FinalScore as the authoritative rank. Both must be handled, or the
+    rate-limit path goes dead and reported scores stop matching the ranking."""
+
+    NEW_DEGRADE = ('level=WARN msg="query embedding failed for every variant — '
+                   'vector legs skipped, results are lexical/graph only" failed=1 '
+                   'error="llm: rate limited (HTTP 429): insufficient_quota"')
+    OLD_DEGRADE = "warning: embed failed, using BM25-only: dial tcp: timeout"
+
+    def test_new_degrade_warning_is_recognized(self):
+        assert SageWikiBackend._degraded(self.NEW_DEGRADE, [{"VectorRank": 3}])
+
+    def test_old_degrade_warning_still_recognized(self):
+        assert SageWikiBackend._degraded(self.OLD_DEGRADE, [{"VectorRank": 3}])
+
+    def test_new_rate_limit_degrade_is_classified_transient(self):
+        assert SageWikiBackend._rate_limited(self.NEW_DEGRADE)
+
+    def test_new_degrade_without_rate_limit_is_permanent(self):
+        cfg_fail = ('level=WARN msg="query embedding failed for every variant — '
+                    'vector legs skipped, results are lexical/graph only" '
+                    'error="no embedding provider configured"')
+        assert SageWikiBackend._degraded(cfg_fail, [{"VectorRank": 1}])
+        assert not SageWikiBackend._rate_limited(cfg_fail)
+
+    def test_healthy_search_is_not_flagged(self):
+        assert not SageWikiBackend._degraded("", [{"VectorRank": 2}])
+
+    def test_score_prefers_final_score_when_present(self, backend, tmp_path, monkeypatch):
+        set_fixture(tmp_path, monkeypatch, "final-score")
+        backend.init_project("conv0")
+        resp = backend.search("conv0", "q", limit=10)
+        # FinalScore is what the new pipeline ranks by (search/pipeline.go:222)
+        assert [r["score"] for r in resp.results] == [1.0, 0.4919]
+
+    def test_score_falls_back_to_rrf_for_older_binaries(self, backend, tmp_path, monkeypatch):
+        set_fixture(tmp_path, monkeypatch, "ok")   # fixture has no FinalScore
+        backend.init_project("conv0")
+        resp = backend.search("conv0", "q", limit=10)
+        assert resp.results[0]["score"] == pytest.approx(0.03)
