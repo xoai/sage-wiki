@@ -40,3 +40,29 @@ func TestPGSearchDFPrunesFrequentTerms(t *testing.T) {
 		t.Fatal("pg all-frequent query must keep first terms (backstop)")
 	}
 }
+
+// pg twin of V-M2e: with the v6 setweight tsvector, a single id/article_path
+// (weight A) match outranks a high-tf content-only (weight D) match.
+func TestPGSearchColumnWeights(t *testing.T) {
+	b, _, cleanup := derivedTestBackend(t)
+	defer cleanup()
+
+	es := b.Entries()
+	if err := es.Add(store.Entry{ID: "concept:gopher", Content: "a burrowing rodent of note", ArticlePath: "wiki/concepts/gopher.md"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := es.Add(store.Entry{ID: "concept:rodent", Content: "the gopher digs gopher tunnels where gopher families raise gopher pups", ArticlePath: "wiki/concepts/rodent.md"}); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := es.Search("gopher", nil, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected both docs, got %+v", results)
+	}
+	if results[0].ID != "concept:gopher" {
+		t.Errorf("weight-A id/path match must outrank content-only tf, got %s first", results[0].ID)
+	}
+}

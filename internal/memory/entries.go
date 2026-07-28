@@ -104,11 +104,14 @@ func (s *Store) Search(query string, tags []string, limit int) ([]SearchResult, 
 		tagFilter = " AND " + strings.Join(conditions, " AND ")
 	}
 
+	// Column weights (spec §2.5): id and article_path carry the concept
+	// name and act as title proxies (3.0); tags moderate (1.5); content
+	// baseline (1.0). bm25() returns negative-better, so ASC order.
 	sqlQuery := fmt.Sprintf(`
-		SELECT id, content, tags, article_path, rank
+		SELECT id, content, tags, article_path, bm25(entries, 3.0, 1.0, 1.5, 3.0) AS score
 		FROM entries
 		WHERE entries MATCH ?%s
-		ORDER BY rank
+		ORDER BY score
 		LIMIT ?
 	`, tagFilter)
 
