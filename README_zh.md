@@ -131,7 +131,8 @@ sage-wiki compile --watch
 | `sage-wiki init [--vault] [--skill <agent>] [--pack <name>] [--prompts]` | 初始化项目（全新或 vault 覆盖模式） |
 | `sage-wiki compile [--watch] [--batch] [--estimate] [--dry-run] [--no-cache] [--fresh] [--re-embed] [--re-extract] [--prune]` | 将源文件编译为 wiki 文章 |
 | `sage-wiki serve [--transport stdio\|sse] [--ui] [--port 3333]` | MCP 服务器 / Web UI |
-| `sage-wiki search "query" [--tags ...]` | 混合搜索（BM25 + 向量） |
+| `sage-wiki reindex [--drop-chunk-vectors]` | 以当前的 `chunk_size` / `chunk_overlap_tokens` 从磁盘上的文档重建 chunk 索引 |
+| `sage-wiki search "query" [--tags ...] [--boost-tags ...] [--limit N] [--channels bm25,vector,graph] [--expand] [--rerank]` | 混合搜索（BM25 + 向量 + 本体图） |
 | `sage-wiki query "question"` | 对 wiki 进行带引用的问答 |
 | `sage-wiki tui` | 交互式终端面板 |
 | `sage-wiki ontology <query\|list\|add\|resolve>` | 查询、管理和消解本体图 |
@@ -276,7 +277,7 @@ python3 -m unittest discover eval    # 评测框架自测
 
 - **存储：** SQLite 搭配 FTS5（BM25 搜索）+ BLOB 向量（余弦相似度）+ compile_items 表用于每个源文件的层级/状态追踪
 - **本体：** 类型化实体-关系图，支持 BFS 遍历与环检测
-- **搜索：** 增强管线，支持 chunk 级 FTS5 + 向量索引、LLM 查询扩展、LLM 重排序、RRF 融合与 4 信号图扩展。搜索响应会提示未编译的源文件以支持按需编译。
+- **搜索：** 统一管线——文档级与 chunk 级的 FTS5 和向量通过加权 RRF 融合，并以本体图作为第三个通道；含语料自适应停用词、标题代理列权重，以及对已知起始日期文档的新近度决胜。LLM 查询扩展与带覆盖率门控的重排序在搜索接口上按调用选择开启，在问答中默认开启（问答还使用 4 信号图上下文扩展）。搜索响应会提示未编译的源文件以支持按需编译。
 - **编译器：** 分层管线（层级 0：索引，层级 1：向量嵌入，层级 2：代码解析，层级 3：完整 LLM 编译），支持自适应背压、并发 Pass 2 抽取、prompt 缓存、batch API（Anthropic + OpenAI + Gemini）、费用追踪、经 MCP 的按需编译、质量评分与级联感知。Embedding 支持指数退避重试、可选限速与长输入的均值池化。内置 10 个代码解析器（Go 使用 go/ast，8 种语言使用正则，结构化数据键提取）。
 - **MCP：** 18 个工具（7 读、9 写、2 复合），通过 stdio 或 SSE 提供，包括用于带溯源引用的多跳图问答的 `wiki_graph_query`、用于按需编译的 `wiki_compile_topic`，以及用于知识提取的 `wiki_capture`
 - **TUI：** bubbletea + glamour 4 标签页终端面板（浏览、搜索、问答、编译），带层级分布显示

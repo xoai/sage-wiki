@@ -148,7 +148,8 @@ La surface principale ; exécutez `sage-wiki <command> --help` pour les flags.
 | `sage-wiki init [--vault] [--skill <agent>] [--pack <name>] [--prompts]` | Initialiser le projet (greenfield ou surcouche vault) |
 | `sage-wiki compile [--watch] [--batch] [--estimate] [--dry-run] [--no-cache] [--fresh] [--re-embed] [--re-extract] [--prune]` | Compiler les sources en articles wiki |
 | `sage-wiki serve [--transport stdio\|sse] [--ui] [--port 3333]` | Serveur MCP / interface web |
-| `sage-wiki search "query" [--tags ...]` | Recherche hybride (BM25 + vecteur) |
+| `sage-wiki reindex [--drop-chunk-vectors]` | Reconstruit l'index de chunks à partir des documents sur disque avec les `chunk_size` / `chunk_overlap_tokens` actuels |
+| `sage-wiki search "query" [--tags ...] [--boost-tags ...] [--limit N] [--channels bm25,vector,graph] [--expand] [--rerank]` | Recherche hybride (BM25 + vecteur + graphe ontologique) |
 | `sage-wiki query "question"` | Q&R sur le wiki avec citations |
 | `sage-wiki tui` | Tableau de bord terminal interactif |
 | `sage-wiki ontology <query\|list\|add\|resolve>` | Interroger, gérer et résoudre le graphe d'ontologie |
@@ -342,7 +343,7 @@ python3 -m unittest discover eval    # auto-tests du harnais
 
 - **Stockage :** SQLite avec FTS5 (recherche BM25) + vecteurs BLOB (similarité cosinus) + table compile_items pour le suivi palier/état par source
 - **Ontologie :** Graphe entité-relation typé avec parcours BFS et détection de cycles
-- **Recherche :** Pipeline amélioré avec indexation FTS5 + vecteurs au niveau des fragments, expansion de requête par LLM, re-classement par LLM, fusion RRF et expansion par graphe à 4 signaux. Les réponses de recherche signalent les sources non compilées pour la compilation à la demande.
+- **Recherche :** Pipeline unifié — FTS5 et vecteurs, au niveau des documents comme des fragments, fusionnés par RRF pondéré avec le graphe ontologique comme troisième canal ; avec suppression des termes trop fréquents adaptée au corpus, pondération des colonnes servant de proxy de titre, et départage par fraîcheur pour les documents dont la date d'origine est connue. L'expansion de requête et le re-classement par LLM (soumis à un seuil de couverture) sont activables appel par appel sur les surfaces de recherche et activés par défaut pour les questions-réponses, qui utilisent aussi l'expansion de contexte par graphe à 4 signaux. Les réponses de recherche signalent les sources non compilées pour la compilation à la demande.
 - **Compilateur :** Pipeline par paliers (Palier 0 : indexation, Palier 1 : embedding, Palier 2 : analyse de code, Palier 3 : compilation LLM complète) avec contre-pression adaptative, extraction Pass 2 concurrente, cache de prompts, API batch (Anthropic + OpenAI + Gemini), suivi des coûts, compilation à la demande via MCP, scoring de qualité et conscience des cascades. L'embedding inclut une reprise avec backoff exponentiel, une limitation de débit optionnelle et le mean-pooling pour les entrées longues. 10 analyseurs de code intégrés (Go via go/ast, 8 langages via regex, extraction de clés de données structurées).
 - **MCP :** 18 outils (7 lecture, 9 écriture, 2 composés) via stdio ou SSE, dont `wiki_graph_query` pour les Q&R de graphe multi-sauts avec citations de provenance, `wiki_compile_topic` pour la compilation à la demande et `wiki_capture` pour l'extraction de connaissances
 - **TUI :** tableau de bord terminal bubbletea + glamour à 4 onglets (parcourir, rechercher, Q&R, compiler) avec affichage de la distribution par paliers

@@ -19,7 +19,10 @@ Every conversation (LOCOMO), question haystack (LongMemEval), or chat
 2. **Compile** — `sage-wiki compile` runs the real LLM pipeline: summaries,
    concept extraction, article writing, FTS5 + embeddings + ontology.
 3. **Search** — `sage-wiki search <question> --format json --limit K`
-   (hybrid BM25 + vector RRF) retrieves context.
+   retrieves context: document- and chunk-level BM25 and vectors fused by
+   weighted RRF with the ontology graph as a third channel, plus a recency
+   tie-breaker on documents with a known origin date. The LLM stages
+   (expansion, reranking) stay off unless the run asks for them.
 4. **Answer + judge** — an answerer LLM writes an answer from the retrieved
    articles; a judge LLM scores it against ground truth using the mem0
    prompts verbatim.

@@ -145,7 +145,8 @@ sage-wiki compile --watch
 | `sage-wiki init [--vault] [--skill <agent>] [--pack <name>] [--prompts]` | 프로젝트 초기화 (새 프로젝트 또는 볼트 오버레이) |
 | `sage-wiki compile [--watch] [--batch] [--estimate] [--dry-run] [--no-cache] [--fresh] [--re-embed] [--re-extract] [--prune]` | 소스를 위키 문서로 컴파일 |
 | `sage-wiki serve [--transport stdio\|sse] [--ui] [--port 3333]` | MCP 서버 / 웹 UI |
-| `sage-wiki search "query" [--tags ...]` | 하이브리드 검색 (BM25 + 벡터) |
+| `sage-wiki reindex [--drop-chunk-vectors]` | 현재의 `chunk_size` / `chunk_overlap_tokens` 로 디스크의 문서에서 청크 인덱스를 재구축 |
+| `sage-wiki search "query" [--tags ...] [--boost-tags ...] [--limit N] [--channels bm25,vector,graph] [--expand] [--rerank]` | 하이브리드 검색 (BM25 + 벡터 + 온톨로지 그래프) |
 | `sage-wiki query "question"` | 인용이 포함된 위키 기반 Q&A |
 | `sage-wiki tui` | 대화형 터미널 대시보드 |
 | `sage-wiki ontology <query\|list\|add\|resolve>` | 온톨로지 그래프 쿼리, 관리, 해소 |
@@ -334,7 +335,7 @@ python3 -m unittest discover eval    # 하네스 자체 테스트
 
 - **스토리지:** FTS5 (BM25 검색) + BLOB 벡터 (코사인 유사도) + 소스별 티어/상태 추적을 위한 compile_items 테이블을 갖춘 SQLite
 - **온톨로지:** BFS 탐색과 순환 감지를 갖춘 타입화된 엔티티-관계 그래프
-- **검색:** 청크 수준 FTS5 + 벡터 인덱싱, LLM 쿼리 확장, LLM 재순위 매기기, RRF 퓨전, 4신호 그래프 확장을 갖춘 향상된 파이프라인. 검색 응답은 온디맨드 컴파일을 위해 컴파일되지 않은 소스를 알립니다.
+- **검색:** 통합 파이프라인 — 문서 수준과 청크 수준의 FTS5 및 벡터를 가중 RRF로 융합하고 온톨로지 그래프를 세 번째 채널로 사용합니다. 코퍼스 적응형 불용어 처리, 제목 대리 열 가중치, 알려진 원본 날짜를 가진 문서에 대한 최신성 타이브레이커를 포함합니다. LLM 쿼리 확장과 커버리지 게이트가 적용된 재순위 매기기는 검색 표면에서는 호출별 옵트인이고 Q&A에서는 기본 활성화이며, Q&A는 4신호 그래프 컨텍스트 확장도 사용합니다. 검색 응답은 온디맨드 컴파일을 위해 컴파일되지 않은 소스를 알립니다.
 - **컴파일러:** 적응형 백프레셔, 동시 Pass 2 추출, 프롬프트 캐싱, 배치 API (Anthropic + OpenAI + Gemini), 비용 추적, MCP를 통한 온디맨드 컴파일, 품질 스코어링, 캐스케이드 인식을 갖춘 계층화된 파이프라인 (Tier 0: 인덱스, Tier 1: 임베드, Tier 2: 코드 파싱, Tier 3: 전체 LLM 컴파일). 임베딩은 지수 백오프 재시도, 선택적 속도 제한, 긴 입력에 대한 평균 풀링을 포함합니다. 10개의 내장 코드 파서 (go/ast를 통한 Go, 정규식을 통한 8개 언어, 구조화된 데이터 키 추출).
 - **MCP:** stdio 또는 SSE를 통한 18개 도구 (읽기 7, 쓰기 9, 복합 2). 출처가 인용되는 멀티홉 그래프 QA를 위한 `wiki_graph_query`, 온디맨드 컴파일을 위한 `wiki_compile_topic`, 지식 추출을 위한 `wiki_capture` 포함
 - **TUI:** 티어 분포 표시를 갖춘 bubbletea + glamour 4탭 터미널 대시보드 (탐색, 검색, Q&A, 컴파일)

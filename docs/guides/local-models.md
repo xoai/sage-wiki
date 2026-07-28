@@ -115,8 +115,11 @@ the primary constraint.
 4. Configure sage-wiki to use `ollama/model-name` format
 
 sage-wiki auto-detects Ollama models when the model name starts with
-`ollama/`. The Ollama provider automatically disables reranking (local
-models don't benefit from it).
+`ollama/`. The Ollama provider automatically disables reranking for
+`sage-wiki query` (local models don't benefit from it). On the search
+surfaces — MCP `wiki_search`, `sage-wiki search`, `/api/search`, the TUI —
+reranking and query expansion are off by default for every provider and are
+requested per call, so there is nothing to disable there.
 
 ## Known Limitations
 
