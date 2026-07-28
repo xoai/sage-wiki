@@ -251,3 +251,15 @@ class TestSearchRateLimitDegrade:
         set_fixture(tmp_path, monkeypatch, "embed-ratelimit-once")
         backend.init_project("conv0")
         assert len(backend.search("conv0", "q", limit=10).results) == 2
+
+
+class TestFakeBinaryIsExecutableInGit:
+    """The stub's exec bit must live in git, not in a local chmod: without it
+    every subprocess test fails on a fresh clone while passing for whoever
+    ran chmod locally (caught post-merge, 2026-07-28)."""
+
+    def test_stub_is_executable(self):
+        assert os.access(FAKE, os.X_OK), (
+            f"{FAKE} is not executable — run: "
+            f"git update-index --chmod=+x {FAKE.relative_to(Path.cwd()) if FAKE.is_relative_to(Path.cwd()) else FAKE}"
+        )
