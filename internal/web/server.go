@@ -21,6 +21,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
@@ -40,6 +41,7 @@ type WebServer struct {
 	vec          store.VectorStore
 	ont          store.OntologyStore
 	searcher     *hybrid.Searcher
+	embedder     embed.Embedder
 	cfg          *config.Config
 	wsClients    map[chan string]bool
 	wsMu         sync.Mutex
@@ -80,6 +82,7 @@ func NewWebServer(projectDir string, progress ...*compiler.Progress) (*WebServer
 		vec:        a.Vec,
 		ont:        a.Ont,
 		searcher:   a.Searcher,
+		embedder:   a.Embedder(),
 		cfg:        a.Config,
 		wsClients:  make(map[chan string]bool),
 	}
@@ -631,11 +634,25 @@ func (s *WebServer) handleSearch(w http.ResponseWriter, r *http.Request) {
 		tags = strings.Split(t, ",")
 	}
 
+	// Embed the query when an embedder is configured; embed failure
+	// degrades to BM25-only (same contract as MCP search).
+	var queryVec []float32
+	if s.embedder != nil {
+		v, embedErr := s.embedder.Embed(query)
+		if embedErr != nil {
+			log.Warn("web search embed failed, falling back to BM25-only", "error", embedErr)
+		} else {
+			queryVec = v
+		}
+	}
+
 	results, err := s.searcher.Search(hybrid.SearchOpts{
-		Query: query,
-		Tags:  tags,
-		Limit: limit,
-	}, nil)
+		Query:        query,
+		Tags:         tags,
+		Limit:        limit,
+		BM25Weight:   s.cfg.Search.HybridWeightBM25,
+		VectorWeight: s.cfg.Search.HybridWeightVector,
+	}, queryVec)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
