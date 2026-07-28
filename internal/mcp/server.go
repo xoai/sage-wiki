@@ -11,15 +11,19 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/xoai/sage-wiki/internal/app"
+	"github.com/xoai/sage-wiki/internal/auth"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/hybrid"
+	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
+	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/pathsafe"
+	"github.com/xoai/sage-wiki/internal/search"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
@@ -161,6 +165,9 @@ func (s *Server) registerReadTools() {
 			mcp.WithString("query", mcp.Required(), mcp.Description("Search query")),
 			mcp.WithString("tags", mcp.Description("Comma-separated tag filter")),
 			mcp.WithNumber("limit", mcp.Description("Maximum results (default 10)")),
+			mcp.WithString("channels", mcp.Description("Comma-separated channel subset: bm25, vector, graph (default: all)")),
+			mcp.WithBoolean("expand", mcp.Description("LLM query expansion (default false)")),
+			mcp.WithBoolean("rerank", mcp.Description("LLM reranking (default false)")),
 		),
 		s.handleSearch,
 	)
@@ -244,30 +251,92 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 		}
 	}
 
-	var queryVec []float32
-	if s.embedder != nil {
-		var embedErr error
-		queryVec, embedErr = s.embedder.Embed(query)
-		if embedErr != nil {
-			log.Warn("search embed failed, falling back to BM25-only", "error", embedErr)
+	var docResults []search.DocResult
+	if s.cfg.Search.PipelineOrDefault() == "unified" {
+		// Unified pipeline (ADR-036, M5): channels/expand/rerank are
+		// opt-in per call; LLM stages default OFF.
+		var channels []search.Channel
+		if c, ok := args["channels"].(string); ok && c != "" {
+			parsed, unknown := search.ParseChannels(splitTags(c))
+			if len(unknown) > 0 {
+				return errorResult(fmt.Sprintf("unknown channels: %v (valid: bm25, vector, graph)", unknown)), nil
+			}
+			channels = parsed
 		}
-	}
-	results, err := s.searcher.Search(hybrid.SearchOpts{
-		Query:        query,
-		Tags:         tags,
-		Limit:        limit,
-		BM25Weight:   s.cfg.Search.HybridWeightBM25,
-		VectorWeight: s.cfg.Search.HybridWeightVector,
-	}, queryVec)
-	if err != nil {
-		return errorResult(err.Error()), nil
+		expand, _ := args["expand"].(bool)
+		rerank, _ := args["rerank"].(bool)
+		var client *llm.Client
+		if expand || rerank {
+			c, err := auth.NewLLMClient(s.cfg)
+			if err != nil {
+				return errorResult(fmt.Sprintf("expand/rerank need an LLM client: %v", err)), nil
+			}
+			client = c
+		}
+		var chunkStore store.ChunkStore
+		if s.backend != nil {
+			chunkStore = s.backend.Chunks()
+		} else {
+			chunkStore = memory.NewChunkStore(s.db)
+		}
+		resp, err := search.Run(search.Deps{
+			Mem:                  s.mem,
+			Chunks:               chunkStore,
+			Vec:                  s.vec,
+			Embedder:             s.embedder,
+			Client:               client,
+			Model:                s.cfg.Models.Query,
+			BM25Weight:           s.cfg.Search.HybridWeightBM25,
+			VectorWeight:         s.cfg.Search.HybridWeightVector,
+			Ont:                  s.ont,
+			GraphWeight:          s.cfg.Search.HybridWeightGraph,
+			GraphRelationWeights: s.cfg.Search.GraphRelationWeights,
+		}, search.Request{
+			Query:             query,
+			Limit:             limit,
+			Channels:          channels,
+			Expand:            expand,
+			Rerank:            rerank,
+			FilterTags:        tags,
+			Granularity:       search.Docs,
+			RerankMinCoverage: s.cfg.Search.RerankMinCoverageOrDefault(),
+		})
+		if err != nil {
+			return errorResult(err.Error()), nil
+		}
+		docResults = search.DocResults(resp.Results)
+	} else {
+		var queryVec []float32
+		if s.embedder != nil {
+			var embedErr error
+			queryVec, embedErr = s.embedder.Embed(query)
+			if embedErr != nil {
+				log.Warn("search embed failed, falling back to BM25-only", "error", embedErr)
+			}
+		}
+		legacy, err := s.searcher.Search(hybrid.SearchOpts{
+			Query:        query,
+			Tags:         tags,
+			Limit:        limit,
+			BM25Weight:   s.cfg.Search.HybridWeightBM25,
+			VectorWeight: s.cfg.Search.HybridWeightVector,
+		}, queryVec)
+		if err != nil {
+			return errorResult(err.Error()), nil
+		}
+		for _, r := range legacy {
+			docResults = append(docResults, search.DocResult{
+				ID: r.ID, Content: r.Content, Tags: r.Tags, ArticlePath: r.ArticlePath,
+				BM25Rank: r.BM25Rank, VectorRank: r.VectorRank, RRFScore: r.RRFScore,
+			})
+		}
 	}
 
 	// Cap each result's content so a single search can't overflow the caller's
 	// context (full text remains available via wiki_read).
 	maxRunes := s.cfg.Search.ResultMaxCharsOrDefault()
-	for i := range results {
-		results[i].Content = truncateResultContent(results[i].Content, results[i].ArticlePath, maxRunes)
+	for i := range docResults {
+		docResults[i].Content = truncateResultContent(docResults[i].Content, docResults[i].ArticlePath, maxRunes)
 	}
 
 	// Count uncompiled sources matching the query (search response signaling)
@@ -278,7 +347,7 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 		items := compiler.NewCompileItemStore(s.db)
 		tierMgr := compiler.NewTierManager(&s.cfg.Compiler, items)
 		var hitPaths []string
-		for _, r := range results {
+		for _, r := range docResults {
 			hitPaths = append(hitPaths, r.ID)
 		}
 		tierMgr.RecordQueryHit(hitPaths)
@@ -286,12 +355,12 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 
 	// Build response with optional signaling
 	type searchResponse struct {
-		Results           []hybrid.SearchResult `json:"results"`
-		UncompiledSources int                   `json:"uncompiled_sources,omitempty"`
-		CompileHint       string                `json:"compile_hint,omitempty"`
+		Results           []search.DocResult `json:"results"`
+		UncompiledSources int                `json:"uncompiled_sources,omitempty"`
+		CompileHint       string             `json:"compile_hint,omitempty"`
 	}
 
-	resp := searchResponse{Results: results}
+	resp := searchResponse{Results: docResults}
 	if uncompiledCount > 0 {
 		resp.UncompiledSources = uncompiledCount
 		resp.CompileHint = fmt.Sprintf(

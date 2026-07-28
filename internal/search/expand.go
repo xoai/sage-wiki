@@ -8,7 +8,7 @@ import (
 	"math"
 
 	"github.com/xoai/sage-wiki/internal/llm"
-	"github.com/xoai/sage-wiki/internal/memory"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 // ExpandedQuery holds LLM-generated query variants for enhanced search.
@@ -84,7 +84,7 @@ var ExpansionSchema = llm.JSONSchema{
 // StrongSignal checks if the top BM25 result is confident enough to skip expansion.
 // Returns true if BOTH: (a) top-1 normalized score >= 0.4, AND (b) top-1 >= 2x top-2.
 // A single result above the floor is also a strong signal.
-func StrongSignal(query string, memStore *memory.Store) bool {
+func StrongSignal(query string, memStore store.EntryStore) bool {
 	results, err := memStore.Search(query, nil, 2)
 	if err != nil || len(results) == 0 {
 		return false

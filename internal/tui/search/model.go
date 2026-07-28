@@ -13,10 +13,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/xoai/sage-wiki/internal/hybrid"
+	"github.com/xoai/sage-wiki/internal/search"
 	"github.com/xoai/sage-wiki/internal/tui"
 	"github.com/xoai/sage-wiki/internal/tui/components"
 )
+
+// SearchFn is the pipeline-agnostic search seam: the dashboard injects
+// unified (search.Run) or legacy per the config pipeline switch (M5).
+type SearchFn func(query string, limit int) ([]search.DocResult, error)
 
 // searchResult wraps a hybrid search result for display.
 type searchResult struct {
@@ -70,11 +74,11 @@ type Model struct {
 	// Dependencies
 	projectDir string
 	outputDir  string
-	searcher   *hybrid.Searcher
+	searchFn   SearchFn // pipeline-agnostic search (unified or legacy per config)
 }
 
 // New creates a new interactive search model.
-func New(projectDir, outputDir string, searcher *hybrid.Searcher, initialQuery string) Model {
+func New(projectDir, outputDir string, searchFn SearchFn, initialQuery string) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Search wiki..."
 	ti.Focus()
@@ -100,7 +104,7 @@ func New(projectDir, outputDir string, searcher *hybrid.Searcher, initialQuery s
 		statusBar:  sb,
 		projectDir: projectDir,
 		outputDir:  outputDir,
-		searcher:   searcher,
+		searchFn:   searchFn,
 		focused:    paneList,
 	}
 }
@@ -316,10 +320,7 @@ func (m Model) debounce(query string, id int) tea.Cmd {
 
 func (m Model) doSearch(query string) tea.Cmd {
 	return func() tea.Msg {
-		results, err := m.searcher.Search(hybrid.SearchOpts{
-			Query: query,
-			Limit: 20,
-		}, nil)
+		results, err := m.searchFn(query, 20)
 		if err != nil {
 			return searchResultsMsg{query: query}
 		}
@@ -378,4 +379,3 @@ func (m Model) openInEditor(articlePath string) tea.Cmd {
 		return nil
 	})
 }
-

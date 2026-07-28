@@ -6,8 +6,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
-	"github.com/xoai/sage-wiki/internal/memory"
-	"github.com/xoai/sage-wiki/internal/vectors"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 // EnhancedSearchOpts configures the enhanced search pipeline.
@@ -17,9 +16,9 @@ type EnhancedSearchOpts struct {
 	Client         *llm.Client
 	Model          string
 	Embedder       embed.Embedder
-	ChunkStore     *memory.ChunkStore
-	MemStore       *memory.Store
-	VecStore       *vectors.Store
+	ChunkStore     store.ChunkStore
+	MemStore       store.EntryStore
+	VecStore       store.VectorStore
 	QueryExpansion bool // enable query expansion
 	RerankEnabled  bool // enable LLM re-ranking
 
@@ -241,6 +240,12 @@ type SearchResult struct {
 	// SourceDate is the doc's origin date (unix seconds; ADR-039 — never
 	// a row timestamp). 0 = no date: no recency contribution was applied.
 	SourceDate int64
+
+	// ArticlePath and Tags are the doc's entry metadata — populated by
+	// Run for Docs-granularity output (the M5 adapters' shape) and
+	// whenever tag filters already fetched the entries.
+	ArticlePath string
+	Tags        []string
 
 	// GraphRank is the graph channel's best rank (0 = not graph-ranked);
 	// AliasOf carries the matched alias when the doc was reached through

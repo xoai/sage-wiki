@@ -32,6 +32,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/query"
 	"github.com/xoai/sage-wiki/internal/scribe"
+	"github.com/xoai/sage-wiki/internal/search"
 	"github.com/xoai/sage-wiki/internal/skill"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/storedial"
@@ -206,6 +207,9 @@ func init() {
 	// Search flags
 	searchCmd.Flags().StringSlice("tags", nil, "Filter by tags")
 	searchCmd.Flags().Int("limit", 10, "Maximum results")
+	searchCmd.Flags().String("channels", "", "Comma-separated channel subset: bm25, vector, graph (default: all)")
+	searchCmd.Flags().Bool("expand", false, "LLM query expansion (default off)")
+	searchCmd.Flags().Bool("rerank", false, "LLM reranking (default off)")
 
 	// Query flags
 	queryCmd.Flags().String("scope", "local", "Query scope: local, global, or all")
@@ -724,10 +728,15 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	defer db.Close()
 
 	// Config first: store construction needs the ANN setting, and the
-	// searcher needs the hybrid weights. Load failure degrades to
-	// BM25-only with hybrid's own weight defaults, as before.
+	// searcher needs the hybrid weights. Auto-discovery load failure
+	// degrades to BM25-only with hybrid's own weight defaults; an
+	// EXPLICIT --config that fails to load is a hard error — exit 0
+	// would mask a typo'd path (F-043).
 	cfg, cfgErr := config.Load(resolveConfigPath(dir))
 	if cfgErr != nil {
+		if configPath != "" {
+			return fmt.Errorf("explicit --config failed to load: %w", cfgErr)
+		}
 		fmt.Fprintf(os.Stderr, "warning: config load failed (%v): default fusion weights, ANN off, BM25-only\n", cfgErr)
 	}
 
@@ -735,20 +744,100 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	var vecStore *vectors.Store
 	if cfgErr == nil {
 		vecStore = vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled()))
+		if cfg.Search.ANNEnabled() {
+			log.Debug("vector search: ANN (HNSW) index enabled") // F-044 observability
+		}
 	} else {
 		vecStore = vectors.NewStore(db)
 	}
+
+	var embedder embed.Embedder
+	if cfgErr == nil {
+		embedder = embed.NewFromConfig(cfg)
+	}
+
+	// Unified pipeline (ADR-036, M5) unless config pins legacy or the
+	// config failed to load (legacy is the only path without a config).
+	if cfgErr == nil && cfg.Search.PipelineOrDefault() == "unified" {
+		channelsFlag, _ := cmd.Flags().GetString("channels")
+		expand, _ := cmd.Flags().GetBool("expand")
+		rerank, _ := cmd.Flags().GetBool("rerank")
+		var channels []search.Channel
+		if channelsFlag != "" {
+			parsed, unknown := search.ParseChannels(strings.Split(channelsFlag, ","))
+			if len(unknown) > 0 {
+				return fmt.Errorf("unknown channels: %v (valid: bm25, vector, graph)", unknown)
+			}
+			channels = parsed
+		}
+		var client *llm.Client
+		if expand || rerank {
+			c, err := auth.NewLLMClient(cfg)
+			if err != nil {
+				return fmt.Errorf("--expand/--rerank need an LLM client: %w", err)
+			}
+			client = c
+		}
+		mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
+		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+		resp, err := search.Run(search.Deps{
+			Mem:                  memStore,
+			Chunks:               memory.NewChunkStore(db),
+			Vec:                  vecStore,
+			Embedder:             embedder,
+			Client:               client,
+			Model:                cfg.Models.Query,
+			BM25Weight:           cfg.Search.HybridWeightBM25,
+			VectorWeight:         cfg.Search.HybridWeightVector,
+			Ont:                  ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes)),
+			GraphWeight:          cfg.Search.HybridWeightGraph,
+			GraphRelationWeights: cfg.Search.GraphRelationWeights,
+		}, search.Request{
+			Query:             queryStr,
+			Limit:             limit,
+			Channels:          channels,
+			Expand:            expand,
+			Rerank:            rerank,
+			FilterTags:        tags,
+			Granularity:       search.Docs,
+			RerankMinCoverage: cfg.Search.RerankMinCoverageOrDefault(),
+		})
+		if err != nil {
+			return err
+		}
+		docs := search.DocResults(resp.Results)
+		if outputFormat == "json" {
+			fmt.Println(cli.FormatJSON(true, docs, ""))
+			return nil
+		}
+		if len(docs) == 0 {
+			fmt.Println("No results found.")
+			return nil
+		}
+		for i, r := range docs {
+			fmt.Printf("%d. [%.4f] %s\n", i+1, r.FinalScore, r.ArticlePath)
+			content := r.Content
+			if len(content) > 120 {
+				content = content[:120] + "..."
+			}
+			fmt.Printf("   %s\n", content)
+			if len(r.Tags) > 0 {
+				fmt.Printf("   tags: %s\n", strings.Join(r.Tags, ", "))
+			}
+			fmt.Println()
+		}
+		return nil
+	}
+
+	// Legacy doc-level path (config pin or config-load degrade).
 	searcher := hybrid.NewSearcher(memStore, vecStore)
 
 	var queryVec []float32
-	if cfgErr == nil {
-		embedder := embed.NewFromConfig(cfg)
-		if embedder != nil {
-			var embedErr error
-			queryVec, embedErr = embedder.Embed(queryStr)
-			if embedErr != nil {
-				fmt.Fprintf(os.Stderr, "warning: embed failed, using BM25-only: %v\n", embedErr)
-			}
+	if embedder != nil {
+		var embedErr error
+		queryVec, embedErr = embedder.Embed(queryStr)
+		if embedErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: embed failed, using BM25-only: %v\n", embedErr)
 		}
 	}
 

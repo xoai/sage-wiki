@@ -315,7 +315,12 @@ type SearchConfig struct {
 	// GraphRelationWeights overrides per-relation-type graph-leg weights
 	// (config-extensible relation types default to 1.0).
 	GraphRelationWeights map[string]float64 `yaml:"graph_relation_weights,omitempty"`
-	DefaultLimit         int                `yaml:"default_limit"`
+	// Pipeline selects the retrieval pipeline for the entry-point
+	// adapters: "unified" (default — search.Run) or "legacy" (the
+	// pre-M5 doc-level path, retained through this release as the
+	// rollback per ADR-036; deleted after M6 validates).
+	Pipeline             string `yaml:"pipeline,omitempty"`
+	DefaultLimit         int    `yaml:"default_limit"`
 	QueryExpansion       *bool              `yaml:"query_expansion,omitempty"`     // enable LLM query expansion (default: true)
 	Rerank               *bool              `yaml:"rerank,omitempty"`              // enable LLM re-ranking (default: true)
 	RerankMinCoverage    *float64           `yaml:"rerank_min_coverage,omitempty"` // min fraction of candidates the LLM must score for blending (default: 0.5)
@@ -353,6 +358,16 @@ func (s SearchConfig) QueryExpansionEnabled() bool {
 		return true
 	}
 	return *s.QueryExpansion
+}
+
+// PipelineOrDefault resolves the adapter pipeline: "unified" (default)
+// or "legacy"; any other value falls back to unified with a warning at
+// the call sites' Load-time validation.
+func (s SearchConfig) PipelineOrDefault() string {
+	if s.Pipeline == "legacy" {
+		return "legacy"
+	}
+	return "unified"
 }
 
 // RerankMinCoverageOrDefault returns the minimum scored-candidate fraction

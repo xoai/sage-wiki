@@ -8,10 +8,8 @@ import (
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
-	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/store"
-	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
 // Channel identifies a retrieval leg (ADR-036; the ablation surface).
@@ -66,9 +64,9 @@ type Request struct {
 // Deps carries stores and models. Nil Embedder means no vector legs;
 // nil Client means no LLM stages regardless of Request flags.
 type Deps struct {
-	Mem      *memory.Store
-	Chunks   *memory.ChunkStore
-	Vec      *vectors.Store
+	Mem      store.EntryStore
+	Chunks   store.ChunkStore
+	Vec      store.VectorStore
 	Embedder embed.Embedder
 	Client   *llm.Client
 	Model    string
@@ -181,15 +179,28 @@ func Run(deps Deps, req Request) (Response, error) {
 		}
 	}
 
+	// One entries fetch serves the tag filters AND Docs-granularity
+	// output shaping (ArticlePath/Tags on results — the M5 adapters'
+	// contract).
+	var entriesByDoc map[string]*store.Entry
+	if deps.Mem != nil && (len(req.FilterTags) > 0 || len(req.Tags) > 0 || req.Granularity == Docs) {
+		entriesByDoc = fetchDocEntries(deps.Mem, results)
+	}
+
 	// Tag semantics (spec §2.1): FilterTags is a hard AND filter,
 	// Tags a soft boost (+3%/matching tag, cap 15% — the same formula
 	// the doc-level path documents).
 	if len(req.FilterTags) > 0 || len(req.Tags) > 0 {
-		tagsByDoc := fetchDocTags(deps.Mem, results)
+		entryTags := func(docID string) []string {
+			if e := entriesByDoc[docID]; e != nil {
+				return e.Tags
+			}
+			return nil
+		}
 		if len(req.FilterTags) > 0 {
 			kept := results[:0]
 			for _, r := range results {
-				if hasAllTags(tagsByDoc[r.DocID], req.FilterTags) {
+				if hasAllTags(entryTags(r.DocID), req.FilterTags) {
 					kept = append(kept, r)
 				}
 			}
@@ -197,12 +208,22 @@ func Run(deps Deps, req Request) (Response, error) {
 		}
 		if len(req.Tags) > 0 {
 			for i := range results {
-				n := countMatchingTags(tagsByDoc[results[i].DocID], req.Tags)
+				n := countMatchingTags(entryTags(results[i].DocID), req.Tags)
 				bonus := 0.03 * float64(n)
 				if bonus > 0.15 {
 					bonus = 0.15
 				}
 				results[i].FinalScore += bonus
+			}
+		}
+	}
+
+	// Docs shaping: attach the entry metadata adapters emit.
+	if entriesByDoc != nil {
+		for i := range results {
+			if e := entriesByDoc[results[i].DocID]; e != nil {
+				results[i].ArticlePath = e.ArticlePath
+				results[i].Tags = e.Tags
 			}
 		}
 	}
@@ -258,13 +279,13 @@ func Run(deps Deps, req Request) (Response, error) {
 	return Response{Results: results}, nil
 }
 
-// fetchDocTags loads entry tags for each distinct result doc. Lookup
-// errors are logged (once, with a count) — a hard filter that excludes a
-// doc because its tag lookup FAILED must not be indistinguishable from
-// one that excluded an untagged doc (F-050; failure stays closed: a hard
-// filter never admits docs it could not check).
-func fetchDocTags(mem *memory.Store, results []SearchResult) map[string][]string {
-	out := make(map[string][]string, len(results))
+// fetchDocEntries loads the entry for each distinct result doc — one
+// fetch serving tag filters, boosts, and Docs-granularity shaping.
+// Lookup errors are logged (once, with a count) — a hard filter that
+// excludes a doc because its lookup FAILED must not be indistinguishable
+// from one that excluded an untagged doc (F-050; failure stays closed).
+func fetchDocEntries(mem store.EntryStore, results []SearchResult) map[string]*store.Entry {
+	out := make(map[string]*store.Entry, len(results))
 	errCount := 0
 	var firstErr error
 	for _, r := range results {
@@ -280,11 +301,11 @@ func fetchDocTags(mem *memory.Store, results []SearchResult) map[string][]string
 			continue
 		}
 		if e != nil {
-			out[r.DocID] = e.Tags
+			out[r.DocID] = e
 		}
 	}
 	if errCount > 0 {
-		log.Warn("tag lookup failed for some result docs — hard filters treat them as unmatched",
+		log.Warn("entry lookup failed for some result docs — hard filters treat them as unmatched",
 			"failed", errCount, "first_error", firstErr)
 	}
 	return out

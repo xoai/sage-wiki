@@ -131,7 +131,7 @@ func TestRunFilterTagsLookupFailureStaysClosed(t *testing.T) {
 	})
 
 	// Force the results first, then break the store for the tag lookups:
-	// closing the DB makes mem.Get error during fetchDocTags... but it
+	// closing the DB makes mem.Get error during fetchDocEntries... but it
 	// would also break the search itself, so instead point the tag lookup
 	// at a Store over a closed second handle.
 	closedDB := openTestDB(t)
@@ -140,12 +140,12 @@ func TestRunFilterTagsLookupFailureStaysClosed(t *testing.T) {
 
 	deps := Deps{Mem: ms, Chunks: cs, Vec: vs}
 	// Swap only the tag-lookup dependency by running the search with the
-	// healthy store, then verifying fetchDocTags against the broken one.
+	// healthy store, then verifying fetchDocEntries against the broken one.
 	resp, err := Run(deps, Request{Query: "keyword topic", Limit: 5})
 	if err != nil || len(resp.Results) == 0 {
 		t.Fatalf("baseline search failed: %v %+v", err, resp)
 	}
-	tags := fetchDocTags(brokenMem, resp.Results)
+	tags := fetchDocEntries(brokenMem, resp.Results)
 	if len(tags) != 0 {
 		t.Fatalf("broken store yielded tags: %v", tags)
 	}
