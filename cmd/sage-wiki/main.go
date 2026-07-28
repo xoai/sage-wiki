@@ -727,6 +727,9 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	// searcher needs the hybrid weights. Load failure degrades to
 	// BM25-only with hybrid's own weight defaults, as before.
 	cfg, cfgErr := config.Load(resolveConfigPath(dir))
+	if cfgErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: config load failed (%v): default fusion weights, ANN off, BM25-only\n", cfgErr)
+	}
 
 	memStore := memory.NewStore(db)
 	var vecStore *vectors.Store
