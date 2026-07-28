@@ -183,12 +183,6 @@ func ChunksConformance(new BackendFactory) func(*testing.T) {
 			t.Errorf("SearchChunks: %+v %v", hits, err)
 		}
 
-		// Multi-query RRF: both queries' docs present.
-		mq, err := cs.SearchChunksMultiQuery([]string{"zebra", "quill"}, 10)
-		if err != nil || len(mq) != 2 {
-			t.Errorf("MultiQuery: %+v %v", mq, err)
-		}
-
 		// ListAll.
 		all, err := cs.ListAll()
 		if err != nil || len(all) != 2 || all[0].DocID != "src:d1" {

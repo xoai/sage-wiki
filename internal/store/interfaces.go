@@ -26,7 +26,6 @@ type ChunkStore interface {
 	IndexChunks(tx *sql.Tx, docID string, chunks []ChunkEntry) error
 	DeleteDocChunks(tx *sql.Tx, docID string) error
 	SearchChunks(query string, limit int) ([]ChunkResult, error)
-	SearchChunksMultiQuery(queries []string, limit int) ([]ChunkResult, error)
 	Count() (int, error)
 	NeedsBackfill(memStore Countable) bool
 	// T8 additions.
