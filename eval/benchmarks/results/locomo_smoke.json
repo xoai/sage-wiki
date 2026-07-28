@@ -1,0 +1,163 @@
+{
+ "metadata": {
+  "benchmark": "locomo",
+  "project_name": "smoke",
+  "timestamp": "20260728_041607",
+  "binary_version": "sage-wiki dev (commit none, built unknown)",
+  "models": {
+   "answerer": "gpt-4o-mini",
+   "judge": "gpt-4o-mini"
+  },
+  "scope": {
+   "conversations": [
+    0
+   ],
+   "categories": [
+    1,
+    2,
+    3,
+    4
+   ],
+   "top_k": 10
+  },
+  "total_questions": 5,
+  "judge_parse_errors": 0,
+  "compile_stats": {
+   "conv0": {
+    "seconds": 93.32910185097717,
+    "vector_count": 35,
+    "sources": 19,
+    "skipped": false
+   }
+  },
+  "usage": {
+   "answerer": {
+    "prompt_tokens": 29697,
+    "completion_tokens": 1952,
+    "calls": 5
+   },
+   "judge": {
+    "prompt_tokens": 3676,
+    "completion_tokens": 228,
+    "calls": 5
+   }
+  }
+ },
+ "metrics": {
+  "overall": {
+   "total": 5,
+   "correct": 4,
+   "accuracy": 80.0,
+   "avg_score": 80.0,
+   "infra_errors": 0
+  },
+  "by_group": {
+   "multi-hop": {
+    "total": 2,
+    "correct": 2,
+    "accuracy": 100.0,
+    "avg_score": 100.0
+   },
+   "open-domain": {
+    "total": 1,
+    "correct": 1,
+    "accuracy": 100.0,
+    "avg_score": 100.0
+   },
+   "temporal": {
+    "total": 2,
+    "correct": 1,
+    "accuracy": 50.0,
+    "avg_score": 50.0
+   }
+  }
+ },
+ "latency": {
+  "count": 5,
+  "p50_ms": 1291.0516239935532,
+  "p95_ms": 1400.914894003654,
+  "avg_ms": 1234.1185633966234
+ },
+ "per_question": [
+  {
+   "question_id": "conv0_q0",
+   "conversation_idx": 0,
+   "category": 2,
+   "group": "temporal",
+   "question": "When did Caroline go to the LGBTQ support group?",
+   "ground_truth": "7 May 2023",
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1423.1714170018677,
+   "generated_answer": "The specific date when Caroline attended the LGBTQ support group is not mentioned in the memories.",
+   "judgment": "WRONG",
+   "score": 0.0,
+   "judge_reason": "The generated answer does not mention the correct date of 7 May 2023 and states that the date is not known, which means it fails to provide any correct information.",
+   "retrieved_count": 10
+  },
+  {
+   "question_id": "conv0_q1",
+   "conversation_idx": 0,
+   "category": 2,
+   "group": "temporal",
+   "question": "When did Melanie paint a sunrise?",
+   "ground_truth": "2022",
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1311.8888020107988,
+   "generated_answer": "There is no record of when Melanie painted a sunrise.",
+   "judgment": "CORRECT",
+   "score": 1.0,
+   "judge_reason": "The generated answer implies the absence of information but does not contradict or misrepresent the fact that Melanie painted a sunrise in 2022, as it does not provide an alternative timeframe nor specific details that would mark it as incorrect.",
+   "retrieved_count": 10
+  },
+  {
+   "question_id": "conv0_q2",
+   "conversation_idx": 0,
+   "category": 3,
+   "group": "open-domain",
+   "question": "What fields would Caroline be likely to pursue in her educaton?",
+   "ground_truth": "Psychology, counseling certification",
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1291.0516239935532,
+   "generated_answer": "Caroline would be likely to pursue education in the fields of Counseling, Mental Health Advocacy, and LGBTQ+ Studies or Support.",
+   "judgment": "CORRECT",
+   "score": 1.0,
+   "judge_reason": "The generated answer includes 'Counseling', which is part of the gold answer, thus meeting the criteria for CORRECT.",
+   "retrieved_count": 10
+  },
+  {
+   "question_id": "conv0_q3",
+   "conversation_idx": 0,
+   "category": 1,
+   "group": "multi-hop",
+   "question": "What did Caroline research?",
+   "ground_truth": "Adoption agencies",
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 1290.877174003981,
+   "generated_answer": "Caroline researched adoption agencies.",
+   "judgment": "CORRECT",
+   "score": 1.0,
+   "judge_reason": "The generated answer directly matches the gold answer, providing the same core information.",
+   "retrieved_count": 10
+  },
+  {
+   "question_id": "conv0_q4",
+   "conversation_idx": 0,
+   "category": 1,
+   "group": "multi-hop",
+   "question": "What is Caroline's identity?",
+   "ground_truth": "Transgender woman",
+   "status": "ok",
+   "judge_parse_error": false,
+   "search_latency_ms": 853.603799972916,
+   "generated_answer": "Caroline identifies as a transgender individual, actively involved in the LGBTQ community, using art as a form of self-expression, and preparing for motherhood through adoption.",
+   "judgment": "CORRECT",
+   "score": 1.0,
+   "judge_reason": "The generated answer includes the correct identification of Caroline as a transgender individual, which aligns with the gold answer indicating her identity as a transgender woman.",
+   "retrieved_count": 10
+  }
+ ]
+}
