@@ -99,6 +99,40 @@ func (s *chunkStore) SearchChunksMultiQuery(queries []string, limit int) ([]stor
 	return out, nil
 }
 
+// GetChunksMeta returns heading and content for the given chunk IDs —
+// the pg twin of the sqlite hydration read. Missing IDs are absent.
+func (s *chunkStore) GetChunksMeta(ids []string) (map[string]store.ChunkEntry, error) {
+	if len(ids) == 0 {
+		return map[string]store.ChunkEntry{}, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+	rows, err := s.b.pool.Query(
+		"SELECT chunk_id, chunk_index, heading, content FROM chunks_meta WHERE chunk_id IN ("+strings.Join(placeholders, ",")+")",
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("pg chunks.GetChunksMeta: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]store.ChunkEntry, len(ids))
+	for rows.Next() {
+		var c store.ChunkEntry
+		var heading, content sql.NullString
+		if err := rows.Scan(&c.ChunkID, &c.ChunkIndex, &heading, &content); err != nil {
+			return nil, fmt.Errorf("pg chunks.GetChunksMeta scan: %w", err)
+		}
+		c.Heading, c.Content = heading.String, content.String
+		out[c.ChunkID] = c
+	}
+	return out, rows.Err()
+}
+
 func (s *chunkStore) scanChunkResults(sqlText string, args ...any) ([]store.ChunkResult, error) {
 	rows, err := s.b.pool.Query(sqlText, args...)
 	if err != nil {

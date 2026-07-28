@@ -31,6 +31,8 @@ type ChunkStore interface {
 	NeedsBackfill(memStore Countable) bool
 	// T8 additions.
 	ListAll() ([]ChunkEntryWithDoc, error)
+	// M1 (20260728-search-upgrade): hydration of vector-only chunk hits.
+	GetChunksMeta(ids []string) (map[string]ChunkEntry, error)
 }
 
 type VectorStore interface {
