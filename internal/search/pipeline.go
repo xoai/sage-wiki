@@ -391,18 +391,42 @@ func EnhancedSearch(opts EnhancedSearchOpts) ([]SearchResult, error) {
 			}
 		}
 	}
-	// Graph-only docs (no chunk at all) hydrate from their entries — they
-	// must reach the reranker with real text, not blank passages (F-072;
-	// the facade's post-pipeline hydration ran after rerank and was
-	// display-only).
+	// Chunkless docs (graph-only and doc-vector-only hits) hydrate from
+	// their entries — they must reach the reranker with real text, not
+	// blank passages (F-072). Bounded to the head that can matter: the
+	// reranker caps at maxCandidates and the final cut is opts.Limit, so
+	// hydrating the sorted tail would be pure over-fetch (NEW-1). Get
+	// errors are logged once — a silently blank passage is the failure
+	// this block exists to prevent.
 	if opts.MemStore != nil {
+		hydrateCap := opts.Limit
+		if hydrateCap < maxCandidates {
+			hydrateCap = maxCandidates
+		}
+		errCount := 0
+		var firstErr error
 		for i := range deduped {
+			if i >= hydrateCap {
+				break
+			}
 			fc := &deduped[i]
 			if fc.chunkID == "" && fc.content == "" {
-				if e, err := opts.MemStore.Get(fc.docID); err == nil && e != nil {
+				e, err := opts.MemStore.Get(fc.docID)
+				if err != nil {
+					errCount++
+					if firstErr == nil {
+						firstErr = err
+					}
+					continue
+				}
+				if e != nil {
 					fc.content = e.Content
 				}
 			}
+		}
+		if errCount > 0 {
+			log.Warn("entry hydration failed for some chunkless candidates — they stay blank",
+				"failed", errCount, "first_error", firstErr)
 		}
 	}
 

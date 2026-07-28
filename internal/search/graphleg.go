@@ -79,7 +79,6 @@ func buildGraphLeg(ont store.OntologyStore, query string, limit int, weightOverr
 
 	type node struct {
 		id    string
-		dist  int
 		score float64
 	}
 	best := make(map[string]*node)
@@ -91,7 +90,7 @@ func buildGraphLeg(ont store.OntologyStore, query string, limit int, weightOverr
 		if e, err := ont.GetEntity(id); err != nil || e == nil {
 			return
 		}
-		best[id] = &node{id: id, dist: 0, score: 0}
+		best[id] = &node{id: id, score: 0}
 		if viaAlias != "" {
 			aliases["concept:"+id] = viaAlias
 		}
@@ -121,15 +120,22 @@ func buildGraphLeg(ont store.OntologyStore, query string, limit int, weightOverr
 	// hop bound when a node's cheapest score needs more hops than the
 	// cheapest PATH THROUGH it (state is (node, hops), not node).
 	prev := make(map[string]float64, len(best))
+	changed := make(map[string]bool, len(best))
 	for id, n := range best {
 		prev[id] = n.score
+		changed[id] = true
 	}
 	for hop := 1; hop <= 2; hop++ {
 		next := make(map[string]float64, len(prev))
 		for id, s := range prev {
 			next[id] = s // ≤h includes ≤h-1 paths
 		}
-		for id, s := range prev {
+		nextChanged := make(map[string]bool)
+		// Only nodes whose score changed last round can improve a
+		// neighbor this round (NEW-2: re-relaxing unchanged seeds only
+		// generates no-op sweeps).
+		for id := range changed {
+			s := prev[id]
 			rels, err := ont.GetRelations(id, store.Both, "")
 			if err != nil {
 				continue
@@ -150,13 +156,15 @@ func buildGraphLeg(ont store.OntologyStore, query string, limit int, weightOverr
 						if e, err := ont.GetEntity(other); err != nil || e == nil {
 							continue
 						}
-						best[other] = &node{id: other, dist: hop, score: cand}
+						best[other] = &node{id: other, score: cand}
 					}
 					next[other] = cand
+					nextChanged[other] = true
 				}
 			}
 		}
 		prev = next
+		changed = nextChanged
 	}
 	// prev now holds the exact ≤2-edge score for every discovered node.
 	for id, s := range prev {
