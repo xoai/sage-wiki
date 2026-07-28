@@ -2,7 +2,21 @@
 
 ## [Unreleased]
 
+## 0.2.3 — 2026-07-28
+
+### Documentation
+
+- **Knowledge-graph / graph-memory section in all seven READMEs**, covering
+  entities, typed relations, evidenced edges, triples, entity resolution and
+  multi-hop traversal — including what sage-wiki does *not* do (temporal
+  validity fields are stored but unqueried; there is no automatic
+  contradiction detection).
+- **README benchmark and eval summaries** now report real measurements: the
+  memory benchmarks (LOCOMO 92.0%, LongMemEval 93.3%, BEAM 0.691 with gpt-5
+  judging) and the quality/perf eval (87.4% median across 10 real wikis).
+
 ### Fixed
+
 
 - **Both checkpoint readers retry transient Windows failures**, via one shared
   helper. Fixing only the compile-state reader moved the CI failure to the
