@@ -89,7 +89,7 @@ def vector_leg_alive(rows: list[dict]) -> bool:
 def evaluate(binary: str, label: str, dataset: list[dict], projects: Path,
              limits: list[int], conversations: list[int], categories: list[int],
              workers: int, max_questions: int | None) -> dict:
-    items = []
+    items: list[tuple[int, Path, dict]] = []
     for conv_idx in conversations:
         entry = dataset[conv_idx]
         project = projects / f"conv{conv_idx}"
