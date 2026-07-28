@@ -1,9 +1,13 @@
 package search
 
 import (
+	"sort"
+	"time"
+
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/memory"
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -59,6 +63,12 @@ type Deps struct {
 	Embedder embed.Embedder
 	Client   *llm.Client
 	Model    string
+
+	// IncludeDoc, when non-nil, is the trust predicate: results whose
+	// DocID it rejects are excluded. Callers inject their trust
+	// semantics (query's output-trust rules; M5 adapters likewise) —
+	// the facade preserves, never reinterprets, them (spec §2.1).
+	IncludeDoc func(docID string) bool
 }
 
 // Response is the unified search output.
@@ -79,18 +89,33 @@ func (r Request) channelEnabled(c Channel) bool {
 	return false
 }
 
-// Run executes the unified retrieval pipeline (ADR-036). At the 2.1a
-// boundary it routes through the enhanced chunk pipeline unchanged; the
-// fusion rewrite (T2.2) and the remaining legs land behind this signature.
+// Run executes the unified retrieval pipeline (ADR-036): enhanced chunk
+// pipeline → hard tag filter → soft tag boost → trust predicate → limit.
+// The request-scoped stage="total" observation is V-M5c's instrument.
 func Run(deps Deps, req Request) (Response, error) {
+	start := time.Now()
+	defer metrics.ObserveDuration(
+		metrics.HistogramNamed("search_duration_seconds", metrics.LatencyBuckets(), "stage", "total"), start)
+
 	embedder := deps.Embedder
 	if !req.channelEnabled(ChannelVector) {
 		embedder = nil // vector legs off
 	}
 
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	// Post-pipeline filters shrink the result set — over-fetch so the
+	// final cut can still fill the requested limit.
+	pipelineLimit := limit
+	if len(req.FilterTags) > 0 || deps.IncludeDoc != nil {
+		pipelineLimit = limit * 3
+	}
+
 	results, err := EnhancedSearch(EnhancedSearchOpts{
 		Query:             req.Query,
-		Limit:             req.Limit,
+		Limit:             pipelineLimit,
 		Client:            deps.Client,
 		Model:             deps.Model,
 		Embedder:          embedder,
@@ -104,5 +129,94 @@ func Run(deps Deps, req Request) (Response, error) {
 	if err != nil {
 		return Response{}, err
 	}
+
+	// Tag semantics (spec §2.1): FilterTags is a hard AND filter,
+	// Tags a soft boost (+3%/matching tag, cap 15% — the same formula
+	// the doc-level path documents).
+	if len(req.FilterTags) > 0 || len(req.Tags) > 0 {
+		tagsByDoc := fetchDocTags(deps.Mem, results)
+		if len(req.FilterTags) > 0 {
+			kept := results[:0]
+			for _, r := range results {
+				if hasAllTags(tagsByDoc[r.DocID], req.FilterTags) {
+					kept = append(kept, r)
+				}
+			}
+			results = kept
+		}
+		if len(req.Tags) > 0 {
+			for i := range results {
+				n := countMatchingTags(tagsByDoc[results[i].DocID], req.Tags)
+				bonus := 0.03 * float64(n)
+				if bonus > 0.15 {
+					bonus = 0.15
+				}
+				results[i].FinalScore += bonus
+			}
+			sort.SliceStable(results, func(i, j int) bool {
+				return results[i].FinalScore > results[j].FinalScore
+			})
+		}
+	}
+
+	if deps.IncludeDoc != nil {
+		kept := results[:0]
+		for _, r := range results {
+			if deps.IncludeDoc(r.DocID) {
+				kept = append(kept, r)
+			}
+		}
+		results = kept
+	}
+
+	if len(results) > limit {
+		results = results[:limit]
+	}
+	for i := range results {
+		results[i].Rank = i + 1
+	}
 	return Response{Results: results}, nil
+}
+
+// fetchDocTags loads entry tags for each distinct result doc.
+func fetchDocTags(mem *memory.Store, results []SearchResult) map[string][]string {
+	out := make(map[string][]string, len(results))
+	for _, r := range results {
+		if _, seen := out[r.DocID]; seen {
+			continue
+		}
+		if e, err := mem.Get(r.DocID); err == nil && e != nil {
+			out[r.DocID] = e.Tags
+		}
+	}
+	return out
+}
+
+func hasAllTags(have, want []string) bool {
+	for _, w := range want {
+		found := false
+		for _, h := range have {
+			if h == w {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func countMatchingTags(have, want []string) int {
+	n := 0
+	for _, w := range want {
+		for _, h := range have {
+			if h == w {
+				n++
+				break
+			}
+		}
+	}
+	return n
 }

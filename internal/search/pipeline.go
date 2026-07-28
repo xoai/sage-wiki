@@ -89,6 +89,8 @@ func blendResults(deduped []fusedChunk, reranked []RerankResult, minCoverage flo
 			RerankScore: rerankScores[fc.docID],
 			FinalScore:  final,
 			Rank:        fc.retrievalRank,
+			BM25Rank:    fc.bm25Rank,
+			VectorRank:  fc.vecRank,
 		})
 	}
 	if applied {
@@ -113,6 +115,11 @@ type SearchResult struct {
 	RerankScore float64
 	FinalScore  float64
 	Rank        int
+
+	// Per-channel ranks of the best chunk (0 = the leg did not rank it).
+	// These are the per-channel attribution source (spec §2.1, T6.3).
+	BM25Rank   int
+	VectorRank int
 }
 
 // EnhancedSearch runs the full enhanced search pipeline:
