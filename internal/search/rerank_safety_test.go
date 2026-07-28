@@ -139,6 +139,26 @@ func TestBlendResults_AppliedSortsByBlend(t *testing.T) {
 	}
 }
 
+// F-042: every non-blended path emits the same normalized [0,1] scale —
+// the rerank-disabled fallback must not leak raw RRF (~0.016) FinalScores.
+func TestBlendResults_NoRerankEmitsNormalizedScale(t *testing.T) {
+	deduped := []fusedChunk{
+		{docID: "a", rrfScore: 0.0328, retrievalRank: 1},
+		{docID: "b", rrfScore: 0.0164, retrievalRank: 2},
+	}
+	results := blendResults(deduped, nil, 0.5)
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+	if results[0].FinalScore != 1.0 || results[1].FinalScore != 0.0 {
+		t.Errorf("no-rerank FinalScores = %v, %v — want normalized 1.0, 0.0 (same scale as every other path)",
+			results[0].FinalScore, results[1].FinalScore)
+	}
+	if results[0].DocID != "a" || results[1].DocID != "b" {
+		t.Errorf("RRF order broken: %v", results)
+	}
+}
+
 // Failure fallback carries no scores at all — coverage 0 ⇒ gate always skips.
 func TestFallbackRerankIsUnscored(t *testing.T) {
 	res := fallbackRerank([]RerankCandidate{{ID: "a", RetrievalRank: 1}, {ID: "b", RetrievalRank: 2}})

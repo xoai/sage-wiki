@@ -60,7 +60,9 @@ func blendResults(deduped []fusedChunk, reranked []RerankResult, minCoverage flo
 		minCoverage = DefaultRerankMinCoverage
 	}
 	finals, applied := BlendReranked(rels, reranked, minCoverage)
-	if !applied {
+	if !applied && len(reranked) > 0 {
+		// Warn only when a rerank actually ran and fell below the gate —
+		// the plain rerank-disabled path goes through here too.
 		log.Warn("rerank coverage below threshold, keeping RRF order",
 			"candidates", len(reranked), "min_coverage", minCoverage)
 	}
@@ -294,19 +296,11 @@ func EnhancedSearch(opts EnhancedSearchOpts) ([]SearchResult, error) {
 		}
 	}
 
-	// If no reranking or reranking produced no results, use RRF order
+	// If no reranking or reranking produced no results, use RRF order.
+	// blendResults with no reranked input takes the not-applied branch:
+	// same normalized-[0,1] FinalScore scale as every other path (F-042).
 	if len(results) == 0 {
-		for _, fc := range deduped {
-			results = append(results, SearchResult{
-				DocID:      fc.docID,
-				ChunkID:    fc.chunkID,
-				ChunkText:  fc.content,
-				Heading:    fc.heading,
-				RRFScore:   fc.rrfScore,
-				FinalScore: fc.rrfScore,
-				Rank:       fc.retrievalRank,
-			})
-		}
+		results = blendResults(deduped, nil, opts.RerankMinCoverage)
 	}
 
 	// Final rank assignment and limit
