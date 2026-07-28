@@ -63,6 +63,46 @@ jobs:
         if: runner.os == 'Windows'
         run: CGO_ENABLED=0 go test ./...
 
+  postgres:
+    name: Postgres backend
+    runs-on: ubuntu-latest
+    # The postgres backend's tests are env-gated (TEST_DATABASE_URL), so on
+    # every other job they SKIP — a pg-only regression shipped green twice
+    # before this job existed (20260728-search-upgrade Gate-3 F-046/F-055).
+    # pgvector/pgvector ships the extension the v1 migration needs.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sage_wiki_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      # -p 1: every pg package talks to the SAME database, so parallel
+      # packages would race on shared tables (they drop and recreate schema).
+      - name: Test (postgres-gated packages)
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/sage_wiki_test?sslmode=disable
+        run: |
+          CGO_ENABLED=0 go test -p 1 -count=1 \
+            ./internal/storage/postgres/... \
+            ./internal/storetest/... \
+            ./internal/hub/...
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
