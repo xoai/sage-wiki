@@ -148,12 +148,12 @@ func TestRunFilterTagsLookupFailureStaysClosed(t *testing.T) {
 	if len(tags) != 0 {
 		t.Fatalf("broken store yielded tags: %v", tags)
 	}
-	// And through Run: a deps whose Mem errors on Get excludes under
-	// FilterTags without panicking. The search legs themselves also error
-	// on a closed DB, so this asserts the error propagates, not panics.
+	// And through Run: a deps whose Mem errors on Get must surface the
+	// error (the doc-FTS leg reads through the same closed handle) —
+	// never panic, never silently succeed.
 	if _, err := Run(Deps{Mem: brokenMem, Chunks: cs, Vec: vs},
 		Request{Query: "keyword topic", Limit: 5, FilterTags: []string{"go"}}); err == nil {
-		t.Log("closed-DB run unexpectedly succeeded — acceptable if reads were cached")
+		t.Fatal("closed-DB run must propagate the store error, got nil")
 	}
 }
 
