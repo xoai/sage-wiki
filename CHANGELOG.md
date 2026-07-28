@@ -2,6 +2,52 @@
 
 ## [Unreleased]
 
+## 0.2.2 — 2026-07-28
+
+### Added
+
+- **Memory benchmark harness** (`eval/benchmarks/`) running **LOCOMO**,
+  **LongMemEval**, and **BEAM** against sage-wiki as the system under test,
+  using the datasets, prompts, and judging procedure of
+  [mem0ai/memory-benchmarks](https://github.com/mem0ai/memory-benchmarks)
+  (Apache-2.0, vendored with attribution). Each conversation compiles into
+  its own sage-wiki project, then retrieval runs through `sage-wiki search`.
+  Results with gpt-5 as answerer/judge on scoped samples: LOCOMO **92.0%**
+  @ top-50 (150 q), LongMemEval-S **93.3%** @ top-50 (30 q), BEAM 100K
+  **0.691** mean nugget (60 q) — see `eval/benchmarks/REPORT.md` for the
+  comparability caveats, which are substantial.
+- **Rate-limit resilience for long runs**: a process-wide gate shared by the
+  LLM client and the search subprocess. One worker's 429 pauses every worker
+  (exponential backoff, `Retry-After` honored), rate-limited search degrades
+  get more retries than permanent ones, and sustained limiting aborts the run
+  cleanly with resume instructions rather than burning the remaining queue
+  into failures.
+
+### Fixed
+
+- **`eval.py` could not read any real wiki.** It hardcoded `_wiki/` while the
+  scaffold emits `output: wiki`, so it exited 1 on every project the current
+  binary produces; it now resolves the output directory from `config.yaml`.
+- **`eval.py` fact-extraction always scored 0% on real wikis** — it counted
+  only bullet lines under `## Key claims` while the summarize pass writes
+  prose, so a single run reported 0% extraction *and* 100% "Structural — Key
+  claims". Counting is now format-agnostic, and the section regex no longer
+  swallows an empty section into the following heading.
+- **Manifest lock treated Windows contention as fatal.** A contended
+  exclusive-create returns `ERROR_ACCESS_DENIED` on Windows (pending-delete or
+  sharing violation), which `os.IsExist` does not match — so a routine lock
+  race aborted the caller's `Mutate` and silently dropped its update.
+  Concurrent manifest writers on Windows could lose data.
+
+### Changed
+
+- **README benchmark numbers now come from real compiled wikis**, not from
+  `eval_test.py`'s synthetic fixture generator. The April 2026 figures
+  (85.9–86.7%) described the generator's parameters; measured across 10 real
+  wikis the overall score is **87.4%** median with 100% fact extraction.
+  Updated in all seven READMEs.
+
+
 ### Fixed
 
 - **CLI `search` now honors the configured hybrid weights** (default
