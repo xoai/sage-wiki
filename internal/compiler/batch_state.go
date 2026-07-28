@@ -31,7 +31,8 @@ type BatchCheckpoint struct {
 }
 
 // batchCheckpointPath returns the canonical batch checkpoint location.
-func batchCheckpointPath(projectDir string) string {	return filepath.Join(projectDir, ".sage", "batch-state.json")
+func batchCheckpointPath(projectDir string) string {
+	return filepath.Join(projectDir, ".sage", "batch-state.json")
 }
 
 // legacyCheckpointPath returns the legacy (pre-P1-3) checkpoint location.
@@ -115,9 +116,19 @@ func writeFileAtomicUnique(path string, data []byte) error {
 	return fmt.Errorf("rename: %w", renameErr)
 }
 
-// isTransientRenameError reports whether a rename failure is worth
-// retrying (sharing/access violations) vs a persistent error (read-only
-// dir, missing parent) that should fail fast.
+// isTransientRenameError reports whether a file operation failed for a
+// reason worth retrying (another handle is open) vs a persistent one
+// (read-only dir, missing parent) that should fail fast.
+//
+// The message list is the load-bearing part. Windows reports
+// ERROR_SHARING_VIOLATION (32) as "The process cannot access the file because
+// it is being used by another process." — which contains NEITHER the phrase
+// "sharing violation" NOR "access is denied", and which Go does not map to
+// fs.ErrPermission (only ERROR_ACCESS_DENIED is mapped). An earlier version of
+// this predicate checked only those two phrases plus ErrPermission, so the
+// single most common Windows contention error fell straight through as fatal.
+// Matching on the human-readable text is unfortunate but portable; the errno
+// is not reachable without a Windows-only build file.
 func isTransientRenameError(err error) bool {
 	if err == nil {
 		return false
@@ -126,7 +137,16 @@ func isTransientRenameError(err error) bool {
 		return true
 	}
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "access is denied") || strings.Contains(msg, "sharing violation")
+	for _, marker := range []string{
+		"being used by another process", // ERROR_SHARING_VIOLATION (32)
+		"access is denied",              // ERROR_ACCESS_DENIED (5)
+		"sharing violation",             // some layers do surface this wording
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // stripLegacyBatch atomically rewrites the legacy compile-state.json with

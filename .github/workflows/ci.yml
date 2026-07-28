@@ -92,6 +92,25 @@ jobs:
           go-version: "1.26"
           cache: true
 
+      # sage-wiki refuses to CREATE EXTENSION itself by design (it needs
+      # superuser; on RDS an operator runs it once), so CI must create it.
+      # Doing it explicitly rather than trusting the image's initdb hook:
+      # the hook only fires on first init of the data directory, and when it
+      # silently doesn't, every pg test fails with "relation does not exist"
+      # — which reads like a schema bug, not a missing extension.
+      - name: Enable pgvector in the test database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          for i in $(seq 1 15); do
+            pg_isready -h localhost -U postgres && break
+            sleep 2
+          done
+          psql -h localhost -U postgres -d sage_wiki_test \
+            -c 'CREATE EXTENSION IF NOT EXISTS vector;'
+          psql -h localhost -U postgres -d sage_wiki_test \
+            -c "SELECT extname FROM pg_extension WHERE extname='vector';" | grep -q vector
+
       # -p 1: every pg package talks to the SAME database, so parallel
       # packages would race on shared tables (they drop and recreate schema).
       - name: Test (postgres-gated packages)

@@ -4,6 +4,17 @@
 
 ### Fixed
 
+- **The transient-error predicate now matches the message Windows actually
+  emits.** `ERROR_SHARING_VIOLATION` reads "The process cannot access the file
+  because it is being used by another process" — containing neither "sharing
+  violation" nor "access is denied", and Go does not map it to
+  `fs.ErrPermission`. The predicate checked only those, so the most common
+  Windows contention error fell through as fatal in both the rename retry and
+  the new read retry.
+- **CI: the Postgres job now creates the pgvector extension explicitly.** It
+  had never passed since being added — sage-wiki refuses to `CREATE EXTENSION`
+  itself by design, and the image's initdb hook was not reliably creating it,
+  so every pg test failed with "relation does not exist".
 - **Compile-state reads now retry transient Windows file-sharing failures.**
   The write half of this contract already retried (`writeFileAtomicUnique` via
   `isTransientRenameError`), but reads did not — so a concurrent writer

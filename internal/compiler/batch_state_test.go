@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -434,5 +435,45 @@ func TestLoadCompileStateGivesUpOnPersistentSharingViolation(t *testing.T) {
 	}
 	if calls < 2 {
 		t.Errorf("expected several attempts before giving up, got %d", calls)
+	}
+}
+
+// TestIsTransientRenameErrorMatchesRealWindowsText pins the predicate against
+// the EXACT strings Windows emits, not synthetic stand-ins.
+//
+// This test exists because an earlier fix used os.ErrPermission as its input
+// and passed, while the real CI error — ERROR_SHARING_VIOLATION, whose text is
+// "The process cannot access the file because it is being used by another
+// process." — matched nothing and fell through as fatal. A predicate that
+// matches on message text must be tested with the messages that occur.
+func TestIsTransientRenameErrorMatchesRealWindowsText(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			"ERROR_SHARING_VIOLATION as Windows words it",
+			errors.New(`open C:\Users\RUNNER~1\AppData\Local\Temp\x\.sage\compile-state.json: ` +
+				`The process cannot access the file because it is being used by another process.`),
+			true,
+		},
+		{
+			"ERROR_ACCESS_DENIED as Windows words it",
+			errors.New(`rename C:\x\tmp C:\x\dst: Access is denied.`),
+			true,
+		},
+		{"literal sharing violation wording", errors.New("sharing violation"), true},
+		{"fs.ErrPermission", &fs.PathError{Op: "open", Err: os.ErrPermission}, true},
+		{"missing file is not transient", &fs.PathError{Op: "open", Err: os.ErrNotExist}, false},
+		{"read-only filesystem is not transient", errors.New("read-only file system"), false},
+		{"nil", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isTransientRenameError(tc.err); got != tc.want {
+				t.Errorf("isTransientRenameError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
