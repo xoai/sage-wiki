@@ -1,6 +1,7 @@
 package search
 
 import (
+	"math"
 	"sort"
 	"time"
 
@@ -170,11 +171,40 @@ func Run(deps Deps, req Request) (Response, error) {
 				}
 				results[i].FinalScore += bonus
 			}
-			sort.SliceStable(results, func(i, j int) bool {
-				return results[i].FinalScore > results[j].FinalScore
-			})
 		}
 	}
+
+	// Recency (spec §2.2, ADR-039): source_date attaches to every result;
+	// dated docs gain 0.05 × 2^(−age/14d) — a tie-breaker (5% cap), never
+	// a driver. Dateless docs get nothing (no fallback timestamp).
+	if deps.Mem != nil && len(results) > 0 {
+		ids := make([]string, len(results))
+		for i, r := range results {
+			ids[i] = r.DocID
+		}
+		if dates, err := deps.Mem.GetSourceDates(ids); err != nil {
+			log.Warn("source dates unavailable; recency skipped", "error", err)
+		} else if len(dates) > 0 {
+			now := time.Now().Unix()
+			for i := range results {
+				ts, ok := dates[results[i].DocID]
+				if !ok {
+					continue
+				}
+				results[i].SourceDate = ts
+				ageDays := float64(now-ts) / 86400.0
+				if ageDays < 0 {
+					ageDays = 0
+				}
+				results[i].FinalScore += 0.05 * math.Exp2(-ageDays/14.0)
+			}
+		}
+	}
+
+	// One stable re-sort covers tag and recency bonuses together.
+	sort.SliceStable(results, func(i, j int) bool {
+		return results[i].FinalScore > results[j].FinalScore
+	})
 
 	if deps.IncludeDoc != nil {
 		kept := results[:0]

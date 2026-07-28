@@ -222,6 +222,10 @@ type SearchResult struct {
 	// per-channel attribution source (spec §2.1, T6.3).
 	BM25Rank   int
 	VectorRank int
+
+	// SourceDate is the doc's origin date (unix seconds; ADR-039 — never
+	// a row timestamp). 0 = no date: no recency contribution was applied.
+	SourceDate int64
 }
 
 // EnhancedSearch runs the full enhanced search pipeline:

@@ -3,6 +3,7 @@ package search
 import (
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/vectors"
@@ -173,6 +174,62 @@ func TestRunTrustPredicateExclusion(t *testing.T) {
 	}
 	if len(resp.Results) != 1 {
 		t.Errorf("expected doc1 only, got %+v", resp.Results)
+	}
+}
+
+// V-M3b: two equal-relevance docs order by recency; results carry
+// source_date (spec §2.1 Response contract; ADR-039).
+func TestRunRecencyBoostAndSourceDates(t *testing.T) {
+	deps, ms := wiringFixture(t)
+
+	old := time.Now().AddDate(0, 0, -90).Unix() // decayed to ~0
+	recent := time.Now().AddDate(0, 0, -1).Unix()
+	if err := ms.SetSourceDate("doc1", old); err != nil {
+		t.Fatal(err)
+	}
+	if err := ms.SetSourceDate("doc2", recent); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := Run(deps, Request{Query: "keyword topic", Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Results) != 2 {
+		t.Fatalf("expected both docs, got %+v", resp.Results)
+	}
+	if resp.Results[0].DocID != "doc2" {
+		t.Errorf("recent doc must outrank equal-relevance old doc, got %s first", resp.Results[0].DocID)
+	}
+	for _, r := range resp.Results {
+		want := old
+		if r.DocID == "doc2" {
+			want = recent
+		}
+		if r.SourceDate != want {
+			t.Errorf("%s SourceDate = %d, want %d", r.DocID, r.SourceDate, want)
+		}
+	}
+}
+
+// A dateless doc gets no recency contribution and no date in the result.
+func TestRunDatelessDocNoRecency(t *testing.T) {
+	deps, ms := wiringFixture(t)
+	if err := ms.SetSourceDate("doc2", time.Now().Unix()); err != nil {
+		t.Fatal(err)
+	}
+	// doc1 stays dateless.
+	resp, err := Run(deps, Request{Query: "keyword topic", Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range resp.Results {
+		if r.DocID == "doc1" && r.SourceDate != 0 {
+			t.Errorf("dateless doc1 carries SourceDate %d", r.SourceDate)
+		}
+	}
+	if resp.Results[0].DocID != "doc2" {
+		t.Errorf("dated doc must win the tie, got %s", resp.Results[0].DocID)
 	}
 }
 
