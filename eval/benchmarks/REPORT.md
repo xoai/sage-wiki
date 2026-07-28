@@ -25,6 +25,67 @@ temporal-reasoning 0%), because the LLM compile step abstracts conversations
 into concepts and articles — retaining meaning, discarding specifics like
 exact dates and numbers.
 
+## Side-by-side with Mem0's published numbers
+
+For orientation only — **these columns are not an apples-to-apples
+comparison.** The runs share prompts, datasets, and judging procedure, but
+differ on every other axis that moves benchmark numbers: Mem0's published
+results use their **managed platform (v3 pipeline)** with a **gpt-5-class
+judge/answerer** at **top-200 retrieval** on **full question sets**; this
+report uses the **self-hosted sage-wiki binary** with a **gpt-4o-mini**
+judge/answerer at **top-10** on scoped samples (LongMemEval, BEAM), and
+sage-wiki results carry no per-memory timestamps (caveat 2). Mem0 column
+values are transcribed from the mem0ai/memory-benchmarks README ("Mem0
+Platform" results section, local checkout, 2026-07-28).
+
+| Benchmark | sage-wiki (this report) | Mem0 Platform (published) |
+|---|---|---|
+| LOCOMO (1,540 q) | **76.8%** @ top-10, gpt-4o-mini judge | **92.5%** @ top-200, gpt-5-class judge (91.8% @ top-50) |
+| LongMemEval-S | **63.3%** — 30-q stratified sample | **94.4%** — full 500 q @ top-200 (94.8% @ top-50) |
+| BEAM | **0.271** avg nugget — **100K** bucket, 60 q | **0.641** avg — **1M** bucket, 700 q; 0.486 — **10M**, 200 q (no 100K published) |
+
+Per-category LOCOMO (Mem0's breakdown is averaged across their top-10–200
+cutoffs; ours is top-10 only):
+
+| Category | sage-wiki | Mem0 Platform |
+|---|---|---|
+| single-hop | 83.2% | 91.2% |
+| multi-hop | 76.6% | 91.3% |
+| open-domain | 74.0% | 72.7% |
+| temporal | 61.1% | 92.0% |
+
+The deltas are informative even without strict comparability: sage-wiki is
+within ~8pp on single-hop and effectively at parity on open-domain, while
+**temporal (−31pp) and multi-hop (−15pp) carry nearly the whole gap** —
+consistent with this report's headline finding (no per-memory timestamps +
+compile-time abstraction of details) rather than with a uniformly weaker
+retrieval stack. Mem0's own weakest LOCOMO category (open-domain, 72.7%) is
+the one where sage-wiki's compiled articles hold up best.
+
+BEAM by ability type (⚠ different size buckets — ours 100K, theirs 1M —
+so read only the *ordering*, not the levels):
+
+| Ability | sage-wiki (100K) | Mem0 Platform (1M) |
+|---|---|---|
+| preference_following | 0.708 | 0.883 |
+| instruction_following | 0.583 | 0.852 |
+| summarization | 0.356 | 0.635 |
+| abstention | 0.333 | 0.525 |
+| event_ordering | 0.272 | 0.536 |
+| knowledge_update | 0.167 | 0.650 |
+| multi_session_reasoning | 0.167 | 0.652 |
+| contradiction_resolution | 0.125 | 0.357 |
+| information_extraction | 0.000 | 0.700 |
+| temporal_reasoning | 0.000 | 0.618 |
+
+Both systems rank preference/instruction following at the top and
+contradiction_resolution near the bottom; the divergence is again verbatim
+detail — information_extraction and temporal_reasoning, mid-pack for Mem0
+(which stores extracted facts with timestamps), are floor for the compiled
+wiki. Closing the judge-model and retrieval-depth gaps (run ours with a
+gpt-5-class judge at top-200) is the prerequisite for any real
+head-to-head; see caveat 1.
+
 ## Pipeline
 
 One sage-wiki project per conversation/haystack (the `user_id` analogue):
