@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/store"
@@ -30,7 +31,20 @@ func (eq *ExpandedQuery) AllQueries() []string {
 // Returns an ExpandedQuery with lex (keyword rewrites), vec (semantic rewrites),
 // and hyde (hypothetical answer) variants. On any failure, returns the original
 // query only — no degradation.
-func ExpandQuery(question string, client *llm.Client, model string) (*ExpandedQuery, error) {
+// expandTimeout bounds one expansion call. Expansion is an optimization —
+// a slow provider must not hold a search open for the transport's 120s.
+const expandTimeout = 20 * time.Second
+
+// ExpandQuery is bounded by expandTimeout and by the caller's context: an
+// MCP client that cancels wiki_search{expand:true}, or a Ctrl-C on the CLI,
+// must actually stop the call rather than wait out the transport timeout.
+func ExpandQuery(ctx context.Context, question string, client *llm.Client, model string) (*ExpandedQuery, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, expandTimeout)
+	defer cancel()
+
 	prompt := fmt.Sprintf(`Given the search query: %q
 Generate search variants to improve retrieval:
 - lex: 2 keyword-rich rewrites (for full-text search, use technical terms)
@@ -42,7 +56,7 @@ Respond ONLY with JSON, no explanation:
 
 	// P2-4: schema-guaranteed JSON where supported; graceful degrade to
 	// fallbackExpansion on any error — exactly today's failure contract.
-	payload, _, err := client.StructuredCompletion(context.Background(), []llm.Message{
+	payload, _, err := client.StructuredCompletion(ctx, []llm.Message{
 		{Role: "user", Content: prompt},
 	}, ExpansionSchema, llm.CallOpts{Model: model, MaxTokens: 300})
 	if err != nil {

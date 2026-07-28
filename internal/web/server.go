@@ -644,6 +644,15 @@ func (s *WebServer) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	var results []webResult
 
+	// The trust rule applies on both branches — `search.pipeline: legacy`
+	// rolls back ranking, never the rule about which documents may appear.
+	trustMode := s.cfg.Trust.IncludeOutputsMode()
+	var trustStore *trust.Store
+	if trustMode == "verified" {
+		trustStore = trust.NewStore(s.db)
+	}
+	includeDoc := trust.IncludePredicate(trustMode, trustStore)
+
 	if s.cfg.Search.PipelineOrDefault() == "unified" {
 		// Unified pipeline (ADR-036, M5). LLM stages stay off on the
 		// web surface.
@@ -653,12 +662,7 @@ func (s *WebServer) handleSearch(w http.ResponseWriter, r *http.Request) {
 		} else {
 			chunkStore = memory.NewChunkStore(s.db)
 		}
-		trustMode := s.cfg.Trust.IncludeOutputsMode()
-		var trustStore *trust.Store
-		if trustMode == "verified" {
-			trustStore = trust.NewStore(s.db)
-		}
-		resp, err := search.Run(search.Deps{
+		resp, err := search.Run(r.Context(), search.Deps{
 			Mem:                  s.mem,
 			Chunks:               chunkStore,
 			Vec:                  s.vec,
@@ -668,7 +672,7 @@ func (s *WebServer) handleSearch(w http.ResponseWriter, r *http.Request) {
 			Ont:                  s.ont,
 			GraphWeight:          s.cfg.Search.HybridWeightGraph,
 			GraphRelationWeights: s.cfg.Search.GraphRelationWeights,
-			IncludeDoc:           trust.IncludePredicate(trustMode, trustStore),
+			IncludeDoc:           includeDoc,
 		}, search.Request{
 			Query:       query,
 			Limit:       limit,
@@ -706,6 +710,9 @@ func (s *WebServer) handleSearch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, r := range legacy {
+			if !includeDoc(r.ID) {
+				continue
+			}
 			results = append(results, webResult{id: r.ID, content: r.Content,
 				articlePath: r.ArticlePath, score: r.RRFScore})
 		}

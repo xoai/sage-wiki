@@ -1,6 +1,8 @@
 package dashboard
 
 import (
+	"context"
+
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -79,7 +81,9 @@ func New(projectDir string, cfg *config.Config, db store.DBHandle) Model {
 			IncludeDoc:           trust.IncludePredicate(trustMode, trustStore),
 		}
 		searchFn = func(query string, limit int) ([]search.DocResult, error) {
-			resp, err := search.Run(deps, search.Request{Query: query, Limit: limit, Granularity: search.Docs})
+			// The TUI has no per-keystroke context; the stage timeouts inside
+			// Run are the bound here.
+			resp, err := search.Run(context.Background(), deps, search.Request{Query: query, Limit: limit, Granularity: search.Docs})
 			if err != nil {
 				return nil, err
 			}
@@ -87,6 +91,14 @@ func New(projectDir string, cfg *config.Config, db store.DBHandle) Model {
 		}
 	} else {
 		searcher := hybrid.NewSearcher(memStore, vecStore)
+		// Trust filtering applies here too: the pipeline pin rolls back
+		// ranking, not the rule about which documents may appear.
+		trustMode := cfg.Trust.IncludeOutputsMode()
+		var trustStore *trust.Store
+		if trustMode == "verified" {
+			trustStore = trust.NewStore(db)
+		}
+		includeDoc := trust.IncludePredicate(trustMode, trustStore)
 		searchFn = func(query string, limit int) ([]search.DocResult, error) {
 			legacy, err := searcher.Search(hybrid.SearchOpts{
 				Query:        query,
@@ -97,10 +109,13 @@ func New(projectDir string, cfg *config.Config, db store.DBHandle) Model {
 			if err != nil {
 				return nil, err
 			}
-			out := make([]search.DocResult, len(legacy))
-			for i, r := range legacy {
-				out[i] = search.DocResult{ID: r.ID, Content: r.Content, Tags: r.Tags,
-					ArticlePath: r.ArticlePath, BM25Rank: r.BM25Rank, VectorRank: r.VectorRank, RRFScore: r.RRFScore}
+			out := make([]search.DocResult, 0, len(legacy))
+			for _, r := range legacy {
+				if !includeDoc(r.ID) {
+					continue
+				}
+				out = append(out, search.DocResult{ID: r.ID, Content: r.Content, Tags: r.Tags,
+					ArticlePath: r.ArticlePath, BM25Rank: r.BM25Rank, VectorRank: r.VectorRank, RRFScore: r.RRFScore})
 			}
 			return out, nil
 		}

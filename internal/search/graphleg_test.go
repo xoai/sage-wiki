@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
@@ -143,11 +144,11 @@ func TestRunEmptyOntologyByteIdentity(t *testing.T) {
 	})
 
 	req := Request{Query: "goroutines", Limit: 5}
-	withOnt, err := Run(Deps{Mem: ms, Chunks: cs, Vec: vs, Ont: ont}, req)
+	withOnt, err := Run(context.Background(), Deps{Mem: ms, Chunks: cs, Vec: vs, Ont: ont}, req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	without, err := Run(Deps{Mem: ms, Chunks: cs, Vec: vs}, req)
+	without, err := Run(context.Background(), Deps{Mem: ms, Chunks: cs, Vec: vs}, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +167,7 @@ func TestRunGraphChannelFusesAndAblates(t *testing.T) {
 
 	// Only the self-attention entry matches lexically; transformer and
 	// rnn are reachable only via the graph.
-	resp, err := Run(deps, Request{Query: "self attention", Limit: 10})
+	resp, err := Run(context.Background(), deps, Request{Query: "self attention", Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +187,7 @@ func TestRunGraphChannelFusesAndAblates(t *testing.T) {
 	}
 
 	// Ablation: channels without graph must drop the graph-only doc.
-	noGraph, err := Run(deps, Request{Query: "self attention", Limit: 10, Channels: []Channel{ChannelBM25, ChannelVector}})
+	noGraph, err := Run(context.Background(), deps, Request{Query: "self attention", Limit: 10, Channels: []Channel{ChannelBM25, ChannelVector}})
 	if err != nil {
 		t.Fatal(err)
 	}

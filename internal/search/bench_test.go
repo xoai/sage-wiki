@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"path/filepath"
@@ -64,7 +65,36 @@ func benchCorpus(b testing.TB) (Deps, *hybrid.Searcher) {
 	// does — the trust predicate triples the pipeline limit, the ontology
 	// store adds an EntityCount probe per query. Measuring without them
 	// would benchmark a configuration that ships nowhere.
+	//
+	// The ontology is POPULATED for the same reason: with zero entities the
+	// EntityCount fast path skips buildGraphLeg entirely, so an empty-store
+	// fixture measures a two-channel pipeline while three-channel ships —
+	// which is what the first version of this fixture did.
 	ont := ontology.NewStore(db, nil, nil)
+	for i := 0; i < 1000; i++ {
+		id := fmt.Sprintf("topic%d", i)
+		if err := ont.AddEntity(ontology.Entity{
+			ID:          id,
+			Type:        ontology.TypeConcept,
+			Name:        id,
+			ArticlePath: fmt.Sprintf("wiki/concepts/%s.md", id),
+		}); err != nil {
+			b.Fatal(err)
+		}
+	}
+	for i := 0; i < 1000; i++ {
+		for j := 1; j <= 3; j++ {
+			target := (i + j*7) % 1000
+			if err := ont.AddRelation(ontology.Relation{
+				ID:       fmt.Sprintf("r%d-%d", i, j),
+				SourceID: fmt.Sprintf("topic%d", i),
+				TargetID: fmt.Sprintf("topic%d", target),
+				Relation: ontology.RelCites,
+			}); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
 	return Deps{
 			Mem: ms, Chunks: cs, Vec: vs,
 			Embedder:   fixedEmbedder{v: []float32{0.5, 0.5, 0.5}},
@@ -80,7 +110,7 @@ func BenchmarkRunUnified(b *testing.B) {
 	deps, _ := benchCorpus(b)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := Run(deps, Request{Query: fmt.Sprintf("topic%d subject details", i%1000), Limit: 10}); err != nil {
+		if _, err := Run(context.Background(), deps, Request{Query: fmt.Sprintf("topic%d subject details", i%1000), Limit: 10}); err != nil {
 			b.Fatal(err)
 		}
 	}

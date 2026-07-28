@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 	"time"
@@ -52,7 +53,7 @@ func wiringFixture(t *testing.T) (Deps, *memory.Store) {
 func TestRunFilterTagsHardExclusion(t *testing.T) {
 	deps, _ := wiringFixture(t)
 
-	resp, err := Run(deps, Request{Query: "keyword topic", Limit: 5, FilterTags: []string{"go", "search"}})
+	resp, err := Run(context.Background(), deps, Request{Query: "keyword topic", Limit: 5, FilterTags: []string{"go", "search"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +68,7 @@ func TestRunSoftBoostVsHardFilterDistinction(t *testing.T) {
 	deps, _ := wiringFixture(t)
 
 	// Soft: both docs stay; the python-tagged one rises.
-	resp, err := Run(deps, Request{Query: "keyword topic", Limit: 5, Tags: []string{"python"}})
+	resp, err := Run(context.Background(), deps, Request{Query: "keyword topic", Limit: 5, Tags: []string{"python"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +80,7 @@ func TestRunSoftBoostVsHardFilterDistinction(t *testing.T) {
 	}
 
 	// Hard: only the python-tagged doc survives.
-	hard, err := Run(deps, Request{Query: "keyword topic", Limit: 5, FilterTags: []string{"python"}})
+	hard, err := Run(context.Background(), deps, Request{Query: "keyword topic", Limit: 5, FilterTags: []string{"python"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +95,7 @@ func TestRunSoftBoostVsHardFilterDistinction(t *testing.T) {
 func TestRunSoftBoostChangesMembership(t *testing.T) {
 	deps, _ := wiringFixture(t)
 
-	resp, err := Run(deps, Request{Query: "keyword topic", Limit: 1, Tags: []string{"python"}})
+	resp, err := Run(context.Background(), deps, Request{Query: "keyword topic", Limit: 1, Tags: []string{"python"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +109,7 @@ func TestRunSoftBoostChangesMembership(t *testing.T) {
 func TestRunChannelsExcludeBM25(t *testing.T) {
 	deps, _ := wiringFixture(t)
 
-	resp, err := Run(deps, Request{Query: "keyword topic", Limit: 5, Channels: []Channel{ChannelVector}})
+	resp, err := Run(context.Background(), deps, Request{Query: "keyword topic", Limit: 5, Channels: []Channel{ChannelVector}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +142,7 @@ func TestRunFilterTagsLookupFailureStaysClosed(t *testing.T) {
 	deps := Deps{Mem: ms, Chunks: cs, Vec: vs}
 	// Swap only the tag-lookup dependency by running the search with the
 	// healthy store, then verifying fetchDocEntries against the broken one.
-	resp, err := Run(deps, Request{Query: "keyword topic", Limit: 5})
+	resp, err := Run(context.Background(), deps, Request{Query: "keyword topic", Limit: 5})
 	if err != nil || len(resp.Results) == 0 {
 		t.Fatalf("baseline search failed: %v %+v", err, resp)
 	}
@@ -152,7 +153,7 @@ func TestRunFilterTagsLookupFailureStaysClosed(t *testing.T) {
 	// And through Run: a deps whose Mem errors on Get must surface the
 	// error (the doc-FTS leg reads through the same closed handle) —
 	// never panic, never silently succeed.
-	if _, err := Run(Deps{Mem: brokenMem, Chunks: cs, Vec: vs},
+	if _, err := Run(context.Background(), Deps{Mem: brokenMem, Chunks: cs, Vec: vs},
 		Request{Query: "keyword topic", Limit: 5, FilterTags: []string{"go"}}); err == nil {
 		t.Fatal("closed-DB run must propagate the store error, got nil")
 	}
@@ -163,7 +164,7 @@ func TestRunTrustPredicateExclusion(t *testing.T) {
 	deps, _ := wiringFixture(t)
 	deps.IncludeDoc = func(docID string) bool { return docID != "doc2" }
 
-	resp, err := Run(deps, Request{Query: "keyword topic", Limit: 5})
+	resp, err := Run(context.Background(), deps, Request{Query: "keyword topic", Limit: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +192,7 @@ func TestRunRecencyBoostAndSourceDates(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp, err := Run(deps, Request{Query: "keyword topic", Limit: 5})
+	resp, err := Run(context.Background(), deps, Request{Query: "keyword topic", Limit: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +220,7 @@ func TestRunDatelessDocNoRecency(t *testing.T) {
 		t.Fatal(err)
 	}
 	// doc1 stays dateless.
-	resp, err := Run(deps, Request{Query: "keyword topic", Limit: 5})
+	resp, err := Run(context.Background(), deps, Request{Query: "keyword topic", Limit: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +239,7 @@ func TestRunDatelessDocNoRecency(t *testing.T) {
 func TestRunEmitsChannelRanks(t *testing.T) {
 	deps, _ := wiringFixture(t)
 
-	resp, err := Run(deps, Request{Query: "keyword topic", Limit: 5})
+	resp, err := Run(context.Background(), deps, Request{Query: "keyword topic", Limit: 5})
 	if err != nil {
 		t.Fatal(err)
 	}

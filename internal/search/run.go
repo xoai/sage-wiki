@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"math"
 	"sort"
 	"time"
@@ -18,7 +19,7 @@ type Channel string
 const (
 	ChannelBM25   Channel = "bm25"
 	ChannelVector Channel = "vector"
-	// ChannelGraph is reserved: the graph leg fuses in M4 (ADR-037).
+	// ChannelGraph is the ontology-proximity leg (ADR-037, M4).
 	ChannelGraph Channel = "graph"
 )
 
@@ -52,9 +53,10 @@ type Request struct {
 	// semantics as a predicate; the M5 adapters map their trust-mode
 	// strings onto it there (Gate-3 F-053: no dead string field here).
 
-	// Granularity is plumbed but not yet branched on: Docs and Chunks
-	// return the same doc-level results with best-chunk text until the
-	// M5 adapters shape Docs output (documented no-op, F-053).
+	// Granularity selects the output shape: Docs attaches entry metadata
+	// (ArticlePath/Tags) and returns the DOCUMENT's text — the adapters'
+	// wire contract; Chunks keeps the best-matching passage, which is what
+	// query's context assembly wants.
 	Granularity Granularity
 
 	// RerankMinCoverage gates blending (0 → DefaultRerankMinCoverage).
@@ -107,10 +109,14 @@ func (r Request) channelEnabled(c Channel) bool {
 	return false
 }
 
-// Run executes the unified retrieval pipeline (ADR-036): enhanced chunk
-// pipeline → hard tag filter → soft tag boost → trust predicate → limit.
+// Run executes the unified retrieval pipeline (ADR-036): graph leg →
+// enhanced chunk+doc pipeline → hard tag filter → soft tag boost → Docs
+// shaping → recency tie-breaker → stable re-sort → trust predicate → limit.
 // The request-scoped stage="total" observation is V-M5c's instrument.
-func Run(deps Deps, req Request) (Response, error) {
+func Run(ctx context.Context, deps Deps, req Request) (Response, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	start := time.Now()
 	defer metrics.ObserveDuration(
 		metrics.HistogramNamed("search_duration_seconds", metrics.LatencyBuckets(), "stage", "total"), start)
@@ -142,11 +148,15 @@ func Run(deps Deps, req Request) (Response, error) {
 	var graphAliases map[string]string
 	if req.channelEnabled(ChannelGraph) && deps.Ont != nil {
 		if n, err := deps.Ont.EntityCount(""); err == nil && n > 0 {
-			graphLeg, graphAliases = buildGraphLeg(deps.Ont, req.Query, limit, deps.GraphRelationWeights)
+			// pipelineLimit, not limit: every other leg fetches against the
+			// over-fetched pool, so capping graph at the raw limit starves
+			// the channel exactly when a filter is active (and the trust
+			// predicate makes one active on every adapter call).
+			graphLeg, graphAliases = buildGraphLeg(deps.Ont, req.Query, pipelineLimit, deps.GraphRelationWeights)
 		}
 	}
 
-	results, err := EnhancedSearch(EnhancedSearchOpts{
+	results, err := EnhancedSearch(ctx, EnhancedSearchOpts{
 		Query:             req.Query,
 		Limit:             pipelineLimit,
 		Client:            deps.Client,
@@ -162,6 +172,7 @@ func Run(deps Deps, req Request) (Response, error) {
 		VectorWeight:      deps.VectorWeight,
 		GraphWeight:       deps.GraphWeight,
 		SkipBM25:          !req.channelEnabled(ChannelBM25),
+		FilterTags:        req.FilterTags,
 		GraphLeg:          graphLeg,
 	})
 	if err != nil {

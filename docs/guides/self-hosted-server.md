@@ -40,6 +40,38 @@ from the address bar. See [Authentication](#authentication) below.
 
 The default command starts the web UI server. Your wiki directory is mounted at `/wiki` inside the container.
 
+## Search API
+
+`GET /api/search?q=<query>&limit=<n>&tags=<a,b>` returns:
+
+```json
+{
+  "query": "chunk boundaries",
+  "total": 2,
+  "results": [
+    {
+      "id": "concept:chunking",
+      "path": "concepts/chunking.md",
+      "snippet": "first 200 characters of the document ...",
+      "score": 0.87,
+      "source_date": 1709251200
+    }
+  ]
+}
+```
+
+`path` is relative to the configured output directory. `score` is the
+**normalized [0,1] fused score** — note that it was the raw RRF score
+(~0.016 scale) before the unified pipeline, so a client thresholding on it
+needs new thresholds. `source_date` is unix seconds and is omitted for
+documents with no known origin date. `tags` is a hard filter (all listed tags
+must be present), and the LLM stages never run on this endpoint — `expand` and
+`rerank` query parameters are ignored, by design.
+
+Which documents may appear is governed by `trust.include_outputs`
+([output-trust.md](output-trust.md)); by default LLM-generated `output:`
+documents are excluded.
+
 ## Authentication
 
 The web server gates all `/api/*` and `/ws` requests behind a bearer token

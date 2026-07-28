@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"testing"
@@ -56,7 +57,7 @@ func TestUnifiedLatencyWithinBudgetOfLegacy(t *testing.T) {
 	}
 
 	runUnified := func(q string) {
-		if _, err := Run(deps, Request{Query: q, Limit: 10}); err != nil {
+		if _, err := Run(context.Background(), deps, Request{Query: q, Limit: 10}); err != nil {
 			t.Fatalf("unified: %v", err)
 		}
 	}

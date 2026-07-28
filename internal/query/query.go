@@ -81,7 +81,7 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 	}
 	defer closeDB()
 
-	contextStr, sources, chunkIDs, err := buildQueryContext(projectDir, question, topK, cfg, db)
+	contextStr, sources, chunkIDs, err := buildQueryContext(context.Background(), projectDir, question, topK, cfg, db)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +179,7 @@ func withContextPreamble(ctx string) string {
 
 // buildQueryContext runs hybrid search + ontology traversal and assembles
 // the article context string. Returns ("", nil, nil, nil) if no results found.
-func buildQueryContext(projectDir string, question string, topK int, cfg *config.Config, db store.DBHandle) (string, []string, []string, error) {
+func buildQueryContext(reqCtx context.Context, projectDir string, question string, topK int, cfg *config.Config, db store.DBHandle) (string, []string, []string, error) {
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled()))
 	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
@@ -216,7 +216,7 @@ func buildQueryContext(projectDir string, question string, topK int, cfg *config
 			model = cfg.Models.Write
 		}
 
-		resp, err := search.Run(search.Deps{
+		resp, err := search.Run(reqCtx, search.Deps{
 			Mem:                  memStore,
 			Chunks:               chunkStore,
 			Vec:                  vecStore,
@@ -813,7 +813,7 @@ func StreamQuery(ctx context.Context, projectDir string, question string, topK i
 		defer a.Close()
 	}
 
-	contextStr, sources, streamChunkIDs, err := buildQueryContext(projectDir, question, topK, cfg, db)
+	contextStr, sources, streamChunkIDs, err := buildQueryContext(ctx, projectDir, question, topK, cfg, db)
 	if err != nil {
 		return nil, err
 	}

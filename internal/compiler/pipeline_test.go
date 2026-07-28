@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -184,7 +185,7 @@ compiler:
 	}
 
 	// End-to-end: search.Run returns the date on a summary hit.
-	resp, err := search.Run(
+	resp, err := search.Run(context.Background(),
 		search.Deps{Mem: ms, Chunks: memory.NewChunkStore(db), Vec: vectors.NewStore(db)},
 		search.Request{Query: "self-attention contextual", Limit: 5},
 	)

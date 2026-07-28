@@ -51,6 +51,7 @@ func relationWeight(rel string, overrides map[string]float64) float64 {
 // The second return maps docID → matched alias for alias-union seeds —
 // the advisory alias_of annotation (spec §2.6).
 func buildGraphLeg(ont store.OntologyStore, query string, limit int, weightOverrides map[string]float64) (legList, map[string]string) {
+	entityErrLogged := false
 	leg := legList{channel: ChannelGraph}
 	aliases := make(map[string]string)
 	if ont == nil {
@@ -84,11 +85,35 @@ func buildGraphLeg(ont store.OntologyStore, query string, limit int, weightOverr
 	}
 	best := make(map[string]*node)
 
+	// One traversal asks for the same entity up to three times (seed,
+	// discovery, final ranking), and entity lookups were ~85% of this
+	// leg's cost in the V-M5c profile. Memoize per call — the ontology
+	// cannot change underneath a single search.
+	entities := make(map[string]*store.Entity)
+	getEntity := func(id string) *store.Entity {
+		if e, ok := entities[id]; ok {
+			return e
+		}
+		e, err := ont.GetEntity(id)
+		if err != nil {
+			// A store error is not "absent": log once per traversal so a
+			// degraded ontology is visible rather than a quietly empty leg.
+			if !entityErrLogged {
+				entityErrLogged = true
+				log.Warn("graph channel: entity lookup failed — graph results may be incomplete",
+					"entity", id, "error", err)
+			}
+			e = nil
+		}
+		entities[id] = e
+		return e
+	}
+
 	seed := func(id, viaAlias string) {
 		if _, ok := best[id]; ok {
 			return
 		}
-		if e, err := ont.GetEntity(id); err != nil || e == nil {
+		if e := getEntity(id); e == nil {
 			return
 		}
 		best[id] = &node{id: id, score: 0}
@@ -154,7 +179,7 @@ func buildGraphLeg(ont store.OntologyStore, query string, limit int, weightOverr
 				cur, known := next[other]
 				if !known || cand < cur {
 					if _, tracked := best[other]; !tracked {
-						if e, err := ont.GetEntity(other); err != nil || e == nil {
+						if e := getEntity(other); e == nil {
 							continue
 						}
 						best[other] = &node{id: other, score: cand}
@@ -190,8 +215,8 @@ func buildGraphLeg(ont store.OntologyStore, query string, limit int, weightOverr
 		if len(leg.hits) >= cap {
 			break
 		}
-		e, err := ont.GetEntity(n.id)
-		if err != nil || e == nil || e.ArticlePath == "" {
+		e := getEntity(n.id)
+		if e == nil || e.ArticlePath == "" {
 			continue
 		}
 		leg.hits = append(leg.hits, legHit{docID: "concept:" + n.id})

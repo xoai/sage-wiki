@@ -162,9 +162,10 @@ func (s *Server) registerReadTools() {
 	// wiki_search
 	s.mcp.AddTool(
 		mcp.NewTool("wiki_search",
-			mcp.WithDescription("Search the wiki using hybrid BM25 + vector search. Returns ranked results."),
+			mcp.WithDescription("Search the wiki with hybrid retrieval: BM25 + vector over documents and chunks, fused with ontology-graph proximity. Returns ranked results with per-channel ranks and source dates. LLM expansion and reranking are off unless requested."),
 			mcp.WithString("query", mcp.Required(), mcp.Description("Search query")),
 			mcp.WithString("tags", mcp.Description("Comma-separated tag filter")),
+			mcp.WithString("boost_tags", mcp.Description("Comma-separated tags to rank higher (+3% each, cap 15%) WITHOUT excluding untagged results")),
 			mcp.WithNumber("limit", mcp.Description("Maximum results (default 10)")),
 			mcp.WithString("channels", mcp.Description("Comma-separated channel subset: bm25, vector, graph (default: all)")),
 			mcp.WithBoolean("expand", mcp.Description("LLM query expansion (default false)")),
@@ -252,6 +253,16 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 		}
 	}
 
+	// The trust rule is the wiki's, not the pipeline's: it applies on BOTH
+	// branches, so `search.pipeline: legacy` rolls back RANKING only and
+	// never quietly re-admits unverified outputs.
+	trustMode := s.cfg.Trust.IncludeOutputsMode()
+	var trustStore *trust.Store
+	if trustMode == "verified" {
+		trustStore = trust.NewStore(s.db)
+	}
+	includeDoc := trust.IncludePredicate(trustMode, trustStore)
+
 	var docResults []search.DocResult
 	if s.cfg.Search.PipelineOrDefault() == "unified" {
 		// Unified pipeline (ADR-036, M5): channels/expand/rerank are
@@ -263,6 +274,10 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 				return errorResult(fmt.Sprintf("unknown channels: %v (valid: bm25, vector, graph)", unknown)), nil
 			}
 			channels = parsed
+		}
+		var boostTags []string
+		if t, ok := args["boost_tags"].(string); ok && t != "" {
+			boostTags = splitTags(t)
 		}
 		expand, _ := args["expand"].(bool)
 		rerank, _ := args["rerank"].(bool)
@@ -280,15 +295,7 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 		} else {
 			chunkStore = memory.NewChunkStore(s.db)
 		}
-		// Trust semantics are the Q&A path's, injected as a predicate
-		// (spec §2.1): an agent searching the wiki must not see outputs
-		// a Q&A answer would refuse to cite.
-		trustMode := s.cfg.Trust.IncludeOutputsMode()
-		var trustStore *trust.Store
-		if trustMode == "verified" {
-			trustStore = trust.NewStore(s.db)
-		}
-		resp, err := search.Run(search.Deps{
+		resp, err := search.Run(ctx, search.Deps{
 			Mem:                  s.mem,
 			Chunks:               chunkStore,
 			Vec:                  s.vec,
@@ -300,7 +307,7 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 			Ont:                  s.ont,
 			GraphWeight:          s.cfg.Search.HybridWeightGraph,
 			GraphRelationWeights: s.cfg.Search.GraphRelationWeights,
-			IncludeDoc:           trust.IncludePredicate(trustMode, trustStore),
+			IncludeDoc:           includeDoc,
 		}, search.Request{
 			Query:             query,
 			Limit:             limit,
@@ -308,6 +315,7 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 			Expand:            expand,
 			Rerank:            rerank,
 			FilterTags:        tags,
+			Tags:              boostTags,
 			Granularity:       search.Docs,
 			RerankMinCoverage: s.cfg.Search.RerankMinCoverageOrDefault(),
 		})
@@ -335,6 +343,9 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 			return errorResult(err.Error()), nil
 		}
 		for _, r := range legacy {
+			if !includeDoc(r.ID) {
+				continue
+			}
 			docResults = append(docResults, search.DocResult{
 				ID: r.ID, Content: r.Content, Tags: r.Tags, ArticlePath: r.ArticlePath,
 				BM25Rank: r.BM25Rank, VectorRank: r.VectorRank, RRFScore: r.RRFScore,

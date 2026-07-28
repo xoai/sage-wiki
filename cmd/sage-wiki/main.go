@@ -210,6 +210,7 @@ func init() {
 
 	// Search flags
 	searchCmd.Flags().StringSlice("tags", nil, "Filter by tags")
+	searchCmd.Flags().StringSlice("boost-tags", nil, "Rank documents carrying these tags higher (+3% each, cap 15%) without excluding others")
 	searchCmd.Flags().Int("limit", 10, "Maximum results")
 	searchCmd.Flags().String("channels", "", "Comma-separated channel subset: bm25, vector, graph (default: all)")
 	searchCmd.Flags().Bool("expand", false, "LLM query expansion (default off)")
@@ -721,6 +722,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
 	queryStr := strings.Join(args, " ")
 	tags, _ := cmd.Flags().GetStringSlice("tags")
+	boostTags, _ := cmd.Flags().GetStringSlice("boost-tags")
 	limit, _ := cmd.Flags().GetInt("limit")
 
 	// P2-1 skip-list: runSearch must tolerate config-load failure (P1-8
@@ -798,7 +800,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		if trustMode == "verified" {
 			trustStore = trust.NewStore(db)
 		}
-		resp, err := search.Run(search.Deps{
+		resp, err := search.Run(cmd.Context(), search.Deps{
 			Mem:                  memStore,
 			Chunks:               memory.NewChunkStore(db),
 			Vec:                  vecStore,
@@ -818,6 +820,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 			Expand:            expand,
 			Rerank:            rerank,
 			FilterTags:        tags,
+			Tags:              boostTags,
 			Granularity:       search.Docs,
 			RerankMinCoverage: cfg.Search.RerankMinCoverageOrDefault(),
 		})
@@ -868,6 +871,27 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+
+	// Trust filtering is not part of the pipeline rollback: `pipeline:
+	// legacy` (or a config-load degrade) must not re-admit unverified
+	// `output:` docs. With no loadable config the conservative "false"
+	// mode applies, which is what an unconfigured project would get.
+	legacyMode := "false"
+	var legacyTrust *trust.Store
+	if cfgErr == nil {
+		legacyMode = cfg.Trust.IncludeOutputsMode()
+		if legacyMode == "verified" {
+			legacyTrust = trust.NewStore(db)
+		}
+	}
+	legacyInclude := trust.IncludePredicate(legacyMode, legacyTrust)
+	kept := results[:0]
+	for _, r := range results {
+		if legacyInclude(r.ID) {
+			kept = append(kept, r)
+		}
+	}
+	results = kept
 
 	if outputFormat == "json" {
 		fmt.Println(cli.FormatJSON(true, results, ""))

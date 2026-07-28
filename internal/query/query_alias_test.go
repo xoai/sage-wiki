@@ -1,6 +1,7 @@
 package query
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -72,7 +73,7 @@ func TestQueryGraphExpansionResolvesAlias(t *testing.T) {
 		t.Fatalf("mem.Add: %v", err)
 	}
 
-	ctx, _, _, err := buildQueryContext(dir, "quantum flux", 5, cfg, db)
+	ctx, _, _, err := buildQueryContext(context.Background(), dir, "quantum flux", 5, cfg, db)
 	if err != nil {
 		t.Fatalf("buildQueryContext: %v", err)
 	}
@@ -111,7 +112,7 @@ func TestQueryRelatedFallbackResolvesAlias(t *testing.T) {
 			t.Fatalf("mem.Add: %v", err)
 		}
 
-		ctx, _, _, err := buildQueryContext(dir, "quantum flux", 5, cfg, db)
+		ctx, _, _, err := buildQueryContext(context.Background(), dir, "quantum flux", 5, cfg, db)
 		if err != nil {
 			t.Fatalf("buildQueryContext: %v", err)
 		}
@@ -139,7 +140,7 @@ func TestQueryRelatedFallbackResolvesAlias(t *testing.T) {
 			t.Fatalf("IndexChunks: %v", err)
 		}
 
-		ctx, _, _, err := buildQueryContext(dir, "quantum flux", 5, cfg, db)
+		ctx, _, _, err := buildQueryContext(context.Background(), dir, "quantum flux", 5, cfg, db)
 		if err != nil {
 			t.Fatalf("buildQueryContext: %v", err)
 		}

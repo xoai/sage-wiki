@@ -48,11 +48,18 @@ func TestSearchDFPruneBackstopKeepsFirstTerms(t *testing.T) {
 	}
 }
 
-// F-056: the chunk-leg probe (chunks_fts JOIN chunks_meta, DISTINCT docs)
-// prunes too — a silent regression in that JOIN would fail open and
-// disable chunk-leg pruning without this pin.
-func TestSearchChunksDFPrunesFrequentTerms(t *testing.T) {
-	db, _ := setupTestDB(t)
+// F-056 (revised): the chunk leg prunes too — and it prunes on the DOCUMENT
+// corpus, the same probe the doc leg uses, so the two legs cannot disagree
+// about which terms are too frequent (F-047's invariant, now by construction
+// rather than by keeping two queries in sync). Probing the chunk tables cost
+// a COUNT(DISTINCT) over a join per term — ~66% of unified search time.
+//
+// The coupling this creates: a chunk index with no `entries` rows does not
+// prune. That is not a production state — every chunked document has an entry
+// row (concept, summary, output or src:), and a chunk doc without one is the
+// phantom-ID bug reindex was fixed for.
+func TestSearchChunksDFPrunesOnTheDocumentCorpus(t *testing.T) {
+	db, ms := setupTestDB(t)
 	cs := NewChunkStore(db)
 
 	for i := 0; i < 120; i++ {
@@ -61,6 +68,9 @@ func TestSearchChunksDFPrunesFrequentTerms(t *testing.T) {
 			content = "common zebra migration"
 		}
 		docID := fmt.Sprintf("doc%d", i)
+		if err := ms.Add(Entry{ID: docID, Content: content}); err != nil {
+			t.Fatal(err)
+		}
 		if err := db.WriteTx(func(tx *sql.Tx) error {
 			return cs.IndexChunks(tx, docID, []ChunkEntry{
 				{ChunkID: docID + ":c0", ChunkIndex: 0, Content: content},
@@ -76,6 +86,16 @@ func TestSearchChunksDFPrunesFrequentTerms(t *testing.T) {
 	}
 	if len(results) != 1 || results[0].DocID != "doc0" {
 		t.Fatalf("chunk-leg DF pruning failed: want only doc0, got %d results", len(results))
+	}
+
+	// The invariant that matters: both legs prune the same term set, so a
+	// document is not dropped by one leg and kept by the other.
+	docHits, err := ms.Search("common zebra", nil, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(docHits) != 1 || docHits[0].ID != "doc0" {
+		t.Fatalf("doc leg pruned differently from the chunk leg: got %d results", len(docHits))
 	}
 }
 

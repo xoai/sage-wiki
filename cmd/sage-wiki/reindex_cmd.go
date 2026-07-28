@@ -76,13 +76,19 @@ func runReindex(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	before, _ := chunkStore.Count()
+	before, err := chunkStore.Count()
+	if err != nil {
+		return cli.CLIError(outputFormat, fmt.Errorf("reading the chunk index: %w", err))
+	}
 	res, err := compiler.BackfillChunks(dir, cfg.Output, cfg.Search.ChunkSizeOrDefault(),
 		cfg.Search.ChunkOverlapOrDefault(), chunkStore, vecStore, embedder, db)
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
-	after, _ := chunkStore.Count()
+	after, err := chunkStore.Count()
+	if err != nil {
+		return cli.CLIError(outputFormat, fmt.Errorf("reading the rebuilt chunk index: %w", err))
+	}
 
 	if outputFormat == "json" {
 		fmt.Println(cli.FormatJSON(true, map[string]any{

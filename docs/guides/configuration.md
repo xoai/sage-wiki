@@ -126,19 +126,25 @@ compiler:
   # backpressure: true         # adaptive concurrency on rate limits
 
 search:
-  hybrid_weight_bm25: 0.7 # BM25 vs vector weight
+  hybrid_weight_bm25: 0.7 # lexical channel weight in the fused ranking (all surfaces)
   hybrid_weight_vector: 0.3
-  # hybrid_weight_graph: 0.2  # graph-channel fusion weight (0.2 default; ontology proximity joins ranking)
+  # hybrid_weight_graph: 0.2  # graph-channel fusion weight (default 0.2). NOTE: 0 or
+  #                           # negative resolves BACK to the default (an omitted key is
+  #                           # also 0) — to turn the channel off, pass channels=bm25,vector
+  #                           # per call. Same for hybrid_weight_bm25 / _vector.
   # graph_relation_weights:   # per-relation-type graph weights (built-ins: contradicts 1.1, cites 0.7, others 1.0; 0 excludes a relation from traversal)
   #   my_custom_relation: 1.2
   default_limit: 10
   # query_expansion: true     # LLM query expansion for Q&A (default: true)
   # rerank: true              # LLM re-ranking for Q&A (default: true)
-  # rerank_min_coverage: 0.5  # min fraction of candidates the LLM must score for the rerank blend to apply; below it, RRF order is kept (default: 0.5)
+  # rerank_min_coverage: 0.5  # 0.0-1.0 — min fraction of candidates the LLM must score for
+  #                           # the rerank blend to apply; below it, pure RRF order is kept.
+  #                           # 0 or negative means "use the default", not "no gate" (default: 0.5)
   # chunk_size: 800           # tokens per chunk for indexing (100-5000)
-  # pipeline: unified       # search pipeline for MCP/CLI/web/TUI: "unified" (default,
-  #                          # chunk+doc fusion, graph channel, recency) or "legacy"
-  #                          # (doc-level only) as a rollback. Any other value is rejected.
+  # pipeline: unified         # search pipeline for MCP/CLI/web/TUI: "unified" (default,
+  #                           # chunk+doc fusion, graph channel, recency) or "legacy"
+  #                           # (doc-level only) as a RANKING rollback. Any other value is
+  #                           # rejected at load. Trust filtering applies on both.
   # chunk_overlap_tokens: 80 # tokens each chunk repeats from its predecessor
   #                          # (default 0 = off; max half of chunk_size).
   #                          # Applies only on `sage-wiki reindex` — change the

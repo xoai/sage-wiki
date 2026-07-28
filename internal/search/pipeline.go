@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"sort"
 
 	"github.com/xoai/sage-wiki/internal/embed"
@@ -32,6 +33,14 @@ type EnhancedSearchOpts struct {
 
 	// SkipBM25 disables the lexical legs (channels:[vector] ablation).
 	SkipBM25 bool
+
+	// FilterTags is the caller's hard tag filter, pushed INTO the
+	// document-level lexical leg. The facade also applies it after
+	// fusion, but a post-filter alone silently loses rare tags: the
+	// pool is cut to the top candidates by relevance first, so a
+	// tagged document that ranks 400th for the query never survives
+	// to be filtered (the legacy doc path pre-filtered, and did).
+	FilterTags []string
 
 	// GraphLeg, when non-empty, joins the fusion as the third channel at
 	// GraphWeight (0 → DefaultGraphWeight). Built by the facade (ADR-037).
@@ -256,7 +265,10 @@ type SearchResult struct {
 
 // EnhancedSearch runs the full enhanced search pipeline:
 // strong-signal check → optional expansion → chunk-level BM25+vector → RRF → dedup → optional rerank → blend.
-func EnhancedSearch(opts EnhancedSearchOpts) ([]SearchResult, error) {
+func EnhancedSearch(ctx context.Context, opts EnhancedSearchOpts) ([]SearchResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if opts.Limit <= 0 {
 		opts.Limit = 10
 	}
@@ -265,7 +277,7 @@ func EnhancedSearch(opts EnhancedSearchOpts) ([]SearchResult, error) {
 	expanded := fallbackExpansion(opts.Query)
 	if opts.QueryExpansion && opts.Client != nil {
 		if !StrongSignal(opts.Query, opts.MemStore) {
-			exp, err := ExpandQuery(opts.Query, opts.Client, opts.Model)
+			exp, err := ExpandQuery(ctx, opts.Query, opts.Client, opts.Model)
 			if err != nil {
 				log.Warn("query expansion failed, using raw query", "error", err)
 			} else {
@@ -304,8 +316,8 @@ func EnhancedSearch(opts EnhancedSearchOpts) ([]SearchResult, error) {
 			}
 			lists = append(lists, l)
 
-			// doc-FTS
-			ers, err := opts.MemStore.Search(q, nil, candidateLimit)
+			// doc-FTS — tag-constrained at the source (see FilterTags)
+			ers, err := opts.MemStore.Search(q, opts.FilterTags, candidateLimit)
 			if err != nil {
 				return nil, err
 			}
@@ -325,12 +337,31 @@ func EnhancedSearch(opts EnhancedSearchOpts) ([]SearchResult, error) {
 		if expanded.Hyde != "" {
 			vecQueries = append(vecQueries, expanded.Hyde)
 		}
+		embedFailures := 0
+		var firstEmbedErr error
 		for _, q := range vecQueries {
 			vec, err := opts.Embedder.Embed(q)
 			if err != nil {
+				embedFailures++
+				if firstEmbedErr == nil {
+					firstEmbedErr = err
+				}
 				continue
 			}
 			queryVecs = append(queryVecs, vec)
+		}
+		// Silence here would hand back BM25-only results that look normal:
+		// an expired key or a provider outage must be visible (constitution
+		// principle 2). The adapters warned about this before M5 moved
+		// embedding inside the pipeline.
+		if embedFailures > 0 {
+			if len(queryVecs) == 0 {
+				log.Warn("query embedding failed for every variant — vector legs skipped, results are lexical/graph only",
+					"failed", embedFailures, "error", firstEmbedErr)
+			} else {
+				log.Warn("query embedding failed for some variants — vector recall reduced",
+					"failed", embedFailures, "of", len(vecQueries), "error", firstEmbedErr)
+			}
 		}
 
 		// Always brute-force chunk-vector search to support cross-lingual
@@ -415,7 +446,12 @@ func EnhancedSearch(opts EnhancedSearchOpts) ([]SearchResult, error) {
 				break
 			}
 			fc := &deduped[i]
-			if fc.chunkID == "" && fc.content == "" {
+			// ANY blank passage, not just chunkless ones: a chunk hit whose
+			// chunks_meta row is gone (a stale chunk-vector cache across a
+			// reindex) fails chunk hydration above and would otherwise reach
+			// the reranker with empty text — the exact failure F-072 exists
+			// to prevent, on the path where rerank is on by default.
+			if fc.content == "" {
 				e, err := opts.MemStore.Get(fc.docID)
 				if err != nil {
 					errCount++
@@ -447,7 +483,7 @@ func EnhancedSearch(opts EnhancedSearchOpts) ([]SearchResult, error) {
 			}
 		}
 
-		reranked, err := Rerank(opts.Query, candidates, opts.Client, opts.Model)
+		reranked, err := Rerank(ctx, opts.Query, candidates, opts.Client, opts.Model)
 		if err != nil {
 			log.Warn("reranking failed, using RRF order", "error", err)
 		}

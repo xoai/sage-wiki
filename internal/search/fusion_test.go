@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"database/sql"
 	"reflect"
 	"testing"
@@ -29,7 +30,7 @@ func TestFusionDocAndChunkLegsAccumulate(t *testing.T) {
 		{ChunkID: "docB:c0", ChunkIndex: 0, Content: "zebra migration patterns appendix"},
 	})
 
-	resp, err := Run(Deps{Mem: ms, Chunks: cs, Vec: vs}, Request{Query: "zebra migration", Limit: 5})
+	resp, err := Run(context.Background(), Deps{Mem: ms, Chunks: cs, Vec: vs}, Request{Query: "zebra migration", Limit: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +78,7 @@ func TestFusionWeightsApplied(t *testing.T) {
 		return deps, func(bm25W, vecW float64) []SearchResult {
 			d := deps
 			d.BM25Weight, d.VectorWeight = bm25W, vecW
-			resp, err := Run(d, Request{Query: "keyword topic", Limit: 5})
+			resp, err := Run(context.Background(), d, Request{Query: "keyword topic", Limit: 5})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -147,13 +148,13 @@ func TestRunNilEmbedderEqualsBM25Channel(t *testing.T) {
 	}
 
 	req := Request{Query: "goroutines", Limit: 5}
-	nilEmb, err := Run(Deps{Mem: ms, Chunks: cs, Vec: vs}, req)
+	nilEmb, err := Run(context.Background(), Deps{Mem: ms, Chunks: cs, Vec: vs}, req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	reqBM25 := req
 	reqBM25.Channels = []Channel{ChannelBM25}
-	bm25Only, err := Run(Deps{Mem: ms, Chunks: cs, Vec: vs, Embedder: fixedEmbedder{v: []float32{1, 0, 0}}}, reqBM25)
+	bm25Only, err := Run(context.Background(), Deps{Mem: ms, Chunks: cs, Vec: vs, Embedder: fixedEmbedder{v: []float32{1, 0, 0}}}, reqBM25)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -41,9 +41,12 @@ func (s *chunkStore) DeleteDocChunks(tx *sql.Tx, docID string) error {
 
 func (s *chunkStore) SearchChunks(query string, limit int) ([]store.ChunkResult, error) {
 	limit = normLimit(limit, 20)
+	// Probes the DOCUMENT corpus, matching the sqlite twin: identical
+	// doc-ratio semantics across both fusion legs by construction, and a
+	// far cheaper probe than counting distinct docs among chunk rows.
 	terms := s.b.dfPruneTerms(
-		"SELECT count(DISTINCT doc_id) FROM chunks_meta",
-		"SELECT count(DISTINCT doc_id) FROM chunks_meta WHERE tsv @@ to_tsquery('sage_fts', $1)",
+		"SELECT count(*) FROM entries",
+		"SELECT count(*) FROM entries WHERE tsv @@ to_tsquery('sage_fts', $1)",
 		queryTerms(query))
 	if len(terms) == 0 {
 		return nil, nil

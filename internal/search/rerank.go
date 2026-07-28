@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/extract"
 	"github.com/xoai/sage-wiki/internal/llm"
@@ -39,7 +40,21 @@ const (
 // Rerank calls the LLM to re-score candidates by relevance to the query.
 // Returns results sorted by LLM score descending. On LLM failure, returns
 // candidates in original order with zero scores.
-func Rerank(query string, candidates []RerankCandidate, client *llm.Client, model string) ([]RerankResult, error) {
+// rerankTimeout bounds one rerank call. Reranking is an optimization over
+// an already-usable RRF ordering, so failing back to that order beats
+// holding the caller for the transport timeout.
+const rerankTimeout = 30 * time.Second
+
+// Rerank is bounded by rerankTimeout and by the caller's context (ADR-038's
+// "timeout bounded per call" — the transport's 120s was the only bound
+// before, which is not a bound a search surface can offer).
+func Rerank(ctx context.Context, query string, candidates []RerankCandidate, client *llm.Client, model string) ([]RerankResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, rerankTimeout)
+	defer cancel()
+
 	if len(candidates) == 0 {
 		return nil, nil
 	}
@@ -77,7 +92,7 @@ Respond ONLY with a JSON array, no explanation:
 
 	// P2-4: schema-guaranteed JSON where supported; graceful degrade to
 	// fallbackRerank on any error — today's failure contract.
-	payload, _, err := client.StructuredCompletion(context.Background(), []llm.Message{
+	payload, _, err := client.StructuredCompletion(ctx, []llm.Message{
 		{Role: "user", Content: prompt},
 	}, RerankSchema, llm.CallOpts{Model: model, MaxTokens: 500})
 	if err != nil {

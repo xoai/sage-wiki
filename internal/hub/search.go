@@ -118,14 +118,14 @@ func searchProject(projectDir string, query string, limit int) ([]hybrid.SearchR
 			return nil, err
 		}
 		defer db.Close()
-		return searchWithStores(hybrid.NewSearcher(memory.NewStore(db), vectors.NewStore(db)), cfg, query, limit)
+		return searchWithStores(hybrid.NewSearcher(memory.NewStore(db), vectors.NewStore(db)), cfg, query, limit, trust.NewStore(db))
 	}
 	defer b.Close()
 
-	return searchWithStores(hybrid.NewSearcher(b.Entries(), b.Vectors()), cfg, query, limit)
+	return searchWithStores(hybrid.NewSearcher(b.Entries(), b.Vectors()), cfg, query, limit, b.Trust())
 }
 
-func searchWithStores(searcher *hybrid.Searcher, cfg *config.Config, query string, limit int) ([]hybrid.SearchResult, error) {
+func searchWithStores(searcher *hybrid.Searcher, cfg *config.Config, query string, limit int, ts trust.ConfirmationChecker) ([]hybrid.SearchResult, error) {
 	var queryVec []float32
 	var bm25W, vecW float64
 	if cfg != nil {
@@ -146,14 +146,14 @@ func searchWithStores(searcher *hybrid.Searcher, cfg *config.Config, query strin
 	// Hub search is the sixth search surface and still on the legacy doc
 	// path, but the trust rule is not the pipeline's — it is the wiki's.
 	// Without this, `hub search` returns unverified `output:` answers that
-	// every other surface (and Q&A itself) refuses to show. Mode "verified"
-	// needs a per-project trust store this cross-project reader does not
-	// open, so it is treated as the conservative "false" here.
+	// every other surface (and Q&A itself) refuses to show. The project's
+	// own trust store is passed in, so "verified" means verified here too
+	// rather than degrading to "exclude everything".
 	mode := "false"
 	if cfg != nil {
 		mode = cfg.Trust.IncludeOutputsMode()
 	}
-	include := trust.IncludePredicate(mode, nil)
+	include := trust.IncludePredicate(mode, ts)
 	kept := hits[:0]
 	for _, h := range hits {
 		if include(h.ID) {

@@ -32,6 +32,11 @@
   than empty the chunk-vector leg, and `--drop-chunk-vectors` rebuilds the
   text index anyway (chunk-level vector search stays off until the next
   `compile --re-embed`).
+- **Soft tag boost**: `sage-wiki search --boost-tags a,b` and MCP
+  `wiki_search{boost_tags}` rank documents carrying those tags +3% each
+  (capped at 15%) **without excluding anything** — the complement to
+  `--tags`/`tags`, which filter. The boost was specified and implemented
+  but had no caller until now.
 - **`search.chunk_overlap_tokens`** (default **0**, recommended opt-in
   **80**, max half of `chunk_size`): each chunk after the first repeats the
   tail of its predecessor, so a fact straddling a chunk boundary is
@@ -43,6 +48,20 @@
 
 ### Changed
 
+- **Web `/api/search` `score` is now the normalized [0,1] fused score**, not
+  the raw RRF score (~0.016 scale) — a client thresholding on it needs new
+  thresholds. New field: `source_date` (unix seconds; omitted when the
+  document has no known origin date).
+- **`sage-wiki search --config <path>` now fails when that file cannot be
+  loaded** instead of silently searching with default weights and no
+  vectors; auto-discovered config still degrades with a warning.
+  `--expand`/`--rerank` fail when no LLM client can be built, and
+  `sage-wiki reindex` refuses to run against an unloadable config.
+- **Query-term stopwording is corpus-adaptive**: above 100 documents, terms
+  matching more than 20% of documents are dropped from the lexical query,
+  and both the document and chunk legs prune the same term set (they now
+  probe the same corpus, which also removed the chunk leg's per-term
+  `COUNT(DISTINCT)` join — the single largest cost in unified search).
 - **Every search surface now runs the unified retrieval pipeline**
   (MCP `wiki_search`, CLI `search`, web `/api/search`, and the TUI —
   `sage-wiki query` moved in M2): chunk-level and document-level hits fuse

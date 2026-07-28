@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -163,7 +164,7 @@ func TestGraphOnlyDocsRerankWithContent(t *testing.T) {
 
 	// The fixture indexes chunks for none of the docs, so transformer and
 	// rnn reach the candidate set only via the graph leg.
-	resp, err := Run(deps, Request{Query: "self attention", Limit: 10, Rerank: true})
+	resp, err := Run(context.Background(), deps, Request{Query: "self attention", Limit: 10, Rerank: true})
 	if err != nil {
 		t.Fatal(err)
 	}

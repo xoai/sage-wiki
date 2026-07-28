@@ -205,8 +205,6 @@ func ContentHash(content string) string {
 	return fmt.Sprintf("%x", h)
 }
 
-// buildFTSQuery converts a user query into FTS5 OR-joined prefix terms.
-// Stopwords are filtered out. FTS5 special characters are stripped for safety.
 func buildFTSQuery(query string) string {
 	return formatFTSTerms(BuildFTSTerms(query))
 }

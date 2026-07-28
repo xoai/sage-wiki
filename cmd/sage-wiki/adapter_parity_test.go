@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -200,7 +201,7 @@ func goldenDocs(t *testing.T, dir string, cfg *config.Config, query string, limi
 	}
 	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
 	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-	resp, err := search.Run(search.Deps{
+	resp, err := search.Run(context.Background(), search.Deps{
 		Mem:                  memory.NewStore(db),
 		Chunks:               memory.NewChunkStore(db),
 		Vec:                  vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled())),
@@ -534,5 +535,88 @@ func TestLegacyPipelinePinServesEverySurface(t *testing.T) {
 			t.Errorf("legacy result carries unified-only fields: %+v", d)
 			break
 		}
+	}
+}
+
+// The soft tag boost was dead for the whole initiative — `Request.Tags` had no
+// production caller, so spec §2.2's "+3%/tag, cap 15%" never ran outside
+// tests. `--boost-tags` / `boost_tags` are its callers. Unlike `--tags`, a
+// boost must change SCORES without changing membership.
+func TestBoostTagsPromotesWithoutExcluding(t *testing.T) {
+	dir := setupParityProject(t)
+	embedSrv := fakeEmbedServer(t)
+	writeParityConfig(t, dir, embedSrv.URL, "false")
+
+	const query = "wiki search rank"
+
+	run := func(t *testing.T, boost []string) []search.DocResult {
+		t.Helper()
+		oldDir, oldFormat := projectDir, outputFormat
+		projectDir, outputFormat = dir, "json"
+		defer func() { projectDir, outputFormat = oldDir, oldFormat }()
+
+		sv, ok := searchCmd.Flags().Lookup("boost-tags").Value.(pflag.SliceValue)
+		if !ok {
+			t.Fatal("boost-tags is not a SliceValue")
+		}
+		if err := sv.Replace(boost); err != nil {
+			t.Fatal(err)
+		}
+		defer sv.Replace(nil)
+
+		r, w, _ := os.Pipe()
+		oldStdout := os.Stdout
+		os.Stdout = w
+		err := runSearch(searchCmd, strings.Fields(query))
+		w.Close()
+		os.Stdout = oldStdout
+		if err != nil {
+			t.Fatalf("runSearch(boost=%v): %v", boost, err)
+		}
+		out, _ := io.ReadAll(r)
+		var payload struct {
+			Data []search.DocResult `json:"data"`
+		}
+		if err := json.Unmarshal(out, &payload); err != nil {
+			t.Fatalf("decode %q: %v", out, err)
+		}
+		return payload.Data
+	}
+
+	plain := run(t, nil)
+	boosted := run(t, []string{"indexing"})
+	if len(plain) < 3 {
+		t.Fatalf("fixture drift: %d results", len(plain))
+	}
+
+	// Membership is untouched: a soft boost is not a filter.
+	if strings.Join(ids(plain), ",") != strings.Join(ids(boosted), ",") ||
+		len(plain) != len(boosted) {
+		// Order MAY differ; membership may not.
+		got, want := append([]string{}, ids(boosted)...), append([]string{}, ids(plain)...)
+		sort.Strings(got)
+		sort.Strings(want)
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("boost changed membership: %v -> %v", want, got)
+		}
+	}
+
+	scoreOf := func(rows []search.DocResult, id string) float64 {
+		for _, r := range rows {
+			if r.ID == id {
+				return r.FinalScore
+			}
+		}
+		t.Fatalf("%s absent from results", id)
+		return 0
+	}
+	// concept:chunk-index carries `indexing`; concept:graph-rank does not.
+	const tagged, untagged = "concept:chunk-index", "concept:graph-rank"
+	gain := scoreOf(boosted, tagged) - scoreOf(plain, tagged)
+	if gain < 0.029 || gain > 0.031 {
+		t.Errorf("tagged doc gained %.4f, want the documented +0.03 for one matching tag", gain)
+	}
+	if d := scoreOf(boosted, untagged) - scoreOf(plain, untagged); d != 0 {
+		t.Errorf("untagged doc moved by %.4f, want 0", d)
 	}
 }

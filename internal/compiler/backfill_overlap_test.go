@@ -111,11 +111,14 @@ func TestChunkOverlapAppliedOnlyOnReindex(t *testing.T) {
 	}
 }
 
-// A rebuild covers every doc family that carries chunks: compiled articles in
-// concepts/, summaries/ AND outputs/, plus raw sources indexed as `src:<path>`
-// which have no article file. Missing a family leaves the index mixing two
-// chunkings — the exact state the chunk-overlap contract forbids.
-func TestBackfillCoversOutputsAndSources(t *testing.T) {
+// A rebuild covers every doc family that carries chunks — and must key each
+// one the way the INDEX keys it. The three directories do NOT share a
+// convention (concepts by basename, outputs by basename WITH the extension,
+// summaries by their source path), and guessing from the filename mints
+// phantom documents: the real doc keeps its old chunking while a duplicate
+// copy of the same text appears under an ID no entry row backs, surfacing on
+// every adapter with a blank article path.
+func TestBackfillKeysEveryDocFamilyLikeTheIndex(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
@@ -123,29 +126,50 @@ func TestBackfillCoversOutputsAndSources(t *testing.T) {
 	const outputDir = "wiki"
 	writeLongArticle(t, projectDir, outputDir, "boundaries")
 
-	// An answer auto-filed back into the wiki.
+	// An answer auto-filed back into the wiki: indexed as "output:<file.md>".
 	outDir := filepath.Join(projectDir, outputDir, "outputs")
 	if err := os.MkdirAll(outDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(outDir, "answered.md"), []byte("A generated answer about chunk boundaries and retrieval."), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(outDir, "answered.md"),
+		[]byte("A generated answer about chunk boundaries and retrieval."), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// A raw source that tier-1 indexing already chunked: the source file on
-	// disk plus its existing chunk rows (there is no article for it).
+	// A summary: indexed under its SOURCE path, which only its frontmatter knows.
+	sumDir := filepath.Join(projectDir, outputDir, "summaries")
+	if err := os.MkdirAll(sumDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sumDir, "sources-paper.md"),
+		[]byte("---\nsource: sources/paper.pdf\nsource_type: article\n---\n\nSummary of the paper about chunk boundaries."), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A raw source that tier-1 indexing already chunked (no article file).
 	if err := os.MkdirAll(filepath.Join(projectDir, "raw"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(projectDir, "raw", "note.md"), []byte("Raw note about chunk boundaries in the source corpus."), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(projectDir, "raw", "note.md"),
+		[]byte("Raw note about chunk boundaries in the source corpus."), 0644); err != nil {
 		t.Fatal(err)
 	}
+
+	// Pre-seed the chunk rows the compile pipeline would have written, under
+	// the REAL doc IDs, so a phantom-ID rebuild is detectable: the real rows
+	// would survive untouched.
 	chunkStore := memory.NewChunkStore(db)
 	vecStore := vectors.NewStore(db)
+	realIDs := []string{"output:answered.md", "sources/paper.pdf", "src:raw/note.md"}
 	if err := db.WriteTx(func(tx *sql.Tx) error {
-		return chunkStore.IndexChunks(tx, "src:raw/note.md", []memory.ChunkEntry{
-			{ChunkID: "src:raw/note.md:c0", ChunkIndex: 0, Content: "stale chunking of the raw note"},
-		})
+		for _, id := range realIDs {
+			if err := chunkStore.IndexChunks(tx, id, []memory.ChunkEntry{
+				{ChunkID: id + ":c0", ChunkIndex: 0, Content: "stale chunking of " + id},
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -154,8 +178,8 @@ func TestBackfillCoversOutputsAndSources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
-	if res.Articles != 2 {
-		t.Errorf("articles = %d, want 2 (concept + output)", res.Articles)
+	if res.Articles != 3 {
+		t.Errorf("articles = %d, want 3 (concept + output + summary)", res.Articles)
 	}
 	if res.Sources != 1 {
 		t.Errorf("sources = %d, want 1 (src: doc)", res.Sources)
@@ -168,13 +192,19 @@ func TestBackfillCoversOutputsAndSources(t *testing.T) {
 	seen := map[string]bool{}
 	for _, c := range all {
 		seen[c.DocID] = true
-		if c.DocID == "src:raw/note.md" && strings.Contains(c.Content, "stale chunking") {
-			t.Error("src: doc kept its old chunk text — it was not re-chunked")
+		if strings.HasPrefix(c.Content, "stale chunking of ") {
+			t.Errorf("%s kept its old chunk text — the rebuild wrote some other doc ID", c.DocID)
 		}
 	}
-	for _, want := range []string{"concept:boundaries", "output:answered", "src:raw/note.md"} {
+	for _, want := range append([]string{"concept:boundaries"}, realIDs...) {
 		if !seen[want] {
 			t.Errorf("%s has no chunks after the rebuild", want)
+		}
+	}
+	// Phantom IDs a filename-derived convention would have produced.
+	for _, phantom := range []string{"output:answered", "summary:sources-paper"} {
+		if seen[phantom] {
+			t.Errorf("rebuild created phantom doc %q — no entry row backs that ID", phantom)
 		}
 	}
 }

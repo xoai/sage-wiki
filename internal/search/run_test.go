@@ -1,7 +1,9 @@
 package search
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -27,7 +29,7 @@ func TestRunMatchesEnhancedSearchAt21aBoundary(t *testing.T) {
 		{ChunkID: "doc2:c0", ChunkIndex: 0, Heading: "Asyncio", Content: "python asyncio provides event loop for async io"},
 	})
 
-	want, err := EnhancedSearch(EnhancedSearchOpts{
+	want, err := EnhancedSearch(context.Background(), EnhancedSearchOpts{
 		Query: "goroutines concurrent", Limit: 5,
 		ChunkStore: cs, MemStore: ms, VecStore: vs,
 	})
@@ -36,6 +38,7 @@ func TestRunMatchesEnhancedSearchAt21aBoundary(t *testing.T) {
 	}
 
 	got, err := Run(
+		context.Background(),
 		Deps{Mem: ms, Chunks: cs, Vec: vs},
 		Request{Query: "goroutines concurrent", Limit: 5, Granularity: Chunks},
 	)
@@ -69,7 +72,7 @@ func TestRunLLMStagesDefaultOff(t *testing.T) {
 	if req.Expand || req.Rerank {
 		t.Fatal("zero-value Request must have LLM stages off")
 	}
-	resp, err := Run(Deps{Mem: ms, Chunks: cs, Vec: vs}, req)
+	resp, err := Run(context.Background(), Deps{Mem: ms, Chunks: cs, Vec: vs}, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +103,7 @@ func TestRunChannelsExcludeVector(t *testing.T) {
 	deps := Deps{Mem: ms, Chunks: cs, Vec: vs, Embedder: fixedEmbedder{v: []float32{1, 0, 0}}}
 
 	// Positive control: with all channels the vector leg finds it.
-	all, err := Run(deps, Request{Query: "sly cunning", Limit: 5})
+	all, err := Run(context.Background(), deps, Request{Query: "sly cunning", Limit: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,11 +112,60 @@ func TestRunChannelsExcludeVector(t *testing.T) {
 	}
 
 	// Restricted to bm25, the vector-only doc must NOT appear.
-	resp, err := Run(deps, Request{Query: "sly cunning", Limit: 5, Channels: []Channel{ChannelBM25}})
+	resp, err := Run(context.Background(), deps, Request{Query: "sly cunning", Limit: 5, Channels: []Channel{ChannelBM25}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(resp.Results) != 0 {
 		t.Errorf("bm25-only channels returned vector-only hit: %+v", resp.Results)
+	}
+}
+
+// A hard tag filter must be pushed INTO retrieval, not merely applied to
+// whatever the unfiltered query happened to return. With a post-filter only,
+// a tagged document that ranks below the candidate cut for the raw query is
+// gone before the filter ever sees it — `--tags rare` then returns nothing on
+// any corpus large enough to matter, which is what the legacy doc path did
+// NOT do (it passed tags into the FTS query).
+func TestRunHardTagFilterSurvivesALargeUntaggedPool(t *testing.T) {
+	db := openTestDB(t)
+	ms := memory.NewStore(db)
+	cs := memory.NewChunkStore(db)
+
+	// 300 strong matches for the query, none carrying the tag.
+	for i := 0; i < 300; i++ {
+		id := fmt.Sprintf("concept:noise%d", i)
+		if err := ms.Add(memory.Entry{
+			ID:      id,
+			Content: "retrieval ranking retrieval ranking retrieval ranking",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// One weak match that carries it.
+	if err := ms.Add(memory.Entry{
+		ID:      "concept:tagged",
+		Content: "a passing mention of retrieval",
+		Tags:    []string{"rare"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := Run(context.Background(), Deps{Mem: ms, Chunks: cs}, Request{
+		Query:       "retrieval ranking",
+		Limit:       10,
+		FilterTags:  []string{"rare"},
+		Granularity: Docs,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].DocID != "concept:tagged" {
+		got := make([]string, len(resp.Results))
+		for i, r := range resp.Results {
+			got[i] = r.DocID
+		}
+		t.Fatalf("tag-filtered search returned %d results (%v), want just concept:tagged",
+			len(resp.Results), got)
 	}
 }

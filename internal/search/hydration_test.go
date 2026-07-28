@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 
@@ -37,7 +38,7 @@ func TestEnhancedSearch_VectorOnlyChunkIsHydrated(t *testing.T) {
 
 	// "sly cunning" shares no stemmed term with the chunk text, so BM25
 	// cannot find it; only the vector leg can.
-	results, err := EnhancedSearch(EnhancedSearchOpts{
+	results, err := EnhancedSearch(context.Background(), EnhancedSearchOpts{
 		Query:          "sly cunning",
 		Limit:          5,
 		Embedder:       fixedEmbedder{v: []float32{1, 0, 0}},
@@ -62,5 +63,51 @@ func TestEnhancedSearch_VectorOnlyChunkIsHydrated(t *testing.T) {
 	}
 	if r.Heading != "Foxes" {
 		t.Errorf("vector-only chunk heading = %q, want %q", r.Heading, "Foxes")
+	}
+}
+
+// A chunk hit whose chunks_meta row is missing (a stale chunk-vector cache
+// across a reindex) used to fall between the two hydration conditions: chunk
+// hydration found nothing, and the entry fallback only ran for hits with no
+// chunk ID at all. The passage then reached the reranker — and the query
+// path's context — blank.
+func TestHydrationCoversChunkHitsWithNoChunkRow(t *testing.T) {
+	db := openTestDB(t)
+	ms := memory.NewStore(db)
+	cs := memory.NewChunkStore(db)
+	vs := vectors.NewStore(db)
+
+	if err := ms.Add(memory.Entry{ID: "doc1", Content: "REAL ENTRY CONTENT about retrieval"}); err != nil {
+		t.Fatal(err)
+	}
+	// A chunk vector pointing at a chunk row that no longer exists.
+	if err := db.WriteTx(func(tx *sql.Tx) error {
+		return vs.UpsertChunk(tx, "doc1:cGONE", "doc1", []float32{1, 0, 0})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	vs.InvalidateChunkCache()
+
+	for _, gran := range []struct {
+		name string
+		g    Granularity
+	}{{"chunks", Chunks}, {"docs", Docs}} {
+		t.Run(gran.name, func(t *testing.T) {
+			resp, err := Run(context.Background(), Deps{
+				Mem: ms, Chunks: cs, Vec: vs,
+				Embedder: fixedEmbedder{v: []float32{1, 0, 0}},
+			}, Request{Query: "retrieval", Limit: 5, Granularity: gran.g})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if len(resp.Results) == 0 {
+				t.Fatal("no results — fixture drift")
+			}
+			for _, r := range resp.Results {
+				if r.ChunkText == "" {
+					t.Errorf("doc %s reached output with a blank passage (chunk %q)", r.DocID, r.ChunkID)
+				}
+			}
+		})
 	}
 }

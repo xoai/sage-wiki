@@ -72,11 +72,17 @@ func (s *ChunkStore) SearchChunks(query string, limit int) ([]ChunkResult, error
 		limit = 20
 	}
 
-	// DF pruning counts DISTINCT docs (not chunk rows) so both fusion
-	// legs prune on identical doc-ratio semantics (Gate-3 F-047).
+	// DF pruning probes the DOCUMENT corpus (`entries`), not the chunk
+	// tables. Two reasons, both load-bearing: the legs must prune on
+	// identical doc-ratio semantics or they diverge (Gate-3 F-047), which
+	// probing the same table guarantees by construction rather than by
+	// matching two queries; and the chunk-side probe was a COUNT(DISTINCT)
+	// over a chunks_fts/chunks_meta join per term — ~66% of unified search
+	// time in the V-M5c profile, for a ratio the entries table answers with
+	// a plain FTS count.
 	ftsQuery := formatFTSTerms(dfPruneTerms(s.db,
-		"SELECT COUNT(DISTINCT doc_id) FROM chunks_meta",
-		"SELECT COUNT(DISTINCT m.doc_id) FROM chunks_fts f JOIN chunks_meta m ON m.chunk_id = f.chunk_id WHERE chunks_fts MATCH ?",
+		"SELECT COUNT(*) FROM entries",
+		"SELECT COUNT(*) FROM entries WHERE entries MATCH ?",
 		BuildFTSTerms(query)))
 	if ftsQuery == "" {
 		return nil, nil

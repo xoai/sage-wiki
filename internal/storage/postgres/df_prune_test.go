@@ -42,12 +42,15 @@ func TestPGSearchDFPrunesFrequentTerms(t *testing.T) {
 	}
 }
 
-// PB-2: pg twin of the chunk-leg DF-prune pin (single-table probe — no
-// JOIN risk, pinned anyway per the same-task-twin discipline).
+// PB-2: pg twin of the chunk-leg DF-prune pin. Like the sqlite twin, the
+// chunk leg probes the DOCUMENT corpus (`entries`), so both fusion legs prune
+// an identical term set by construction — and the probe is a plain count
+// rather than a COUNT(DISTINCT) over the chunk tables.
 func TestPGSearchChunksDFPrunesFrequentTerms(t *testing.T) {
 	b, _, cleanup := derivedTestBackend(t)
 	defer cleanup()
 
+	es := b.Entries()
 	cs := b.Chunks()
 	for i := 0; i < 120; i++ {
 		content := fmt.Sprintf("common filler text number%d", i)
@@ -55,6 +58,9 @@ func TestPGSearchChunksDFPrunesFrequentTerms(t *testing.T) {
 			content = "common zebra migration"
 		}
 		docID := fmt.Sprintf("doc%d", i)
+		if err := es.Add(store.Entry{ID: docID, Content: content}); err != nil {
+			t.Fatal(err)
+		}
 		if err := b.WriteTx(func(tx *sql.Tx) error {
 			return cs.IndexChunks(tx, docID, []store.ChunkEntry{
 				{ChunkID: docID + ":c0", ChunkIndex: 0, Content: content},
@@ -70,6 +76,14 @@ func TestPGSearchChunksDFPrunesFrequentTerms(t *testing.T) {
 	}
 	if len(results) != 1 || results[0].DocID != "doc0" {
 		t.Fatalf("pg chunk-leg DF pruning failed: want only doc0, got %d results", len(results))
+	}
+
+	docHits, err := es.Search("common zebra", nil, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(docHits) != 1 || docHits[0].ID != "doc0" {
+		t.Fatalf("pg doc leg pruned differently from the chunk leg: got %d results", len(docHits))
 	}
 }
 

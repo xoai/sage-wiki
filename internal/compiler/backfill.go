@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"bufio"
 	"database/sql"
 	"fmt"
 	"os"
@@ -50,36 +51,52 @@ func BackfillChunks(projectDir string, outputDir string, chunkSize int, chunkOve
 
 	var res BackfillResult
 
-	// Pass 1: compiled articles, keyed by their output directory.
-	dirs := []struct {
-		path   string
-		prefix string
-	}{
-		{filepath.Join(projectDir, outputDir, "concepts"), "concept:"},
-		{filepath.Join(projectDir, outputDir, "summaries"), "summary:"},
-		{filepath.Join(projectDir, outputDir, "outputs"), "output:"},
-	}
-
+	// Pass 1: compiled articles, keyed the way the INDEX keys them — which is
+	// not uniform across the three directories, and guessing from the filename
+	// mints phantom documents that shadow the real ones:
+	//   concepts/x.md   -> "concept:x"      (basename)
+	//   outputs/x.md    -> "output:x.md"    (basename WITH the extension)
+	//   summaries/x.md  -> the SOURCE PATH  (not derivable from the filename;
+	//                      read from the summary's own `source:` frontmatter)
 	type doc struct {
 		id   string
 		path string
 	}
 	var docs []doc
-	for _, dir := range dirs {
-		entries, err := os.ReadDir(dir.path)
+
+	scan := func(dir string, id func(name, path string) string) {
+		entries, err := os.ReadDir(dir)
 		if err != nil {
-			continue
+			return
 		}
 		for _, e := range entries {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 				continue
 			}
-			docs = append(docs, doc{
-				id:   dir.prefix + strings.TrimSuffix(e.Name(), ".md"),
-				path: filepath.Join(dir.path, e.Name()),
-			})
+			full := filepath.Join(dir, e.Name())
+			docID := id(e.Name(), full)
+			if docID == "" {
+				continue
+			}
+			docs = append(docs, doc{id: docID, path: full})
 		}
 	}
+
+	scan(filepath.Join(projectDir, outputDir, "concepts"), func(name, _ string) string {
+		return "concept:" + strings.TrimSuffix(name, ".md")
+	})
+	scan(filepath.Join(projectDir, outputDir, "outputs"), func(name, _ string) string {
+		return "output:" + name
+	})
+	scan(filepath.Join(projectDir, outputDir, "summaries"), func(name, path string) string {
+		src := summarySourcePath(path)
+		if src == "" {
+			log.Warn("reindex: summary has no source frontmatter — skipped, its chunks keep the old chunking",
+				"summary", name)
+			return ""
+		}
+		return src
+	})
 	res.Articles = len(docs)
 
 	// Pass 2: raw sources already chunk-indexed as `src:<path>` (tier 1).
@@ -87,7 +104,10 @@ func BackfillChunks(projectDir string, outputDir string, chunkSize int, chunkOve
 	// itself — the chunk index is the only record that they were indexed.
 	srcIDs, err := chunkStore.ListDocIDs()
 	if err != nil {
-		log.Warn("backfill: listing chunked docs failed — source chunks keep their old chunking", "error", err)
+		// The command's whole contract is "the index now matches the config".
+		// Continuing here would exit 0 having left every src: document at the
+		// old chunking — the mixed index this exists to prevent.
+		return res, fmt.Errorf("listing chunked documents: %w", err)
 	}
 	for _, id := range srcIDs {
 		if !strings.HasPrefix(id, "src:") {
@@ -175,6 +195,36 @@ func BackfillChunks(projectDir string, outputDir string, chunkSize int, chunkOve
 
 	log.Info("chunk index rebuild complete", "indexed", count, "documents", len(docs))
 	return res, nil
+}
+
+// summarySourcePath reads a summary's `source:` frontmatter — the source path
+// IS the summary's document ID in the index (internal/wiki/reconcile.go:86).
+func summarySourcePath(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	first := true
+	for sc.Scan() {
+		line := strings.TrimRight(sc.Text(), "\r")
+		if first {
+			first = false
+			if strings.TrimSpace(line) != "---" {
+				return "" // no frontmatter block at all
+			}
+			continue
+		}
+		if strings.TrimSpace(line) == "---" {
+			return "" // block closed without a source key
+		}
+		if rest, ok := strings.CutPrefix(line, "source:"); ok {
+			return strings.TrimSpace(rest)
+		}
+	}
+	return ""
 }
 
 // docText reads a document's text. Articles are markdown read verbatim (the

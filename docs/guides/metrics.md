@@ -22,8 +22,9 @@ serve:
 
 With `serve.metrics: true`, the web server (`sage-wiki serve --ui`)
 exposes `GET /metrics` in Prometheus text format: search stage latencies
-(BM25/vector/RRF), query latency, embedding calls, and vector cache
-hit/miss for the serve process. Series appear only after their first
+(`stage="bm25"`, `"vector"`, `"rrf"` per leg, and `"total"` for the
+end-to-end request through the unified pipeline), query latency, embedding
+calls, and vector cache hit/miss for the serve process. Series appear only after their first
 recording (no flat-zero noise). When a bearer token is configured,
 `/metrics` is gated exactly like `/api/*`. The MCP transports (stdio and
 SSE) never serve metrics — they are transports, not ops surfaces.
