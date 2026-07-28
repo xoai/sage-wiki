@@ -13,16 +13,17 @@ Numbers in this report are machine-verified against the JSONs in
 
 | Benchmark | Scope | Score | Infra errors |
 |---|---|---|---|
-| **LOCOMO** | 10 conversations, categories 1–4, **1,540 questions** | **81.8%** LLM-judge accuracy | 0 |
+| **LOCOMO** | 10 conversations, categories 1–4, **1,540 questions** | **76.8%** LLM-judge accuracy | 0 |
 | **LongMemEval-S** | stratified 5/type (seed 42), **30 questions** | **63.3%** LLM-judge accuracy | 0 |
 | **BEAM** | 100K bucket, conversations 0–2, **60 questions** | **27.1%** mean nugget score | 0 |
 
 The pattern is consistent across all three: sage-wiki's compile-then-search
-pipeline is **strong at semantic/factual recall** (LOCOMO single-hop 87.3%,
+pipeline is **strong at semantic/factual recall** (LOCOMO single-hop 83.2%,
 BEAM preference-following 70.8%) and **weak at verbatim detail and temporal
-precision** (BEAM information-extraction and temporal-reasoning 0%), because
-the LLM compile step abstracts conversations into concepts and articles —
-retaining meaning, discarding specifics like exact dates and numbers.
+precision** (LOCOMO temporal 61.1%, BEAM information-extraction and
+temporal-reasoning 0%), because the LLM compile step abstracts conversations
+into concepts and articles — retaining meaning, discarding specifics like
+exact dates and numbers.
 
 ## Pipeline
 
@@ -33,7 +34,10 @@ One sage-wiki project per conversation/haystack (the `user_id` analogue):
 2. **Compile** — `sage-wiki compile` (`compiler.mode: standard`): LLM
    summaries → concept extraction → article writing, FTS5 + OpenAI
    embeddings + ontology. Model: gpt-4o-mini; embeddings:
-   text-embedding-3-small.
+   text-embedding-3-small. The harness gates every project on a hardened
+   compile-success predicate — the manifest's compiled-source count must
+   equal the raw source count and vector entries must be ≥ the source count
+   — before any question runs (see "Integrity incident" below for why).
 3. **Search** — `sage-wiki search <question> --format json --limit 10`
    (hybrid BM25 + vector RRF over compiled articles/summaries).
 4. **Answer + judge** — gpt-4o-mini answerer over the retrieved articles;
@@ -42,39 +46,55 @@ One sage-wiki project per conversation/haystack (the `user_id` analogue):
 
 Infrastructure failures (compile hard-fail, degraded search) are recorded as
 `infra_error` and excluded from accuracy denominators. **Across all 1,630
-questions there were 0 infra errors and 0 judge parse errors** — every
-question was answered by the real hybrid pipeline (the harness verifies
-per-search that the vector branch contributed; BM25-only degrades are never
-scored).
+questions in the published runs there were 0 infra errors and 0 judge parse
+errors.** Search-side degrade detection (stderr scan + a no-vector-ranked-
+results guard) exists but is best-effort; the compile gate above is the
+load-bearing defense that questions run against compiled content.
 
-## LOCOMO — 81.8% overall
+### Integrity incident (disclosed)
 
-<!-- check:locomo_full metrics.overall.accuracy = 81.8 -->
+An earlier LOCOMO run published 81.8% overall. Independent review found that
+conversation 0 (152 questions, 9.9%) had been benchmarked against **raw
+transcripts**: an interrupted compile left its work queue leased, the
+restarted compile exited 0 having done nothing, and the original
+`vector_count > 0` gate passed on one stray vector. Raw-transcript retrieval
+scored 94.7% on those questions — memory benchmarks are much easier against
+verbatim text. The project was wiped, recompiled through the hardened gate,
+and all 152 questions rerun; this report carries only the corrected numbers.
+Properly compiled, conv0 scores 44.7% — its question set is heavily
+temporal/detail, the compile-abstraction weak spot. LongMemEval and BEAM
+projects were audited at the database level and were clean.
+
+## LOCOMO — 76.8% overall
+
+<!-- check:locomo_full metrics.overall.accuracy = 76.8 -->
 <!-- check:locomo_full metrics.overall.total = 1540 -->
-<!-- check:locomo_full metrics.overall.correct = 1259 -->
+<!-- check:locomo_full metrics.overall.correct = 1183 -->
 
-1,259 / 1,540 correct (81.8%) across all 10 conversations, categories 1–4.
+1,183 / 1,540 correct (76.8%) across all 10 conversations, categories 1–4.
 
 | Category | Accuracy | n |
 |---|---|---|
-| single-hop | **87.3%** | 841 |
-| multi-hop | **81.2%** | 282 |
-| open-domain | **76.0%** | 96 |
-| temporal | **69.5%** | 321 |
+| single-hop | **83.2%** | 841 |
+| multi-hop | **76.6%** | 282 |
+| open-domain | **74.0%** | 96 |
+| temporal | **61.1%** | 321 |
 
-<!-- check:locomo_full metrics.by_group.single-hop.accuracy = 87.3 -->
-<!-- check:locomo_full metrics.by_group.multi-hop.accuracy = 81.2 -->
-<!-- check:locomo_full metrics.by_group.open-domain.accuracy = 76.0 -->
-<!-- check:locomo_full metrics.by_group.temporal.accuracy = 69.5 -->
+<!-- check:locomo_full metrics.by_group.single-hop.accuracy = 83.2 -->
+<!-- check:locomo_full metrics.by_group.multi-hop.accuracy = 76.6 -->
+<!-- check:locomo_full metrics.by_group.open-domain.accuracy = 74.0 -->
+<!-- check:locomo_full metrics.by_group.temporal.accuracy = 61.1 -->
 
 Temporal is the weakest category, as predicted by the design caveat:
 sage-wiki search results carry no per-memory timestamp (`created_at` is
 structurally absent), so the answerer sees dates only where the compile
-preserved them inside article text. Single- and multi-hop factual recall —
-the thing a compiled, interlinked wiki is built for — is the strength.
+preserved them inside article text. Per-conversation accuracy spreads
+44.7%–86.9% — the low end (conv0) is dominated by exact-date and duration
+questions the compiled wiki abstracts away.
 
-Compile: 272 session files across 10 projects in 20.3 minutes total
-(~122 s/conversation), producing 485 vector entries.
+Compile: ~122 s per conversation for the nine conversations compiled in the
+first run (272 session files, 20.3 min total) and 90.4 s for conversation
+0's clean recompile (19 sources → 30 vectors, 11 concepts).
 
 ## LongMemEval-S — 63.3% overall
 
@@ -83,7 +103,9 @@ Compile: 272 session files across 10 projects in 20.3 minutes total
 
 19 / 30 correct on a stratified sample (5 per question type, seed 42). Each
 question's ~50-session haystack (~115K tokens) was compiled into its own
-project (~7–8 min each).
+project; the 30 haystack compiles plus 30 questions took ~46 minutes
+wall-clock at 3 concurrent projects (per-project compile stats were not
+recorded in this run's metadata — a known reporting gap).
 
 | Question type | Accuracy |
 |---|---|
@@ -154,11 +176,11 @@ Search (subprocess spawn + OpenAI query embedding + hybrid RRF), per query:
 
 | Run | p50 | p95 |
 |---|---|---|
-| LOCOMO | 960 ms | 1,147 ms |
+| LOCOMO | 959 ms | 1,142 ms |
 | LongMemEval | 987 ms | 1,220 ms |
 | BEAM | 959 ms | 1,428 ms |
 
-<!-- check:locomo_full latency.p50_ms = 960.0 -->
+<!-- check:locomo_full latency.p50_ms = 959.0 -->
 <!-- check:longmemeval_full latency.p50_ms = 987.0 -->
 <!-- check:beam_full latency.p50_ms = 958.7 -->
 
@@ -169,17 +191,23 @@ server (`sage-wiki serve`) would remove most of it.
 
 ## Cost (harness-tracked LLM usage)
 
+Usage counters are **per-process**: a resumed run records only its own
+calls, so totals below are the sum of the run processes and slightly
+understate questions completed by interrupted attempts.
+
 | Run | Answerer tokens (in/out) | Judge tokens (in/out) |
 |---|---|---|
-| LOCOMO | 9.60M / 0.64M | 1.14M / 0.06M |
+| LOCOMO (initial, 1,531 calls) | 9.60M / 0.64M | 1.14M / 0.06M |
+| LOCOMO (conv0 rerun, 152 calls) | 0.88M / 0.06M | 0.11M / 0.007M |
 | LongMemEval | 0.40M / 0.006M | 0.05M / 0.006M |
 | BEAM | 0.42M / 0.016M | 0.18M / 0.006M |
 
-At gpt-4o-mini pricing this is ≈ **$2.30** for all answer/judge calls. The
-compile side (sage-wiki's own LLM + embedding calls: ~10.4M input tokens
-across 42 projects) is not metered by the harness; from token volume it adds
-roughly **$2–4**. Total wall time: ~2.5 h (LOCOMO 55 min; LongMemEval 46 min
-at 3 concurrent haystack compiles; BEAM 12 min).
+At gpt-4o-mini pricing this is ≈ **$2.50** for all answer/judge calls
+(including the 152 contaminated-run calls that were discarded and redone).
+The compile side (sage-wiki's own LLM + embedding calls: ~10.5M input tokens
+across 43 project compiles) is not metered by the harness; from token volume
+it adds roughly **$2–4**. Total wall time: ~2.5 h for the initial runs plus
+~25 min for the conv0 rerun.
 
 ## Caveats — read before comparing
 
@@ -193,15 +221,20 @@ at 3 concurrent haystack compiles; BEAM 12 min).
    prefixes (LOCOMO shows "(unknown date)"). Dates reach the answerer only
    inside compiled article text. This structurally weakens temporal
    categories in all three benchmarks.
-3. **Judge-model weakness on abstention rubrics.** The gpt-4o-mini judge
-   sometimes scores a *correct* abstention as 0 (e.g. BEAM `conv0_q0` in the
-   smoke run: the answer "I don't have enough information" matches the
-   rubric's "there is no information related to X", yet scored 0.0). BEAM
-   abstention numbers are likely understated.
+3. **The gpt-4o-mini judge errs in both directions on BEAM rubrics.** It
+   sometimes scores a *correct* abstention as 0 (smoke-run `conv0_q0`: "I
+   don't have enough information" matches the rubric's "there is no
+   information related to X", scored 0.0) and sometimes scores a rubric
+   *violation* as 1.0 (full-run `conv0_q0`: a nugget stating the information
+   is absent scored 1.0 while praising the answer for providing it). Treat
+   BEAM absolute numbers as judge-noisy; the per-type ordering is more
+   robust than the levels.
 4. **The compile step is the memory bottleneck, by design.** sage-wiki is a
    knowledge compiler, not a verbatim log store. These results measure the
    compiled-wiki representation, which trades verbatim recall for
-   organized, interlinked knowledge.
+   organized, interlinked knowledge — the 94.7%→44.7% conv0 delta between
+   raw-transcript and compiled retrieval (see the integrity incident) is a
+   direct measurement of that trade-off on detail-heavy questions.
 5. Compile used `gpt-4o-mini` for all passes — a stronger compile model
    would likely lift every number; that axis is unexplored here.
 
