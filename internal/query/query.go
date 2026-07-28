@@ -216,20 +216,22 @@ func buildQueryContext(projectDir string, question string, topK int, cfg *config
 			model = cfg.Models.Write
 		}
 
-		enhanced, err := search.EnhancedSearch(search.EnhancedSearchOpts{
-			Query:          question,
-			Limit:          topK,
-			Client:         client,
-			Model:          model,
-			Embedder:       embedder,
-			ChunkStore:     chunkStore,
-			MemStore:       memStore,
-			VecStore:       vecStore,
-			QueryExpansion: cfg.Search.QueryExpansionEnabled(),
-			RerankEnabled:  rerankEnabled,
-
+		resp, err := search.Run(search.Deps{
+			Mem:      memStore,
+			Chunks:   chunkStore,
+			Vec:      vecStore,
+			Embedder: embedder,
+			Client:   client,
+			Model:    model,
+		}, search.Request{
+			Query:             question,
+			Limit:             topK,
+			Expand:            cfg.Search.QueryExpansionEnabled(),
+			Rerank:            rerankEnabled,
+			Granularity:       search.Chunks,
 			RerankMinCoverage: cfg.Search.RerankMinCoverageOrDefault(),
 		})
+		enhanced := resp.Results
 		if err != nil {
 			log.Warn("enhanced search failed, falling back to doc-level", "error", err)
 		} else if len(enhanced) > 0 {
