@@ -119,6 +119,39 @@ type ftsPlan struct {
 	next  int
 }
 
+// dfPruneTerms is the pg twin of memory.dfPruneTerms (spec §2.5): on
+// corpora above memory.DFPruneMinCorpus, drop terms whose doc frequency
+// exceeds memory.DFPruneMaxRatio; keep the first memory.DFPruneKeepFirst
+// when everything would be dropped. Probe failure keeps the term.
+func (b *backend) dfPruneTerms(table, tsvCol string, terms []string) []string {
+	if len(terms) == 0 {
+		return terms
+	}
+	var total int
+	if err := b.pool.QueryRow("SELECT count(*) FROM " + table).Scan(&total); err != nil || total <= memory.DFPruneMinCorpus {
+		return terms
+	}
+	maxDF := int(float64(total) * memory.DFPruneMaxRatio)
+	kept := terms[:0:0]
+	for _, t := range terms {
+		var n int
+		err := b.pool.QueryRow(
+			"SELECT count(*) FROM "+table+" WHERE "+tsvCol+" @@ to_tsquery('sage_fts', $1)",
+			t+":*",
+		).Scan(&n)
+		if err != nil || n <= maxDF {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) == 0 {
+		if len(terms) > memory.DFPruneKeepFirst {
+			return terms[:memory.DFPruneKeepFirst]
+		}
+		return terms
+	}
+	return kept
+}
+
 func (b *backend) planFTS(tsvCol, textExpr string, terms []string, nextArg int) ftsPlan {
 	if len(terms) == 0 {
 		return ftsPlan{where: "TRUE", rank: textExpr, next: nextArg}

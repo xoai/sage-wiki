@@ -85,8 +85,8 @@ func (s *Store) Search(query string, tags []string, limit int) ([]SearchResult, 
 		limit = 10
 	}
 
-	// Build FTS5 query: OR-joined prefix terms
-	ftsQuery := buildFTSQuery(query)
+	// Build FTS5 query: OR-joined prefix terms, DF-pruned on large corpora
+	ftsQuery := formatFTSTerms(dfPruneTerms(s.db, "entries", buildFTSTerms(query)))
 	if ftsQuery == "" {
 		return nil, nil
 	}
@@ -157,6 +157,12 @@ func ContentHash(content string) string {
 // buildFTSQuery converts a user query into FTS5 OR-joined prefix terms.
 // Stopwords are filtered out. FTS5 special characters are stripped for safety.
 func buildFTSQuery(query string) string {
+	return formatFTSTerms(buildFTSTerms(query))
+}
+
+// buildFTSTerms returns the sanitized, stopword-filtered term list (raw
+// words — formatFTSTerms adds quoting and prefix stars).
+func buildFTSTerms(query string) []string {
 	words := strings.Fields(strings.ToLower(query))
 	var terms []string
 	for _, w := range words {
@@ -165,7 +171,7 @@ func buildFTSQuery(query string) string {
 			continue
 		}
 		if !isStopword(w) {
-			terms = append(terms, "\""+w+"\"*")
+			terms = append(terms, w)
 		}
 	}
 	if len(terms) == 0 {
@@ -175,10 +181,61 @@ func buildFTSQuery(query string) string {
 			if w == "" {
 				continue
 			}
-			terms = append(terms, "\""+w+"\"*")
+			terms = append(terms, w)
 		}
 	}
-	return strings.Join(terms, " OR ")
+	return terms
+}
+
+// formatFTSTerms renders terms as OR-joined quoted prefix matches.
+func formatFTSTerms(terms []string) string {
+	quoted := make([]string, len(terms))
+	for i, t := range terms {
+		quoted[i] = "\"" + t + "\"*"
+	}
+	return strings.Join(quoted, " OR ")
+}
+
+// DF pruning thresholds (spec §2.5, shared with the postgres twin):
+// corpora above DFPruneMinCorpus drop query terms whose prefix-match doc
+// frequency exceeds DFPruneMaxRatio; a fully-pruned query keeps its first
+// DFPruneKeepFirst terms as the backstop.
+const (
+	DFPruneMinCorpus = 100
+	DFPruneMaxRatio  = 0.2
+	DFPruneKeepFirst = 3
+)
+
+// dfPruneTerms drops over-frequent terms using per-term COUNT probes on
+// the given FTS table. Probe failure keeps the term (never silently
+// narrows the query on error).
+func dfPruneTerms(db store.DBHandle, ftsTable string, terms []string) []string {
+	if len(terms) == 0 {
+		return terms
+	}
+	var total int
+	if err := db.ReadDB().QueryRow("SELECT COUNT(*) FROM " + ftsTable).Scan(&total); err != nil || total <= DFPruneMinCorpus {
+		return terms
+	}
+	maxDF := int(float64(total) * DFPruneMaxRatio)
+	kept := terms[:0:0]
+	for _, t := range terms {
+		var n int
+		err := db.ReadDB().QueryRow(
+			"SELECT COUNT(*) FROM "+ftsTable+" WHERE "+ftsTable+" MATCH ?",
+			"\""+t+"\"*",
+		).Scan(&n)
+		if err != nil || n <= maxDF {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) == 0 {
+		if len(terms) > DFPruneKeepFirst {
+			return terms[:DFPruneKeepFirst]
+		}
+		return terms
+	}
+	return kept
 }
 
 // SanitizeFTS strips FTS5 special characters to prevent query injection.

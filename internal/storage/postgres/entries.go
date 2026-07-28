@@ -64,7 +64,7 @@ func (s *entryStore) Search(query string, tags []string, limit int) ([]store.Sea
 	if limit <= 0 {
 		limit = 10 // memory/entries.go:84-86 parity
 	}
-	terms := queryTerms(query)
+	terms := s.b.dfPruneTerms("entries", "tsv", queryTerms(query))
 	if len(terms) == 0 {
 		return nil, nil
 	}

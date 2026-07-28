@@ -42,7 +42,7 @@ func (s *chunkStore) DeleteDocChunks(tx *sql.Tx, docID string) error {
 
 func (s *chunkStore) SearchChunks(query string, limit int) ([]store.ChunkResult, error) {
 	limit = normLimit(limit, 20)
-	terms := queryTerms(query)
+	terms := s.b.dfPruneTerms("chunks_meta", "tsv", queryTerms(query))
 	if len(terms) == 0 {
 		return nil, nil
 	}

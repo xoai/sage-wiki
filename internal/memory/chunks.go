@@ -73,7 +73,7 @@ func (s *ChunkStore) SearchChunks(query string, limit int) ([]ChunkResult, error
 		limit = 20
 	}
 
-	ftsQuery := buildFTSQuery(query)
+	ftsQuery := formatFTSTerms(dfPruneTerms(s.db, "chunks_fts", buildFTSTerms(query)))
 	if ftsQuery == "" {
 		return nil, nil
 	}
