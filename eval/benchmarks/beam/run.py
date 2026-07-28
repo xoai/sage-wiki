@@ -26,6 +26,7 @@ from typing import Any
 
 from benchmarks.common.checkpoints import CheckpointStore, heartbeat, write_run_metadata
 from benchmarks.common.llm import LLMClient, LLMError
+from benchmarks.common.ratelimit import GLOBAL_GATE, QuotaExhausted
 from benchmarks.common.metrics import (
     aggregate_beam,
     compute_kendall_tau_b,
@@ -313,6 +314,8 @@ def _process_question(cfg: RunConfig, backend, answerer, judge_llm,
             question_text, resp.results, top_k=cfg.top_k))
         record["generated_answer"] = answer
         nugget_scores, parse_err = judge_nuggets(judge_llm, question_text, nuggets, answer)
+    except QuotaExhausted:
+        raise  # provider wall: stop the run, do not fabricate a failed question
     except (DegradedSearchError, LLMError, subprocess.TimeoutExpired) as exc:
         record.update(status="infra_error", error=str(exc), score=0.0)
         record.setdefault("search_latency_ms", None)
@@ -372,6 +375,8 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
                 md = render_batch(bi, turns)
                 backend.write_session(key, f"batch_{bi:04d}", md)
             backend.compile(key)
+        except QuotaExhausted:
+            raise  # provider wall: stop the run, do not fabricate failed questions
         except (CompileError, subprocess.TimeoutExpired) as exc:
             log.error("compile failed for %s: %s", key, exc)
             failed_projects.append(key)
@@ -396,8 +401,17 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
                 heartbeat(log, counter["n"], len(all_qids), every=cfg.heartbeat_every)
             return record
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=cfg.workers) as pool:
-            list(pool.map(work, pending))
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=cfg.workers) as pool:
+                list(pool.map(work, pending))
+        except QuotaExhausted as exc:
+            msg = (f"{exc} Completed questions are checkpointed in "
+                   f"{cfg.out_dir}; resume with --project-name "
+                   f"{cfg.project_name} once quota is available.")
+            log.error("aborting run: %s", msg)
+            write_run_metadata(cfg.out_dir, status="aborted_quota", error=msg,
+                               rate_limit=GLOBAL_GATE.stats())
+            raise
 
     rows = [r for r in store.load_all() if r.get("question_id") in set(all_qids)]
     metrics = aggregate_beam(rows)
@@ -413,6 +427,7 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
                       "conversations": cfg.conversations, "top_k": cfg.top_k},
             "total_questions": len(rows),
             "judge_parse_errors": sum(1 for r in rows if r.get("judge_parse_error")),
+            "rate_limit": GLOBAL_GATE.stats(),
             "failed_projects": failed_projects,
             "usage": {"answerer": answerer.usage(), "judge": judge_llm.usage()},
         },

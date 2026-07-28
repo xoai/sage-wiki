@@ -87,6 +87,34 @@ tail -f locomo.log
 Interrupting a run loses at most the questions in flight; rerunning the
 same `--project-name` resumes from the checkpoints.
 
+### Rate limits
+
+Long runs will meet provider throttling. The harness handles it in three
+layers, all shared process-wide (`common/ratelimit.py`):
+
+- **Cooperative backoff.** A 429 seen by *any* worker opens a cooldown that
+  *every* worker waits out before its next call, escalating 5 s → 10 s → …
+  → 120 s and honoring the provider's `Retry-After` header when present. A
+  successful call resets the escalation.
+- **The search path counts too.** Query embeddings happen inside the
+  `sage-wiki search` subprocess, so throttling surfaces as an exit-0
+  "BM25-only" degrade rather than an exception. The harness recognizes the
+  rate-limit flavor of that warning, routes it through the same gate, and
+  gives it more retries than a permanent (config) degrade — which no amount
+  of retrying can fix.
+- **Clean abort instead of a burned queue.** If the wall persists past 15
+  minutes of cumulative waiting with no successful call, the run stops with
+  `QuotaExhausted` and records `status: aborted_quota` plus resume
+  instructions in `_run_metadata.json`. Completed questions stay
+  checkpointed; rerun the same `--project-name` when quota returns.
+
+Rate-limit activity is reported in each run's aggregate JSON under
+`metadata.rate_limit` (`rate_limit_events`, `total_wait_seconds`).
+
+Without this, a mid-run quota wall silently converts the rest of the queue
+into `infra_error` records — which is exactly what cost the 2026-07-28
+parity run 1,011 of its 1,540 questions (see REPORT.md).
+
 ## Layout
 
 ```

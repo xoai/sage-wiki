@@ -22,8 +22,12 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from benchmarks.common.ratelimit import GLOBAL_GATE
+
 EMBED_WARNING = "warning: embed failed, using BM25-only"
-SEARCH_RETRIES = 2  # retries after the initial attempt
+RATE_LIMIT_MARKERS = ("rate limited", "http 429", "429", "quota")
+SEARCH_RETRIES = 2        # retries after the initial attempt (permanent degrade)
+SEARCH_RATE_RETRIES = 6   # a rate-limited embedder is transient — wait it out
 CONFIG_TEMPLATE = """version: 1
 project: {key}
 description: "memory benchmark project"
@@ -104,11 +108,13 @@ def require_api_key() -> None:
 
 class SageWikiBackend:
     def __init__(self, binary: str | None = None, root: Path | str = "runs/projects",
-                 model: str = "gpt-4o-mini", embed_model: str = "text-embedding-3-small"):
+                 model: str = "gpt-4o-mini", embed_model: str = "text-embedding-3-small",
+                 gate=None):
         self.binary = binary or default_binary()
         self.root = Path(root)
         self.model = model
         self.embed_model = embed_model
+        self.gate = gate if gate is not None else GLOBAL_GATE
 
     # -- setup -----------------------------------------------------------------
 
@@ -232,10 +238,29 @@ class SageWikiBackend:
             return True  # silent config-load degrade: vector branch contributed nothing
         return False
 
+    @staticmethod
+    def _rate_limited(stderr: str) -> bool:
+        """The embedder degraded because the provider is throttling us — a
+        transient condition worth waiting out, unlike a config-load degrade."""
+        low = stderr.lower()
+        return EMBED_WARNING in stderr and any(m in low for m in RATE_LIMIT_MARKERS)
+
     def search(self, key: str, query: str, limit: int = 10,
                timeout_s: int = 300) -> SearchResponse:
+        """Search with rate-limit-aware retries.
+
+        The query embedding happens inside the sage-wiki subprocess, so a
+        throttled provider surfaces here as an exit-0 BM25-only degrade rather
+        than an exception. Those attempts go through the shared gate (pausing
+        every worker) and get more tries than a permanent degrade, which no
+        amount of retrying will fix.
+        """
         last_reason = ""
-        for _ in range(1 + SEARCH_RETRIES):
+        attempt = 0
+        max_attempts = 1 + SEARCH_RETRIES
+        while attempt < max_attempts:
+            attempt += 1
+            self.gate.wait()  # honor a cooldown opened anywhere in the run
             start = time.monotonic()
             proc = self._run(key, "search", query, "--format", "json",
                              "--limit", str(limit), timeout_s=timeout_s)
@@ -250,16 +275,23 @@ class SageWikiBackend:
                 continue
             rows = envelope.get("data") or []  # zero hits arrive as data: null
             if self._degraded(proc.stderr, rows):
-                last_reason = "BM25-only degrade detected"
+                if self._rate_limited(proc.stderr):
+                    max_attempts = max(max_attempts, 1 + SEARCH_RATE_RETRIES)
+                    last_reason = ("embedder rate-limited by the provider "
+                                   "(search degraded to BM25-only)")
+                    self.gate.report_limit()  # may raise QuotaExhausted → abort run
+                else:
+                    last_reason = "BM25-only degrade detected"
                 continue
             results = [
                 {"memory": r.get("Content", ""), "score": r.get("RRFScore", 0.0),
                  "id": r.get("ID", "")}
                 for r in rows
             ]
+            self.gate.report_success()
             return SearchResponse(results=results, latency_ms=latency_ms, raw=rows)
         raise DegradedSearchError(
-            f"search stayed degraded/failing after {1 + SEARCH_RETRIES} attempts "
+            f"search stayed degraded/failing after {attempt} attempts "
             f"for {key}: {last_reason}"
         )
 

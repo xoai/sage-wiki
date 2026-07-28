@@ -27,6 +27,7 @@ from pathlib import Path
 from benchmarks.common.checkpoints import CheckpointStore, heartbeat, write_run_metadata
 from benchmarks.common.llm import LLMClient, LLMError
 from benchmarks.common.metrics import aggregate_accuracy, latency_stats
+from benchmarks.common.ratelimit import GLOBAL_GATE, QuotaExhausted
 from benchmarks.common.sagewiki import (
     CompileError,
     DegradedSearchError,
@@ -214,6 +215,8 @@ def _process_question(cfg: RunConfig, backend, answerer, judge_llm,
         record["generated_answer"] = answer
         judgment, score, parse_err, reason = _judge(
             judge_llm, category, qa["question"], qa["answer"], answer)
+    except QuotaExhausted:
+        raise  # provider wall: stop the run, do not fabricate a failed question
     except (DegradedSearchError, LLMError, subprocess.TimeoutExpired) as exc:
         record.update(status="infra_error", error=str(exc), score=0.0)
         record.setdefault("search_latency_ms", None)
@@ -292,15 +295,29 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
             qi, qa = item
             record = _process_question(cfg, backend, answerer, judge_llm,
                                        conv_idx, qi, qa, ref_date)
-            store.save(record["question_id"], record)
+            store.save(record["question_id"], record)  # only reached on success
             with counter_lock:
                 counter["n"] += 1
                 heartbeat(log, counter["n"], run_total, every=cfg.heartbeat_every)
             return record
 
         if pending:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=cfg.workers) as pool:
-                list(pool.map(work, pending))
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=cfg.workers) as pool:
+                    list(pool.map(work, pending))
+            except QuotaExhausted as exc:
+                # The runner owns the resume guidance: it knows the project
+                # name, and an abort raised anywhere must leave the operator
+                # a way back in.
+                msg = (f"{exc} Completed questions are checkpointed in "
+                       f"{cfg.out_dir}; resume with --project-name "
+                       f"{cfg.project_name} once quota is available.")
+                log.error("aborting run: %s", msg)
+                write_run_metadata(cfg.out_dir, status="aborted_quota",
+                                   error=msg,
+                                   rate_limit=GLOBAL_GATE.stats(),
+                                   failed_projects=failed_projects)
+                raise
 
     # -- aggregate -------------------------------------------------------------
     rows = [r for r in store.load_all() if r.get("question_id") in set(all_qids)]
@@ -333,6 +350,7 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
             "judge_parse_errors": sum(1 for r in rows if r.get("judge_parse_error")),
             "compile_stats": compile_stats,
             "failed_projects": failed_projects,
+            "rate_limit": GLOBAL_GATE.stats(),
             "usage": usage,
         },
         "metrics": metrics,

@@ -203,3 +203,46 @@ class TestCutoffMode:
         agg, backend = run_with(tmp_path)
         assert "metrics" in agg and "cutoff_results" not in agg["per_question"][0]
         assert backend.search_limits == [10, 10]
+
+
+class TestQuotaAbort:
+    """A sustained provider wall must stop the run, not convert the remaining
+    queue into infra_error records (the 2026-07-28 parity-run failure: 1,011
+    questions burned over 50 minutes after quota ran out)."""
+
+    class WallBackend(StubBackend):
+        def __init__(self, fail_after):
+            super().__init__()
+            self.fail_after = fail_after
+            self.calls = 0
+
+        def search(self, key, query, limit=10, timeout_s=0):
+            from benchmarks.common.ratelimit import QuotaExhausted
+            self.calls += 1
+            if self.calls > self.fail_after:
+                raise QuotaExhausted("provider wall")
+            return super().search(key, query, limit=limit)
+
+    def test_quota_exhausted_aborts_and_preserves_completed_work(self, tmp_path):
+        from benchmarks.common.ratelimit import QuotaExhausted
+        cfg = RunConfig(out_dir=tmp_path / "out", results_dir=tmp_path / "results",
+                        project_name="t", conversations=[0], workers=1)
+        with pytest.raises(QuotaExhausted):
+            run_benchmark(cfg, self.WallBackend(fail_after=1), StubLLM(), StubLLM(),
+                          DATASET)
+        # the question completed before the wall is checkpointed and resumable
+        done = list((tmp_path / "out").glob("conv0_q*.json"))
+        assert len(done) == 1
+        # and no infra_error record was manufactured for the aborted question
+        assert all(json.loads(p.read_text())["status"] == "ok" for p in done)
+
+    def test_run_metadata_records_the_abort(self, tmp_path):
+        from benchmarks.common.ratelimit import QuotaExhausted
+        cfg = RunConfig(out_dir=tmp_path / "out", results_dir=tmp_path / "results",
+                        project_name="t", conversations=[0], workers=1)
+        with pytest.raises(QuotaExhausted):
+            run_benchmark(cfg, self.WallBackend(fail_after=0), StubLLM(), StubLLM(),
+                          DATASET)
+        meta = json.loads((tmp_path / "out" / "_run_metadata.json").read_text())
+        assert meta["status"] == "aborted_quota"
+        assert "resume" in meta["error"].lower()

@@ -26,6 +26,7 @@ from pathlib import Path
 
 from benchmarks.common.checkpoints import CheckpointStore, heartbeat, write_run_metadata
 from benchmarks.common.llm import LLMClient, LLMError
+from benchmarks.common.ratelimit import GLOBAL_GATE, QuotaExhausted
 from benchmarks.common.metrics import aggregate_accuracy, latency_stats
 from benchmarks.common.sagewiki import (
     CompileError,
@@ -183,6 +184,8 @@ def _process_question(cfg: RunConfig, backend, answerer, judge_llm, q: dict) -> 
         for sid, date_str, turns in sorted_sessions(q):
             backend.write_session(key, sid, render_session(sid, date_str, turns))
         backend.compile(key)
+    except QuotaExhausted:
+        raise
     except (CompileError, subprocess.TimeoutExpired) as exc:
         record.update(status="infra_error", error=f"compile: {exc}", score=0.0,
                       search_latency_ms=None, failed_project=key)
@@ -193,6 +196,8 @@ def _process_question(cfg: RunConfig, backend, answerer, judge_llm, q: dict) -> 
         record["retrieval"] = resp.results
         gen_prompt = get_answer_generation_prompt(q["question"], resp.results, qdate)
         answer = answerer.generate("", gen_prompt)
+    except QuotaExhausted:
+        raise  # provider wall: stop the run, do not fabricate a failed question
     except (DegradedSearchError, LLMError, subprocess.TimeoutExpired) as exc:
         record.update(status="infra_error", error=str(exc), score=0.0)
         record.setdefault("search_latency_ms", None)
@@ -213,6 +218,8 @@ def _process_question(cfg: RunConfig, backend, answerer, judge_llm, q: dict) -> 
             verdict, parse_error = parse_yes_no(raw)
             if not parse_error:
                 break
+    except QuotaExhausted:
+        raise
     except LLMError as exc:
         record.update(status="infra_error", error=str(exc), score=0.0)
         return record
@@ -256,11 +263,22 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
         return record
 
     if pending:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=cfg.workers) as pool:
-            list(pool.map(work, pending))
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=cfg.workers) as pool:
+                list(pool.map(work, pending))
+        except QuotaExhausted as exc:
+            msg = (f"{exc} Completed questions are checkpointed in "
+                   f"{cfg.out_dir}; resume with --project-name "
+                   f"{cfg.project_name} once quota is available.")
+            log.error("aborting run: %s", msg)
+            write_run_metadata(cfg.out_dir, status="aborted_quota", error=msg,
+                               rate_limit=GLOBAL_GATE.stats())
+            raise
 
     wanted = {q["question_id"] for q in questions}
     rows = [r for r in store.load_all() if r.get("question_id") in wanted]
+    failed_projects = sorted({r["failed_project"] for r in rows
+                              if r.get("failed_project")})
     metrics = aggregate_accuracy(rows)
     aggregate = {
         "metadata": {
@@ -273,8 +291,8 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
             "scope": {"per_type": cfg.per_type, "seed": cfg.seed, "top_k": cfg.top_k},
             "total_questions": len(rows),
             "judge_parse_errors": sum(1 for r in rows if r.get("judge_parse_error")),
-            "failed_projects": sorted({r["failed_project"] for r in rows
-                                       if r.get("failed_project")}),
+            "rate_limit": GLOBAL_GATE.stats(),
+            "failed_projects": failed_projects,
             "usage": {"answerer": answerer.usage(), "judge": judge_llm.usage()},
         },
         "metrics": metrics,
@@ -289,7 +307,7 @@ def run_benchmark(cfg: RunConfig, backend, answerer, judge_llm,
     out = cfg.results_dir / f"longmemeval_{cfg.project_name}.json"
     out.write_text(json.dumps(aggregate, ensure_ascii=False, indent=1), encoding="utf-8")
     write_run_metadata(cfg.out_dir, status="complete", results_file=str(out),
-                       failed_projects=aggregate["metadata"]["failed_projects"])
+                       failed_projects=failed_projects)
     log.info("results written to %s", out)
     return aggregate
 

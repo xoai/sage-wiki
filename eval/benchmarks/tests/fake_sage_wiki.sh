@@ -56,6 +56,18 @@ case "$CMD" in
         echo "warning: embed failed, using BM25-only: dial tcp: timeout" >&2
         echo "$BM25_JSON"
         ;;
+      embed-ratelimit)
+        echo "warning: embed failed, using BM25-only: llm: rate limited (HTTP 429): quota" >&2
+        echo "$BM25_JSON"
+        ;;
+      embed-ratelimit-once)
+        if [ "$n" -le 1 ]; then
+          echo "warning: embed failed, using BM25-only: llm: rate limited (HTTP 429): quota" >&2
+          echo "$BM25_JSON"
+        else
+          echo "$HYBRID_JSON"
+        fi
+        ;;
       embed-warning-once)
         if [ "$n" -le 1 ]; then
           echo "warning: embed failed, using BM25-only: dial tcp: timeout" >&2

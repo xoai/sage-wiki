@@ -15,6 +15,8 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+from benchmarks.common.ratelimit import GLOBAL_GATE, QuotaExhausted
+
 MAX_RETRIES = 5
 JSON_PARSE_RETRIES = 3
 RETRYABLE_STATUS = {408, 409, 429, 500, 502, 503, 504}
@@ -24,6 +26,20 @@ _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 
 class LLMError(Exception):
     """Raised when the LLM call fails permanently (retries exhausted or fatal)."""
+
+
+def _retry_after(exc) -> float | None:
+    """Seconds from a Retry-After header, when the provider sent one."""
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None) or {}
+    for key in ("retry-after", "Retry-After"):
+        value = headers.get(key) if hasattr(headers, "get") else None
+        if value is not None:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+    return None
 
 
 def _real_transport(api_key: str | None = None):
@@ -52,12 +68,13 @@ def _real_transport(api_key: str | None = None):
 
 class LLMClient:
     def __init__(self, model: str, transport=None, workers: int = 8,
-                 retry_base_delay: float = 2.0, role: str = "llm"):
+                 retry_base_delay: float = 2.0, role: str = "llm", gate=None):
         self.model = model
         self.transport = transport or _real_transport()
         self.workers = workers
         self.retry_base_delay = retry_base_delay
         self.role = role
+        self.gate = gate if gate is not None else GLOBAL_GATE
         self._lock = threading.Lock()
         self._usage = {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0}
 
@@ -66,6 +83,7 @@ class LLMClient:
     def _call(self, system: str, user: str, response_format=None) -> str:
         last_exc = None
         for attempt in range(MAX_RETRIES):
+            self.gate.wait()  # respect a cooldown another worker opened
             try:
                 content, usage = self.transport(self.model, system, user,
                                                 response_format=response_format)
@@ -73,13 +91,19 @@ class LLMClient:
                     self._usage["prompt_tokens"] += usage.get("prompt_tokens", 0)
                     self._usage["completion_tokens"] += usage.get("completion_tokens", 0)
                     self._usage["calls"] += 1
+                self.gate.report_success()
                 return content
+            except QuotaExhausted:
+                raise  # the run is over; never downgrade this to LLMError
             except Exception as exc:  # noqa: BLE001 — classified below
                 last_exc = exc
                 status = getattr(exc, "status_code", None)
                 if status is not None and status not in RETRYABLE_STATUS:
                     raise LLMError(f"{self.role} call failed (status {status}): {exc}") from exc
-                if attempt < MAX_RETRIES - 1:
+                if status == 429:
+                    # Shared backpressure: pause every worker, honor Retry-After.
+                    self.gate.report_limit(retry_after=_retry_after(exc))
+                elif attempt < MAX_RETRIES - 1:
                     time.sleep(self.retry_base_delay * (2 ** attempt))
         raise LLMError(f"{self.role} call failed after {MAX_RETRIES} attempts: {last_exc}") from last_exc
 

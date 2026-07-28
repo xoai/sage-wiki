@@ -18,9 +18,17 @@ from benchmarks.common.sagewiki import (
 FAKE = Path(__file__).parent / "fake_sage_wiki.sh"
 
 
+def fast_gate():
+    """Real gate semantics, zero wall-clock — unit tests must never sleep."""
+    from benchmarks.common.ratelimit import RateLimitGate
+    return RateLimitGate(base_delay=0.0, max_delay=0.0, give_up_after=1e9,
+                         sleep=lambda s: None, jitter=lambda: 0.0)
+
+
 @pytest.fixture()
 def backend(tmp_path):
-    return SageWikiBackend(binary=str(FAKE), root=tmp_path / "projects")
+    return SageWikiBackend(binary=str(FAKE), root=tmp_path / "projects",
+                           gate=fast_gate())
 
 
 def set_fixture(tmp_path, monkeypatch, name):
@@ -197,3 +205,49 @@ class TestNoopCompileGuard:
         (backend.project_dir("conv0") / ".compiled").write_text("3")
         with pytest.raises(CompileError, match="marker present but project is"):
             backend.compile("conv0")
+
+
+class TestSearchRateLimitDegrade:
+    """A rate-limited embedder degrades search to BM25-only with exit 0 — the
+    2026-07-28 parity-run failure. Retries must back off through the shared
+    gate instead of firing instantly and giving up."""
+
+    def test_rate_limit_degrade_reports_to_gate_and_retries(self, backend, tmp_path, monkeypatch):
+        from benchmarks.common.ratelimit import RateLimitGate
+        events = {"limit": 0, "wait": 0}
+
+        class SpyGate(RateLimitGate):
+            def wait(self):
+                events["wait"] += 1
+
+            def report_limit(self, retry_after=None):
+                events["limit"] += 1
+                return 0.0
+
+        backend.gate = SpyGate()
+        set_fixture(tmp_path, monkeypatch, "embed-ratelimit")
+        backend.init_project("conv0")
+        with pytest.raises(DegradedSearchError, match="rate"):
+            backend.search("conv0", "q", limit=10)
+        assert events["limit"] >= 1      # provider pressure was reported
+        assert events["wait"] >= 1       # and waited on before retrying
+
+    def test_rate_limit_degrade_gets_more_attempts_than_permanent_degrade(
+            self, backend, tmp_path, monkeypatch):
+        set_fixture(tmp_path, monkeypatch, "embed-ratelimit")
+        backend.init_project("conv0")
+        with pytest.raises(DegradedSearchError):
+            backend.search("conv0", "q", limit=10)
+        rate_calls = int((tmp_path / "fake-state" / "search-calls").read_text())
+
+        set_fixture(tmp_path, monkeypatch, "bm25-only")   # permanent (config) degrade
+        backend.init_project("conv1")
+        with pytest.raises(DegradedSearchError):
+            backend.search("conv1", "q", limit=10)
+        perm_calls = int((tmp_path / "fake-state" / "search-calls").read_text()) - rate_calls
+        assert rate_calls > perm_calls
+
+    def test_transient_rate_limit_recovers(self, backend, tmp_path, monkeypatch):
+        set_fixture(tmp_path, monkeypatch, "embed-ratelimit-once")
+        backend.init_project("conv0")
+        assert len(backend.search("conv0", "q", limit=10).results) == 2
