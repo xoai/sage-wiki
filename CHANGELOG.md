@@ -11,6 +11,12 @@
   `fs.ErrPermission`. The predicate checked only those, so the most common
   Windows contention error fell through as fatal in both the rename retry and
   the new read retry.
+- **Postgres migration tests no longer depend on a pre-migrated database.**
+  `TestMigrationV3/V4/V5` clone the base database and then simulate a
+  downgrade, but did so *before* creating any schema — so they only passed
+  against a long-lived developer database that had accumulated the schema
+  from earlier runs, and failed on every fresh CI Postgres with
+  `relation "relations" does not exist`. They now create the schema first.
 - **CI: the Postgres job now creates the pgvector extension explicitly.** It
   had never passed since being added — sage-wiki refuses to `CREATE EXTENSION`
   itself by design, and the image's initdb hook was not reliably creating it,

@@ -42,6 +42,18 @@ func TestMigrationV3EvidenceColumns(t *testing.T) {
 	}
 	defer raw.Close()
 
+	// Create the schema first: these tests clone the base database, which is
+	// empty on a fresh CI Postgres. Simulating a downgrade against a database
+	// that was never migrated fails on the first ALTER/DELETE. (This passed
+	// locally for whoever ran it against a long-lived dev database that had
+	// accumulated the schema from earlier runs — the base having schema was
+	// an accident of local state, never a guarantee.)
+	seed, err := Open(testDSN, store.OpenOptions{Mode: store.ModeWriter, VectorDimension: 3})
+	if err != nil {
+		t.Fatalf("seed schema: %v", err)
+	}
+	seed.Close()
+
 	// Simulate a pre-v3 database: drop the six columns and roll the version
 	// back, then let Open migrate forward. ADD COLUMN IF NOT EXISTS is
 	// re-runnable, but the version row is what the runner keys off.
