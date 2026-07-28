@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/store"
 )
@@ -194,6 +195,9 @@ func buildGraphLeg(ont store.OntologyStore, query string, limit int, weightOverr
 			continue
 		}
 		leg.hits = append(leg.hits, legHit{docID: "concept:" + n.id})
+	}
+	if len(leg.hits) > 0 {
+		log.Debug("graph channel", "seeds", len(candidates), "entities", len(best), "hits", len(leg.hits), "alias_seeds", len(aliases))
 	}
 	return leg, aliases
 }
