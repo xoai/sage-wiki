@@ -39,6 +39,9 @@ type ChunkStore interface {
 	ListAll() ([]ChunkEntryWithDoc, error)
 	// M1 (20260728-search-upgrade): hydration of vector-only chunk hits.
 	GetChunksMeta(ids []string) (map[string]ChunkEntry, error)
+	// M5: the doc IDs currently carrying chunks — reindex needs them to
+	// re-chunk doc families that have no article file on disk (src: docs).
+	ListDocIDs() ([]string, error)
 }
 
 type VectorStore interface {

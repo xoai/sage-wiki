@@ -536,7 +536,7 @@ func setupStores(projectDir string, run *compileRun) error {
 	// Backfill chunk index if needed (after migration, before first compile)
 	if run.chunkStore.NeedsBackfill(run.memStore) {
 		log.Info("chunk index empty with existing articles — running backfill")
-		if err := BackfillChunks(projectDir, cfg.Output, cfg.Search.ChunkSizeOrDefault(), cfg.Search.ChunkOverlapOrDefault(), run.chunkStore, run.vecStore, run.embedder, db); err != nil {
+		if _, err := BackfillChunks(projectDir, cfg.Output, cfg.Search.ChunkSizeOrDefault(), cfg.Search.ChunkOverlapOrDefault(), run.chunkStore, run.vecStore, run.embedder, db); err != nil {
 			log.Warn("chunk backfill failed", "error", err)
 		}
 	}

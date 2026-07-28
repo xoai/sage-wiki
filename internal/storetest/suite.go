@@ -3,6 +3,7 @@ package storetest
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -84,6 +85,7 @@ func EntriesConformance(new BackendFactory) func(*testing.T) {
 		if empty, err := es.GetMany(nil); err != nil || len(empty) != 0 {
 			t.Errorf("GetMany(nil) = %v, %v; want empty, nil", empty, err)
 		}
+
 		hits, err := es.Search("zebra", nil, 10)
 		if err != nil || len(hits) != 2 {
 			t.Fatalf("Search: %v %v", hits, err)
@@ -191,6 +193,25 @@ func EntriesConformance(new BackendFactory) func(*testing.T) {
 		n, _ := es.Count()
 		if n != 1 {
 			t.Errorf("Count = %d, want 1", n)
+		}
+
+		// Past the driver bind limit the IN clause must be batched: an
+		// unbatched clause errors the whole call, and result hydration —
+		// which asks for every result doc at once — would return nothing.
+		// Last in this suite because it adds an entry.
+		bulk := make([]string, 1200)
+		for i := range bulk {
+			bulk[i] = fmt.Sprintf("src:bulk%d.md", i)
+		}
+		if err := es.Add(store.Entry{ID: bulk[900], Content: "bulk hydration probe"}); err != nil {
+			t.Fatal(err)
+		}
+		big, err := es.GetMany(bulk)
+		if err != nil {
+			t.Fatalf("GetMany(1200 ids): %v", err)
+		}
+		if len(big) != 1 || big[bulk[900]] == nil {
+			t.Errorf("GetMany(1200 ids) = %d entries, want the 1 that exists", len(big))
 		}
 	}
 }

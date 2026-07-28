@@ -23,11 +23,15 @@
 
 ### Added
 
-- **`sage-wiki reindex`** rebuilds the chunk index from the compiled
-  articles on disk using the current chunking config — chunk FTS rows and
-  chunk vectors are replaced per article (delete-then-insert), and no LLM
-  article writing happens. `--no-embed` skips regenerating chunk
-  embeddings.
+- **`sage-wiki reindex`** rebuilds the chunk index from the documents on
+  disk using the current chunking config — compiled articles
+  (`concepts/`, `summaries/`, `outputs/`) and chunk-indexed raw sources
+  alike, replaced per document (delete-then-insert). No LLM article
+  writing happens. Re-chunking changes chunk IDs, so old chunk vectors
+  cannot be kept: without an embedding provider the command stops rather
+  than empty the chunk-vector leg, and `--drop-chunk-vectors` rebuilds the
+  text index anyway (chunk-level vector search stays off until the next
+  `compile --re-embed`).
 - **`search.chunk_overlap_tokens`** (default **0**, recommended opt-in
   **80**, max half of `chunk_size`): each chunk after the first repeats the
   tail of its predecessor, so a fact straddling a chunk boundary is
@@ -39,6 +43,20 @@
 
 ### Changed
 
+- **Every search surface now runs the unified retrieval pipeline**
+  (MCP `wiki_search`, CLI `search`, web `/api/search`, and the TUI —
+  `sage-wiki query` moved in M2): chunk-level and document-level hits fuse
+  with the configured weights, the ontology graph contributes as a third
+  channel, and dated documents get the recency tie-breaker. **Result
+  ordering changes on all of them.** Results gain `FinalScore`,
+  `GraphRank`, `SourceDate` and `AliasOf` (web: `source_date`) alongside
+  the existing fields, and MCP/CLI gain per-call `channels`, `expand` and
+  `rerank` options — the LLM stages stay OFF unless asked for. The TUI ran
+  BM25-only with default weights before; it now uses the configured
+  weights, vectors and graph like every other surface.
+- **`search.pipeline: legacy`** pins any surface back to the previous
+  doc-level path if the new ranking is disruptive; the value is validated,
+  so a typo is rejected rather than silently resolved to `unified`.
 - **Result hydration is a single batched query** (`EntryStore.GetMany`)
   instead of one lookup per result document — it was the unified
   pipeline's dominant per-query cost, and removing it puts the unified
@@ -46,7 +64,8 @@
   latency on a 1k-entry corpus despite searching both chunks and
   documents.
 - **Search entry points now apply the `trust.include_outputs` rule**
-  (MCP `wiki_search`, CLI `search`, web `/api/search`, TUI): `output:`
+  (MCP `wiki_search`, CLI `search`, web `/api/search`, TUI, and
+  `hub search`): `output:`
   documents — LLM-generated answers auto-filed back into the wiki — are
   excluded unless the mode admits them (`true` always, `verified` only
   once confirmed). The default is `false`, so by default these surfaces

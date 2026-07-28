@@ -209,13 +209,21 @@ index without adding recall.
 sage-wiki reindex
 ```
 
-`reindex` re-chunks every compiled article on disk with the current
-`chunk_size` and `chunk_overlap_tokens`, replacing the chunk FTS rows and
-chunk vectors (no LLM article writing happens; pass `--no-embed` to skip
-regenerating chunk embeddings). Compiling normally after a config change does
-NOT re-chunk articles that did not change — the index would mix the old and
-new chunkings until every article happened to be rewritten. Change the value
-and reindex together.
+`reindex` re-chunks every document that carries chunks — compiled articles in
+`concepts/`, `summaries/` and `outputs/`, plus raw sources indexed as
+`src:<path>` — with the current `chunk_size` and `chunk_overlap_tokens`,
+replacing the chunk FTS rows and chunk vectors. No LLM article writing
+happens; the only API cost is re-embedding the new chunks.
+
+Re-chunking changes chunk IDs, so the old chunk vectors cannot be carried
+over. Without a working embedding provider the command stops rather than
+leave the chunk-vector leg empty; `--drop-chunk-vectors` rebuilds the text
+index anyway and leaves chunk-level vector search off until the next
+`sage-wiki compile --re-embed`.
+
+Compiling normally after a config change does NOT re-chunk documents that did
+not change — the index would mix the old and new chunkings until every
+document happened to be rewritten. Change the value and reindex together.
 
 ## Cost
 

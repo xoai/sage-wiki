@@ -66,11 +66,11 @@ func TestRunReindexAppliesConfiguredOverlap(t *testing.T) {
 	projectDir, outputFormat = dir, "json"
 	defer func() { projectDir, outputFormat = oldDir, oldFormat }()
 
-	// Chunk text is the subject here; skip the embedder probe.
-	if err := reindexCmd.Flags().Set("no-embed", "true"); err != nil {
+	// Chunk text is the subject here; no embedder in the fixture.
+	if err := reindexCmd.Flags().Set("drop-chunk-vectors", "true"); err != nil {
 		t.Fatal(err)
 	}
-	defer reindexCmd.Flags().Set("no-embed", "false")
+	defer reindexCmd.Flags().Set("drop-chunk-vectors", "false")
 
 	runReindexJSON := func(t *testing.T) map[string]any {
 		t.Helper()
@@ -169,5 +169,41 @@ func TestRunReindexFailsOnBadConfig(t *testing.T) {
 
 	if err := runReindex(reindexCmd, nil); err == nil {
 		t.Fatal("runReindex succeeded with an unloadable config, want error")
+	}
+}
+
+// stubEmbedder is a non-nil embedder that never dials.
+type stubEmbedder struct{ v []float32 }
+
+func (s stubEmbedder) Embed(string) ([]float32, error) { return s.v, nil }
+func (s stubEmbedder) Dimensions() int                 { return len(s.v) }
+func (s stubEmbedder) Name() string                    { return "stub" }
+
+// The CRITICAL half of the reindex contract: re-chunking replaces chunk IDs,
+// so the rebuild drops each document's chunk vectors on the way through. With
+// no embedder to rebuild them, the command must refuse — the alternative is a
+// silent, exit-0 wipe of the entire chunk-vector leg.
+func TestReindexEmbedderGuard(t *testing.T) {
+	fake := stubEmbedder{v: []float32{0.1, 0.2}}
+
+	if _, err := reindexEmbedder(nil, false); err == nil {
+		t.Error("no embedder and no --drop-chunk-vectors must be an error")
+	} else if !strings.Contains(err.Error(), "--drop-chunk-vectors") {
+		t.Errorf("error must name the escape hatch, got: %v", err)
+	}
+
+	got, err := reindexEmbedder(fake, false)
+	if err != nil || got == nil {
+		t.Errorf("a working embedder must proceed: %v %v", got, err)
+	}
+
+	got, err = reindexEmbedder(fake, true)
+	if err != nil || got != nil {
+		t.Errorf("--drop-chunk-vectors must proceed WITHOUT an embedder: %v %v", got, err)
+	}
+
+	got, err = reindexEmbedder(nil, true)
+	if err != nil || got != nil {
+		t.Errorf("--drop-chunk-vectors with no embedder must proceed: %v %v", got, err)
 	}
 }

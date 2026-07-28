@@ -69,3 +69,34 @@ func validBaseConfig() *Config {
 		Models:  ModelsConfig{Summarize: "m", Extract: "m", Write: "m", Lint: "m", Query: "m"},
 	}
 }
+
+// The pipeline switch is a rollback lever: a typo must be rejected, not
+// silently resolved to the new path it was meant to roll back from.
+func TestPipelineValidation(t *testing.T) {
+	for _, tt := range []struct {
+		value   string
+		wantErr bool
+		resolve string
+	}{
+		{"", false, "unified"},
+		{"unified", false, "unified"},
+		{"legacy", false, "legacy"},
+		{"legcy", true, "unified"},
+		{"Legacy", true, "unified"},
+	} {
+		t.Run("value="+tt.value, func(t *testing.T) {
+			c := validBaseConfig()
+			c.Search.Pipeline = tt.value
+			err := c.Validate()
+			if tt.wantErr && err == nil {
+				t.Fatalf("Validate() = nil, want an error for %q", tt.value)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("Validate() = %v, want nil", err)
+			}
+			if got := c.Search.PipelineOrDefault(); got != tt.resolve {
+				t.Errorf("PipelineOrDefault() = %q, want %q", got, tt.resolve)
+			}
+		})
+	}
+}

@@ -133,6 +133,25 @@ func (s *chunkStore) NeedsBackfill(memStore store.Countable) bool {
 	return cc == 0
 }
 
+// ListDocIDs — pg twin: distinct doc IDs that currently have chunks.
+func (s *chunkStore) ListDocIDs() ([]string, error) {
+	rows, err := s.b.pool.Query("SELECT DISTINCT doc_id FROM chunks_meta ORDER BY doc_id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 func (s *chunkStore) ListAll() ([]store.ChunkEntryWithDoc, error) {
 	rows, err := s.b.pool.Query(
 		"SELECT chunk_id, doc_id, chunk_index, heading, content, start_offset, end_offset FROM chunks_meta ORDER BY doc_id, chunk_index")

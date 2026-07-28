@@ -3,6 +3,7 @@ package extract
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // longDoc builds a multi-paragraph document that reliably splits into
@@ -108,6 +109,41 @@ func TestChunkTextOverlapNegativeIsOff(t *testing.T) {
 	for i := range base {
 		if neg[i].Text != base[i].Text {
 			t.Errorf("chunk %d differs with negative overlap", i)
+		}
+	}
+}
+
+// A CJK paragraph has no interior whitespace, so the word-boundary trim has
+// nothing to find and a raw byte cut would land mid-rune — invalid UTF-8 in
+// the chunk index, and a mangled embedding request (Go's JSON encoder
+// substitutes U+FFFD, so the vector stops matching the stored text).
+func TestChunkTextOverlapKeepsValidUTF8OnCJK(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 60; i++ {
+		b.WriteString("検索品質はチャンク境界の位置に依存し、境界をまたぐ事実は失われやすい。")
+	}
+	// Two paragraphs, each internally whitespace-free.
+	text := b.String() + "\n\n" + b.String()
+
+	chunks := ChunkText(text, 100, 20)
+	if len(chunks) < 2 {
+		t.Fatalf("fixture produced %d chunks, want >= 2", len(chunks))
+	}
+	for i, c := range chunks {
+		if !utf8.ValidString(c.Text) {
+			t.Errorf("chunk %d is not valid UTF-8", i)
+		}
+	}
+	for i := 1; i < len(chunks); i++ {
+		prefix, _, found := strings.Cut(chunks[i].Text, "\n")
+		if !found || prefix == "" {
+			continue // no overlap prefix on this boundary
+		}
+		if !utf8.ValidString(prefix) {
+			t.Errorf("chunk %d overlap prefix is not valid UTF-8", i)
+		}
+		if !strings.HasSuffix(chunks[i-1].Text, prefix) {
+			t.Errorf("chunk %d prefix is not a tail of its predecessor", i)
 		}
 	}
 }

@@ -371,8 +371,8 @@ func (s SearchConfig) ChunkOverlapOrDefault() int {
 }
 
 // PipelineOrDefault resolves the adapter pipeline: "unified" (default)
-// or "legacy"; any other value falls back to unified with a warning at
-// the call sites' Load-time validation.
+// or "legacy". Any other value is rejected by Validate — a rollback switch
+// that silently ignores a typo is worse than no switch at all.
 func (s SearchConfig) PipelineOrDefault() string {
 	if s.Pipeline == "legacy" {
 		return "legacy"
@@ -1008,6 +1008,9 @@ func (c *Config) Validate() error {
 		if !typeNameRe.MatchString(et.Name) {
 			return fmt.Errorf("config: ontology.entity_types: invalid name %q (must match [a-z][a-z0-9_]*)", et.Name)
 		}
+	}
+	if c.Search.Pipeline != "" && c.Search.Pipeline != "unified" && c.Search.Pipeline != "legacy" {
+		return fmt.Errorf("config: search.pipeline must be \"unified\" or \"legacy\", got %q", c.Search.Pipeline)
 	}
 	if c.Search.ChunkSize != 0 && (c.Search.ChunkSize < 100 || c.Search.ChunkSize > 5000) {
 		return fmt.Errorf("config: search.chunk_size must be 100-5000, got %d", c.Search.ChunkSize)

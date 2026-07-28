@@ -175,6 +175,25 @@ func (s *ChunkStore) NeedsBackfill(memStore Countable) bool {
 
 // ListAll returns every chunk, fully populated, ordered for determinism
 // (P2-1: absorbs reembed's raw chunks_meta scan). Unbounded by design.
+// ListDocIDs returns the distinct doc IDs that currently have chunks.
+func (s *ChunkStore) ListDocIDs() ([]string, error) {
+	rows, err := s.db.ReadDB().Query("SELECT DISTINCT doc_id FROM chunks_meta ORDER BY doc_id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 func (s *ChunkStore) ListAll() ([]ChunkEntryWithDoc, error) {
 	rows, err := s.db.ReadDB().Query(
 		"SELECT chunk_id, doc_id, chunk_index, heading, content, start_offset, end_offset FROM chunks_meta ORDER BY doc_id, chunk_index")

@@ -77,6 +77,10 @@ var parityCorpus = []parityDoc{
 // writeParityConfig pins every knob the adapters read, so the golden and the
 // three entry points cannot disagree by reading different defaults.
 func writeParityConfig(t *testing.T, dir, embedURL, includeOutputs string) *config.Config {
+	return writePipelineConfig(t, dir, embedURL, includeOutputs, "unified")
+}
+
+func writePipelineConfig(t *testing.T, dir, embedURL, includeOutputs, pipeline string) *config.Config {
 	t.Helper()
 	cfg := fmt.Sprintf(`version: 1
 project: parity
@@ -104,9 +108,10 @@ search:
   hybrid_weight_vector: 0.3
   hybrid_weight_graph: 0.2
   default_limit: 10
+  pipeline: %s
 trust:
   include_outputs: %s
-`, embedURL, includeOutputs)
+`, embedURL, pipeline, includeOutputs)
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfg), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -147,6 +152,14 @@ func setupParityProject(t *testing.T) string {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(abs, []byte(d.content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Dated docs (ADR-039): V-M3c's entry-point half — every surface must
+	// emit the date it ranks with.
+	for i, d := range parityCorpus {
+		if err := memStore.SetSourceDate(d.id, int64(1700000000+i*86400)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -219,7 +232,35 @@ func ids(docs []search.DocResult) []string {
 	return out
 }
 
-func cliIDs(t *testing.T, dir, query string, limit int, tags []string) []string {
+// row is the comparable projection of a result: everything an adapter could
+// drop or reshape without changing the ID order (V-M5a compares results, not
+// just identities).
+type row struct {
+	ID          string
+	ArticlePath string
+	Tags        string
+	Content     string
+	SourceDate  int64
+	BM25Rank    int
+	VectorRank  int
+	GraphRank   int
+	FinalScore  string
+}
+
+func rows(docs []search.DocResult) []row {
+	out := make([]row, len(docs))
+	for i, d := range docs {
+		out[i] = row{
+			ID: d.ID, ArticlePath: d.ArticlePath, Tags: strings.Join(d.Tags, "|"),
+			Content: d.Content, SourceDate: d.SourceDate,
+			BM25Rank: d.BM25Rank, VectorRank: d.VectorRank, GraphRank: d.GraphRank,
+			FinalScore: fmt.Sprintf("%.6f", d.FinalScore),
+		}
+	}
+	return out
+}
+
+func cliDocs(t *testing.T, dir, query string, limit int, tags []string) []search.DocResult {
 	t.Helper()
 	oldDir, oldFormat := projectDir, outputFormat
 	projectDir, outputFormat = dir, "json"
@@ -267,10 +308,10 @@ func cliIDs(t *testing.T, dir, query string, limit int, tags []string) []string 
 	if !payload.Ok {
 		t.Fatalf("CLI reported failure: %s", out)
 	}
-	return ids(payload.Data)
+	return payload.Data
 }
 
-func mcpIDs(t *testing.T, dir, query string, limit int, tags []string) []string {
+func mcpDocs(t *testing.T, dir, query string, limit int, tags []string) []search.DocResult {
 	t.Helper()
 	srv, err := wikimcp.NewServer(dir)
 	if err != nil {
@@ -299,10 +340,19 @@ func mcpIDs(t *testing.T, dir, query string, limit int, tags []string) []string 
 	if err := json.Unmarshal([]byte(text.Text), &payload); err != nil {
 		t.Fatalf("decode MCP output %q: %v", text.Text, err)
 	}
-	return ids(payload.Results)
+	return payload.Results
 }
 
-func webIDs(t *testing.T, dir, query string, limit int, tags []string) []string {
+// webHit is what the web surface exposes — fewer fields than DocResult, so
+// parity there is asserted on the fields it does emit.
+type webHit struct {
+	ID         string  `json:"id"`
+	Path       string  `json:"path"`
+	Score      float64 `json:"score"`
+	SourceDate int64   `json:"source_date"`
+}
+
+func webHits(t *testing.T, dir, query string, limit int, tags []string) []webHit {
 	t.Helper()
 	srv, err := web.NewWebServer(dir)
 	if err != nil {
@@ -321,18 +371,12 @@ func webIDs(t *testing.T, dir, query string, limit int, tags []string) []string 
 		t.Fatalf("web /api/search: %d %s", rec.Code, rec.Body.String())
 	}
 	var payload struct {
-		Results []struct {
-			ID string `json:"id"`
-		} `json:"results"`
+		Results []webHit `json:"results"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode web output %q: %v", rec.Body.String(), err)
 	}
-	out := make([]string, len(payload.Results))
-	for i, r := range payload.Results {
-		out[i] = r.ID
-	}
-	return out
+	return payload.Results
 }
 
 // V-M5a: every entry point returns exactly what search.Run returns, in the
@@ -410,19 +454,85 @@ func TestAdapterParityWithSearchRun(t *testing.T) {
 				}
 			}
 
+			wantRows := rows(want)
+			if wantRows[0].SourceDate == 0 {
+				t.Fatal("golden carries no source date — V-M3c cannot be asserted")
+			}
+
 			for _, adapter := range []struct {
 				name string
-				fn   func(*testing.T, string, string, int, []string) []string
+				fn   func(*testing.T, string, string, int, []string) []search.DocResult
 			}{
-				{"cli", cliIDs},
-				{"mcp", mcpIDs},
-				{"web", webIDs},
+				{"cli", cliDocs},
+				{"mcp", mcpDocs},
 			} {
-				got := adapter.fn(t, dir, tc.query, tc.limit, tc.tags)
-				if strings.Join(got, ",") != strings.Join(wantIDs, ",") {
-					t.Errorf("%s = %v, want %v (search.Run)", adapter.name, got, wantIDs)
+				got := rows(adapter.fn(t, dir, tc.query, tc.limit, tc.tags))
+				if fmt.Sprint(got) != fmt.Sprint(wantRows) {
+					t.Errorf("%s rows differ from search.Run:\n got %+v\nwant %+v", adapter.name, got, wantRows)
+				}
+			}
+
+			// Web emits a reduced shape; assert every field it does emit,
+			// including the source date and the output-dir-stripped path.
+			gotWeb := webHits(t, dir, tc.query, tc.limit, tc.tags)
+			if len(gotWeb) != len(want) {
+				t.Fatalf("web returned %d results, want %d", len(gotWeb), len(want))
+			}
+			for i, h := range gotWeb {
+				w := want[i]
+				if h.ID != w.ID {
+					t.Errorf("web[%d].id = %s, want %s", i, h.ID, w.ID)
+				}
+				if wantPath := strings.TrimPrefix(w.ArticlePath, "wiki/"); h.Path != wantPath {
+					t.Errorf("web[%d].path = %s, want %s", i, h.Path, wantPath)
+				}
+				if h.SourceDate != w.SourceDate {
+					t.Errorf("web[%d].source_date = %d, want %d", i, h.SourceDate, w.SourceDate)
+				}
+				if fmt.Sprintf("%.6f", h.Score) != fmt.Sprintf("%.6f", w.FinalScore) {
+					t.Errorf("web[%d].score = %f, want %f", i, h.Score, w.FinalScore)
 				}
 			}
 		})
+	}
+}
+
+// T5.1's rollback switch has to work in BOTH directions: `pipeline: legacy`
+// must actually take every surface off the unified path, and the surfaces must
+// still agree with each other there. A switch that only ever selects the new
+// path is not a rollback.
+func TestLegacyPipelinePinServesEverySurface(t *testing.T) {
+	dir := setupParityProject(t)
+	embedSrv := fakeEmbedServer(t)
+	const query = "wiki search rank"
+
+	cfg := writePipelineConfig(t, dir, embedSrv.URL, "true", "legacy")
+	if cfg.Search.PipelineOrDefault() != "legacy" {
+		t.Fatalf("PipelineOrDefault = %q, want legacy", cfg.Search.PipelineOrDefault())
+	}
+
+	cli := ids(cliDocs(t, dir, query, 10, nil))
+	mcp := ids(mcpDocs(t, dir, query, 10, nil))
+	var web []string
+	for _, h := range webHits(t, dir, query, 10, nil) {
+		web = append(web, h.ID)
+	}
+	if len(cli) == 0 {
+		t.Fatal("legacy pin returned no CLI results")
+	}
+	if strings.Join(mcp, ",") != strings.Join(cli, ",") {
+		t.Errorf("legacy MCP = %v, want CLI %v", mcp, cli)
+	}
+	if strings.Join(web, ",") != strings.Join(cli, ",") {
+		t.Errorf("legacy web = %v, want CLI %v", web, cli)
+	}
+
+	// And the pin must actually be the legacy path, not unified-by-accident:
+	// legacy is doc-level only, so it carries none of the unified additions.
+	for _, d := range cliDocs(t, dir, query, 10, nil) {
+		if d.FinalScore != 0 || d.GraphRank != 0 || d.SourceDate != 0 {
+			t.Errorf("legacy result carries unified-only fields: %+v", d)
+			break
+		}
 	}
 }

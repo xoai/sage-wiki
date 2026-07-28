@@ -6,6 +6,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
@@ -69,6 +70,7 @@ func New(projectDir string, cfg *config.Config, db store.DBHandle) Model {
 			Mem:                  memStore,
 			Chunks:               memory.NewChunkStore(db),
 			Vec:                  vecStore,
+			Embedder:             embed.NewFromConfig(cfg), // without it search.Run runs no vector leg at all
 			BM25Weight:           cfg.Search.HybridWeightBM25,
 			VectorWeight:         cfg.Search.HybridWeightVector,
 			Ont:                  ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes)),

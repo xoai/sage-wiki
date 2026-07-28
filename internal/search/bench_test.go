@@ -4,7 +4,10 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/xoai/sage-wiki/internal/ontology"
 
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/memory"
@@ -55,7 +58,19 @@ func benchCorpus(b testing.TB) (Deps, *hybrid.Searcher) {
 			b.Fatal(err)
 		}
 	}
-	return Deps{Mem: ms, Chunks: cs, Vec: vs, Embedder: fixedEmbedder{v: []float32{0.5, 0.5, 0.5}}},
+	// Shaped like a shipped adapter, not like a minimal facade call: every
+	// entry point passes a non-nil IncludeDoc (trust.IncludePredicate always
+	// returns a closure) and an ontology store, and both change the work Run
+	// does — the trust predicate triples the pipeline limit, the ontology
+	// store adds an EntityCount probe per query. Measuring without them
+	// would benchmark a configuration that ships nowhere.
+	ont := ontology.NewStore(db, nil, nil)
+	return Deps{
+			Mem: ms, Chunks: cs, Vec: vs,
+			Embedder:   fixedEmbedder{v: []float32{0.5, 0.5, 0.5}},
+			Ont:        ont,
+			IncludeDoc: func(docID string) bool { return !strings.HasPrefix(docID, "output:") },
+		},
 		hybrid.NewSearcher(ms, vs)
 }
 

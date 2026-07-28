@@ -136,6 +136,9 @@ search:
   # rerank: true              # LLM re-ranking for Q&A (default: true)
   # rerank_min_coverage: 0.5  # min fraction of candidates the LLM must score for the rerank blend to apply; below it, RRF order is kept (default: 0.5)
   # chunk_size: 800           # tokens per chunk for indexing (100-5000)
+  # pipeline: unified       # search pipeline for MCP/CLI/web/TUI: "unified" (default,
+  #                          # chunk+doc fusion, graph channel, recency) or "legacy"
+  #                          # (doc-level only) as a rollback. Any other value is rejected.
   # chunk_overlap_tokens: 80 # tokens each chunk repeats from its predecessor
   #                          # (default 0 = off; max half of chunk_size).
   #                          # Applies only on `sage-wiki reindex` — change the

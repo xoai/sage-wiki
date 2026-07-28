@@ -193,7 +193,7 @@ func init() {
 	compileCmd.Flags().Bool("prune", false, "Delete orphaned articles when their sole source is removed")
 
 	// Reindex flags
-	reindexCmd.Flags().Bool("no-embed", false, "Rebuild chunk FTS rows without regenerating chunk embeddings")
+	reindexCmd.Flags().Bool("drop-chunk-vectors", false, "Rebuild the text index without an embedder — chunk vectors are deleted, not rebuilt")
 
 	// Serve flags
 	serveCmd.Flags().String("transport", "stdio", "Transport: stdio or sse")
@@ -768,7 +768,16 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		rerank, _ := cmd.Flags().GetBool("rerank")
 		var channels []search.Channel
 		if channelsFlag != "" {
-			parsed, unknown := search.ParseChannels(strings.Split(channelsFlag, ","))
+			// Trim like the MCP adapter's splitTags — `--channels "bm25, vector"`
+			// must not be a hard error on one surface and fine on the other.
+			raw := strings.Split(channelsFlag, ",")
+			names := make([]string, 0, len(raw))
+			for _, c := range raw {
+				if c = strings.TrimSpace(c); c != "" {
+					names = append(names, c)
+				}
+			}
+			parsed, unknown := search.ParseChannels(names)
 			if len(unknown) > 0 {
 				return fmt.Errorf("unknown channels: %v (valid: bm25, vector, graph)", unknown)
 			}

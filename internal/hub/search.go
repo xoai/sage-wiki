@@ -10,9 +10,10 @@ import (
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/memory"
+	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/storedial"
-	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -135,7 +136,29 @@ func searchWithStores(searcher *hybrid.Searcher, cfg *config.Config, query strin
 		vecW = cfg.Search.HybridWeightVector
 	}
 
-	return searcher.Search(hybrid.SearchOpts{
+	hits, err := searcher.Search(hybrid.SearchOpts{
 		Query: query, Limit: limit, BM25Weight: bm25W, VectorWeight: vecW,
 	}, queryVec)
+	if err != nil {
+		return nil, err
+	}
+
+	// Hub search is the sixth search surface and still on the legacy doc
+	// path, but the trust rule is not the pipeline's — it is the wiki's.
+	// Without this, `hub search` returns unverified `output:` answers that
+	// every other surface (and Q&A itself) refuses to show. Mode "verified"
+	// needs a per-project trust store this cross-project reader does not
+	// open, so it is treated as the conservative "false" here.
+	mode := "false"
+	if cfg != nil {
+		mode = cfg.Trust.IncludeOutputsMode()
+	}
+	include := trust.IncludePredicate(mode, nil)
+	kept := hits[:0]
+	for _, h := range hits {
+		if include(h.ID) {
+			kept = append(kept, h)
+		}
+	}
+	return kept, nil
 }

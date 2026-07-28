@@ -85,7 +85,7 @@ func TestEntryPointLLMStagesDefaultOff(t *testing.T) {
 
 	t.Run("cli", func(t *testing.T) {
 		atomic.StoreInt64(&calls, 0)
-		if got := cliIDs(t, dir, query, 10, nil); len(got) == 0 {
+		if got := cliDocs(t, dir, query, 10, nil); len(got) == 0 {
 			t.Fatal("CLI returned no results")
 		}
 		if n := atomic.LoadInt64(&calls); n != 0 {
@@ -95,7 +95,7 @@ func TestEntryPointLLMStagesDefaultOff(t *testing.T) {
 
 	t.Run("mcp", func(t *testing.T) {
 		atomic.StoreInt64(&calls, 0)
-		if got := mcpIDs(t, dir, query, 10, nil); len(got) == 0 {
+		if got := mcpDocs(t, dir, query, 10, nil); len(got) == 0 {
 			t.Fatal("MCP returned no results")
 		}
 		if n := atomic.LoadInt64(&calls); n != 0 {
@@ -105,7 +105,7 @@ func TestEntryPointLLMStagesDefaultOff(t *testing.T) {
 
 	t.Run("web", func(t *testing.T) {
 		atomic.StoreInt64(&calls, 0)
-		if got := webIDs(t, dir, query, 10, nil); len(got) == 0 {
+		if got := webHits(t, dir, query, 10, nil); len(got) == 0 {
 			t.Fatal("web returned no results")
 		}
 		if n := atomic.LoadInt64(&calls); n != 0 {

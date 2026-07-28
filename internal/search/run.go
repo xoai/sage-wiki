@@ -218,12 +218,21 @@ func Run(deps Deps, req Request) (Response, error) {
 		}
 	}
 
-	// Docs shaping: attach the entry metadata adapters emit.
+	// Docs shaping: attach the entry metadata adapters emit. Docs
+	// granularity also restores the DOCUMENT's text — the chunk leg leaves
+	// ChunkText holding the best-matching passage, and the entry points
+	// have always returned whole entries there (their JSON is the legacy
+	// doc shape). Chunks granularity keeps the passage; that is its point.
 	if entriesByDoc != nil {
 		for i := range results {
-			if e := entriesByDoc[results[i].DocID]; e != nil {
-				results[i].ArticlePath = e.ArticlePath
-				results[i].Tags = e.Tags
+			e := entriesByDoc[results[i].DocID]
+			if e == nil {
+				continue
+			}
+			results[i].ArticlePath = e.ArticlePath
+			results[i].Tags = e.Tags
+			if req.Granularity == Docs && e.Content != "" {
+				results[i].ChunkText = e.Content
 			}
 		}
 	}
@@ -295,13 +304,28 @@ func fetchDocEntries(mem store.EntryStore, results []SearchResult) map[string]*s
 		ids = append(ids, r.DocID)
 	}
 	out, err := mem.GetMany(ids)
-	if err != nil {
-		// One failed batch is not a reason to drop every doc: hard filters
-		// treat an unhydrated doc as unmatched, so an empty map degrades
-		// loudly (warning + no results) rather than silently mis-filtering.
-		log.Warn("entry lookup failed for result docs — hard filters treat them as unmatched",
-			"docs", len(ids), "error", err)
-		return map[string]*store.Entry{}
+	if err == nil {
+		return out
+	}
+	// A failed batch would otherwise unhydrate EVERY doc at once — hard tag
+	// filters treat an unhydrated doc as unmatched, so one transient error
+	// would empty the whole result set. Fall back to per-doc lookups so the
+	// blast radius is the docs that actually fail.
+	log.Warn("batched entry lookup failed — falling back to per-doc lookups", "docs", len(ids), "error", err)
+	out = make(map[string]*store.Entry, len(ids))
+	failed := 0
+	for _, id := range ids {
+		e, err := mem.Get(id)
+		if err != nil {
+			failed++
+			continue
+		}
+		if e != nil {
+			out[id] = e
+		}
+	}
+	if failed > 0 {
+		log.Warn("entry lookup failed for some result docs — hard filters treat them as unmatched", "failed", failed)
 	}
 	return out
 }

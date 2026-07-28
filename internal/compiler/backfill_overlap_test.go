@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,13 @@ import (
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
+
+// backfillEmbedder is a deterministic non-nil embedder.
+type backfillEmbedder struct{}
+
+func (backfillEmbedder) Embed(string) ([]float32, error) { return []float32{0.1, 0.2, 0.3}, nil }
+func (backfillEmbedder) Dimensions() int                 { return 3 }
+func (backfillEmbedder) Name() string                    { return "stub" }
 
 // writeLongArticle drops a concept article that splits into several chunks
 // at a small chunk budget.
@@ -44,7 +52,7 @@ func TestChunkOverlapAppliedOnlyOnReindex(t *testing.T) {
 	vecStore := vectors.NewStore(db)
 
 	// Index once with the default (overlap 0).
-	if err := BackfillChunks(projectDir, outputDir, 100, 0, chunkStore, vecStore, nil, db); err != nil {
+	if _, err := BackfillChunks(projectDir, outputDir, 100, 0, chunkStore, vecStore, nil, db); err != nil {
 		t.Fatalf("backfill (overlap 0): %v", err)
 	}
 	before, err := chunkStore.ListAll()
@@ -71,7 +79,7 @@ func TestChunkOverlapAppliedOnlyOnReindex(t *testing.T) {
 	}
 
 	// The explicit reindex applies the new overlap.
-	if err := BackfillChunks(projectDir, outputDir, 100, 20, chunkStore, vecStore, nil, db); err != nil {
+	if _, err := BackfillChunks(projectDir, outputDir, 100, 20, chunkStore, vecStore, nil, db); err != nil {
 		t.Fatalf("backfill (overlap 20): %v", err)
 	}
 	after, err := chunkStore.ListAll()
@@ -100,5 +108,110 @@ func TestChunkOverlapAppliedOnlyOnReindex(t *testing.T) {
 	}
 	if !grew {
 		t.Error("reindex with overlap 20 produced no overlapping chunks")
+	}
+}
+
+// A rebuild covers every doc family that carries chunks: compiled articles in
+// concepts/, summaries/ AND outputs/, plus raw sources indexed as `src:<path>`
+// which have no article file. Missing a family leaves the index mixing two
+// chunkings — the exact state the chunk-overlap contract forbids.
+func TestBackfillCoversOutputsAndSources(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	projectDir := t.TempDir()
+	const outputDir = "wiki"
+	writeLongArticle(t, projectDir, outputDir, "boundaries")
+
+	// An answer auto-filed back into the wiki.
+	outDir := filepath.Join(projectDir, outputDir, "outputs")
+	if err := os.MkdirAll(outDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outDir, "answered.md"), []byte("A generated answer about chunk boundaries and retrieval."), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A raw source that tier-1 indexing already chunked: the source file on
+	// disk plus its existing chunk rows (there is no article for it).
+	if err := os.MkdirAll(filepath.Join(projectDir, "raw"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "raw", "note.md"), []byte("Raw note about chunk boundaries in the source corpus."), 0644); err != nil {
+		t.Fatal(err)
+	}
+	chunkStore := memory.NewChunkStore(db)
+	vecStore := vectors.NewStore(db)
+	if err := db.WriteTx(func(tx *sql.Tx) error {
+		return chunkStore.IndexChunks(tx, "src:raw/note.md", []memory.ChunkEntry{
+			{ChunkID: "src:raw/note.md:c0", ChunkIndex: 0, Content: "stale chunking of the raw note"},
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := BackfillChunks(projectDir, outputDir, 100, 0, chunkStore, vecStore, backfillEmbedder{}, db)
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if res.Articles != 2 {
+		t.Errorf("articles = %d, want 2 (concept + output)", res.Articles)
+	}
+	if res.Sources != 1 {
+		t.Errorf("sources = %d, want 1 (src: doc)", res.Sources)
+	}
+
+	all, err := chunkStore.ListAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, c := range all {
+		seen[c.DocID] = true
+		if c.DocID == "src:raw/note.md" && strings.Contains(c.Content, "stale chunking") {
+			t.Error("src: doc kept its old chunk text — it was not re-chunked")
+		}
+	}
+	for _, want := range []string{"concept:boundaries", "output:answered", "src:raw/note.md"} {
+		if !seen[want] {
+			t.Errorf("%s has no chunks after the rebuild", want)
+		}
+	}
+}
+
+// Chunk IDs change when the chunking changes, so the rebuild deletes each
+// document's chunk vectors. With an embedder they come back; without one they
+// are gone — which is why the CLI refuses that combination unless asked.
+func TestBackfillChunkVectorLifecycle(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	projectDir := t.TempDir()
+	const outputDir = "wiki"
+	writeLongArticle(t, projectDir, outputDir, "boundaries")
+
+	chunkStore := memory.NewChunkStore(db)
+	vecStore := vectors.NewStore(db)
+
+	if _, err := BackfillChunks(projectDir, outputDir, 100, 0, chunkStore, vecStore, backfillEmbedder{}, db); err != nil {
+		t.Fatalf("backfill with embedder: %v", err)
+	}
+	has, err := vecStore.HasChunkVectors("concept:boundaries")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !has {
+		t.Fatal("rebuild with an embedder left no chunk vectors")
+	}
+
+	if _, err := BackfillChunks(projectDir, outputDir, 100, 0, chunkStore, vecStore, nil, db); err != nil {
+		t.Fatalf("backfill without embedder: %v", err)
+	}
+	has, err = vecStore.HasChunkVectors("concept:boundaries")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if has {
+		t.Error("chunk vectors survived a nil-embedder rebuild — the CLI guard's premise is wrong")
 	}
 }
