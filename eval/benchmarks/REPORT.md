@@ -87,7 +87,60 @@ for any real head-to-head; the partial study below does exactly that for
 LOCOMO and shows the two axes are worth far more than the table above
 suggests.
 
-### Partial parity study: which axis actually moves the number?
+### Post-search-upgrade run (gpt-5, mem0's cutoff ladder)
+
+After the `arch/search-upgrade` pipeline landed, LOCOMO was re-run with
+**gpt-5 as both answerer and judge** (mem0's configuration) over a
+**stratified 150-question sample** (seed 42; category shares within 0.4pp of
+the full 1,540 and 14–16 questions from each of the ten conversations), at
+mem0's cutoffs. Compiled projects were reused, so this measures the search
+change, not a re-compile.
+
+| Cutoff | Accuracy | 95% CI |
+|---|---|---|
+| top-10 | **87.3%** (131/150) | 81.1 – 91.7 |
+| top-50 | **92.0%** (138/150) | 86.5 – 95.4 |
+| top-200 | **91.3%** (137/150) | 85.7 – 94.9 |
+
+<!-- check:locomo_gpt5-150 metrics_by_cutoff.top_10.overall.accuracy = 87.3 -->
+<!-- check:locomo_gpt5-150 metrics_by_cutoff.top_50.overall.accuracy = 92.0 -->
+<!-- check:locomo_gpt5-150 metrics_by_cutoff.top_200.overall.accuracy = 91.3 -->
+<!-- check:locomo_gpt5-150 metrics.overall.infra_errors = 0 -->
+
+| Category | n | top-10 | top-50 | top-200 |
+|---|---:|---:|---:|---:|
+| single-hop | 82 | 90.2% | 93.9% | 93.9% |
+| multi-hop | 28 | 89.3% | 85.7% | 89.3% |
+| temporal | 31 | 87.1% | 96.8% | 90.3% |
+| open-domain | 9 | 55.6% | 77.8% | 77.8% |
+
+**The headline is the shape, not the level.** In the pre-upgrade study below,
+accuracy climbed **+51.4pp** from top-10 to top-200 — the answers were in the
+wiki but a 10-result window did not surface them. After the upgrade that
+dependency is **+4.0pp**, and top-200 is marginally *below* top-50 (extra
+context distracts slightly). The new pipeline puts the right material in the
+first ten results, which is exactly what a retrieval improvement should look
+like. This within-run comparison is the robust part: the answerer is held
+constant inside each curve, so the collapse from 51pp to 4pp is a property of
+retrieval, not of the model reading it.
+
+**What cannot be attributed cleanly:** top-10 went 43.5% → 87.3% between the
+two studies, but *two* variables changed (old→new search AND gpt-5-mini→gpt-5
+answerer), and the earlier study covered conversations 0–3 rather than a
+stratified sample. The isolated search delta needs the old binary re-run on
+this identical 150-question sample — the sampler is seeded precisely so that
+comparison stays available.
+
+**Versus Mem0** (92.5% @ top-200, gpt-5-class judge, full 1,540): mem0's
+figure sits **inside this run's 95% confidence interval** at both top-50 and
+top-200, so on this sample the two are statistically indistinguishable.
+Restraint is still warranted — n=150 (±4–5pp), the compile pipelines differ,
+and per-category cells are thin (open-domain n=9 is directional only).
+
+Run cost: **$24.59**, 28 minutes, 0 infra errors, 0 judge parse errors, 0
+rate-limit events.
+
+### Partial parity study (pre-upgrade): which axis actually moves the number?
 
 A follow-up LOCOMO run used **gpt-5 as judge, gpt-5-mini as answerer, and
 mem0's cutoff ladder (top-10 / 50 / 200)** over the same compiled projects.
