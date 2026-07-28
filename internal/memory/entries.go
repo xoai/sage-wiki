@@ -279,6 +279,52 @@ func isStopword(w string) bool {
 	return stopwords[w]
 }
 
+// SetSourceDate upserts the entry's origin date (unix seconds) into the
+// entry_dates sidecar (ADR-039: "when the knowledge originated", never a
+// row timestamp). ts <= 0 is a no-op — "no date" is expressed by absence.
+func (s *Store) SetSourceDate(id string, ts int64) error {
+	if ts <= 0 {
+		return nil
+	}
+	return s.db.WriteTx(func(tx *sql.Tx) error {
+		_, err := tx.Exec(
+			"INSERT INTO entry_dates (id, source_date) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET source_date = excluded.source_date",
+			id, ts,
+		)
+		return err
+	})
+}
+
+// GetSourceDates returns source dates for the given IDs; missing IDs are
+// absent from the map (no date — no recency contribution).
+func (s *Store) GetSourceDates(ids []string) (map[string]int64, error) {
+	if len(ids) == 0 {
+		return map[string]int64{}, nil
+	}
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := s.db.ReadDB().Query(
+		"SELECT id, source_date FROM entry_dates WHERE id IN ("+placeholders+")", args...)
+	if err != nil {
+		return nil, fmt.Errorf("memory.GetSourceDates: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]int64, len(ids))
+	for rows.Next() {
+		var id string
+		var ts int64
+		if err := rows.Scan(&id, &ts); err != nil {
+			return nil, err
+		}
+		out[id] = ts
+	}
+	return out, rows.Err()
+}
+
 // ListAll returns every entry, fully populated (P2-1: absorbs reembed's raw
 // entries scan). Unbounded by design — reembed needs the full table.
 func (s *Store) ListAll() ([]Entry, error) {

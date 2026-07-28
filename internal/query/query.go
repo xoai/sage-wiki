@@ -708,6 +708,10 @@ format: %s
 		Tags:        []string{"output"},
 		ArticlePath: relPath,
 	})
+	// Q&A outputs stamp creation time as their origin date (ADR-039).
+	if err := memStore.SetSourceDate("output:"+filename, time.Now().Unix()); err != nil {
+		log.Warn("output source date not recorded", "output", filename, "error", err)
+	}
 
 	// Embed
 	if embedder != nil {

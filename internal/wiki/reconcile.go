@@ -15,6 +15,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/sourcedate"
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/vectors"
@@ -97,6 +98,14 @@ func (rc *reconciler) run(ctx context.Context) (*ReconcileResult, error) {
 		if err := rc.reconcileOne(ctx, eo); err != nil {
 			log.Warn("reconcile: heal failed", "output", eo.path, "error", err)
 		}
+	}
+
+	// Backfill entry_dates for pre-V13 corpora (ADR-039). Additive and
+	// idempotent — dated entries are untouched, dateless chains stay absent.
+	if n, err := sourcedate.Backfill(rc.projectDir, rc.mem, mf); err != nil {
+		log.Warn("reconcile: source-date backfill failed", "error", err)
+	} else if n > 0 {
+		log.Info("reconcile: source dates backfilled", "count", n)
 	}
 
 	// output_index rows that are no longer an expected output are orphaned.

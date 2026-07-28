@@ -20,6 +20,9 @@ type EntryStore interface {
 	// T8 additions (D3 moves).
 	ListAll() ([]Entry, error)
 	CountUncompiled(query string) (int, error)
+	// M3 (20260728-search-upgrade, ADR-039): entry_dates sidecar.
+	SetSourceDate(id string, ts int64) error
+	GetSourceDates(ids []string) (map[string]int64, error)
 }
 
 type ChunkStore interface {

@@ -60,6 +60,48 @@ func (s *entryStore) Get(id string) (*store.Entry, error) {
 		"SELECT id, content, tags, article_path FROM entries WHERE id=$1", id))
 }
 
+// SetSourceDate — pg twin of the sqlite sidecar upsert (ADR-039).
+func (s *entryStore) SetSourceDate(id string, ts int64) error {
+	if ts <= 0 {
+		return nil
+	}
+	return s.b.WriteTx(func(tx *sql.Tx) error {
+		_, err := tx.Exec(
+			"INSERT INTO entry_dates (id, source_date) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET source_date = excluded.source_date",
+			id, ts)
+		return err
+	})
+}
+
+// GetSourceDates — pg twin; missing IDs absent from the map.
+func (s *entryStore) GetSourceDates(ids []string) (map[string]int64, error) {
+	if len(ids) == 0 {
+		return map[string]int64{}, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+	rows, err := s.b.pool.Query(
+		"SELECT id, source_date FROM entry_dates WHERE id IN ("+strings.Join(placeholders, ",")+")", args...)
+	if err != nil {
+		return nil, fmt.Errorf("pg entries.GetSourceDates: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]int64, len(ids))
+	for rows.Next() {
+		var id string
+		var ts int64
+		if err := rows.Scan(&id, &ts); err != nil {
+			return nil, err
+		}
+		out[id] = ts
+	}
+	return out, rows.Err()
+}
+
 func (s *entryStore) Search(query string, tags []string, limit int) ([]store.SearchResult, error) {
 	if limit <= 0 {
 		limit = 10 // memory/entries.go:84-86 parity
