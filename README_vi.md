@@ -28,6 +28,29 @@ _Các điểm trên đường biên ngoài đại diện cho tóm tắt của t�
 - **Nhóm** — chia sẻ một wiki qua git hoặc một [máy chủ tự host](docs/guides/self-hosted-server.md), cùng nhau rà soát các đề xuất phân giải thực thể và [tin cậy đầu ra](docs/guides/output-trust.md), và liên kết nhiều wiki bằng hub. Xem [Thiết lập nhóm](docs/guides/team-setup.md).
 - **Công ty** — chuyển lưu trữ sang [PostgreSQL/pgvector](docs/guides/storage-backends.md), bật [số liệu](docs/guides/metrics.md), đặt lớp xác thực trước máy chủ, và mở rộng tiếp nhận với [biên dịch phân tầng](docs/guides/large-vault-performance.md).
 
+## Đồ thị tri thức & bộ nhớ đồ thị
+
+Tìm kiếm vector trả về những đoạn *trông giống* câu hỏi. Đồ thị còn lưu **các sự vật liên hệ với nhau ra sao**, nên một câu hỏi cần hai ba bước suy luận được trả lời bằng cách duyệt đồ thị, thay vì hy vọng một đoạn văn chứa trọn chuỗi lập luận. sage-wiki dựng đồ thị đó như một sản phẩm của quá trình biên dịch — không phải một cơ sở dữ liệu thứ hai phải đồng bộ.
+
+- **Thực thể và quan hệ có kiểu.** Mỗi lần biên dịch sẽ trích xuất thực thể (khái niệm, nguồn, hiện vật) và nối chúng bằng quan hệ có kiểu. Bộ từ vựng quan hệ do bạn định nghĩa — xem
+  [quan hệ có thể cấu hình](docs/guides/configurable-relations.md).
+- **Cạnh có bằng chứng.** Một quan hệ có thể mang `evidence` (đoạn văn chống lưng), `confidence` (0–1) và `source_doc`, nhờ đó kết luận truy ngược tới đúng câu đã tạo ra cạnh, chứ không chỉ tới cả tài liệu.
+- **Bộ ba (triple).** Một lượt xử lý tùy chọn với đầu ra có cấu trúc trích thẳng chủ thể → quan hệ → đối tượng. Phải bật thủ công (`ontology.triples`): nó thêm một lệnh gọi LLM cho mỗi tài liệu, và mặc định không bao giờ tiêu tiền của bạn mà không hỏi.
+- **Hợp nhất thực thể.** “K8s” và “Kubernetes” trở thành một nút. Đề xuất mặc định phải qua duyệt chứ không âm thầm gộp.
+
+**Đồ thị là một kênh truy xuất, không phải khung nhìn phụ.** Mỗi lần tìm kiếm hợp nhất ba kênh — từ vựng (BM25), vector và độ gần trên đồ thị: từ khóa truy vấn khơi mào các thực thể, một lượt duyệt có giới hạn xếp hạng vùng lân cận, rồi cả ba hợp nhất theo `search.hybrid_weight_graph`. Ontology rỗng không tốn gì và giữ kết quả giống hệt từng byte.
+
+Hỏi trực tiếp, hoặc để agent làm qua MCP:
+
+```bash
+sage-wiki ontology query --entity kubernetes --depth 3 --direction both
+sage-wiki provenance "service mesh"    # những nguồn nào sinh ra khái niệm này
+```
+
+**Điều nó chưa làm được**, nói thẳng: các trường hiệu lực theo thời gian (`valid_from` / `valid_to`) được lưu nhưng chưa dùng khi truy vấn, và chưa có phát hiện mâu thuẫn tự động — các khẳng định xung đột lộ ra qua khâu duyệt
+[độ tin cậy đầu ra](docs/guides/output-trust.md), không phải bằng luật đồ thị. Chi tiết:
+[bộ nhớ đồ thị](docs/guides/graph-memory.md).
+
 ## Hướng dẫn
 
 | Hướng dẫn | Mô tả |

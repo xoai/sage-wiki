@@ -28,6 +28,29 @@ _外圈边界上的点代表知识库中所有文档的摘要，内圈的点代�
 - **团队** —— 通过 git 或[自托管服务器](docs/guides/self-hosted-server.md)共享同一个 wiki，共同评审实体消解提案与[输出信任](docs/guides/output-trust.md)，并用 hub 将多个 wiki 联邦起来。参阅[团队配置](docs/guides/team-setup.md)。
 - **公司** —— 将存储迁移到 [PostgreSQL/pgvector](docs/guides/storage-backends.md)，开启[指标监控](docs/guides/metrics.md)，在服务器前加上认证，并用[分层编译](docs/guides/large-vault-performance.md)扩展摄取能力。
 
+## 知识图谱与图记忆
+
+向量检索返回与查询*看起来相似*的片段。图还记录 **事物之间如何关联**，因此需要两三跳才能回答的问题可以靠遍历得出，而不必指望某个片段恰好包含完整链条。sage-wiki 把这张图作为编译产物构建 —— 而不是另一套需要同步的数据库。
+
+- **实体与带类型的关系。** 每次编译都会抽取实体（概念、来源、产物）并用带类型的关系连接。关系词表由你定义 —— 参见
+  [可配置关系](docs/guides/configurable-relations.md)。
+- **带证据的边。** 关系可携带 `evidence`（支撑它的原文片段）、`confidence`（0–1）和 `source_doc`，因此结论能追溯到证成这条边的那句话，而不只是整篇文档。
+- **三元组。** 可选的结构化输出流程直接抽取 主语 → 关系 → 宾语。需显式开启（`ontology.triples`）：它会为每篇文档增加一次 LLM 调用，默认配置绝不在未经询问时花你的额度。
+- **实体归一。** “K8s”与“Kubernetes”合并为同一节点。合并提案默认需经复核，不会静默合并。
+
+**图是检索通道，而非旁支视图。** 每次检索融合三条通道 —— 词法（BM25）、向量与图邻近：查询词点亮起始实体，受限遍历为其邻域排序，三者按 `search.hybrid_weight_graph` 融合。本体为空时零开销，结果逐字节保持不变。
+
+可直接查询，也可让 agent 通过 MCP 调用：
+
+```bash
+sage-wiki ontology query --entity kubernetes --depth 3 --direction both
+sage-wiki provenance "service mesh"    # 哪些来源产生了这个概念
+```
+
+**目前尚未支持的能力**，如实说明：时间有效性字段（`valid_from` / `valid_to`）已存储但尚未参与查询，也没有自动矛盾检测 —— 冲突主张通过
+[输出可信度](docs/guides/output-trust.md)复核浮现，而非由图规则处理。深入了解：
+[图记忆](docs/guides/graph-memory.md)。
+
 ## 指南
 
 | 指南 | 说明 |

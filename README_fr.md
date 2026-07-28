@@ -28,6 +28,29 @@ _Les points sur la bordure extérieure représentent les résumés de tous les d
 - **Équipe** — partagez un même wiki via git ou un [serveur auto-hébergé](docs/guides/self-hosted-server.md), passez en revue ensemble les propositions de résolution d'entités et la [confiance des sorties](docs/guides/output-trust.md), et fédérez plusieurs wikis avec le hub. Voir [Configuration d'équipe](docs/guides/team-setup.md).
 - **Entreprise** — déplacez le stockage vers [PostgreSQL/pgvector](docs/guides/storage-backends.md), activez les [métriques](docs/guides/metrics.md), placez une authentification devant le serveur, et faites passer l'ingestion à l'échelle avec la [compilation par paliers](docs/guides/large-vault-performance.md).
 
+## Graphe de connaissances & mémoire de graphe
+
+La recherche vectorielle retrouve des passages qui *ressemblent* à la requête. Un graphe enregistre en plus **comment les choses sont reliées** : une question qui demande deux ou trois sauts se résout par traversée, au lieu d'espérer qu'un seul fragment contienne toute la chaîne. sage-wiki construit ce graphe comme une sortie de compilation — pas une seconde base à synchroniser.
+
+- **Entités et relations typées.** Chaque compilation extrait des entités (concepts, sources, artefacts) et les relie par des relations typées. Le vocabulaire des relations vous appartient — voir
+  [relations configurables](docs/guides/configurable-relations.md).
+- **Arêtes sourcées.** Une relation peut porter `evidence` (le passage qui la justifie), `confidence` (0–1) et `source_doc` : une conclusion remonte jusqu'à la phrase qui a justifié l'arête, pas seulement jusqu'au document.
+- **Triplets.** Une passe optionnelle en sortie structurée extrait directement sujet → relation → objet. Activation explicite (`ontology.triples`) : elle ajoute un appel LLM par document, et les valeurs par défaut ne dépensent jamais votre clé sans demande.
+- **Résolution d'entités.** « K8s » et « Kubernetes » deviennent un seul nœud. Les propositions passent par revue plutôt que d'être fusionnées en silence.
+
+**Le graphe est un canal de recherche, pas une vue annexe.** Chaque recherche fusionne trois canaux — lexical (BM25), vectoriel et proximité de graphe : les termes de la requête amorcent des entités, une traversée bornée classe leur voisinage, et les trois fusionnent selon `search.hybrid_weight_graph`. Une ontologie vide ne coûte rien et laisse les résultats identiques au bit près.
+
+Interrogez-le directement, ou laissez un agent le faire via MCP :
+
+```bash
+sage-wiki ontology query --entity kubernetes --depth 3 --direction both
+sage-wiki provenance "service mesh"    # quelles sources ont produit ce concept
+```
+
+**Ce qu'il ne fait pas encore**, dit clairement : les champs de validité temporelle (`valid_from` / `valid_to`) sont stockés mais pas encore interrogés, et il n'y a pas de détection automatique de contradictions — les affirmations conflictuelles remontent via la revue de
+[confiance des sorties](docs/guides/output-trust.md), pas par une règle de graphe. Détails :
+[mémoire de graphe](docs/guides/graph-memory.md).
+
 ## Guides
 
 | Guide | Description |

@@ -28,6 +28,29 @@ _외곽 경계의 점들은 지식 베이스에 있는 모든 문서의 요약�
 - **팀** — git 또는 [셀프 호스팅 서버](docs/guides/self-hosted-server.md)로 하나의 위키를 공유하고, 엔티티 해소 제안과 [출력 신뢰](docs/guides/output-trust.md)를 함께 검토하며, 허브로 여러 위키를 연합하세요. [팀 설정](docs/guides/team-setup.md)을 참조하세요.
 - **회사** — 스토리지를 [PostgreSQL/pgvector](docs/guides/storage-backends.md)로 옮기고, [메트릭](docs/guides/metrics.md)을 켜고, 서버 앞단에 인증을 두고, [계층화된 컴파일](docs/guides/large-vault-performance.md)로 수집을 확장하세요.
 
+## 지식 그래프와 그래프 메모리
+
+벡터 검색은 질의와 *비슷해 보이는* 구절을 찾아옵니다. 그래프는 여기에 더해 **사물이 어떻게 연결되는지**를 저장하므로, 두세 단계를 거쳐야 하는 질문도 하나의 청크가 전체 사슬을 담고 있기를 기대하는 대신 순회로 답할 수 있습니다. sage-wiki는 이 그래프를 컴파일 산출물로 만듭니다 — 따로 동기화해야 하는 두 번째 데이터베이스가 아닙니다.
+
+- **엔티티와 타입이 있는 관계.** 컴파일마다 엔티티(개념·출처·산출물)를 추출하고 타입이 지정된 관계로 연결합니다. 관계 어휘는 직접 정의합니다 —
+  [설정 가능한 관계](docs/guides/configurable-relations.md) 참고.
+- **근거가 붙은 간선.** 관계는 `evidence`(근거가 되는 구절), `confidence`(0–1), `source_doc`을 가질 수 있어, 결론을 문서 단위가 아니라 그 간선을 뒷받침한 문장까지 추적할 수 있습니다.
+- **트리플.** 선택적 구조화 출력 패스가 주어 → 관계 → 목적어를 직접 추출합니다. 명시적 활성화(`ontology.triples`): 문서당 LLM 호출이 하나 늘어나므로, 기본값이 사용자의 키를 말없이 쓰지 않습니다.
+- **엔티티 해소.** “K8s”와 “Kubernetes”를 한 노드로 합칩니다. 제안은 기본적으로 검토를 거치며 조용히 병합되지 않습니다.
+
+**그래프는 부가 화면이 아니라 검색 채널입니다.** 모든 검색은 세 채널(어휘 BM25·벡터·그래프 근접)을 융합합니다: 질의어가 엔티티를 촉발하고, 제한된 순회가 그 이웃을 순위화하며, `search.hybrid_weight_graph`에서 융합됩니다. 온톨로지가 비어 있으면 비용이 없고 결과는 바이트 단위로 동일합니다.
+
+직접 질의하거나, MCP를 통해 에이전트가 하도록 맡길 수 있습니다:
+
+```bash
+sage-wiki ontology query --entity kubernetes --depth 3 --direction both
+sage-wiki provenance "service mesh"    # 이 개념을 만든 출처
+```
+
+**아직 하지 않는 것**을 분명히 밝힙니다: 시간 유효성 필드(`valid_from` / `valid_to`)는 저장되지만 아직 질의에 쓰이지 않고, 자동 모순 탐지도 없습니다. 상충하는 주장은
+[출력 신뢰](docs/guides/output-trust.md) 검토로 드러나며 그래프 규칙으로 처리되지 않습니다. 자세한 내용:
+[그래프 메모리](docs/guides/graph-memory.md).
+
 ## 가이드
 
 | 가이드 | 설명 |

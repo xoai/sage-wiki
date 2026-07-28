@@ -25,6 +25,46 @@ _Dots on the outer boundary represent summaries of all documents in the knowledg
 - **Team** — share one wiki via git or a [self-hosted server](docs/guides/self-hosted-server.md), review entity-resolution proposals and [output trust](docs/guides/output-trust.md) together, and federate multiple wikis with the hub. See [Team Setup](docs/guides/team-setup.md).
 - **Company** — move storage to [PostgreSQL/pgvector](docs/guides/storage-backends.md), turn on [metrics](docs/guides/metrics.md), front the server with auth, and scale ingestion with [tiered compilation](docs/guides/large-vault-performance.md).
 
+## Knowledge graph & graph memory
+
+Vector search retrieves passages that *look like* the query. A graph also
+records **how things relate**, so a question needing two or three hops is
+answered by traversal instead of hoping one chunk happens to contain the whole
+chain. sage-wiki builds that graph as a compile output — not a second database
+you have to keep in sync.
+
+- **Entities and typed relations.** Each compile extracts entities (concepts,
+  sources, artifacts) and links them with typed relations. The relation
+  vocabulary is yours to define — see
+  [configurable relations](docs/guides/configurable-relations.md).
+- **Evidenced edges.** A relation can carry `evidence` (the span that supports
+  it), `confidence` (0–1), and `source_doc`, so a conclusion traces to the
+  sentence that justified the edge rather than to a whole document.
+- **Triples.** An optional structured-output pass extracts
+  subject → relation → object directly. Opt-in (`ontology.triples`): it adds
+  one LLM call per document, and defaults never spend your key without asking.
+- **Entity resolution.** "K8s" and "Kubernetes" become one node. Proposals are
+  review-gated by default rather than silently merged.
+
+**The graph is a retrieval channel, not a side view.** Every search fuses three
+channels — lexical (BM25), vector, and graph proximity: query terms seed
+entities, a bounded traversal ranks their neighborhood, and the three fuse at
+`search.hybrid_weight_graph`. An empty ontology costs nothing and leaves
+results byte-identical, so the graph earns its place incrementally.
+
+Query it directly, or let an agent do it over MCP:
+
+```bash
+sage-wiki ontology query --entity kubernetes --depth 3 --direction both
+sage-wiki provenance "service mesh"    # which sources produced this concept
+```
+
+**What it does not do yet**, stated plainly: temporal validity fields
+(`valid_from` / `valid_to`) are stored but not yet queried, and there is no
+automatic contradiction detection — conflicting claims surface through
+[output trust](docs/guides/output-trust.md) review, not a graph rule. Depth
+and mechanics: [graph memory](docs/guides/graph-memory.md).
+
 ## Guides
 
 | Guide | Description |
