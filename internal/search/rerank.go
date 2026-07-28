@@ -104,13 +104,17 @@ Respond ONLY with a JSON array, no explanation:
 		results[i] = r
 	}
 
-	// Sort by score descending (unscored sort below any scored candidate
-	// here; the blend stage restores their normalized relevance).
-	sort.Slice(results, func(i, j int) bool {
+	// Sort by score descending, RetrievalRank as the deterministic
+	// tiebreak (unscored sort below any scored candidate here; the blend
+	// stage restores their normalized relevance).
+	sort.SliceStable(results, func(i, j int) bool {
 		if results[i].Scored != results[j].Scored {
 			return results[i].Scored
 		}
-		return results[i].Score > results[j].Score
+		if results[i].Score != results[j].Score {
+			return results[i].Score > results[j].Score
+		}
+		return results[i].RetrievalRank < results[j].RetrievalRank
 	})
 
 	return results, nil
