@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1321,20 +1320,7 @@ func loadCompileState(path string) (*CompileState, error) {
 //
 // The reader is injectable so the retry is testable on any OS.
 func loadCompileStateWith(path string, read func(string) ([]byte, error)) (*CompileState, error) {
-	var data []byte
-	var err error
-	for attempt := 0; attempt < 6; attempt++ {
-		if attempt > 0 {
-			time.Sleep(time.Duration(10+rand.Intn(20)) * time.Millisecond)
-		}
-		data, err = read(path)
-		if err == nil {
-			break
-		}
-		if os.IsNotExist(err) || !isTransientRenameError(err) {
-			return nil, err
-		}
-	}
+	data, err := readStateFileRetrying(path, read)
 	if err != nil {
 		return nil, err
 	}

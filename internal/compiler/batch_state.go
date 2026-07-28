@@ -45,7 +45,7 @@ func legacyCheckpointPath(projectDir string) string {
 // silently ignoring an unparseable checkpoint could strand an in-flight
 // batch (spec D2).
 func loadBatchCheckpoint(projectDir string) (*BatchCheckpoint, error) {
-	data, err := os.ReadFile(batchCheckpointPath(projectDir))
+	data, err := readStateFileRetrying(batchCheckpointPath(projectDir), nil)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -114,6 +114,38 @@ func writeFileAtomicUnique(path string, data []byte) error {
 	}
 	os.Remove(tmpName) // don't orphan the temp file
 	return fmt.Errorf("rename: %w", renameErr)
+}
+
+// readStateFileRetrying reads a checkpoint file, retrying the transient
+// Windows failures that a concurrent writer causes.
+//
+// Both state files (batch-state.json, compile-state.json) are written through
+// writeFileAtomicUnique, which already retries its rename. Reads needed the
+// same treatment, and needed it at EVERY site: fixing only the compile-state
+// reader moved the CI failure to the batch-state reader rather than curing it.
+// One helper, used by both, so a third reader cannot silently reintroduce the
+// gap. A missing file is returned as-is so callers' os.IsNotExist checks work.
+//
+// The reader is injectable so the retry is testable on any OS.
+func readStateFileRetrying(path string, read func(string) ([]byte, error)) ([]byte, error) {
+	if read == nil {
+		read = os.ReadFile
+	}
+	var data []byte
+	var err error
+	for attempt := 0; attempt < 6; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(10+rand.Intn(20)) * time.Millisecond)
+		}
+		data, err = read(path)
+		if err == nil {
+			return data, nil
+		}
+		if os.IsNotExist(err) || !isTransientRenameError(err) {
+			return nil, err
+		}
+	}
+	return nil, err
 }
 
 // isTransientRenameError reports whether a file operation failed for a

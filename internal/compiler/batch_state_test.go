@@ -477,3 +477,56 @@ func TestIsTransientRenameErrorMatchesRealWindowsText(t *testing.T) {
 		})
 	}
 }
+
+// TestBothStateReadersRetryTransientErrors asserts the retry covers EVERY
+// concurrently-written state file, not just the one that happened to fail.
+//
+// Fixing only the compile-state reader moved the Windows CI failure to the
+// batch-state reader — same test, same error, different path. Both now go
+// through readStateFileRetrying; this test fails if a reader is added that
+// bypasses it.
+func TestBothStateReadersRetryTransientErrors(t *testing.T) {
+	sharing := errors.New("open x: The process cannot access the file because it is being used by another process.")
+
+	t.Run("readStateFileRetrying retries then succeeds", func(t *testing.T) {
+		calls := 0
+		data, err := readStateFileRetrying("x", func(string) ([]byte, error) {
+			calls++
+			if calls <= 2 {
+				return nil, sharing
+			}
+			return []byte(`{"compile_id":"c1"}`), nil
+		})
+		if err != nil {
+			t.Fatalf("expected retry to succeed: %v", err)
+		}
+		if calls != 3 {
+			t.Errorf("expected 3 attempts, got %d", calls)
+		}
+		if string(data) == "" {
+			t.Error("no data returned")
+		}
+	})
+
+	t.Run("batch-state reader is wired to it", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, ".sage"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// A real file that parses: proves loadBatchCheckpoint reads through the
+		// helper without changing its contract.
+		if err := os.WriteFile(batchCheckpointPath(dir), []byte(`{"compile_id":"c1"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		bcp, err := loadBatchCheckpoint(dir)
+		if err != nil || bcp == nil || bcp.CompileID != "c1" {
+			t.Fatalf("loadBatchCheckpoint: %v %+v", err, bcp)
+		}
+	})
+
+	t.Run("missing file still reads as absent", func(t *testing.T) {
+		if bcp, err := loadBatchCheckpoint(t.TempDir()); err != nil || bcp != nil {
+			t.Errorf("absent checkpoint must be (nil, nil), got %+v %v", bcp, err)
+		}
+	})
+}

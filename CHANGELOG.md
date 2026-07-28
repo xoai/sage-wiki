@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- **Both checkpoint readers retry transient Windows failures**, via one shared
+  helper. Fixing only the compile-state reader moved the CI failure to the
+  batch-state reader — same test, same error, different path — so both now go
+  through `readStateFileRetrying` and a test asserts it.
 - **The transient-error predicate now matches the message Windows actually
   emits.** `ERROR_SHARING_VIOLATION` reads "The process cannot access the file
   because it is being used by another process" — containing neither "sharing
