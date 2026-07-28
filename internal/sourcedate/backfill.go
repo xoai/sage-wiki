@@ -70,6 +70,53 @@ func Backfill(projectDir string, mem store.EntryStore, m *manifest.Manifest) (in
 			set++
 		}
 	}
+
+	// Pass 3: UNMANIFESTED src: entries (Gate-8 F-071). Tier-0/1 indexing
+	// never registers sources in the manifest, and a recompile skips
+	// already-indexed sources before the date-recording call — so a
+	// pre-V13 tier-0/1 vault would stay dateless forever without this
+	// pass. Resolve from the entry ID's path (frontmatter > mtime; there
+	// is no manifest first-seen for these).
+	entries, err := mem.ListAll()
+	if err != nil {
+		return set, err
+	}
+	var orphanIDs []string
+	for _, e := range entries {
+		if len(e.ID) > 4 && e.ID[:4] == "src:" {
+			if _, inManifest := m.Sources[e.ID[4:]]; !inManifest {
+				orphanIDs = append(orphanIDs, e.ID, e.ID[4:])
+			}
+		}
+	}
+	if len(orphanIDs) > 0 {
+		orphanHave, err := mem.GetSourceDates(orphanIDs)
+		if err != nil {
+			return set, err
+		}
+		for i := 0; i < len(orphanIDs); i += 2 {
+			srcID, bareID := orphanIDs[i], orphanIDs[i+1]
+			_, hasSrc := orphanHave[srcID]
+			_, hasBare := orphanHave[bareID]
+			if hasSrc && hasBare {
+				continue
+			}
+			ts := Resolve(filepath.Join(projectDir, bareID), "")
+			if ts <= 0 {
+				continue
+			}
+			for id, present := range map[string]bool{srcID: hasSrc, bareID: hasBare} {
+				if present {
+					continue
+				}
+				if err := mem.SetSourceDate(id, ts); err != nil {
+					log.Warn("backfill: unmanifested source date not recorded", "id", id, "error", err)
+					continue
+				}
+				set++
+			}
+		}
+	}
 	return set, nil
 }
 

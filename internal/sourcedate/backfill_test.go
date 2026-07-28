@@ -85,3 +85,42 @@ func TestBackfill(t *testing.T) {
 		t.Errorf("second run set %d (err %v), want 0", n2, err)
 	}
 }
+
+// F-071 (Gate-8 QA repro): tier-0/1 corpora index sources WITHOUT
+// registering them in the manifest — Backfill must still date their
+// entries from the entry IDs, and stay idempotent.
+func TestBackfillUnmanifestedTierZeroEntries(t *testing.T) {
+	dir := t.TempDir()
+	db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mem := memory.NewStore(db)
+
+	os.WriteFile(filepath.Join(dir, "note.md"), []byte("---\ndate: 2024-03-15\n---\nbody\n"), 0644)
+	// The tier-0 shape: src: entry indexed, manifest EMPTY.
+	mem.Add(memory.Entry{ID: "src:note.md", Content: "body"})
+
+	m := manifest.New() // sources: {}
+	n, err := Backfill(dir, mem, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 { // both identities
+		t.Errorf("backfilled %d, want 2", n)
+	}
+	dates, err := mem.GetSourceDates([]string{"src:note.md", "note.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC).Unix()
+	if dates["src:note.md"] != want || dates["note.md"] != want {
+		t.Errorf("unmanifested dates = %v, want both %d", dates, want)
+	}
+
+	n2, err := Backfill(dir, mem, m)
+	if err != nil || n2 != 0 {
+		t.Errorf("second run set %d (err %v), want 0", n2, err)
+	}
+}
