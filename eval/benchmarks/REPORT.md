@@ -82,9 +82,78 @@ Both systems rank preference/instruction following at the top and
 contradiction_resolution near the bottom; the divergence is again verbatim
 detail — information_extraction and temporal_reasoning, mid-pack for Mem0
 (which stores extracted facts with timestamps), are floor for the compiled
-wiki. Closing the judge-model and retrieval-depth gaps (run ours with a
-gpt-5-class judge at top-200) is the prerequisite for any real
-head-to-head; see caveat 1.
+wiki. Closing the judge-model and retrieval-depth gaps is the prerequisite
+for any real head-to-head; the partial study below does exactly that for
+LOCOMO and shows the two axes are worth far more than the table above
+suggests.
+
+### Partial parity study: which axis actually moves the number?
+
+A follow-up LOCOMO run used **gpt-5 as judge, gpt-5-mini as answerer, and
+mem0's cutoff ladder (top-10 / 50 / 200)** over the same compiled projects.
+It was **cut short by API quota exhaustion after 529 of 1,540 questions**;
+every question after that point degraded to BM25-only search and was
+recorded `infra_error` and excluded rather than scored (`results/
+locomo_parity.json`, 1,011 excluded). **The 529 completed questions are
+conversations 0–3, not a random sample, so none of the percentages below
+are sage-wiki's LOCOMO score** — they are only valid *against each other*,
+because every row is the same question under both pipelines.
+
+Same 529 questions, four pipelines:
+
+| Pipeline | Accuracy |
+|---|---|
+| gpt-4o-mini judge @ top-10 (this report's config) | 67.1% |
+| gpt-5 judge @ top-10 | **43.5%** |
+| gpt-5 judge @ top-50 | **77.7%** |
+| gpt-5 judge @ top-200 | **94.9%** |
+
+<!-- check:locomo_parity metrics_by_cutoff.top_10.overall.accuracy = 43.5 -->
+<!-- check:locomo_parity metrics_by_cutoff.top_50.overall.accuracy = 77.7 -->
+<!-- check:locomo_parity metrics_by_cutoff.top_200.overall.accuracy = 94.9 -->
+<!-- check:locomo_parity metrics.overall.infra_errors = 1011 -->
+
+(The 67.1% baseline row is `results/locomo_full.json` restricted to those
+529 question IDs; the three gpt-5 rows are machine-checked above.)
+
+By category, same 529 questions:
+
+| Category | n | 4o-mini @10 | gpt-5 @10 | gpt-5 @50 | gpt-5 @200 |
+|---|---:|---:|---:|---:|---:|
+| single-hop | 256 | 74.2% | 57.4% | 82.0% | 96.1% |
+| multi-hop | 111 | 67.6% | 47.7% | 79.3% | 93.7% |
+| open-domain | 32 | 65.6% | 59.4% | 62.5% | 75.0% |
+| temporal | 130 | 53.1% | 8.5% | 71.5% | 98.5% |
+
+Three findings, all of which change how the Mem0 table above should be read:
+
+1. **Retrieval depth dominates everything else.** Holding the judge fixed,
+   top-10 → top-200 moves accuracy +51pp (43.5% → 94.9%). The information
+   is in the compiled wiki; a 10-result window simply does not surface it.
+   Our headline 76.8% is a *shallow-retrieval* number, not a capability
+   ceiling.
+2. **gpt-5 is a much stricter judge than gpt-4o-mini** — at identical
+   top-10 retrieval it scores the same answers 43.5% vs 67.1% (−24pp), and
+   on temporal questions 8.5% vs 53.1%. So this report's gpt-4o-mini
+   numbers are *judge-inflated* relative to Mem0's gpt-5-class judging: the
+   real gap at equal depth is wider than the headline table implies, and
+   the direction of the judge-model caveat (caveat 1) is now measured, not
+   assumed.
+3. **At these corpus sizes "top-200" means "the whole corpus."** A LOCOMO
+   project compiles to roughly 35–100 searchable chunks, so a top-200
+   request returns everything and the top-200 column measures *reasoning
+   over the full compiled wiki with retrieval removed as a variable* —
+   which is why temporal jumps to 98.5%. It is an upper bound on what the
+   compiled representation preserves (and evidence that compilation keeps
+   more temporal detail than the top-10 numbers suggest), not a retrieval
+   result.
+
+The honest summary: at matched retrieval depth and judge, sage-wiki's gap
+to Mem0 on LOCOMO is much smaller than the headline table shows, but this
+report's own default configuration (top-10, cheap judge) is not the
+configuration that demonstrates it. Completing the remaining 1,011
+questions — the run is resumable, `--project-name parity` picks up where it
+stopped — is the outstanding work needed for a publishable head-to-head.
 
 ## Pipeline
 
