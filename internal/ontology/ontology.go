@@ -61,14 +61,33 @@ type Store struct {
 	db               store.DBHandle
 	validRelations   map[string]bool
 	validEntityTypes map[string]bool
+	// temporalEnabled gates P3-6 validity filtering and supersession. Default
+	// true; absence of WithTemporalEnabled must mean ENABLED, because the
+	// ~30 direct construction sites (and every test) predate the option and
+	// would otherwise silently disable filtering (spec rev-plan i2/i3).
+	temporalEnabled  bool
 	derivedGuard     // alias-derived edges (decision-035); see derived.go
+}
+
+// StoreOption configures optional Store behavior (P3-6). Variadic so existing
+// NewStore call sites compile unchanged with default behavior.
+type StoreOption func(*Store)
+
+// WithTemporalEnabled toggles bi-temporal validity filtering (P3-6). Wire it
+// from config.Ontology.Temporal.EnabledOrDefault(); never pass a raw bool
+// literal outside tests.
+func WithTemporalEnabled(enabled bool) StoreOption {
+	return func(s *Store) { s.temporalEnabled = enabled }
 }
 
 // NewStore creates an ontology store with application-layer type validation.
 // validRelations lists the allowed relation type names. If nil, all types are accepted.
 // validEntityTypes lists the allowed entity type names. If nil, all types are accepted.
-func NewStore(db store.DBHandle, validRelations []string, validEntityTypes []string) *Store {
-	s := &Store{db: db}
+func NewStore(db store.DBHandle, validRelations []string, validEntityTypes []string, opts ...StoreOption) *Store {
+	s := &Store{db: db, temporalEnabled: true}
+	for _, opt := range opts {
+		opt(s)
+	}
 	if validRelations != nil {
 		s.validRelations = make(map[string]bool, len(validRelations))
 		for _, r := range validRelations {
@@ -290,6 +309,13 @@ func (s *Store) AddRelation(r Relation) error {
 
 // GetRelations returns relations for an entity in a given direction.
 func (s *Store) GetRelations(entityID string, direction Direction, relationType string) ([]Relation, error) {
+	return s.GetRelationsAt(entityID, direction, relationType, time.Now())
+}
+
+func (s *Store) GetRelationsAt(entityID string, direction Direction, relationType string, asOf time.Time) ([]Relation, error) {
+	if asOf.IsZero() {
+		asOf = time.Now()
+	}
 	// The predicate is repeated into the derived arm rather than wrapping the
 	// whole thing, so that arm can seek its own indexes — see derived.go for
 	// why a view cannot.
@@ -322,6 +348,13 @@ func (s *Store) GetRelations(entityID string, direction Direction, relationType 
 		args = append(args, relationType)
 	}
 
+	if s.temporalEnabled {
+		asOfStr := asOfString(asOf)
+		base += " AND " + liveAtPredicate("")
+		dpred += " AND " + liveAtPredicate("d.")
+		args = append(args, asOfStr, asOfStr)
+	}
+
 	query := base
 	if s.derivedExists() {
 		query = base + "\nUNION ALL" + derivedArm(dpred)
@@ -352,7 +385,7 @@ func (s *Store) Traverse(entityID string, opts TraverseOpts) ([]Entity, error) {
 	for depth := 0; depth < opts.MaxDepth && len(queue) > 0; depth++ {
 		var nextQueue []string
 		for _, id := range queue {
-			rels, err := s.GetRelations(id, opts.Direction, opts.RelationType)
+			rels, err := s.GetRelationsAt(id, opts.Direction, opts.RelationType, opts.AsOf)
 			if err != nil {
 				return nil, err
 			}
@@ -548,10 +581,19 @@ func (s *Store) AllRelations() ([]Relation, error) {
 func (s *Store) RelationsByType(relationType string) ([]Relation, error) {
 	derived := s.derivedExists()
 	q := `SELECT ` + relationCols + ` FROM relations WHERE relation=?`
+	dpred := `d.relation=?`
 	args := []any{relationType}
+	if s.temporalEnabled {
+		// Live-at-now (P3-6): the linter's contradicts pass and other type
+		// scans must not see superseded edges.
+		asOfStr := asOfString(time.Now())
+		q += " AND " + liveAtPredicate("")
+		dpred += " AND " + liveAtPredicate("d.")
+		args = append(args, asOfStr, asOfStr)
+	}
 	if derived {
-		q += "\nUNION ALL" + derivedArm(`d.relation=?`)
-		args = append(args, relationType)
+		q += "\nUNION ALL" + derivedArm(dpred)
+		args = append(args, args...)
 	}
 	rows, err := s.db.ReadDB().Query(q, args...)
 	if err != nil {

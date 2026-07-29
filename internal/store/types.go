@@ -41,6 +41,11 @@ type OpenOptions struct {
 	// Ontology validation lists (config-derived) for the concrete ontology store.
 	ValidRelations   []string
 	ValidEntityTypes []string
+	// TemporalEnabled gates P3-6 bi-temporal edge behavior (validity
+	// filtering, supersession). *bool so nil means the default (enabled) — a
+	// plain bool would silently DISABLE filtering in every unset literal
+	// (OpenConcrete, test/hub opens), inverting the spec default.
+	TemporalEnabled *bool
 }
 
 // Learning mirrors the learnings table (and linter.Learning) for

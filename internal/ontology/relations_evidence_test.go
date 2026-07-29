@@ -41,7 +41,7 @@ func assertEvidenced(t *testing.T, where string, r Relation) {
 	if r.SourceDoc != "raw/paper.pdf" {
 		t.Errorf("%s: SourceDoc = %q", where, r.SourceDoc)
 	}
-	if r.ValidFrom != "2026-01-15" || r.ValidTo != "2026-06-01" || r.InvalidatedBy != "later-edge" {
+	if r.ValidFrom != "2026-01-15T00:00:00Z" || r.ValidTo != "2099-06-01T00:00:00Z" || r.InvalidatedBy != "later-edge" {
 		t.Errorf("%s: temporal fields = %q/%q/%q", where, r.ValidFrom, r.ValidTo, r.InvalidatedBy)
 	}
 }
@@ -56,7 +56,11 @@ func TestRelationEvidenceRoundTripsAllReadPaths(t *testing.T) {
 	in := Relation{
 		ID: "alpha-extends-beta", SourceID: "alpha", TargetID: "beta", Relation: RelExtends,
 		Evidence: "alpha extends beta because reasons", Confidence: 0.8, SourceDoc: "raw/paper.pdf",
-		ValidFrom: "2026-01-15", ValidTo: "2026-06-01", InvalidatedBy: "later-edge",
+		// P3-6: values are RFC3339 (writers normalize; date-only strings would
+		// sort below their own midnight — a lexical accident, not semantics)
+		// and ValidTo is far-future so the edge stays live under the default
+		// validity filter that GetRelations/RelationsByType now apply.
+		ValidFrom: "2026-01-15T00:00:00Z", ValidTo: "2099-06-01T00:00:00Z", InvalidatedBy: "later-edge",
 	}
 	if err := s.AddRelation(in); err != nil {
 		t.Fatalf("AddRelation: %v", err)

@@ -195,6 +195,10 @@ type TraverseOpts struct {
 	Direction    Direction
 	RelationType string // optional filter
 	MaxDepth     int    // 1-5, default 1
+	// AsOf makes the traversal point-in-time (P3-6): only edges live at AsOf
+	// are followed. Zero means now. Has no effect when the store was built
+	// with temporal behavior disabled.
+	AsOf time.Time
 }
 
 // --- trust ---

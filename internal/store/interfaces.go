@@ -69,6 +69,11 @@ type OntologyStore interface {
 	DeleteEntity(id string) error
 	AddRelation(r Relation) error
 	GetRelations(entityID string, direction Direction, relationType string) ([]Relation, error)
+	// GetRelationsAt is the point-in-time read (P3-6): only edges live at
+	// asOf are returned. A zero asOf behaves exactly like GetRelations
+	// (live-at-now when temporal behavior is enabled; unfiltered when the
+	// store was built with it disabled).
+	GetRelationsAt(entityID string, direction Direction, relationType string, asOf time.Time) ([]Relation, error)
 	Traverse(entityID string, opts TraverseOpts) ([]Entity, error)
 	DetectCycles(entityID string) ([][]string, error)
 	EntityCount(entityType string) (int, error)
