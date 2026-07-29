@@ -31,8 +31,8 @@ func BuildInput(ont store.OntologyStore) (nodes []string, edges []Edge, err erro
 	now := time.Now().UTC()
 	nodeSet := map[string]bool{}
 	for _, r := range rels {
-		if r.Relation == "cites" {
-			continue // document links, not semantic affinity
+		if r.Relation == "cites" || r.SourceID == r.TargetID {
+			continue // document links / self-loops: no community signal
 		}
 		st, sok := types[r.SourceID]
 		tt, tok := types[r.TargetID]

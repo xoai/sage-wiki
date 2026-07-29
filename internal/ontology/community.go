@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/store"
 )
@@ -33,6 +34,9 @@ func scanCommunities(rows *sql.Rows) ([]store.Community, error) {
 // conditionally without a stored incoming hash column) — the tx makes the
 // read-modify-write atomic.
 func (s *Store) ReplaceDetection(comms []store.Community, members map[string][]string) ([]string, error) {
+	// Copy before sorting: mutating the caller's slice is a surprising side
+	// effect for an interface method.
+	comms = append([]store.Community(nil), comms...)
 	sort.Slice(comms, func(i, j int) bool { // level-ordered for the parent_id self-FK
 		return comms[i].Level < comms[j].Level
 	})
@@ -187,8 +191,8 @@ func (s *Store) EntityCommunity(entityID string, level int) (string, error) {
 func (s *Store) SetSummary(id, summary, summaryHash, model string) error {
 	return s.db.WriteTx(func(tx *sql.Tx) error {
 		_, err := tx.Exec(
-			`UPDATE communities SET summary=?, summary_hash=?, model=? WHERE id=?`,
-			summary, summaryHash, model, id)
+			`UPDATE communities SET summary=?, summary_hash=?, model=?, updated_at=? WHERE id=?`,
+			summary, summaryHash, model, time.Now().UTC().Format(time.RFC3339), id)
 		return err
 	})
 }

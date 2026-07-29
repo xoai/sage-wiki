@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/store"
 )
@@ -34,6 +35,7 @@ func scanCommunities(rows *sql.Rows) ([]store.Community, error) {
 }
 
 func (s *communityStore) ReplaceDetection(comms []store.Community, members map[string][]string) ([]string, error) {
+	comms = append([]store.Community(nil), comms...)
 	sort.Slice(comms, func(i, j int) bool {
 		return comms[i].Level < comms[j].Level
 	})
@@ -175,8 +177,8 @@ func (s *communityStore) EntityCommunity(entityID string, level int) (string, er
 func (s *communityStore) SetSummary(id, summary, summaryHash, model string) error {
 	return s.b.WriteTx(func(tx *sql.Tx) error {
 		_, err := tx.Exec(
-			`UPDATE communities SET summary=$1, summary_hash=$2, model=$3 WHERE id=$4`,
-			nullStr(summary), nullStr(summaryHash), nullStr(model), id)
+			`UPDATE communities SET summary=$1, summary_hash=$2, model=$3, updated_at=$4 WHERE id=$5`,
+			nullStr(summary), nullStr(summaryHash), nullStr(model), time.Now().UTC().Format(time.RFC3339), id)
 		return err
 	})
 }
