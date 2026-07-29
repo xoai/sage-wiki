@@ -14,13 +14,30 @@ import (
 	"github.com/xoai/sage-wiki/internal/metrics"
 )
 
+// backoffDelayFn is the sleep-duration hook for every retry branch
+// (status, read-error, truncation). Package var so tests can swap in a
+// near-zero delay — tests must NOT use t.Parallel() (see issue114 tests).
+var backoffDelayFn = backoffDelay
+
 // doWithRetry executes buildReq with the direct path's retry discipline —
 // THE single transport the client uses (P2-4 extraction): rate limiter,
 // ctx-annotated request, 429 first-discrimination + typed RateLimitError,
 // cancellable backoff with retry counting, StatusError on non-retryable.
 // buildReq is called per attempt (fresh body — Do consumes it).
-// Behavior is byte-identical to the pre-extraction chatCompletionDirect.
-func (c *Client) doWithRetry(ctx context.Context, buildReq func() (*http.Request, error)) ([]byte, error) {
+//
+// Issue #114 extensions:
+//   - A body READ error (dropped mid-body connection) is no longer
+//     discarded: it is retried as transport-transient and preserved as
+//     lastErr so errors.Is(io.ErrUnexpectedEOF) survives the final wrap.
+//   - validate (when non-nil) checks a 200 body INSIDE the loop.
+//     Truncation-class failures (IsTruncatedBodyErr) retry with the same
+//     backoff discipline; deterministic failures return (body, verr) —
+//     body != nil is the discriminant telling the caller to wrap verr and
+//     run its usual accounting instead of treating it as transport failure.
+//   - Both new branches reset lastStatusCode so a stale 429 can't produce
+//     a typed RateLimitError wrapping a non-rate-limit failure, and honor
+//     the final-attempt guard (no sleep, no counter when no retry follows).
+func (c *Client) doWithRetry(ctx context.Context, buildReq func() (*http.Request, error), validate func([]byte) error, errLabel string) ([]byte, error) {
 	var lastErr error
 	var lastStatusCode int
 
@@ -45,15 +62,55 @@ func (c *Client) doWithRetry(ctx context.Context, buildReq func() (*http.Request
 			return nil, fmt.Errorf("llm: request failed: %w", err)
 		}
 
-		body, _ := io.ReadAll(resp.Body)
+		body, rerr := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if rerr != nil {
+			// Dropped mid-body — transient transport failure. Retry, and
+			// preserve the error identity (issue #114 R2: previously
+			// laundered into a parse error via the discarded read error).
+			delay := backoffDelayFn(attempt)
+			log.Warn("response body read failed, retrying", "error", rerr, "attempt", attempt+1, "delay", delay)
+			if attempt+1 < maxAttempts {
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(delay):
+				}
+				metrics.CounterNamed("llm_retries_total").Inc()
+			}
+			lastStatusCode = 0
+			lastErr = fmt.Errorf("llm: read response body: %w", rerr)
+			continue
+		}
 
 		if resp.StatusCode == http.StatusOK {
-			return body, nil
+			verr := validate(body)
+			if verr == nil {
+				return body, nil
+			}
+			if !IsTruncatedBodyErr(verr) {
+				// Deterministic (well-formed-but-invalid): fail fast,
+				// body != nil tells the caller this is a validation
+				// failure, not a transport failure (issue #114 R4).
+				return body, verr
+			}
+			delay := backoffDelayFn(attempt)
+			log.Warn("truncated response body, retrying", "error", verr, "attempt", attempt+1, "delay", delay)
+			if attempt+1 < maxAttempts {
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(delay):
+				}
+				metrics.CounterNamed("llm_retries_total").Inc()
+			}
+			lastStatusCode = 0
+			lastErr = fmt.Errorf("%s: %w", errLabel, verr)
+			continue
 		}
 
 		if isRetryable(resp.StatusCode) {
-			delay := backoffDelay(attempt)
+			delay := backoffDelayFn(attempt)
 			if resp.StatusCode == 429 {
 				metrics.CounterNamed("llm_rate_limited_total").Inc() // first discrimination (P2-2)
 			}
@@ -106,9 +163,21 @@ func (c *Client) StructuredCompletion(ctx context.Context, messages []Message, s
 	}
 
 	// Native path: prebuilt constrained request through the shared transport
-	// (deliberately NON-cached, design D7).
-	body, err := c.doWithRetry(ctx, buildReq)
-	if err != nil {
+	// (deliberately NON-cached, design D7). The validate closure runs
+	// ParseStructuredResponse INSIDE the retry loop (issue #114): truncated
+	// 200 bodies retry; the captured payload is reused below so a success
+	// doesn't parse twice.
+	var captured json.RawMessage
+	validate := func(body []byte) error {
+		p, err := c.provider.ParseStructuredResponse(body)
+		if err != nil {
+			return err
+		}
+		captured = p
+		return nil
+	}
+	body, err := c.doWithRetry(ctx, buildReq, validate, "parse structured response")
+	if err != nil && body == nil {
 		// OpenAI degrade: 400 mentioning the constraint field → ONE
 		// json_object retry (envelope root for arrays; spec §3).
 		var se *StatusError
@@ -120,11 +189,11 @@ func (c *Client) StructuredCompletion(ctx context.Context, messages []Message, s
 				degraded := schema
 				degraded.Degraded = true
 				if dreq, dok, derr := c.provider.FormatStructuredRequest(messages, degraded, opts); derr == nil && dok {
-					body, err = c.doWithRetry(ctx, dreq)
+					body, err = c.doWithRetry(ctx, dreq, validate, "parse structured response")
 				}
 			}
 		}
-		if err != nil {
+		if err != nil && body == nil {
 			// Spec §3: a second 400 (degrade failed) or a 400 without the
 			// field mention → plain completion + fence-strip fallback.
 			var se *StatusError
@@ -144,7 +213,13 @@ func (c *Client) StructuredCompletion(ctx context.Context, messages []Message, s
 		c.trackUsage(resp.Model, resp.Usage)
 	}
 
-	payload, serr := c.provider.ParseStructuredResponse(body)
+	// On a validated success, reuse the payload captured inside the loop.
+	// On a (body, verr) deterministic validation failure, surface verr
+	// exactly as the pre-#114 code surfaced ParseStructuredResponse's error.
+	payload, serr := captured, error(nil)
+	if err != nil {
+		payload, serr = nil, err
+	}
 	if serr != nil || len(strings.TrimSpace(string(payload))) == 0 {
 		// Anthropic's forced tool_use legitimately returns empty text
 		// Content — but then the structured parse succeeded with the tool

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"math/rand"
 	"net/http"
@@ -199,19 +200,43 @@ func (c *Client) ChatCompletionCtx(ctx context.Context, messages []Message, opts
 	return resp, nil
 }
 
+// IsTruncatedBodyErr reports whether err is a truncation-class parse
+// failure on a 200-OK body — transient provider flakiness worth retrying:
+// *json.SyntaxError (covers "unexpected end of JSON input" from Unmarshal),
+// io.ErrUnexpectedEOF, io.EOF (empty body via a Decoder). Well-formed-but-
+// invalid bodies (error-shaped JSON, empty choices, wrong shape) must NOT
+// match — those are deterministic and fail fast. Requires providers to wrap
+// parse errors with %w (verified: openai.go, anthropic.go, gemini.go).
+func IsTruncatedBodyErr(err error) bool {
+	var se *json.SyntaxError
+	return errors.As(err, &se) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF)
+}
+
 // chatCompletionDirect sends a request without checking cacheID.
 // Used by ChatCompletionCtx and as the fallback path for ChatCompletionCached.
-// The ctx bounds the HTTP call and the retry backoff.
+// The ctx bounds the HTTP call and the retry backoff. Body validation rides
+// the retry loop via the validate closure (issue #114): a truncated 200 body
+// retries; a well-formed-but-invalid one returns (body, verr) and is wrapped
+// here, preserving the "llm: parse response" contract.
 func (c *Client) chatCompletionDirect(ctx context.Context, messages []Message, opts CallOpts) (*Response, error) {
+	var result *Response
+	validate := func(body []byte) error {
+		r, err := c.provider.ParseResponse(body)
+		if err != nil {
+			return err
+		}
+		result = r
+		return nil
+	}
 	body, err := c.doWithRetry(ctx, func() (*http.Request, error) {
 		return c.provider.FormatRequest(messages, opts)
-	})
+	}, validate, "parse response")
 	if err != nil {
+		if body != nil {
+			// Non-truncation validation failure (deterministic).
+			return nil, fmt.Errorf("llm: parse response: %w", err)
+		}
 		return nil, err
-	}
-	result, err := c.provider.ParseResponse(body)
-	if err != nil {
-		return nil, fmt.Errorf("llm: parse response: %w", err)
 	}
 	c.trackUsage(result.Model, result.Usage)
 	return result, nil

@@ -393,6 +393,126 @@ func TestEmbedRateLimiter(t *testing.T) {
 	}
 }
 
+// fastEmbedSleep swaps in a no-op backoff sleep for the duration of a
+// test (issue #114 retry tests — do NOT add t.Parallel() to this file).
+func fastEmbedSleep(t *testing.T) {
+	t.Helper()
+	orig := embedSleepFn
+	embedSleepFn = func(time.Duration) {}
+	t.Cleanup(func() { embedSleepFn = orig })
+}
+
+// Issue #114: a truncated 200 embedding body is transient — retried.
+func TestEmbedRetryTruncatedThenSuccess(t *testing.T) {
+	fastEmbedSleep(t)
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusOK)
+		if n == 1 {
+			w.Write([]byte(`{"data":[{"embedding":[0.1,0.`))
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"embedding": []float32{0.1, 0.2, 0.3}}},
+		})
+	}))
+	defer server.Close()
+
+	e := &APIEmbedder{provider: "openai", model: "x", apiKey: "sk", baseURL: server.URL, dims: 3}
+	vec, err := e.Embed("test")
+	if err != nil {
+		t.Fatalf("expected success after truncation retry, got: %v", err)
+	}
+	if len(vec) != 3 {
+		t.Errorf("expected 3 dims, got %d", len(vec))
+	}
+	if atomic.LoadInt32(&calls) != 2 {
+		t.Errorf("expected 2 calls (truncated + success), got %d", calls)
+	}
+}
+
+// Issue #114: permanent truncation exhausts maxEmbedRetries and fails.
+func TestEmbedRetryTruncationExhausted(t *testing.T) {
+	fastEmbedSleep(t)
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"data":[{"embedding":[0.1,0.`))
+	}))
+	defer server.Close()
+
+	e := &APIEmbedder{provider: "openai", model: "x", apiKey: "sk", baseURL: server.URL, dims: 3}
+	_, err := e.Embed("test")
+	if err == nil {
+		t.Fatal("expected error after truncation retry exhaustion")
+	}
+	if got := atomic.LoadInt32(&calls); got != maxEmbedRetries+1 {
+		t.Errorf("expected %d calls (exhausted), got %d", maxEmbedRetries+1, got)
+	}
+}
+
+// Issue #114: an empty 200 body (io.EOF on the Decoder) is also
+// truncation-class — retried.
+func TestEmbedRetryEmptyBodyThenSuccess(t *testing.T) {
+	fastEmbedSleep(t)
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusOK)
+		if n == 1 {
+			return // empty body
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"embedding": []float32{0.1, 0.2, 0.3}}},
+		})
+	}))
+	defer server.Close()
+
+	e := &APIEmbedder{provider: "openai", model: "x", apiKey: "sk", baseURL: server.URL, dims: 3}
+	vec, err := e.Embed("test")
+	if err != nil {
+		t.Fatalf("expected success after empty-body retry, got: %v", err)
+	}
+	if len(vec) != 3 {
+		t.Errorf("expected 3 dims, got %d", len(vec))
+	}
+	if atomic.LoadInt32(&calls) != 2 {
+		t.Errorf("expected 2 calls (empty + success), got %d", calls)
+	}
+}
+
+// Mixed [429, truncation]: the final error is the truncation failure,
+// NOT a RateLimitError wrapping it (decisions.md accepted trade-off).
+func TestEmbedRetryMixed429ThenTruncation(t *testing.T) {
+	fastEmbedSleep(t)
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			w.WriteHeader(429)
+			w.Write([]byte(`{"error": "rate limited"}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"data":[{"embedding":[0.1,0.`))
+	}))
+	defer server.Close()
+
+	e := &APIEmbedder{provider: "openai", model: "x", apiKey: "sk", baseURL: server.URL, dims: 3}
+	_, err := e.Embed("test")
+	if err == nil {
+		t.Fatal("expected error after mixed exhaustion")
+	}
+	if llm.IsRateLimitError(err) {
+		t.Errorf("mixed [429, truncation] must not surface as RateLimitError; got: %T %v", err, err)
+	}
+	if got := atomic.LoadInt32(&calls); got != maxEmbedRetries+1 {
+		t.Errorf("expected %d calls (exhausted), got %d", maxEmbedRetries+1, got)
+	}
+}
+
 func TestEmbedRejectsEmptyAndWhitespace(t *testing.T) {
 	// The embedding API must NOT be called for empty/whitespace-only input —
 	// fail the test if the mock server is ever hit. bge-m3 rejects such input

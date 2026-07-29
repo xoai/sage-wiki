@@ -480,6 +480,10 @@ func parseRetryAfter(header string) time.Duration {
 
 const maxEmbedRetries = 3
 
+// embedSleepFn is the backoff sleep hook for retryableEmbed — package var
+// so tests can swap in a no-op (tests must NOT use t.Parallel()).
+var embedSleepFn = time.Sleep
+
 func retryableEmbed(fn func() ([]float32, error)) ([]float32, error) {
 	var lastErr error
 	for attempt := 0; attempt <= maxEmbedRetries; attempt++ {
@@ -488,8 +492,14 @@ func retryableEmbed(fn func() ([]float32, error)) ([]float32, error) {
 			return vec, nil
 		}
 
+		// Retryable: embedHTTPError with 429/503, OR a truncation-class
+		// decode failure on a 200 body (issue #114 — a proxy truncating
+		// the embedding response is transient flakiness, same as the LLM
+		// completion paths). httpErr may be nil on the truncation branch —
+		// RetryAfter is only consulted when errors.As matched.
 		var httpErr *embedHTTPError
-		if !errors.As(err, &httpErr) || !isRetryableStatus(httpErr.StatusCode) {
+		httpRetryable := errors.As(err, &httpErr) && isRetryableStatus(httpErr.StatusCode)
+		if !httpRetryable && !llm.IsTruncatedBodyErr(err) {
 			return nil, err
 		}
 
@@ -498,13 +508,16 @@ func retryableEmbed(fn func() ([]float32, error)) ([]float32, error) {
 			break
 		}
 
-		delay := httpErr.RetryAfter
+		var delay time.Duration
+		if httpRetryable {
+			delay = httpErr.RetryAfter
+		}
 		if delay == 0 {
 			base := time.Second * time.Duration(1<<uint(attempt))
 			jitter := time.Duration(float64(base) * (0.75 + rand.Float64()*0.5))
 			delay = jitter
 		}
-		time.Sleep(delay)
+		embedSleepFn(delay)
 	}
 
 	var httpErr *embedHTTPError
