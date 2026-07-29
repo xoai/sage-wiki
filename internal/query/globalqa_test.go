@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -122,13 +123,13 @@ func TestGlobalQAEmptyAfterFilterIsSentinel(t *testing.T) {
 	seedCommunities(t, h)
 	// Bury the community docs under non-community hits for this query.
 	for i := 0; i < 30; i++ {
-		h.mem.Add(store.Entry{ID: "concept:filler" + string(rune('a'+i%26)), Content: "completely unrelated zebra giraffe platypus unrelated"})
+		h.mem.Add(store.Entry{ID: fmt.Sprintf("concept:filler-%d", i), Content: "completely unrelated zebra giraffe platypus unrelated"})
 	}
 	srv, _, _ := graphqaServer(t, `{"answer":"x"}`)
 	client := testClient(t, srv.URL)
 	_, err := GlobalQA(context.Background(), store.CommunityStore(h.ont), h.searcher, client,
 		"zebra giraffe platypus?", GlobalQAOpts{Model: "m", MaxTokens: 64, MinMembers: 3})
-	if err != ErrNoCommunities {
-		t.Errorf("err = %v, want ErrNoCommunities (empty after filter)", err)
+	if err == nil || !strings.Contains(err.Error(), "no communities match") {
+		t.Errorf("err = %v, want the search-starvation error", err)
 	}
 }

@@ -550,7 +550,7 @@ type OntologyConfig struct {
 	Resolve       ResolveConfig      `yaml:"resolve,omitempty"`
 	GraphQuery    GraphQueryConfig   `yaml:"graph_query,omitempty"`
 	Temporal      TemporalConfig     `yaml:"temporal,omitempty"`
-	Communities  CommunitiesConfig  `yaml:"communities,omitempty"`
+	Communities   CommunitiesConfig  `yaml:"communities,omitempty"`
 }
 
 // CommunitiesConfig controls community detection + global queries (P3-5).

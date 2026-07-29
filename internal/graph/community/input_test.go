@@ -39,12 +39,12 @@ func inputStore(t *testing.T) store.OntologyStore {
 			t.Fatal(err)
 		}
 	}
-	add("r1", "a", "b", "extends", "")                                     // keep
-	add("r2", "b", "c", "extends", "2020-01-01T00:00:00Z")                 // invalidated → drop
-	add("r3", "c", "d", "extends", "2099-01-01T00:00:00Z")                 // future valid_to → still live, keep
-	add("r4", "a", "d", "cites", "")                                       // cites → drop
-	add("r5", "src1", "a", "extends", "")                                  // source endpoint → drop
-	add("r7", "a", "c", "extends", "")                                     // keep
+	add("r1", "a", "b", "extends", "")                     // keep
+	add("r2", "b", "c", "extends", "2020-01-01T00:00:00Z") // invalidated → drop
+	add("r3", "c", "d", "extends", "2099-01-01T00:00:00Z") // future valid_to → still live, keep
+	add("r4", "a", "d", "cites", "")                       // cites → drop
+	add("r5", "src1", "a", "extends", "")                  // source endpoint → drop
+	add("r7", "a", "c", "extends", "")                     // keep
 	// NOTE: the missing-endpoint filter is defensive — the relations FK
 	// (entities ON DELETE CASCADE) makes a dangling endpoint unwritable.
 	return s

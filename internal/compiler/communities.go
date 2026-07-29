@@ -79,10 +79,9 @@ func CommunitiesPass(
 	levels := community.Detect(nodes, edges, 4)
 
 	// Flatten levels into community rows: ID c<level>-<seq>, seq over the
-	// Detect-pinned order (min member ID). Parent links point at the level+1
-	// community containing the majority... no — the FIRST level+1 community
-	// whose member set contains this community's first member (levels are
-	// partitions, so exactly one contains it).
+	// Detect-pinned order (min member ID). Parent = the level+1 community
+	// containing this community's first member — levels are partitions of
+	// the same node set, so exactly one contains it.
 	var rows []store.Community
 	membersOf := map[string][]string{}
 	for li, lvl := range levels {
@@ -102,21 +101,23 @@ func CommunitiesPass(
 			membersOf[id] = members
 		}
 	}
-	// Intra-community edge counts at every level (flattened membership —
-	// the input edge list is the level-0 graph for all levels).
-	commOfEntity := map[string]string{}
-	for li, lvl := range levels {
-		for si, members := range lvl.Communities {
-			id := fmt.Sprintf("c%d-%d", li, si)
-			for _, e := range members {
-				commOfEntity[e] = id
-			}
+	// Intra-community edge counts at every level: per-level membership
+	// sets (a single commOfEntity map would be overwritten by the highest
+	// level — gates i2). The input edge list is the base graph for all
+	// levels since higher levels flatten to original entities.
+	memberSets := map[string]map[string]bool{}
+	for id, ms := range membersOf {
+		set := make(map[string]bool, len(ms))
+		for _, m := range ms {
+			set[m] = true
 		}
+		memberSets[id] = set
 	}
 	for i := range rows {
+		set := memberSets[rows[i].ID]
 		count := 0
 		for _, e := range edges {
-			if commOfEntity[e.From] == rows[i].ID && commOfEntity[e.To] == rows[i].ID {
+			if set[e.From] && set[e.To] {
 				count++
 			}
 		}
@@ -171,6 +172,13 @@ func CommunitiesPass(
 
 	// Summarize eligible communities whose member hash or model is stale.
 	model := communityModel(cfg)
+	// One relation scan for the whole pass (gates i2): summarizeCommunity
+	// filters this slice per community instead of scanning per community.
+	allRels, err := ont.AllRelations()
+	if err != nil {
+		log.Warn("communities: relations read failed", "error", err)
+		return
+	}
 	for _, c := range current {
 		if c.MemberCount < minMembers {
 			continue
@@ -183,7 +191,7 @@ func CommunitiesPass(
 		if c.SummaryHash == hash && c.Model == model {
 			continue // cached, unchanged
 		}
-		summary := summarizeCommunity(ctx, client, model, ccfg.MaxTokensOrDefault(), c, members, ont)
+		summary := summarizeCommunity(ctx, client, model, ccfg.MaxTokensOrDefault(), c, members, allRels)
 		if summary == "" {
 			continue // empty/failed — retried next compile (hash still stale)
 		}
@@ -238,19 +246,13 @@ func communityModel(cfg *config.Config) string {
 
 // summarizeCommunity generates one ~150-word theme summary. Empty on any
 // failure — the caller treats empty as "retry next compile".
-func summarizeCommunity(ctx context.Context, client *llm.Client, model string, maxTokens int, c store.Community, members []string, ont store.OntologyStore) string {
-	// Intra-community edges with evidence (truncated) ground the summary.
-	// One batch read (never N+1 GetRelations), filtered to live edges —
-	// the same LiveAt rule detection used.
+func summarizeCommunity(ctx context.Context, client *llm.Client, model string, maxTokens int, c store.Community, members []string, all []store.Relation) string {
+	// Intra-community edges with evidence (truncated) ground the summary,
+	// filtered to live edges — the same LiveAt rule detection used.
 	var lines []string
 	set := map[string]bool{}
 	for _, m := range members {
 		set[m] = true
-	}
-	all, err := ont.AllRelations()
-	if err != nil {
-		log.Warn("communities: relations read failed", "id", c.ID, "error", err)
-		return ""
 	}
 	now := time.Now().UTC()
 	for _, r := range all {
@@ -338,11 +340,14 @@ func writeCommunityFile(outputDir string, c store.Community, members []string, s
 // (delete-then-add: mem.Add errors on an existing ID).
 func indexCommunity(mem store.EntryStore, vec store.VectorStore, embedder embed.Embedder, c store.Community, summary string) {
 	docID := "community:" + c.ID
+	if mem == nil {
+		return
+	}
 	_ = mem.Delete(docID) // absent is fine
 	if err := mem.Add(store.Entry{ID: docID, Content: summary, ArticlePath: "communities/" + c.ID + ".md"}); err != nil {
 		log.Warn("communities: FTS index failed", "id", c.ID, "error", err)
 	}
-	if embedder == nil {
+	if embedder == nil || vec == nil {
 		return
 	}
 	v, err := embedder.Embed(summary)

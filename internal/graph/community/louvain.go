@@ -37,11 +37,11 @@ var MemberHash = store.MemberHash
 // quotient is a weighted graph (Louvain aggregation levels need weights;
 // level 0 has all weights 1).
 type quotient struct {
-	nodes []string                 // node IDs (community keys at level >0)
+	nodes []string // node IDs (community keys at level >0)
 	adj   map[string]map[string]float64
-	deg   map[string]float64       // self-loops counted twice
-	mem   map[string][]string      // node -> flattened original member IDs
-	m     float64                  // total degree weight
+	deg   map[string]float64  // self-loops counted twice
+	mem   map[string][]string // node -> flattened original member IDs
+	m     float64             // total degree weight
 }
 
 func buildQuotient(nodes []string, edges []Edge) *quotient {
@@ -194,14 +194,14 @@ func (q *quotient) modularity(commOf map[string]string) float64 {
 	if q.m == 0 {
 		return 0
 	}
-	inW := map[string]float64{}  // internal ordered-pair weight
-	tot := map[string]float64{}  // community degree sums
-	for u, nbrs := range q.adj {
+	inW := map[string]float64{} // internal ordered-pair weight
+	tot := map[string]float64{} // community degree sums
+	for _, u := range q.nodes {
 		cu := commOf[u]
 		tot[cu] += q.deg[u]
-		for v, w := range nbrs {
+		for _, v := range sortedKeys(q.adj[u]) {
 			if commOf[v] == cu {
-				inW[cu] += w
+				inW[cu] += q.adj[u][v]
 			}
 		}
 	}

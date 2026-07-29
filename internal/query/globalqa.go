@@ -100,7 +100,9 @@ func GlobalQA(ctx context.Context, cs store.CommunityStore, searcher *hybrid.Sea
 		}
 	}
 	if len(selected) == 0 {
-		return GlobalQAResult{}, ErrNoCommunities
+		// Communities exist but none match this question — different
+		// failure from "never built"; say which.
+		return GlobalQAResult{}, fmt.Errorf("no communities match this question (selection over %d summarized communities found nothing)", len(summarized))
 	}
 
 	// Map: one partial answer per selected community, bounded parallelism.

@@ -314,3 +314,53 @@ ontology:
 		t.Error("no community summaries generated during compile")
 	}
 }
+
+// Gates i2: the empty-graph path must clear stale communities (not leave
+// GlobalQA answering from a graph that no longer exists).
+func TestCommunitiesPassEmptyGraphClears(t *testing.T) {
+	f := newCommunityFixture(t)
+	f.seed(t)
+	f.run(t)
+	if len(f.communities(t)) == 0 {
+		t.Fatal("seed run produced no communities")
+	}
+
+	// Delete every relation → detection input is empty → clear expected.
+	rels, err := f.ont.AllRelations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rels {
+		if err := f.ont.DeleteEntity(r.SourceID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.run(t)
+	if got := f.communities(t); len(got) != 0 {
+		t.Errorf("empty graph must clear all communities, got %+v", got)
+	}
+	// Orphan files swept too.
+	entries, _ := os.ReadDir(filepath.Join(f.dir, "wiki", "communities"))
+	for _, e := range entries {
+		t.Errorf("orphan community file survived: %s", e.Name())
+	}
+}
+
+// Gates i2: a file whose DB row is gone (crash window) is swept even though
+// no ReplaceDetection will ever return its ID.
+func TestSweepCommunityFilesOrphan(t *testing.T) {
+	f := newCommunityFixture(t)
+	dir := filepath.Join(f.dir, "wiki", "communities")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "c0-0.md"), []byte("kept"), 0o644)
+	os.WriteFile(filepath.Join(dir, "c0-9.md"), []byte("orphan"), 0o644)
+	sweepCommunityFiles(filepath.Join(f.dir, "wiki"), map[string]bool{"c0-0": true})
+	if _, err := os.Stat(filepath.Join(dir, "c0-0.md")); err != nil {
+		t.Error("kept file was swept")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "c0-9.md")); !os.IsNotExist(err) {
+		t.Error("orphan file survived the sweep")
+	}
+}
