@@ -223,6 +223,10 @@ func init() {
 
 	// Enables `sage-wiki --version` in addition to the `version` subcommand.
 	rootCmd.Version = version
+
+	// Report the real build version to MCP clients on initialize, instead of
+	// the constant the server package defaults to.
+	mcppkg.Version = version
 }
 
 func runVersion(cmd *cobra.Command, args []string) error {
