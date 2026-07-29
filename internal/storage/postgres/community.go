@@ -45,20 +45,21 @@ func (s *communityStore) ReplaceDetection(comms []store.Community, members map[s
 	var removed []string
 	err := s.b.WriteTx(func(tx *sql.Tx) error {
 		existing := map[string][2]string{}
-		rows, err := tx.Query(`SELECT id, COALESCE(summary_hash,''), COALESCE(summary,'') FROM communities`)
-		if err != nil {
-			return fmt.Errorf("postgres.ReplaceDetection: read existing: %w", err)
-		}
-		for rows.Next() {
-			var id, hash, summary string
-			if err := rows.Scan(&id, &hash, &summary); err != nil {
-				rows.Close()
-				return err
+		if err := func() error {
+			rows, err := tx.Query(`SELECT id, COALESCE(summary_hash,''), COALESCE(summary,'') FROM communities`)
+			if err != nil {
+				return fmt.Errorf("postgres.ReplaceDetection: read existing: %w", err)
 			}
-			existing[id] = [2]string{hash, summary}
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
+			defer rows.Close()
+			for rows.Next() {
+				var id, hash, summary string
+				if err := rows.Scan(&id, &hash, &summary); err != nil {
+					return err
+				}
+				existing[id] = [2]string{hash, summary}
+			}
+			return rows.Err()
+		}(); err != nil {
 			return err
 		}
 
