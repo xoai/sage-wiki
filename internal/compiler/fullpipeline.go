@@ -309,14 +309,16 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 	writeOntStore := opts.OntStore
 	if writeOntStore == nil {
-		writeOntStore = ontology.NewStore(opts.DB, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
+		writeOntStore = ontology.NewStore(opts.DB, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
+			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
 	}
 
 	// Pass 2b: LLM triple extraction (P3-2, opt-in). Runs BEFORE the
 	// zero-concept early return below — otherwise triples would silently never
 	// persist on an incremental compile where every concept dedup-merged, which
 	// is the ordinary case. Never fails the compile; see ExtractTriplesPass.
-	touched := ExtractTriplesPass(opts.Ctx, writeOntStore, successfulSummaries, concepts, cfg, client, false)
+	touched, supersessions := ExtractTriplesPass(opts.Ctx, writeOntStore, successfulSummaries, concepts, cfg, client, false, opts.ProjectDir, mf)
+	_ = supersessions // consumed by the post-resolution sweep (T7)
 
 	// Pass 4: entity resolution (P3-3, opt-in). Deferred rather than called
 	// inline because it must run AFTER Pass 3 — WriteArticles is what creates

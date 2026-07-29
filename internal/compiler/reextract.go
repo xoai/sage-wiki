@@ -89,7 +89,8 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	vecStore := vectors.NewStore(db)
 	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
 	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
+	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes),
+		ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
 	embedder := embed.NewFromConfig(cfg)
 	chunkStore := memory.NewChunkStore(db)
 
@@ -117,7 +118,8 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	// is true here: this path loads summary FILES from disk, so Summary holds
 	// the frontmatter and SourcePath is the summary's filename, not the source
 	// document.
-	touched := ExtractTriplesPass(context.Background(), ontStore, summaries, concepts, cfg, client, true)
+	touched, supersessions := ExtractTriplesPass(context.Background(), ontStore, summaries, concepts, cfg, client, true, projectDir, mf)
+	_ = supersessions // consumed by the post-resolution sweep (T7)
 
 	// Pass 3: Write articles
 	if len(concepts) > 0 {

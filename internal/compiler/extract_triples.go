@@ -11,12 +11,16 @@ import (
 	"sync"
 	"time"
 
+	"path/filepath"
+
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/prompts"
+	"github.com/xoai/sage-wiki/internal/sourcedate"
 	"github.com/xoai/sage-wiki/internal/store"
 )
 
@@ -337,10 +341,46 @@ func tripleRelationID(source, predicate, target string) string {
 //     (write.go), so both passes assert the same type for the row they share.
 //  3. otherwise -> the normalized model type. Nothing else claims these.
 //
+// FunctionalSupersession records one functional-predicate edge asserted this
+// compile so the post-resolution sweep can re-fire InvalidateFunctional once
+// this run's alias links exist (P3-6 two-trigger design: persistGraph runs
+// strictly BEFORE ResolveEntitiesPass, so alias forms created by THIS run's
+// resolution are invisible to the write-time trigger).
+type FunctionalSupersession struct {
+	SourceID      string
+	Predicate     string
+	KeepTargetID  string
+	NewValidFrom  string
+	InvalidatedBy string
+}
+
+// validFromForDoc resolves when the facts in sourceDoc became true (P3-6):
+// frontmatter date → file mtime → manifest added-at, via sourcedate.Resolve.
+// Zero means unknown and stays EMPTY — writing the epoch would date every
+// undated fact 1970. sourceDoc is project-relative on both call paths
+// (resolveSourceDoc strips to the source: key or the relative SourcePath).
+func validFromForDoc(projectDir string, mf *manifest.Manifest, sourceDoc string) string {
+	abs := sourceDoc
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(projectDir, sourceDoc)
+	}
+	addedAt := ""
+	if mf != nil {
+		if src, ok := mf.Sources[sourceDoc]; ok {
+			addedAt = src.AddedAt
+		}
+	}
+	ts := sourcedate.Resolve(abs, addedAt)
+	if ts == 0 {
+		return ""
+	}
+	return time.Unix(ts, 0).UTC().Format(time.RFC3339)
+}
+
 // Persistence is sequential by contract: GetEntity reads outside the write
 // mutex, so concurrent callers would both observe "absent" and race on the
 // type. ExtractTriplesPass fans out extraction and joins before calling this.
-func persistGraph(ont store.OntologyStore, g ExtractedGraph, concepts []ExtractedConcept, sourceDoc string) (entities, relations int, persisted []string) {
+func persistGraph(ont store.OntologyStore, g ExtractedGraph, concepts []ExtractedConcept, sourceDoc, validFrom string) (entities, relations int, persisted []string) {
 	conceptTypes := make(map[string]string, len(concepts))
 	for _, c := range concepts {
 		t := c.Type
@@ -409,6 +449,7 @@ func persistGraph(ont store.OntologyStore, g ExtractedGraph, concepts []Extracte
 			Evidence:   r.Evidence,
 			Confidence: r.Confidence,
 			SourceDoc:  sourceDoc,
+			ValidFrom:  validFrom,
 		}); err != nil {
 			log.Warn("triples: relation write failed",
 				"source", r.Source, "predicate", r.Predicate, "target", r.Target, "error", err)
@@ -452,15 +493,18 @@ func ExtractTriplesPass(
 	cfg *config.Config,
 	client *llm.Client,
 	summariesCarryFrontmatter bool,
-) []string {
+	projectDir string,
+	mf *manifest.Manifest,
+) (touched []string, supersessions []FunctionalSupersession) {
 	if cfg == nil || !cfg.Ontology.Triples.Enabled || ont == nil || client == nil || len(summaries) == 0 {
-		return nil
+		return nil, nil
 	}
 	// opts.Ctx is nilable at the fullpipeline call site; a per-document
 	// ctx.Err() on a nil interface panics.
 	if ctx == nil {
 		ctx = context.Background()
 	}
+
 
 	defer metrics.ObserveDuration(metrics.HistogramNamed(
 		"compile_pass_duration_seconds", metrics.CompileBuckets(), "pass", "triples"), time.Now())
@@ -594,7 +638,7 @@ func ExtractTriplesPass(
 		}
 		// Counts are what actually landed, not what was attempted: a failed
 		// write must not be reported as an extracted entity.
-		e, rel, ids := persistGraph(ont, g, concepts, r.sourceDoc)
+		e, rel, ids := persistGraph(ont, g, concepts, r.sourceDoc, validFromForDoc(projectDir, mf, r.sourceDoc))
 		entities += e
 		relations += rel
 		persisted = append(persisted, ids...)
@@ -605,7 +649,7 @@ func ExtractTriplesPass(
 			"failed", failures, "of", len(summaries))
 	}
 	log.Info("triples extracted", "entities", entities, "relations", relations, "documents", len(summaries))
-	return dedupeIDs(persisted)
+	return dedupeIDs(persisted), supersessions
 }
 
 // dedupeIDs collapses the per-document id lists into one stable set. The same
