@@ -97,8 +97,8 @@ func (s *ontologyStore) InvalidateFunctional(sourceID, predicate, keepTargetID, 
 		}
 
 		for _, table := range []string{"relations", "derived_relations"} {
-			if table == "derived_relations" && !s.b.derivedExists() {
-				continue
+			if table == "derived_relations" && !s.b.derivedExistsFresh() {
+				continue // uncached probe — see the SQLite twin
 			}
 			ids, err := func() ([]string, error) {
 				rows, err := tx.Query(`SELECT id FROM `+table+` WHERE `+where, mkArgs()...)

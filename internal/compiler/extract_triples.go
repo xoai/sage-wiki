@@ -669,12 +669,8 @@ func ExtractTriplesPass(
 		trust:      trustStore,
 		projectDir: projectDir,
 	}
+	// config.Load normalizes relation_types into Relations — one loop only.
 	for _, rc := range cfg.Ontology.Relations {
-		if rc.Functional {
-			hooks.functional[rc.Name] = true
-		}
-	}
-	for _, rc := range cfg.Ontology.RelationTypes {
 		if rc.Functional {
 			hooks.functional[rc.Name] = true
 		}

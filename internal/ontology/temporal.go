@@ -127,8 +127,9 @@ func (s *Store) InvalidateFunctional(sourceID, predicate, keepTargetID, newValid
 		}
 
 		for _, table := range []string{"relations", "derived_relations"} {
-			if table == "derived_relations" && !s.derivedExists() {
-				continue // pre-v12 schema; every derived touch gates on this
+			if table == "derived_relations" && !s.derivedExistsFresh() {
+				continue // uncached probe: a cached stale-false would skip
+				// derived invalidation (read-tuned guard, see derived.go)
 			}
 			ids, err := func() ([]string, error) {
 				rows, err := tx.Query(`SELECT id FROM `+table+` WHERE `+where, mkArgs()...)

@@ -1031,6 +1031,16 @@ func (c *Config) Validate() error {
 	} else if len(c.Ontology.Relations) > 0 {
 		log.Println("config: ontology.relations is deprecated, use ontology.relation_types instead")
 	}
+	// Functional predicates promise single-valued edges, but the compile-time
+	// supersession trigger lives in the triples pass — without it, only
+	// manual MCP/CLI adds supersede. Warn rather than silently under-deliver.
+	if !c.Ontology.Triples.Enabled && c.Ontology.Temporal.EnabledOrDefault() {
+		for _, r := range c.Ontology.Relations {
+			if r.Functional {
+				log.Printf("config: relation %q is functional but ontology.triples.enabled is false — compile-time supersession is inactive (manual adds still supersede)", r.Name)
+			}
+		}
+	}
 	for _, r := range c.Ontology.Relations {
 		if r.Name == "" {
 			return fmt.Errorf("config: ontology.relation_types: name is required")

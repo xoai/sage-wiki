@@ -336,7 +336,9 @@ func (s *Server) handleAddOntology(ctx context.Context, req mcplib.CallToolReque
 				invalidated, err := s.ont.InvalidateFunctional(sourceID, relType, targetID,
 					time.Now().UTC().Format(time.RFC3339), relID)
 				if err != nil {
-					return errorResult(fmt.Sprintf("supersession failed: %v", err)), nil
+					// The new edge is already committed and live; retrying
+					// the same add re-fires supersession idempotently.
+					return errorResult(fmt.Sprintf("relation added but supersession failed: %v (both values are now live; retry the add to re-apply)", err)), nil
 				}
 				if len(invalidated) > 0 {
 					msg += fmt.Sprintf(" (superseded %d prior edge(s))", len(invalidated))
@@ -756,12 +758,8 @@ func (s *Server) trustStore() store.TrustStore {
 // functionalPredicate reports whether relType is configured functional
 // (outbound uniqueness, P3-6) in either relation config key.
 func (s *Server) functionalPredicate(relType string) bool {
+	// config.Load normalizes relation_types into Relations — one loop only.
 	for _, rc := range s.cfg.Ontology.Relations {
-		if rc.Name == relType && rc.Functional {
-			return true
-		}
-	}
-	for _, rc := range s.cfg.Ontology.RelationTypes {
 		if rc.Name == relType && rc.Functional {
 			return true
 		}

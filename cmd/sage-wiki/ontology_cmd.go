@@ -273,12 +273,8 @@ func runOntologyList(cmd *cobra.Command, args []string) error {
 // cliFunctionalPredicate reports whether relType is configured functional
 // (outbound uniqueness, P3-6) in either relation config key.
 func cliFunctionalPredicate(cfg *config.Config, relType string) bool {
+	// config.Load normalizes relation_types into Relations — one loop only.
 	for _, rc := range cfg.Ontology.Relations {
-		if rc.Name == relType && rc.Functional {
-			return true
-		}
-	}
-	for _, rc := range cfg.Ontology.RelationTypes {
 		if rc.Name == relType && rc.Functional {
 			return true
 		}

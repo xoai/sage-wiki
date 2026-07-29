@@ -149,7 +149,13 @@ func GraphQA(ctx context.Context, ont store.OntologyStore, searcher *hybrid.Sear
 		return GraphQAResult{}, fmt.Errorf("graphqa: %w", err)
 	}
 	if len(sg.Edges) == 0 {
-		return GraphQAResult{Answer: "no edges found for the matched entities", Cited: []CitedEdge{}, Seeds: sg.Seeds}, nil
+		// With as_of set, an empty subgraph means "nothing valid then" —
+		// say so; the bare message reads as "no edges ever".
+		msg := "no edges found for the matched entities"
+		if !opts.AsOf.IsZero() {
+			msg = fmt.Sprintf("no edges valid as of %s for the matched entities", opts.AsOf.UTC().Format(time.RFC3339))
+		}
+		return GraphQAResult{Answer: msg, Cited: []CitedEdge{}, Seeds: sg.Seeds}, nil
 	}
 
 	// The subgraph text is built from user-document-derived names and

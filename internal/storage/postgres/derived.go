@@ -65,6 +65,17 @@ func (b *backend) derivedExists() bool {
 	return b.hasDerived
 }
 
+// derivedExistsFresh probes WITHOUT the rate-limited cache — write paths
+// (InvalidateFunctional) need it: the cached guard's fail-safe is tuned for
+// reads, and a stale false silently skips derived invalidation (see the
+// SQLite twin). Errors (no such table) return false: skipping the UPDATE is
+// safe, running it would fail the tx.
+func (b *backend) derivedExistsFresh() bool {
+	var n bool
+	err := b.pool.QueryRow(`SELECT EXISTS(SELECT 1 FROM derived_relations)`).Scan(&n)
+	return err == nil && n
+}
+
 // markDerivedWritten is called after any insert into derived_relations.
 func (b *backend) markDerivedWritten() {
 	b.derivedMu.Lock()
