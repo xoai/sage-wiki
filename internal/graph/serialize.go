@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"time"
 	"fmt"
 	"sort"
 	"strings"
@@ -15,6 +16,9 @@ import (
 type SubgraphOpts struct {
 	MaxHops  int
 	MaxEdges int
+	// AsOf makes the subgraph point-in-time (P3-6): only edges live at AsOf
+	// are serialized. Zero means now.
+	AsOf time.Time
 }
 
 // SerializedEdge is one numbered triple. Line is the BARE triple — the
@@ -72,7 +76,7 @@ func SerializeSubgraph(ont store.OntologyStore, seeds []string, opts SubgraphOpt
 				continue
 			}
 			visited[id] = true
-			rels, err := ont.GetRelations(id, store.Both, "")
+			rels, err := ont.GetRelationsAt(id, store.Both, "", opts.AsOf)
 			if err != nil {
 				return Subgraph{}, fmt.Errorf("serialize subgraph: %w", err)
 			}
@@ -162,6 +166,18 @@ func provenanceTag(r store.Relation) string {
 	}
 	if r.Evidence != "" {
 		parts = append(parts, fmt.Sprintf("evidence: %q", "«"+r.Evidence+"»"))
+	}
+	// P3-6: the validity window travels with the edge (GRAPH-08). "now" for
+	// an open window — the edge is currently valid.
+	if r.ValidFrom != "" || r.ValidTo != "" {
+		from, to := r.ValidFrom, r.ValidTo
+		if from == "" {
+			from = "…"
+		}
+		if to == "" {
+			to = "now"
+		}
+		parts = append(parts, fmt.Sprintf("valid: %s→%s", from, to))
 	}
 	if len(parts) == 0 {
 		return ""

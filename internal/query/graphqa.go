@@ -1,6 +1,7 @@
 package query
 
 import (
+	"time"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -50,6 +51,8 @@ type CitedEdge struct {
 	SourceDoc  string  `json:"source_doc,omitempty"`
 	Confidence float64 `json:"confidence,omitempty"`
 	Evidence   string  `json:"evidence,omitempty"`
+	ValidFrom  string  `json:"valid_from,omitempty"`
+	ValidTo    string  `json:"valid_to,omitempty"`
 }
 
 // GraphQAResult is a graph-grounded answer with edge-level citations.
@@ -76,6 +79,9 @@ type GraphQAOpts struct {
 	// valid arg > valid config > literal default; out-of-range falls back.
 	Hops     int
 	MaxEdges int
+	// AsOf makes the answer point-in-time (P3-6): the subgraph contains
+	// only edges live at AsOf and the prompt says so. Zero means now.
+	AsOf time.Time
 }
 
 // graphQAGroundingInstruction is the system prompt. The capture test pins
@@ -138,7 +144,7 @@ func GraphQA(ctx context.Context, ont store.OntologyStore, searcher *hybrid.Sear
 		return GraphQAResult{Answer: "no graph entities matched the question", Cited: []CitedEdge{}, Seeds: []string{}}, nil
 	}
 
-	sg, err := graph.SerializeSubgraph(ont, seeds, graph.SubgraphOpts{MaxHops: hops, MaxEdges: maxEdges})
+	sg, err := graph.SerializeSubgraph(ont, seeds, graph.SubgraphOpts{MaxHops: hops, MaxEdges: maxEdges, AsOf: opts.AsOf})
 	if err != nil {
 		return GraphQAResult{}, fmt.Errorf("graphqa: %w", err)
 	}
@@ -149,7 +155,11 @@ func GraphQA(ctx context.Context, ont store.OntologyStore, searcher *hybrid.Sear
 	// The subgraph text is built from user-document-derived names and
 	// evidence — it goes through the canonical untrusted frame (P1-6),
 	// whose neutralization defangs literal delimiter tags in entity names.
-	user := fmt.Sprintf("Question: %s\n\nGraph edges:\n%s", question, prompts.WrapUntrusted(sg.Text))
+	var timeNote string
+	if !opts.AsOf.IsZero() {
+		timeNote = fmt.Sprintf(" (as of %s — only facts valid then are listed)", opts.AsOf.UTC().Format(time.RFC3339))
+	}
+	user := fmt.Sprintf("Question: %s%s\n\nGraph edges:\n%s", question, timeNote, prompts.WrapUntrusted(sg.Text))
 	payload, _, err := client.StructuredCompletion(ctx, []llm.Message{
 		{Role: "system", Content: graphQAGroundingInstruction},
 		{Role: "user", Content: user},
@@ -189,6 +199,8 @@ func GraphQA(ctx context.Context, ont store.OntologyStore, searcher *hybrid.Sear
 			SourceDoc:  r.SourceDoc,
 			Confidence: r.Confidence,
 			Evidence:   r.Evidence,
+			ValidFrom:  r.ValidFrom,
+			ValidTo:    r.ValidTo,
 		})
 	}
 	return res, nil
