@@ -127,8 +127,6 @@ func TestFunctionalSupersessionAutoApplies(t *testing.T) {
 		t.Errorf("supersession not collected for sweep: %+v", sup)
 	}
 	// The loser is invalidated, not deleted: point-in-time read still sees it.
-	hist, err := ont.GetRelations("alice", ontology.Outbound, "")
-	_ = hist
 	all, err := ont.AllRelations()
 	if err != nil {
 		t.Fatal(err)

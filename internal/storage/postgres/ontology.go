@@ -332,7 +332,7 @@ func (s *ontologyStore) GetRelationsAt(entityID string, direction store.Directio
 		asOfStr := asOfString(asOf)
 		var pred, dpred string
 		pred, _ = liveAtPredicate("", n)
-		dpred, n = liveAtPredicate("d.", n)
+		dpred, _ = liveAtPredicate("d.", n)
 		conds = append(conds, pred)
 		dconds = append(dconds, dpred)
 		args = append(args, asOfStr, asOfStr)

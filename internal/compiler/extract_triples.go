@@ -618,7 +618,6 @@ func ExtractTriplesPass(
 		ctx = context.Background()
 	}
 
-
 	defer metrics.ObserveDuration(metrics.HistogramNamed(
 		"compile_pass_duration_seconds", metrics.CompileBuckets(), "pass", "triples"), time.Now())
 

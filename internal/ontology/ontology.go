@@ -65,8 +65,8 @@ type Store struct {
 	// true; absence of WithTemporalEnabled must mean ENABLED, because the
 	// ~30 direct construction sites (and every test) predate the option and
 	// would otherwise silently disable filtering (spec rev-plan i2/i3).
-	temporalEnabled  bool
-	derivedGuard     // alias-derived edges (decision-035); see derived.go
+	temporalEnabled bool
+	derivedGuard    // alias-derived edges (decision-035); see derived.go
 }
 
 // StoreOption configures optional Store behavior (P3-6). Variadic so existing

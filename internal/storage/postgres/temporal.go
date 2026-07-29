@@ -100,23 +100,25 @@ func (s *ontologyStore) InvalidateFunctional(sourceID, predicate, keepTargetID, 
 			if table == "derived_relations" && !s.b.derivedExists() {
 				continue
 			}
-			rows, err := tx.Query(`SELECT id FROM `+table+` WHERE `+where, mkArgs()...)
+			ids, err := func() ([]string, error) {
+				rows, err := tx.Query(`SELECT id FROM `+table+` WHERE `+where, mkArgs()...)
+				if err != nil {
+					return nil, fmt.Errorf("postgres.InvalidateFunctional: scan %s: %w", table, err)
+				}
+				defer rows.Close()
+				var ids []string
+				for rows.Next() {
+					var id sql.NullString
+					if err := rows.Scan(&id); err != nil {
+						return nil, err
+					}
+					if id.Valid {
+						ids = append(ids, id.String)
+					}
+				}
+				return ids, rows.Err()
+			}()
 			if err != nil {
-				return fmt.Errorf("postgres.InvalidateFunctional: scan %s: %w", table, err)
-			}
-			var ids []string
-			for rows.Next() {
-				var id sql.NullString
-				if err := rows.Scan(&id); err != nil {
-					rows.Close()
-					return err
-				}
-				if id.Valid {
-					ids = append(ids, id.String)
-				}
-			}
-			rows.Close()
-			if err := rows.Err(); err != nil {
 				return err
 			}
 			if len(ids) == 0 {
