@@ -26,6 +26,9 @@ type OnDemandOpts struct {
 	ProjectDir  string
 	Config      *config.Config
 	DB          store.DBHandle
+	// TrustStore is optional (P3-6): pass the Backend's Trust store under
+	// storage.backend=postgres; nil falls back to the sqlite implementation.
+	TrustStore  store.TrustStore
 	Searcher    *hybrid.Searcher
 	Embedder    embed.Embedder
 	Client      *llm.Client
@@ -151,6 +154,10 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 
 		bp := NewBackpressureController(cfg.Compiler.MaxParallel)
 		cacheEnabled := cfg.Compiler.PromptCacheEnabled()
+		trustStore := opts.TrustStore
+		if trustStore == nil {
+			trustStore = trust.NewStore(opts.DB)
+		}
 
 		pResult := runFullPipeline(uncompiled, FullPipelineOpts{
 			Ctx:          ctx,
@@ -163,7 +170,7 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 			VecStore:     vecStore,
 			ChunkStore:   chunkStore,
 			OntStore:     ontStore,
-			TrustStore:   trust.NewStore(opts.DB),
+			TrustStore:   trustStore,
 			Embedder:     opts.Embedder,
 			Backpressure: bp,
 			ItemStore:    items,

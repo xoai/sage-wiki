@@ -709,6 +709,7 @@ func (s *Server) handleCompileTopic(ctx context.Context, req mcplib.CallToolRequ
 		ProjectDir:  s.projectDir,
 		Config:      cfg,
 		DB:          s.db,
+		TrustStore:  s.trustStore(),
 		Searcher:    s.searcher,
 		Embedder:    s.embedder,
 		Client:      client,
@@ -741,6 +742,17 @@ var CaptureSchema = llm.JSONSchema{
 	},
 }
 
+// trustStore returns the Backend's Trust store when one is wired (the
+// postgres path), falling back to the sqlite implementation over the raw
+// handle. trust.NewStore emits '?' placeholders and silently fails under a
+// Postgres backend (Gate-3 i2).
+func (s *Server) trustStore() store.TrustStore {
+	if s.backend != nil {
+		return s.backend.Trust()
+	}
+	return trust.NewStore(s.db)
+}
+
 // functionalPredicate reports whether relType is configured functional
 // (outbound uniqueness, P3-6) in either relation config key.
 func (s *Server) functionalPredicate(relType string) bool {
@@ -761,7 +773,7 @@ func (s *Server) functionalPredicate(relType string) bool {
 // edge (P3-6). Deterministic ID dedups repeats; insert races lose to the PK
 // and are swallowed — conflict surfacing is best-effort.
 func (s *Server) emitEdgeConflict(question, answer string) {
-	ts := trust.NewStore(s.db)
+	ts := s.trustStore()
 	sum := sha256.Sum256([]byte(question))
 	id := "edgeconflict-" + hex.EncodeToString(sum[:])[:16]
 	if existing, err := ts.Get(id); err == nil && existing != nil {

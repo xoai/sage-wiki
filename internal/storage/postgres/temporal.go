@@ -10,8 +10,11 @@ import (
 )
 
 // P3-6: functional supersession — Postgres twin of
-// internal/ontology/temporal.go. Semantics must stay byte-identical; only
-// placeholder style and the clamp expression differ.
+// internal/ontology/temporal.go. Semantics are intended identical; the
+// placeholder style and clamp expression differ, and one behavioral
+// divergence is deliberate (spec i5): unparseable valid_from degrades
+// silently to newValidFrom on SQLite but fails loudly on the ::timestamptz
+// cast here.
 
 // aliasRoot / idForms: see the SQLite twin. Edges are written with
 // pre-resolution LLM IDs and LinkAlias rewrites only derived copies, so one

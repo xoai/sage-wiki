@@ -10,7 +10,6 @@ import (
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/store"
-	"github.com/xoai/sage-wiki/internal/trust"
 )
 
 // passHooks are the worker's tier pass functions, fields so tests can
@@ -252,7 +251,7 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 				VecStore:     run.vecStore,
 				ChunkStore:   run.chunkStore,
 				OntStore:     run.pipelineOntStore,
-				TrustStore:   trust.NewStore(run.db),
+				TrustStore:   run.trustStore,
 				Embedder:     run.embedder,
 				Backpressure: run.bp,
 				ItemStore:    run.itemStore,
