@@ -48,7 +48,7 @@ sage-wiki provenance "service mesh"    # những nguồn nào sinh ra khái ni�
 ```
 
 Các cạnh mang tính lưỡng thời gian (bi-temporal): khi một sự thật bị bác bỏ, cạnh cũ bị vô hiệu thay vì xung đột, câu trả lời mặc định không còn mâu thuẫn, và truy vấn `as_of` trả lời "tháng Giêng chúng ta đã tin điều gì?". Các mâu thuẫn không rõ ràng vẫn lộ ra qua khâu duyệt
-[độ tin cậy đầu ra](docs/guides/output-trust.md). Chi tiết:
+[độ tin cậy đầu ra](docs/guides/output-trust.md). Cho câu hỏi toàn corpus ("các chủ đề chính là gì?"), tính năng phát hiện cộng đồng opt-in (`ontology.communities.enabled`) tạo tóm tắt cộng đồng được cache và trả lờ̛i qua `wiki_graph_query` `mode: "global"`. Chi tiết:
 [bộ nhớ đồ thị](docs/guides/graph-memory.md).
 
 ## Hướng dẫn

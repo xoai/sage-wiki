@@ -48,7 +48,7 @@ sage-wiki provenance "service mesh"    # 哪些来源产生了这个概念
 ```
 
 边是双时态（bi-temporal）的：事实被更正时旧边会被作废而非冲突，默认答案不含矛盾，`as_of` 查询可回答"一月份我们相信什么？"。有歧义的矛盾仍通过
-[输出可信度](docs/guides/output-trust.md)复核浮现。深入了解：
+[输出可信度](docs/guides/output-trust.md)复核浮现。对于跨语料的问题（“整体的主要主题是什么？”），可选的社区检测（`ontology.communities.enabled`）会生成缓存的社区摘要，并通过 `wiki_graph_query` `mode: "global"` 作答。深入了解：
 [图记忆](docs/guides/graph-memory.md)。
 
 ## 指南

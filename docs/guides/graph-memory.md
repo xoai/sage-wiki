@@ -282,6 +282,26 @@ validity — once on this list — now exist: `ontology resolve --unlink`,
 canonical seed resolution at every user surface, `wiki_graph_query` below,
 and the bi-temporal edges of the next section.)
 
+## Communities and global queries
+
+Local graph queries answer "what relates to X?". **Global** queries answer
+"what are the main themes across everything?" — query-focused summarization,
+not retrieval. With `ontology.communities.enabled: true`, each compile runs a
+deterministic pure-Go Louvain detection over the live entity graph
+(hierarchical levels), generates a cached summary per community of 3+
+members, and re-summarizes only communities whose membership changed.
+
+Ask globally with `wiki_graph_query` and `mode: "global"`: the answer
+map-reduces over relevant community summaries and cites the communities it
+used. Community markdown lands in `wiki/communities/` alongside concepts.
+
+**Cost honesty:** detection itself is free (in-memory, milliseconds at
+personal-vault scale). Summaries cost one cheap-model call per community of
+3+ members on first enable (roughly entities/10), then only for changed
+communities. A global query costs 1 + K calls (map over up to
+`max_communities` communities, then reduce). This is why it is off by
+default — enable it when global questions matter more than the indexing cost.
+
 ## Temporal validity
 
 Edges are bi-temporal: `valid_from` records when a fact became true (the

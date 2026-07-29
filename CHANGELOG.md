@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Graph communities + global queries (P3-5).** Opt-in GraphRAG-style
+  sensemaking: deterministic pure-Go Louvain detection over the ontology
+  graph (hierarchical levels, no CGO), LLM-generated community summaries
+  cached by member hash (unchanged communities cost nothing on recompiles),
+  and a global query mode that map-reduces over summaries with
+  community-level citations: `wiki_graph_query` with `mode: "global"`.
+  Enable with `ontology.communities.enabled: true` (default off — indexing
+  cost is one Louvain run plus roughly members/10 cheap-model calls on first
+  enable; global queries cost 1 + K calls). Community markdown lands in
+  `wiki/communities/`.
+
 ## 0.2.4 — 2026-07-29
 
 ### Added
