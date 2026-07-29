@@ -1,10 +1,10 @@
 package graph
 
 import (
-	"time"
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/store"

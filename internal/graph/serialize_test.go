@@ -4,8 +4,8 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
-	"time"
 	"testing"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/ontology"
