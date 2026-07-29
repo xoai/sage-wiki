@@ -177,3 +177,11 @@ func (s *Store) InvalidateFunctional(sourceID, predicate, keepTargetID, newValid
 func placeholders(n int) string {
 	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
 }
+
+// LiveAt reports whether a relation is live at time T, implementing the exact
+// liveAtPredicate semantics in Go — one definition shared by the SQL fragment
+// and Go-side consumers (P3-5 community detection input building).
+func LiveAt(r store.Relation, t time.Time) bool {
+	ts := asOfString(t)
+	return (r.ValidFrom == "" || r.ValidFrom <= ts) && (r.ValidTo == "" || r.ValidTo > ts)
+}

@@ -1254,6 +1254,17 @@ func resumeBatch(
 	// Pass 4: Images (placeholder)
 	ExtractImages(projectDir, cfg.Output, nil)
 
+	// Community detection (P3-5): batch-resume never runs resolution, so
+	// this sees the unresolved graph — documented in the spec; the next full
+	// compile re-detects. Runs only when Pass 2/3 completed.
+	if batchPass23OK {
+		merged := ontology.MergedRelations(cfg.Ontology.Relations)
+		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+		ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
+			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
+		CommunitiesPass(orBackground(opts.Ctx), projectDir, ontStore, ontStore, memStore, vecStore, embedder, cfg, client)
+	}
+
 	// If Pass 2/3 did not complete (extraction failure or cancel), this batch-resume
 	// run is incomplete: skip the manifest Save entirely (below), discarding the
 	// run's in-memory manifest mutations (AddSource/MarkCompiled/AddConcept) so the

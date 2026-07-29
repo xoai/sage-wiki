@@ -62,7 +62,10 @@ sage-wiki provenance "service mesh"    # which sources produced this concept
 Edges are bi-temporal: contradicting a fact invalidates the old edge instead
 of colliding, default answers are contradiction-free, and `as_of` queries
 answer "what did we believe in January?" Ambiguous contradictions still
-surface through [output trust](docs/guides/output-trust.md) review. Depth
+surface through [output trust](docs/guides/output-trust.md) review. For
+corpus-wide questions ("main themes across everything?"), opt-in community
+detection (`ontology.communities.enabled`) generates cached community
+summaries and answers via `wiki_graph_query` `mode: "global"`. Depth
 and mechanics: [graph memory](docs/guides/graph-memory.md).
 
 ## Guides

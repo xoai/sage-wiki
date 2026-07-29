@@ -48,7 +48,7 @@ sage-wiki provenance "service mesh"    # 이 개념을 만든 출처
 ```
 
 엣지는 이중 시간(bi-temporal)입니다: 사실이 바뀌면 이전 엣지가 충돌 대신 무효화되고, 기본 답변은 모순이 없으며, `as_of` 쿼리로 "1월에는 무엇을 사실로 믿었는가"를 물을 수 있습니다. 모호한 모순은 여전히
-[출력 신뢰](docs/guides/output-trust.md) 검토로 드러납니다. 자세한 내용:
+[출력 신뢰](docs/guides/output-trust.md) 검토로 드러납니다. 코퍼스 전반의 질문("전체의 주요 주제는 무엇인가?")에는 옵트인 커뮤니티 탐지(`ontology.communities.enabled`)가 캐시된 커뮤니티 요약을 생성하고 `wiki_graph_query` `mode: "global"`로 답합니다. 자세한 내용:
 [그래프 메모리](docs/guides/graph-memory.md).
 
 ## 가이드

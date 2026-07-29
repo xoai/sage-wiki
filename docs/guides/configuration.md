@@ -195,6 +195,12 @@ serve:
 #   temporal:                      # bi-temporal edge validity (P3-6)
 #     enabled: true                # DEFAULT — false disables filtering, supersession, as_of
 #     auto_apply_threshold: 0.8    # DEFAULT — confidence to auto-invalidate a superseded edge
+#   communities:                   # community detection + global queries (P3-5)
+#     enabled: true                # default FALSE — costs LLM calls (summaries)
+#     model: ""                    # default: models.extract → models.summarize → gpt-4o-mini
+#     max_tokens: 1024
+#     max_communities: 8           # global-query map breadth
+#     min_members: 3               # smaller communities get no summary
 #   resolve:                       # entity resolution (P3-3, opt-in)
 #     enabled: true                # default false — pairs with triples (see below)
 #     model: ""                    # default: models.extract, then models.summarize

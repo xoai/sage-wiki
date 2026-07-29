@@ -320,6 +320,7 @@ func (b *backend) Entries() store.EntryStore            { return &entryStore{b: 
 func (b *backend) Chunks() store.ChunkStore             { return &chunkStore{b: b} }
 func (b *backend) Vectors() store.VectorStore           { return &vectorStore{b: b} }
 func (b *backend) Ontology() store.OntologyStore        { return &ontologyStore{b: b} }
+func (b *backend) Communities() store.CommunityStore    { return &communityStore{b: b} }
 func (b *backend) Trust() store.TrustStore              { return &trustStore{b: b} }
 func (b *backend) CompileItems() store.CompileItemStore { return &itemStore{b: b} }
 func (b *backend) OutputIndex() store.OutputIndexStore  { return &outputIndexStore{b: b} }

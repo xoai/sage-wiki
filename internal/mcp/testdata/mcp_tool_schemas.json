@@ -206,6 +206,10 @@
           "description": "Subgraph edge cap 1-500 (default 60)",
           "type": "number"
         },
+        "mode": {
+          "description": "'local' (default) traverses entity neighborhoods; 'global' answers corpus-wide questions via community summaries (P3-5, requires ontology.communities.enabled)",
+          "type": "string"
+        },
         "question": {
           "description": "Natural-language question about relations between entities",
           "type": "string"

@@ -133,6 +133,25 @@ type OntologyStore interface {
 	ClearDerived() error
 }
 
+// CommunityStore persists detected graph communities (P3-5). Membership is
+// derived, rebuilt state — replaced wholesale per detection run.
+type CommunityStore interface {
+	// ReplaceDetection upserts the new partition in ONE tx: member rows are
+	// deleted and reinserted wholesale; each community upserts preserving
+	// summary/summary_hash/model UNLESS the incoming member hash differs
+	// from the stored one (conditional clear — repurposed IDs can never
+	// keep a stale summary); communities absent from the new set are
+	// deleted and their IDs returned for artifact cleanup. Tx order:
+	// members delete → level-ordered upsert → absent delete → reinsert.
+	ReplaceDetection(comms []Community, members map[string][]string) (removed []string, err error)
+	ListCommunities(level int) ([]Community, error) // level -1 = all
+	CommunityMembers(id string) ([]string, error)
+	EntityCommunity(entityID string, level int) (string, error)
+	SetSummary(id, summary, summaryHash, model string) error
+	MaxLevel() (int, error)
+	ClearCommunities() error
+}
+
 type TrustStore interface {
 	InsertPending(o *PendingOutput) error
 	Get(id string) (*PendingOutput, error)

@@ -550,6 +550,43 @@ type OntologyConfig struct {
 	Resolve       ResolveConfig      `yaml:"resolve,omitempty"`
 	GraphQuery    GraphQueryConfig   `yaml:"graph_query,omitempty"`
 	Temporal      TemporalConfig     `yaml:"temporal,omitempty"`
+	Communities   CommunitiesConfig  `yaml:"communities,omitempty"`
+}
+
+// CommunitiesConfig controls community detection + global queries (P3-5).
+// Enabled defaults OFF for the same reason TriplesConfig does: the pass adds
+// LLM calls (summaries), and an upgrade must not raise anyone's bill unasked.
+type CommunitiesConfig struct {
+	Enabled        bool   `yaml:"enabled,omitempty"`
+	Model          string `yaml:"model,omitempty"`
+	MaxTokens      int    `yaml:"max_tokens,omitempty"`
+	MaxCommunities int    `yaml:"max_communities,omitempty"`
+	MinMembers     int    `yaml:"min_members,omitempty"`
+}
+
+// MaxTokensOrDefault returns the summary token cap (default 1024).
+func (c CommunitiesConfig) MaxTokensOrDefault() int {
+	if c.MaxTokens <= 0 {
+		return 1024
+	}
+	return c.MaxTokens
+}
+
+// MaxCommunitiesOrDefault returns the global-query map breadth (default 8).
+func (c CommunitiesConfig) MaxCommunitiesOrDefault() int {
+	if c.MaxCommunities <= 0 {
+		return 8
+	}
+	return c.MaxCommunities
+}
+
+// MinMembersOrDefault returns the smallest community that gets a summary
+// (default 3).
+func (c CommunitiesConfig) MinMembersOrDefault() int {
+	if c.MinMembers <= 0 {
+		return 3
+	}
+	return c.MinMembers
 }
 
 // TemporalConfig controls bi-temporal edge validity (P3-6): default

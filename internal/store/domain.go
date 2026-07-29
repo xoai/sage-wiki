@@ -1,6 +1,12 @@
 package store
 
-import "time"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"sort"
+	"strings"
+	"time"
+)
 
 // Domain types relocated from the concrete store packages (P2-1 amendment
 // "D2-prime"): internal/store must not import memory/vectors/ontology/trust/
@@ -201,6 +207,34 @@ type TraverseOpts struct {
 	// are followed. Zero means now. Has no effect when the store was built
 	// with temporal behavior disabled.
 	AsOf time.Time
+}
+
+// --- communities (P3-5) ---
+
+// Community is one detected graph community row. Summary fields are
+// preserved across re-detection via upsert UNLESS the member set changed
+// (member-hash mismatch clears them — see CommunityStore.ReplaceDetection).
+type Community struct {
+	ID          string // c<level>-<seq>, per-run; NOT a stable user reference
+	Level       int
+	ParentID    string
+	MemberCount int
+	EdgeCount   int
+	Summary     string
+	SummaryHash string
+	Model       string
+	UpdatedAt   string
+}
+
+// MemberHash is THE hash of a community's member set (sha256 of the sorted
+// IDs joined with \n). It lives in store because both the store layer
+// (conditional summary clear) and the compiler pass (staleness check) use
+// it, and graph/community cannot be imported from here (import cycle).
+func MemberHash(members []string) string {
+	cp := append([]string(nil), members...)
+	sort.Strings(cp)
+	sum := sha256.Sum256([]byte(strings.Join(cp, "\n")))
+	return hex.EncodeToString(sum[:])
 }
 
 // --- trust ---

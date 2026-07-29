@@ -7,7 +7,7 @@ import (
 )
 
 // currentSchemaVersion tracks len(schemaMigrations).
-const currentSchemaVersion = 7
+const currentSchemaVersion = 8
 
 // schemaMigrations is the append-only Postgres V-series. Each entry is ONE
 // statement per Exec (pgx stdlib rejects multi-statement prepared calls).
@@ -315,6 +315,28 @@ var schemaMigrations = [][]string{
 			source_date BIGINT NOT NULL
 		)`,
 		`INSERT INTO schema_version (version) SELECT 7 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = 7)`,
+	},
+	// v8 — graph communities (sqlite twin: migrationV14; P3-5). Membership
+	// is derived, rebuilt state — replaced wholesale per detection run.
+	{
+		`CREATE TABLE IF NOT EXISTS communities (
+			id           TEXT PRIMARY KEY,
+			level        INTEGER NOT NULL,
+			parent_id    TEXT,
+			member_count INTEGER NOT NULL DEFAULT 0,
+			edge_count   INTEGER NOT NULL DEFAULT 0,
+			summary      TEXT,
+			summary_hash TEXT,
+			model        TEXT,
+			updated_at   TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS community_members (
+			community_id TEXT NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
+			entity_id    TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+			level        INTEGER NOT NULL,
+			PRIMARY KEY (community_id, entity_id)
+		)`,
+		`INSERT INTO schema_version (version) SELECT 8 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = 8)`,
 	},
 }
 

@@ -14,6 +14,7 @@ import (
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
 
@@ -301,5 +302,89 @@ func TestMCPGraphQueryAsOf(t *testing.T) {
 	}
 	if !strings.Contains(captured, "as of 2022-06-01T00:00:00Z") {
 		t.Errorf("prompt must disclose the as-of window:\n%s", captured)
+	}
+}
+
+// P3-5: wiki_graph_query mode=global — gated, invalid-mode error, and the
+// enabled happy path over seeded communities.
+func TestMCPGraphQueryGlobalMode(t *testing.T) {
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{
+				"content": "A synthesized global answer citing [c0-0].",
+			}}},
+			"model": "gpt-4o-mini",
+			"usage": map[string]int{"total_tokens": 10},
+		})
+	}))
+	defer fake.Close()
+
+	dir := graphQueryProject(t, fake.URL)
+	// Enable communities.
+	cfgBytes, _ := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	os.WriteFile(filepath.Join(dir, "config.yaml"),
+		append(cfgBytes, []byte("\nontology:\n  communities:\n    enabled: true\n")...), 0o644)
+
+	srv, err := NewServer(dir)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer srv.Close()
+
+	// Invalid mode errors.
+	bad := srv.CallTool(context.Background(), "wiki_graph_query", makeToolRequest(map[string]any{
+		"question": "themes?", "mode": "sideways",
+	}))
+	if !bad.IsError {
+		t.Error("invalid mode must error")
+	}
+
+	// No communities yet → ErrNoCommunities surfaced.
+	empty := srv.CallTool(context.Background(), "wiki_graph_query", makeToolRequest(map[string]any{
+		"question": "themes?", "mode": "global",
+	}))
+	if !empty.IsError || !strings.Contains(empty.Content[0].(mcplib.TextContent).Text, "no summarized communities") {
+		t.Errorf("global with no communities must surface the sentinel, got: %v", empty.Content[0])
+	}
+
+	// Seed one summarized community (+ its index entry) and ask again.
+	cs := srv.backend.Communities()
+	for _, id := range []string{"a", "b", "c"} {
+		if err := srv.ont.AddEntity(ontology.Entity{ID: id, Type: "concept", Name: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := cs.ReplaceDetection(
+		[]store.Community{{ID: "c0-0", Level: 0, MemberCount: 3, UpdatedAt: "2026-07-29T00:00:00Z"}},
+		map[string][]string{"c0-0": {"a", "b", "c"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cs.SetSummary("c0-0", "attention optimization techniques", "h", "m"); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.mem.Add(memory.Entry{ID: "community:c0-0", Content: "attention optimization techniques"}); err != nil {
+		t.Fatal(err)
+	}
+
+	ok := srv.CallTool(context.Background(), "wiki_graph_query", makeToolRequest(map[string]any{
+		"question": "attention optimization?", "mode": "global",
+	}))
+	if ok.IsError {
+		t.Fatalf("global happy path errored: %s", ok.Content[0].(mcplib.TextContent).Text)
+	}
+	var resp struct {
+		Answer string `json:"answer"`
+		Cited  []struct {
+			ID string `json:"id"`
+		} `json:"cited"`
+	}
+	if err := json.Unmarshal([]byte(ok.Content[0].(mcplib.TextContent).Text), &resp); err != nil {
+		t.Fatalf("response not structured: %v", err)
+	}
+	if resp.Answer == "" {
+		t.Error("empty global answer")
+	}
+	if len(resp.Cited) != 1 || resp.Cited[0].ID != "c0-0" {
+		t.Errorf("cited = %+v, want exactly [c0-0]", resp.Cited)
 	}
 }

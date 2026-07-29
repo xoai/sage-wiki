@@ -48,7 +48,7 @@ sage-wiki provenance "service mesh"    # この概念を生んだソース
 ```
 
 エッジはバイテンポラルです: 事実を更新すると古いエッジは衝突せず無効化され、デフォルトの回答は矛盾のないものになり、`as_of` クエリで「1月時点では何を信じていたか」を答えられます。曖昧な矛盾は引き続き
-[出力信頼](docs/guides/output-trust.md)のレビューで表面化します。詳細:
+[出力信頼](docs/guides/output-trust.md)のレビューで表面化します。コーパス全体の問い（「全体の主なテーマは？」）には、オプトインのコミュニティ検出（`ontology.communities.enabled`）がキャッシュ済みコミュニティ要約を生成し、`wiki_graph_query` `mode: "global"` で回答します。詳細:
 [グラフメモリ](docs/guides/graph-memory.md)。
 
 ## ガイド

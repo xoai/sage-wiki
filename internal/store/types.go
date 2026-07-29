@@ -110,6 +110,7 @@ type Backend interface {
 	Chunks() ChunkStore
 	Vectors() VectorStore
 	Ontology() OntologyStore
+	Communities() CommunityStore
 	Trust() TrustStore
 	CompileItems() CompileItemStore
 	OutputIndex() OutputIndexStore

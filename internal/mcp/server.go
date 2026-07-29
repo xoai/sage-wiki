@@ -211,6 +211,7 @@ func (s *Server) registerReadTools() {
 			mcp.WithNumber("hops", mcp.Description("Traversal depth 1-5 (default 2)")),
 			mcp.WithNumber("max_edges", mcp.Description("Subgraph edge cap 1-500 (default 60)")),
 			mcp.WithString("as_of", mcp.Description("Optional RFC3339 timestamp: answer using only facts valid at that time (P3-6)")),
+			mcp.WithString("mode", mcp.Description("'local' (default) traverses entity neighborhoods; 'global' answers corpus-wide questions via community summaries (P3-5, requires ontology.communities.enabled)")),
 		),
 		s.handleGraphQuery,
 	)

@@ -48,7 +48,7 @@ sage-wiki provenance "service mesh"    # quelles sources ont produit ce concept
 ```
 
 Les arêtes sont bi-temporelles : contredire un fait invalide l'ancienne arête au lieu d'entrer en collision, les réponses par défaut sont sans contradiction, et les requêtes `as_of` répondent à « qu'est-ce qu'on croyait en janvier ? ». Les contradictions ambiguës remontent toujours via la revue de
-[confiance des sorties](docs/guides/output-trust.md). Détails :
+[confiance des sorties](docs/guides/output-trust.md). Pour les questions globales (« quels sont les grands thèmes de l'ensemble ? »), la détection de communautés (`ontology.communities.enabled`) génère des résumés de communautés mis en cache et répond via `wiki_graph_query` `mode: "global"`. Détails :
 [mémoire de graphe](docs/guides/graph-memory.md).
 
 ## Guides

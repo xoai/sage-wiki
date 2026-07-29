@@ -74,8 +74,8 @@ func TestMigrationV8_Upgrade(t *testing.T) {
 	if err := db.ReadDB().QueryRow("SELECT COALESCE(MAX(version),0) FROM schema_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 13 {
-		t.Errorf("MAX(version) = %d, want 13", version)
+	if version != 14 {
+		t.Errorf("MAX(version) = %d, want 14", version)
 	}
 
 	// Content preserved through the recreate+copy.
@@ -143,8 +143,8 @@ func TestMigrationV8_FreshDB(t *testing.T) {
 	if err := db.ReadDB().QueryRow("SELECT COALESCE(MAX(version),0) FROM schema_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 13 {
-		t.Errorf("fresh DB MAX(version) = %d, want 13", version)
+	if version != 14 {
+		t.Errorf("fresh DB MAX(version) = %d, want 14", version)
 	}
 	var sql string
 	if err := db.ReadDB().QueryRow("SELECT sql FROM sqlite_master WHERE name='entries'").Scan(&sql); err != nil {
