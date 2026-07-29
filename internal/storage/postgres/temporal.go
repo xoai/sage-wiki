@@ -79,7 +79,7 @@ func (s *ontologyStore) InvalidateFunctional(sourceID, predicate, keepTargetID, 
 		n := 1
 		predPH, next := pgPlaceholders(1, n)
 		srcPH, next := pgPlaceholders(len(sourceForms), next)
-		keepPH, next := pgPlaceholders(len(keepForms), next)
+		keepPH, _ := pgPlaceholders(len(keepForms), next)
 
 		where := `relation = ` + predPH +
 			` AND source_id IN (` + srcPH + `)` +
@@ -130,13 +130,14 @@ func (s *ontologyStore) InvalidateFunctional(sourceID, predicate, keepTargetID, 
 			// as Z (spec i4). COLLATE "C" makes the text max
 			// collation-independent. Empty valid_from → newValidFrom; garbage
 			// valid_from fails loudly on the cast (by design, spec i5).
-			vfPH := fmt.Sprintf("$%d", next)
-			invPH := fmt.Sprintf("$%d", next+2)
-			idPH, _ := pgPlaceholders(len(ids), next+3)
-			clamp := `CASE WHEN COALESCE(valid_from,'')='' THEN ` + vfPH +
-				` ELSE GREATEST(` + vfPH + ` COLLATE "C", to_char((valid_from::timestamptz + interval '1 second') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') COLLATE "C") END`
+			// Placeholders RESTART at $1: the UPDATE is a separate statement
+			// from the SELECT above, so its bind positions are independent.
+			// uargs = [newValidFrom($1), newValidFrom($2), invalidatedBy($3), ids($4…)].
+			clamp := `CASE WHEN COALESCE(valid_from,'')='' THEN $1` +
+				` ELSE GREATEST($2 COLLATE "C", to_char((valid_from::timestamptz + interval '1 second') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') COLLATE "C") END`
+			idPH, _ := pgPlaceholders(len(ids), 4)
 			upd := `UPDATE ` + table + ` SET valid_to = ` + clamp +
-				`, invalidated_by = ` + invPH + ` WHERE id IN (` + idPH + `)`
+				`, invalidated_by = $3 WHERE id IN (` + idPH + `)`
 			uargs := []any{newValidFrom, newValidFrom, invalidatedBy}
 			for _, id := range ids {
 				uargs = append(uargs, id)

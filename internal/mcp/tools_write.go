@@ -319,6 +319,7 @@ func (s *Server) handleAddOntology(ctx context.Context, req mcplib.CallToolReque
 		relID := sourceID + "-" + relType + "-" + targetID
 		if err := s.ont.AddRelation(ontology.Relation{
 			ID: relID, SourceID: sourceID, TargetID: targetID, Relation: relType,
+			ValidFrom: time.Now().UTC().Format(time.RFC3339), // manual add = asserted now (P3-6)
 		}); err != nil {
 			return errorResult(fmt.Sprintf("add relation failed: %v", err)), nil
 		}
@@ -766,13 +767,18 @@ func (s *Server) emitEdgeConflict(question, answer string) {
 	if existing, err := ts.Get(id); err == nil && existing != nil {
 		return
 	}
-	_ = ts.InsertPending(&store.PendingOutput{
+	o := &store.PendingOutput{
 		ID:           id,
 		Question:     question,
 		QuestionHash: trust.HashQuestion(question),
 		Answer:       answer,
 		AnswerHash:   trust.HashAnswer(answer),
 		State:        store.StateConflict,
+		SourcesUsed:  "[]",
+		SourcesHash:  trust.ComputeSourcesHash("", "[]"),
 		CreatedAt:    time.Now().UTC(),
-	})
+	}
+	if err := ts.InsertPending(o); err != nil {
+		log.Debug("wiki_ontology_add: edge conflict insert skipped", "id", id, "error", err)
+	}
 }

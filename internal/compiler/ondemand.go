@@ -15,6 +15,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -136,7 +137,8 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 		chunkStore := memory.NewChunkStore(opts.DB)
 		merged := ontology.MergedRelations(cfg.Ontology.Relations)
 		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-		ontStore := ontology.NewStore(opts.DB, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
+		ontStore := ontology.NewStore(opts.DB, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
+		ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
 
 		mfPath := filepath.Join(opts.ProjectDir, ".manifest.json")
 		mf, err := manifest.Load(mfPath)
@@ -161,6 +163,7 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 			VecStore:     vecStore,
 			ChunkStore:   chunkStore,
 			OntStore:     ontStore,
+			TrustStore:   trust.NewStore(opts.DB),
 			Embedder:     opts.Embedder,
 			Backpressure: bp,
 			ItemStore:    items,

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +15,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/storedial"
+	"github.com/xoai/sage-wiki/internal/trust"
 )
 
 var ontologyCmd = &cobra.Command{
@@ -159,20 +162,29 @@ func runOntologyAdd(cmd *cobra.Command, args []string) error {
 		relID := fromID + "-" + relType + "-" + toID
 		if err := ont.AddRelation(ontology.Relation{
 			ID: relID, SourceID: fromID, TargetID: toID, Relation: relType,
+			ValidFrom: time.Now().UTC().Format(time.RFC3339), // manual add = asserted now (P3-6)
 		}); err != nil {
 			return cli.CLIError(outputFormat, err)
 		}
 		msg := fmt.Sprintf("Relation: %s -[%s]-> %s", fromID, relType, toID)
 		// P3-6: same rule as wiki_ontology_add — functional predicates
-		// auto-apply supersession (manual add = explicit intent).
-		if cfg.Ontology.Temporal.EnabledOrDefault() && cliFunctionalPredicate(cfg, relType) {
-			invalidated, err := ont.InvalidateFunctional(fromID, relType, toID,
-				time.Now().UTC().Format(time.RFC3339), relID)
-			if err != nil {
-				return cli.CLIError(outputFormat, err)
-			}
-			if len(invalidated) > 0 {
-				msg += fmt.Sprintf(" (superseded %d prior edge(s))", len(invalidated))
+		// auto-apply supersession (manual add = explicit intent); bare
+		// contradicts edges surface a dedup'd trust conflict for review.
+		if cfg.Ontology.Temporal.EnabledOrDefault() {
+			if relType == ontology.RelContradicts {
+				cliEmitEdgeConflict(db,
+					fmt.Sprintf("Edge conflict: %s contradicts %s (source: manual add)", fromID, toID),
+					"Deferred: entity-level contradicts edge recorded for review; no auto-invalidation.")
+				msg += " (conflict recorded for review)"
+			} else if cliFunctionalPredicate(cfg, relType) {
+				invalidated, err := ont.InvalidateFunctional(fromID, relType, toID,
+					time.Now().UTC().Format(time.RFC3339), relID)
+				if err != nil {
+					return cli.CLIError(outputFormat, err)
+				}
+				if len(invalidated) > 0 {
+					msg += fmt.Sprintf(" (superseded %d prior edge(s))", len(invalidated))
+				}
 			}
 		}
 		if outputFormat == "json" {
@@ -272,4 +284,29 @@ func cliFunctionalPredicate(cfg *config.Config, relType string) bool {
 		}
 	}
 	return false
+}
+
+// cliEmitEdgeConflict records a trust conflict for a manually added
+// contradicts edge (P3-6), mirroring the MCP emitter: deterministic ID
+// dedups repeats; insert races lose to the PK and are swallowed.
+func cliEmitEdgeConflict(db *storage.DB, question, answer string) {
+	ts := trust.NewStore(db)
+	sum := sha256.Sum256([]byte(question))
+	id := "edgeconflict-" + hex.EncodeToString(sum[:])[:16]
+	if existing, err := ts.Get(id); err == nil && existing != nil {
+		return
+	}
+	if err := ts.InsertPending(&store.PendingOutput{
+		ID:           id,
+		Question:     question,
+		QuestionHash: trust.HashQuestion(question),
+		Answer:       answer,
+		AnswerHash:   trust.HashAnswer(answer),
+		State:        store.StateConflict,
+		SourcesUsed:  "[]",
+		SourcesHash:  trust.ComputeSourcesHash("", "[]"),
+		CreatedAt:    time.Now().UTC(),
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "note: conflict record skipped: %v\n", err)
+	}
 }

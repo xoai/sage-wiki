@@ -108,7 +108,8 @@ func GetStatus(projectDir string, stores *Stores) (*StatusInfo, error) {
 		vecStore = vectors.NewStore(db)
 		mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
 		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-		ontStore = ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
+		ontStore = ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes),
+		ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
 
 		// Provide DB for tier stats
 		stores = &Stores{Mem: memStore, Vec: vecStore, Ont: ontStore, DB: db}

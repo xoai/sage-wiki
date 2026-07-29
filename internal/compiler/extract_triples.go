@@ -372,7 +372,7 @@ type temporalHooks struct {
 // deterministic ID: a recompile of the same doc re-generates the same ID and
 // the Get short-circuits; the residual race between concurrent MCP callers
 // loses to the PK constraint and is swallowed at debug — never surfaced.
-func emitEdgeConflict(h temporalHooks, question, answer string) {
+func emitEdgeConflict(h temporalHooks, sourceDoc, question, answer string) {
 	if h.trust == nil {
 		log.Debug("triples: edge conflict (no trust store wired)", "question", question)
 		return
@@ -382,6 +382,7 @@ func emitEdgeConflict(h temporalHooks, question, answer string) {
 	if existing, err := h.trust.Get(id); err == nil && existing != nil {
 		return
 	}
+	sourcesUsed, _ := json.Marshal([]string{sourceDoc})
 	o := &store.PendingOutput{
 		ID:           id,
 		Question:     question,
@@ -389,6 +390,8 @@ func emitEdgeConflict(h temporalHooks, question, answer string) {
 		Answer:       answer,
 		AnswerHash:   trust.HashAnswer(answer),
 		State:        store.StateConflict,
+		SourcesUsed:  string(sourcesUsed),
+		SourcesHash:  trust.ComputeSourcesHash(h.projectDir, string(sourcesUsed)),
 		CreatedAt:    time.Now().UTC(),
 	}
 	if err := h.trust.InsertPending(o); err != nil {
@@ -526,7 +529,7 @@ func persistGraph(ont store.OntologyStore, g ExtractedGraph, concepts []Extracte
 		// A --contradicts--> B carries no deterministic mapping to the
 		// contradicted triple (spec rev 2 scope decision).
 		if r.Predicate == ontology.RelContradicts {
-			emitEdgeConflict(hooks,
+			emitEdgeConflict(hooks, sourceDoc,
 				fmt.Sprintf("Edge conflict: %s contradicts %s (source: %s)", r.Source, r.Target, sourceDoc),
 				"Deferred: entity-level contradicts edge recorded for review; no auto-invalidation.")
 			continue
@@ -562,7 +565,11 @@ func persistGraph(ont store.OntologyStore, g ExtractedGraph, concepts []Extracte
 					}
 				}
 			}
-			emitEdgeConflict(hooks,
+			// Sorted: the conflict text keys the deterministic dedup ID, and
+			// GetRelations has no ORDER BY on SQLite — an unstable list would
+			// mint a new conflict row per compile (Gate-3 review).
+			sort.Strings(current)
+			emitEdgeConflict(hooks, sourceDoc,
 				fmt.Sprintf("Edge conflict: %s %s %v vs %s (source: %s)",
 					r.Source, r.Predicate, current, r.Target, sourceDoc),
 				fmt.Sprintf("Deferred: confidence %.2f below auto-apply threshold %.2f; both values kept live.",

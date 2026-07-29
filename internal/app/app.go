@@ -63,6 +63,7 @@ func Open(projectDir string) (*App, error) {
 		ValidRelations:   ontology.ValidRelationNames(mergedRels),
 		ValidEntityTypes: ontology.ValidEntityTypeNames(mergedTypes),
 		ANN:              cfg.Search.ANNEnabled(),
+		TemporalEnabled:  cfg.Ontology.Temporal.Enabled,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)

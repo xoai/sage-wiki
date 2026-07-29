@@ -81,5 +81,6 @@ func OpenProject(projectDir string, mode store.Mode) (store.Backend, error) {
 		VectorDimension:  cfg.Storage.VectorDimension,
 		ValidRelations:   ontology.ValidRelationNames(mergedRels),
 		ValidEntityTypes: ontology.ValidEntityTypeNames(mergedTypes),
+		TemporalEnabled:  cfg.Ontology.Temporal.Enabled,
 	})
 }
