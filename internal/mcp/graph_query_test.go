@@ -384,4 +384,7 @@ func TestMCPGraphQueryGlobalMode(t *testing.T) {
 	if resp.Answer == "" {
 		t.Error("empty global answer")
 	}
+	if len(resp.Cited) != 1 || resp.Cited[0].ID != "c0-0" {
+		t.Errorf("cited = %+v, want exactly [c0-0]", resp.Cited)
+	}
 }

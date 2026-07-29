@@ -32,13 +32,10 @@ func seedCommunities(t *testing.T, h *graphqaHarness) {
 		t.Fatal(err)
 	}
 	cs.SetSummary("c0-0", "attention mechanisms and their optimizations", "h0", "m")
+	_ = cs
 	cs.SetSummary("c0-1", "distributed training infrastructure", "h1", "m")
 	cs.SetSummary("c1-0", "machine learning systems overall", "h2", "m")
 	// Index summaries so the searcher can find them.
-	for _, c := range comms {
-		summary, _ := cs.CommunityMembers(c.ID)
-		_ = summary
-	}
 	h.mem.Add(store.Entry{ID: "community:c0-0", Content: "attention mechanisms and their optimizations"})
 	h.mem.Add(store.Entry{ID: "community:c0-1", Content: "distributed training infrastructure"})
 	h.mem.Add(store.Entry{ID: "community:c1-0", Content: "machine learning systems overall"})
@@ -62,6 +59,14 @@ func TestGlobalQAHappyPath(t *testing.T) {
 	// summarized ones → the walk must pick level 0.
 	if res.Level != 0 {
 		t.Errorf("level = %d, want 0", res.Level)
+	}
+	if len(res.Cited) == 0 {
+		t.Fatal("no community citations — Cited could regress to always-empty")
+	}
+	for _, c := range res.Cited {
+		if c.ID == "" || c.MemberCount < 3 {
+			t.Errorf("bad citation: %+v", c)
+		}
 	}
 }
 

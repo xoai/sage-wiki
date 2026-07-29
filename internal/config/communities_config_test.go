@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestCommunitiesDefaults(t *testing.T) {
 	c := CommunitiesConfig{}
@@ -23,5 +27,33 @@ func TestCommunitiesDefaults(t *testing.T) {
 	neg := CommunitiesConfig{MaxTokens: -1}
 	if neg.MaxTokensOrDefault() != 1024 {
 		t.Error("out-of-range must fall back, not clamp")
+	}
+}
+
+func TestCommunitiesYamlParse(t *testing.T) {
+	yamlDoc := []byte(`project: test
+output: wiki
+sources:
+  - path: raw
+ontology:
+  communities:
+    enabled: true
+    model: cheap-model
+    max_tokens: 512
+    max_communities: 4
+    min_members: 5
+`)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, yamlDoc, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	c := cfg.Ontology.Communities
+	if !c.Enabled || c.Model != "cheap-model" || c.MaxTokens != 512 || c.MaxCommunities != 4 || c.MinMembers != 5 {
+		t.Errorf("parsed = %+v", c)
 	}
 }

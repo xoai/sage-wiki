@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/storage"
@@ -370,5 +371,204 @@ func TestSweepCommunityFilesOrphan(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "c0-9.md")); !os.IsNotExist(err) {
 		t.Error("orphan file survived the sweep")
+	}
+}
+
+// T7 (Gate-8 Critical): batch-resume wiring — a resumed batch compile with
+// communities enabled runs the pass at its tail.
+func TestResumeBatchWiresCommunitiesPass(t *testing.T) {
+	fake := newFakeBatchServer(t)
+	fake.status.Store("completed")
+	dir := writeBatchProject(t, fake.URL, `
+ontology:
+  communities:
+    enabled: true
+`, "raw/a.md", "raw/b.md")
+
+	idA, idB := batchIDForPath("raw/a.md"), batchIDForPath("raw/b.md")
+	if err := saveBatchCheckpoint(dir, &BatchCheckpoint{
+		CompileID: "c1",
+		Batch: &BatchState{
+			BatchID:  "batch_test_1",
+			Provider: "openai",
+			Pass:     "summarize",
+			PathByID: map[string]string{idA: "raw/a.md", idB: "raw/b.md"},
+		},
+		Pending: []string{"raw/a.md", "raw/b.md"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fake.setResults([]string{idA, idB})
+
+	// Pre-seed the detectable graph.
+	db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ont := ontology.NewStore(db, nil, nil)
+	seedGraph(t, ont)
+	db.Close()
+
+	if _, err := Compile(dir, CompileOpts{}); err != nil {
+		t.Fatalf("resume compile: %v", err)
+	}
+	assertCommunitiesExist(t, dir)
+}
+
+// T7 (Gate-8 Critical): ReExtract wiring — re-extract with communities
+// enabled runs the pass at its tail.
+func TestReExtractWiresCommunitiesPass(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{
+				"content": `[{"name": "test-concept", "aliases": [], "sources": ["raw/a.md"], "type": "concept"}]`,
+			}}},
+			"model": "gpt-4o-mini",
+			"usage": map[string]int{"total_tokens": 10},
+		})
+	}))
+	defer srv.Close()
+
+	dir := writeBatchProject(t, srv.URL, `
+ontology:
+  communities:
+    enabled: true
+`, "raw/a.md")
+
+	// ReExtract needs existing summaries on disk.
+	if err := os.MkdirAll(filepath.Join(dir, "wiki", "summaries"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "wiki", "summaries", "a.md"), []byte(
+		"---\nsource: raw/a.md\n---\n\n## Key claims\n\nSelf-attention computes contextual representations of tokens across the sequence and relates to test-concept.\n"), 0o644)
+
+	db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ont := ontology.NewStore(db, nil, nil)
+	seedGraph(t, ont)
+	db.Close()
+
+	if _, err := ReExtract(dir); err != nil {
+		t.Fatalf("ReExtract: %v", err)
+	}
+	assertCommunitiesExist(t, dir)
+}
+
+func seedGraph(t *testing.T, ont *ontology.Store) {
+	t.Helper()
+	for _, id := range []string{"a", "b", "c", "d", "e", "g"} {
+		if err := ont.AddEntity(store.Entity{ID: id, Type: "concept", Name: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, e := range [][2]string{{"a", "b"}, {"b", "c"}, {"a", "c"}, {"d", "e"}, {"d", "g"}, {"e", "g"}} {
+		if err := ont.AddRelation(store.Relation{
+			ID: string(rune('A' + i)), SourceID: e[0], TargetID: e[1], Relation: "extends", Confidence: 0.9,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func assertCommunitiesExist(t *testing.T, dir string) {
+	t.Helper()
+	db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ont := ontology.NewStore(db, nil, nil)
+	comms, err := ont.ListCommunities(-1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(comms) == 0 {
+		t.Error("no community rows — pass not wired on this path")
+	}
+}
+
+// Gate-8: model change invalidates cached summaries (regen with zero
+// membership change).
+func TestCommunitiesPassModelChangeInvalidates(t *testing.T) {
+	f := newCommunityFixture(t)
+	f.seed(t)
+	f.run(t)
+	before := f.calls.Load()
+	if before == 0 {
+		t.Fatal("seed run made no LLM calls")
+	}
+
+	f.cfg.Models.Extract = "other-model"
+	f.run(t)
+	if got := f.calls.Load() - before; got == 0 {
+		t.Error("model change must regenerate summaries even with unchanged membership")
+	}
+}
+
+// Gate-8: LLM failure on one community leaves its hash stale (retried next
+// run) and does not fail the pass or other communities.
+func TestCommunitiesPassToleratesLLMFailure(t *testing.T) {
+	f := newCommunityFixture(t)
+	f.srv.Close() // kill the LLM endpoint entirely
+	f.seed(t)
+	f.run(t) // must not panic or fail
+
+	comms := f.communities(t)
+	for _, c := range comms {
+		if c.Summary != "" {
+			t.Errorf("community %s summarized despite dead LLM", c.ID)
+		}
+		if c.SummaryHash != "" {
+			t.Errorf("community %s has a stale-false hash after failure", c.ID)
+		}
+	}
+}
+
+// Gate-8: min_members raise → artifacts cleared; later lower → re-summarized.
+func TestCommunitiesPassMinMembersRoundTrip(t *testing.T) {
+	f := newCommunityFixture(t)
+	f.seed(t)
+	f.run(t)
+	before := f.calls.Load()
+
+	f.cfg.Ontology.Communities.MinMembers = 100
+	f.run(t)
+	for _, c := range f.communities(t) {
+		if c.Summary != "" || c.SummaryHash != "" {
+			t.Errorf("raise must clear stored summaries: %+v", c)
+		}
+	}
+
+	f.cfg.Ontology.Communities.MinMembers = 3
+	f.run(t)
+	if got := f.calls.Load() - before; got == 0 {
+		t.Error("lowering min_members must re-summarize (b2 clear made hashes stale)")
+	}
+}
+
+// Gate-8: community files never register in output_index/manifest — the
+// reconcile orphan drop must not eat them (spec M2).
+func TestCommunityFilesExcludedFromReconcile(t *testing.T) {
+	f := newCommunityFixture(t)
+	f.seed(t)
+	f.run(t)
+
+	m, err := manifest.Load(filepath.Join(f.dir, ".manifest.json"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if m != nil {
+		for path := range m.Sources {
+			if strings.Contains(path, "communities/") {
+				t.Errorf("community file leaked into manifest sources: %s", path)
+			}
+		}
+		for path := range m.Concepts {
+			if strings.Contains(path, "communities/") {
+				t.Errorf("community file leaked into manifest concepts: %s", path)
+			}
+		}
 	}
 }
