@@ -62,6 +62,9 @@ func (s *Server) handleGraphQuery(ctx context.Context, req mcp.CallToolRequest) 
 	}
 
 	if mode == "global" {
+		if raw, _ := args["as_of"].(string); raw != "" {
+			return errorResult("as_of applies to local mode only (global answers are synthesized from community summaries)"), nil
+		}
 		if !s.cfg.Ontology.Communities.Enabled {
 			return errorResult("global mode requires ontology.communities.enabled (currently false)"), nil
 		}

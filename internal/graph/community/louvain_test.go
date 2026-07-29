@@ -139,3 +139,33 @@ func TestMemberHashStable(t *testing.T) {
 		t.Error("nil and empty must hash identically")
 	}
 }
+
+// Regression (independent review): at aggregation levels >= 1 the self-loop
+// must not inflate the stay side of the gain. Node X carries a self-loop
+// (aggregated internal weight) but its cross-community edges favor moving —
+// counting the self-loop in k_i,in would over-anchor it.
+func TestLocalMovingIgnoresSelfLoopInGain(t *testing.T) {
+	// Quotient graph: A-B each with big self-loops (internal weight), X
+	// between them but much closer to B. m = 2*(deg sums).
+	q := &quotient{
+		nodes: []string{"a", "b", "x"},
+		adj: map[string]map[string]float64{
+			"a": {"a": 10, "x": 1},
+			"b": {"b": 10, "x": 5},
+			"x": {"a": 1, "b": 5},
+		},
+		deg: map[string]float64{"a": 11, "b": 15, "x": 6},
+		mem: map[string][]string{"a": {"a"}, "b": {"b"}, "x": {"x"}},
+		m:   64,
+	}
+	comms, _ := q.localMoving()
+	joined := map[string]string{}
+	for _, c := range comms {
+		for _, n := range c {
+			joined[n] = c[0]
+		}
+	}
+	if joined["x"] != joined["b"] {
+		t.Errorf("x must move to b's community (self-loop excluded from gain), got %v", comms)
+	}
+}

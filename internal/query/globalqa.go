@@ -141,7 +141,9 @@ func GlobalQA(ctx context.Context, cs store.CommunityStore, searcher *hybrid.Sea
 		byID[c.ID] = c
 	}
 	for _, p := range partials {
-		if p.text == "" || strings.HasPrefix(p.text, "IRRELEVANT") {
+		// Case-fold: the model emits "irrelevant", "Irrelevant.", or
+		// "**IRRELEVANT**" as readily as the exact prefix.
+		if p.text == "" || strings.HasPrefix(strings.ToUpper(strings.TrimLeft(p.text, "* ")), "IRRELEVANT") {
 			continue
 		}
 		relevant = append(relevant, p)
@@ -174,15 +176,18 @@ func GlobalQA(ctx context.Context, cs store.CommunityStore, searcher *hybrid.Sea
 	}, nil
 }
 
-// pickLevel walks levels from MaxLevel down, returning the first level with
-// >1 community AND >=1 summarized community meeting minMembers; else level 0
-// if it has summaries; else -1.
+// pickLevel prefers the highest level with >=2 summarized communities (a
+// one-summary "global" map is not global); falls back to the highest level
+// with >=1, then level 0 with >=1, else -1. Counts SUMMARIZED communities
+// only — raw row counts would let a level of stubs outrank a rich level
+// below (independent review).
 func pickLevel(cs store.CommunityStore, minMembers int) (int, []store.Community) {
 	maxLevel, err := cs.MaxLevel()
 	if err != nil || maxLevel < 0 {
 		return -1, nil
 	}
-	var zero []store.Community
+	var fallback []store.Community
+	fallbackLevel := -1
 	for level := maxLevel; level >= 0; level-- {
 		comms, err := cs.ListCommunities(level)
 		if err != nil {
@@ -194,15 +199,15 @@ func pickLevel(cs store.CommunityStore, minMembers int) (int, []store.Community)
 				ok = append(ok, c)
 			}
 		}
-		if level == 0 {
-			zero = ok
-		}
-		if len(comms) > 1 && len(ok) > 0 {
+		if len(ok) >= 2 {
 			return level, ok
 		}
+		if len(ok) == 1 && fallbackLevel < 0 {
+			fallbackLevel, fallback = level, ok
+		}
 	}
-	if len(zero) > 0 {
-		return 0, zero
+	if fallbackLevel >= 0 {
+		return fallbackLevel, fallback
 	}
 	return -1, nil
 }

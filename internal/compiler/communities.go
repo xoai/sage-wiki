@@ -101,27 +101,31 @@ func CommunitiesPass(
 			membersOf[id] = members
 		}
 	}
-	// Intra-community edge counts at every level: per-level membership
-	// sets (a single commOfEntity map would be overwritten by the highest
-	// level — gates i2). The input edge list is the base graph for all
-	// levels since higher levels flatten to original entities.
-	memberSets := map[string]map[string]bool{}
-	for id, ms := range membersOf {
-		set := make(map[string]bool, len(ms))
-		for _, m := range ms {
-			set[m] = true
-		}
-		memberSets[id] = set
+	// Intra-community edge counts at every level, one pass over the edges
+	// per level (O(edges × levels), not O(communities × edges)): the input
+	// edge list is the base graph for all levels since higher levels
+	// flatten to original entities.
+	byLevel := map[int][]store.Community{}
+	for _, r := range rows {
+		byLevel[r.Level] = append(byLevel[r.Level], r)
 	}
-	for i := range rows {
-		set := memberSets[rows[i].ID]
-		count := 0
-		for _, e := range edges {
-			if set[e.From] && set[e.To] {
-				count++
+	counts := map[string]int{}
+	for li := range byLevel {
+		commOfEntity := map[string]string{}
+		for si, members := range levels[li].Communities {
+			id := fmt.Sprintf("c%d-%d", li, si)
+			for _, e := range members {
+				commOfEntity[e] = id
 			}
 		}
-		rows[i].EdgeCount = count
+		for _, e := range edges {
+			if id := commOfEntity[e.From]; id != "" && id == commOfEntity[e.To] {
+				counts[id]++
+			}
+		}
+	}
+	for i := range rows {
+		rows[i].EdgeCount = counts[rows[i].ID]
 	}
 
 	removed, err := cs.ReplaceDetection(rows, membersOf)
@@ -259,6 +263,9 @@ func summarizeCommunity(ctx context.Context, client *llm.Client, model string, m
 		if !set[r.SourceID] || !set[r.TargetID] {
 			continue
 		}
+		if r.Relation == "cites" {
+			continue // document links — detection excluded them too
+		}
 		if !ontology.LiveAt(r, now) {
 			continue
 		}
@@ -296,8 +303,19 @@ Respond with the summary paragraph, then "Keywords:" followed by a comma-separat
 	content := strings.TrimSpace(resp.Content)
 	if content == "" {
 		log.Warn("communities: empty summary", "id", c.ID, "details", resp.EmptyContentDetails())
+		return ""
 	}
-	return content
+	// The body is unsanitized LLM output written to disk: strip lines that
+	// look like frontmatter delimiters so no future consumer that splits on
+	// --- ever re-parses a fake block (frontmatter itself is quoted safely).
+	var kept []string
+	for _, line := range strings.Split(content, "\n") {
+		if strings.TrimSpace(line) == "---" {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
 }
 
 func extractKeywords(summary string) []string {

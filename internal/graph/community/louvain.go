@@ -6,6 +6,7 @@ package community
 
 import (
 	"sort"
+	"strconv"
 
 	"github.com/xoai/sage-wiki/internal/store"
 )
@@ -111,19 +112,7 @@ func commKeyOf(i int) string {
 	return "c:" + itoa(i)
 }
 
-func itoa(i int) string {
-	if i == 0 {
-		return "0"
-	}
-	var b [8]byte
-	p := len(b)
-	for i > 0 {
-		p--
-		b[p] = byte('0' + i%10)
-		i /= 10
-	}
-	return string(b[p:])
-}
+var itoa = strconv.Itoa
 
 // localMoving runs the Louvain local-moving phase: move each node to the
 // neighboring community with the best strictly-positive modularity gain,
@@ -147,8 +136,16 @@ func (q *quotient) localMoving() ([][]string, float64) {
 			// Remove n from its community.
 			tot[own] -= ki
 			// Gain per neighboring community (weights grouped by community).
+			// The self-loop is EXCLUDED: it is internal to every candidate
+			// (it cancels in exact ΔQ math), so counting it inflates only
+			// the stay side and over-anchors super-nodes at aggregation
+			// levels ≥ 1 (independent review). python-louvain's remove_cost
+			// constant achieves the same exclusion.
 			byComm := map[string]float64{}
 			for _, v := range sortedKeys(q.adj[n]) {
+				if v == n {
+					continue
+				}
 				byComm[commOf[v]] += q.adj[n][v]
 			}
 			comms := make([]string, 0, len(byComm)+1)
@@ -258,6 +255,12 @@ func Detect(nodes []string, edges []Edge, maxLevels int) []Level {
 	prevQ := 0.0
 	for len(levels) < maxLevels {
 		comms, mod := q.localMoving()
+		if len(levels) > 0 && (len(comms) == 1 || mod-prevQ < levelEpsilon) {
+			// A merged-to-one or non-improving top level is not kept — it
+			// would be a near-duplicate of the level below that pickLevel
+			// prefers and that gets summarized for LLM cost.
+			break
+		}
 		flat := make([][]string, len(comms))
 		for i, c := range comms {
 			var members []string
@@ -269,10 +272,6 @@ func Detect(nodes []string, edges []Edge, maxLevels int) []Level {
 		}
 		sortByMinMember(flat)
 		levels = append(levels, Level{Communities: flat})
-
-		if len(comms) == 1 || mod-prevQ < levelEpsilon {
-			break
-		}
 		prevQ = mod
 		q = q.aggregate(comms)
 	}

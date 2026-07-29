@@ -46,7 +46,7 @@ func (s *communityStore) ReplaceDetection(comms []store.Community, members map[s
 	err := s.b.WriteTx(func(tx *sql.Tx) error {
 		existing := map[string][3]string{}
 		if err := func() error {
-			rows, err := tx.Query(`SELECT id, COALESCE(summary_hash,''), COALESCE(summary,''), COALESCE(model,'') FROM communities`)
+			rows, err := tx.Query(`SELECT id, COALESCE(summary_hash,''), COALESCE(summary,''), COALESCE(model,'') FROM communities FOR UPDATE`)
 			if err != nil {
 				return fmt.Errorf("postgres.ReplaceDetection: read existing: %w", err)
 			}
