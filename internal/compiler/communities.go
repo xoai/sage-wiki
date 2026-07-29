@@ -340,12 +340,11 @@ func writeCommunityFile(outputDir string, c store.Community, members []string, s
 // (delete-then-add: mem.Add errors on an existing ID).
 func indexCommunity(mem store.EntryStore, vec store.VectorStore, embedder embed.Embedder, c store.Community, summary string) {
 	docID := "community:" + c.ID
-	if mem == nil {
-		return
-	}
-	_ = mem.Delete(docID) // absent is fine
-	if err := mem.Add(store.Entry{ID: docID, Content: summary, ArticlePath: "communities/" + c.ID + ".md"}); err != nil {
-		log.Warn("communities: FTS index failed", "id", c.ID, "error", err)
+	if mem != nil {
+		_ = mem.Delete(docID) // absent is fine
+		if err := mem.Add(store.Entry{ID: docID, Content: summary, ArticlePath: "communities/" + c.ID + ".md"}); err != nil {
+			log.Warn("communities: FTS index failed", "id", c.ID, "error", err)
+		}
 	}
 	if embedder == nil || vec == nil {
 		return

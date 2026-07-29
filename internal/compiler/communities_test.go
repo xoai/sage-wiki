@@ -119,6 +119,11 @@ func TestCommunitiesPassDetectsAndSummarizes(t *testing.T) {
 	summarized := 0
 	for _, c := range comms {
 		if c.Level == 0 && c.MemberCount >= 3 {
+			// Each triangle has exactly 3 intra-community edges (gates i3:
+			// the per-level memberSets fix would ship silently without this).
+			if c.EdgeCount != 3 {
+				t.Errorf("community %s EdgeCount = %d, want 3", c.ID, c.EdgeCount)
+			}
 			if c.Summary == "" {
 				t.Errorf("eligible community %s has no summary", c.ID)
 				continue
@@ -340,7 +345,10 @@ func TestCommunitiesPassEmptyGraphClears(t *testing.T) {
 		t.Errorf("empty graph must clear all communities, got %+v", got)
 	}
 	// Orphan files swept too.
-	entries, _ := os.ReadDir(filepath.Join(f.dir, "wiki", "communities"))
+	entries, err := os.ReadDir(filepath.Join(f.dir, "wiki", "communities"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
 	for _, e := range entries {
 		t.Errorf("orphan community file survived: %s", e.Name())
 	}
