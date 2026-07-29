@@ -219,3 +219,45 @@ func TestTemporalDisabledNoTrigger(t *testing.T) {
 		t.Errorf("disabled: no conflicts, got %d", n)
 	}
 }
+
+// T7: the post-resolution sweep closes the pre-resolution hazard — an alias
+// form applied AFTER the write-time trigger must not resurrect the loser.
+func TestPostResolutionSweepCoversNewAliasForms(t *testing.T) {
+	ont, ts := temporalTestStores(t)
+	cfg := temporalCfg()
+
+	// Doc A asserts alice works_at acme; doc B asserts alice_alias works_at
+	// initech. The write-time trigger for B cannot see "alice" — no alias
+	// exists yet — so acme stays live at this point.
+	runOneDoc(t, ont, ts, cfg, worksAtAcme, "raw/a.md")
+	sup := runOneDoc(t, ont, ts, cfg,
+		`{"entities":[
+			{"name":"alice_alias","type":"person","description":"A person."},
+			{"name":"initech","type":"org","description":"Another company."}
+		],"relations":[
+			{"source":"alice_alias","predicate":"works_at","target":"initech",
+			 "evidence":"Alice works at Initech.","confidence":0.9}
+		]}`, "raw/b.md")
+
+	if targets := liveTargets(t, ont, "alice"); len(targets) != 1 || targets[0] != "acme" {
+		t.Fatalf("pre-link: acme must still be live under alice, got %v", targets)
+	}
+
+	// Resolution applies the alias and derives the winner onto the canonical.
+	if _, err := ont.LinkAlias(store.EntityAlias{
+		Alias: "alice_alias", CanonicalID: "alice", EntityType: "person",
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-29T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Without the sweep, the canonical now answers BOTH acme (alias original
+	// untouched) and initech (derived copy).
+	runSupersessionSweep(ont, sup)
+
+	if targets := liveTargets(t, ont, "alice"); len(targets) != 1 || targets[0] != "initech" {
+		t.Errorf("post-sweep: only initech must answer under the canonical, got %v", targets)
+	}
+	if targets := liveTargets(t, ont, "alice_alias"); len(targets) != 1 || targets[0] != "initech" {
+		t.Errorf("post-sweep: alias form must answer only the winner, got %v", targets)
+	}
+}

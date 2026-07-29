@@ -398,6 +398,23 @@ func emitEdgeConflict(h temporalHooks, question, answer string) {
 	}
 }
 
+// runSupersessionSweep is the second trigger of the P3-6 two-trigger design:
+// it re-fires InvalidateFunctional for this compile's functional edges AFTER
+// ResolveEntitiesPass. The write-time trigger runs before resolution, so an
+// alias form created or applied by THIS run is invisible to its form-set
+// expansion — and the resolution replay would re-derive a live copy of the
+// superseded edge. InvalidateFunctional only touches not-yet-invalidated
+// rows, so re-firing is a no-op wherever the first trigger sufficed.
+func runSupersessionSweep(ont store.OntologyStore, supersessions []FunctionalSupersession) {
+	for _, sup := range supersessions {
+		if _, err := ont.InvalidateFunctional(sup.SourceID, sup.Predicate,
+			sup.KeepTargetID, sup.NewValidFrom, sup.InvalidatedBy); err != nil {
+			log.Warn("triples: post-resolution sweep failed", "source", sup.SourceID,
+				"predicate", sup.Predicate, "error", err)
+		}
+	}
+}
+
 // validFromForDoc resolves when the facts in sourceDoc became true (P3-6):
 // frontmatter date → file mtime → manifest added-at, via sourcedate.Resolve.
 // Zero means unknown and stays EMPTY — writing the epoch would date every

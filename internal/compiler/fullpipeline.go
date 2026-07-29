@@ -319,7 +319,6 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	// persist on an incremental compile where every concept dedup-merged, which
 	// is the ordinary case. Never fails the compile; see ExtractTriplesPass.
 	touched, supersessions := ExtractTriplesPass(opts.Ctx, writeOntStore, successfulSummaries, concepts, cfg, client, false, opts.ProjectDir, mf, opts.TrustStore)
-	_ = supersessions // consumed by the post-resolution sweep (T7)
 
 	// Pass 4: entity resolution (P3-3, opt-in). Deferred rather than called
 	// inline because it must run AFTER Pass 3 — WriteArticles is what creates
@@ -331,6 +330,9 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	// contribution is included.
 	defer func() {
 		ResolveEntitiesPass(opts.Ctx, writeOntStore, touched, cfg, client, opts.Embedder)
+		// Second supersession trigger (P3-6): links applied above may have
+		// created alias forms the write-time trigger could not see.
+		runSupersessionSweep(writeOntStore, supersessions)
 	}()
 
 	// Pass 3: Write articles

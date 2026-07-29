@@ -120,7 +120,6 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	// the frontmatter and SourcePath is the summary's filename, not the source
 	// document.
 	touched, supersessions := ExtractTriplesPass(context.Background(), ontStore, summaries, concepts, cfg, client, true, projectDir, mf, trust.NewStore(db))
-	_ = supersessions // consumed by the post-resolution sweep (T7)
 
 	// Pass 3: Write articles
 	if len(concepts) > 0 {
@@ -176,6 +175,10 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	// ReExtract has no cancellation context of its own, matching the calls
 	// above.
 	ResolveEntitiesPass(context.Background(), ontStore, touched, cfg, client, embedder)
+	// Second supersession trigger (P3-6): same pre-resolution hazard as the
+	// full pipeline — without it this path has no self-heal until a full
+	// compile.
+	runSupersessionSweep(ontStore, supersessions)
 
 	// Post-compile sweep: strip [[wikilinks]] pointing at concepts that don't
 	// exist on disk. Re-extract rewrites articles via Pass 3 and would
