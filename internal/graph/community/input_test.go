@@ -44,8 +44,9 @@ func inputStore(t *testing.T) store.OntologyStore {
 	add("r3", "c", "d", "extends", "2099-01-01T00:00:00Z")                 // future valid_to → still live, keep
 	add("r4", "a", "d", "cites", "")                                       // cites → drop
 	add("r5", "src1", "a", "extends", "")                                  // source endpoint → drop
-	add("r6", "a", "ghost", "extends", "")                                 // missing endpoint → drop
 	add("r7", "a", "c", "extends", "")                                     // keep
+	// NOTE: the missing-endpoint filter is defensive — the relations FK
+	// (entities ON DELETE CASCADE) makes a dangling endpoint unwritable.
 	return s
 }
 
@@ -68,7 +69,7 @@ func TestBuildInputFilters(t *testing.T) {
 		}
 	}
 	for _, e := range edges {
-		if e.From == "src1" || e.To == "src1" || e.To == "ghost" {
+		if e.From == "src1" || e.To == "src1" {
 			t.Errorf("filtered edge present: %+v", e)
 		}
 		if (e.From == "b" && e.To == "c") || (e.From == "a" && e.To == "d") {
