@@ -95,13 +95,13 @@ func (q *quotient) aggregate(comms [][]string) *quotient {
 		nq.adj[id] = map[string]float64{}
 		nq.mem[id] = append([]string(nil), comms[i]...)
 	}
-	for u, nbrs := range q.adj {
+	for _, u := range q.nodes {
 		cu := commKeyOf(idxOf[u])
-		for v, w := range nbrs {
+		for _, v := range sortedKeys(q.adj[u]) {
 			cv := commKeyOf(idxOf[v])
-			nq.adj[cu][cv] += w
-			nq.deg[cu] += w
-			nq.m += w
+			nq.adj[cu][cv] += q.adj[u][v]
+			nq.deg[cu] += q.adj[u][v]
+			nq.m += q.adj[u][v]
 		}
 	}
 	return nq
@@ -148,8 +148,8 @@ func (q *quotient) localMoving() ([][]string, float64) {
 			tot[own] -= ki
 			// Gain per neighboring community (weights grouped by community).
 			byComm := map[string]float64{}
-			for v, w := range q.adj[n] {
-				byComm[commOf[v]] += w
+			for _, v := range sortedKeys(q.adj[n]) {
+				byComm[commOf[v]] += q.adj[n][v]
 			}
 			comms := make([]string, 0, len(byComm)+1)
 			for c := range byComm {
@@ -220,6 +220,15 @@ func (q *quotient) modularity(commOf map[string]string) float64 {
 	return qq
 }
 
+func sortedKeys(m map[string]float64) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // sortByMinMember orders communities by their minimum member ID
 // (lexicographic) — the pinned seq-assignment order.
 func sortByMinMember(comms [][]string) {
@@ -234,7 +243,10 @@ func sortByMinMember(comms [][]string) {
 // levelEpsilon, or at min(maxLevels, 4) levels. Communities at every level
 // are flattened to original node IDs.
 func Detect(nodes []string, edges []Edge, maxLevels int) []Level {
-	if maxLevels <= 0 || maxLevels > maxLevelsCap {
+	if maxLevels <= 0 {
+		return nil
+	}
+	if maxLevels > maxLevelsCap {
 		maxLevels = maxLevelsCap
 	}
 	q := buildQuotient(nodes, edges)

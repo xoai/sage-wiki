@@ -100,15 +100,7 @@ func GlobalQA(ctx context.Context, cs store.CommunityStore, searcher *hybrid.Sea
 		}
 	}
 	if len(selected) == 0 {
-		// Selection over the chosen level found nothing via search — fall
-		// back to the top summarized communities at that level so a global
-		// question always gets map input (search-starvation guard).
-		for _, c := range summarized {
-			selected = append(selected, c)
-			if len(selected) >= maxC {
-				break
-			}
-		}
+		return GlobalQAResult{}, ErrNoCommunities
 	}
 
 	// Map: one partial answer per selected community, bounded parallelism.

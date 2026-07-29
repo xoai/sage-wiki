@@ -44,19 +44,19 @@ func (s *Store) ReplaceDetection(comms []store.Community, members map[string][]s
 	var removed []string
 	err := s.db.WriteTx(func(tx *sql.Tx) error {
 		// Existing summary state for the conditional clear.
-		existing := map[string][2]string{}
+		existing := map[string][3]string{}
 		if err := func() error {
-			rows, err := tx.Query(`SELECT id, COALESCE(summary_hash,''), COALESCE(summary,'') FROM communities`)
+			rows, err := tx.Query(`SELECT id, COALESCE(summary_hash,''), COALESCE(summary,''), COALESCE(model,'') FROM communities`)
 			if err != nil {
 				return fmt.Errorf("ontology.ReplaceDetection: read existing: %w", err)
 			}
 			defer rows.Close()
 			for rows.Next() {
-				var id, hash, summary string
-				if err := rows.Scan(&id, &hash, &summary); err != nil {
+				var id, hash, summary, model string
+				if err := rows.Scan(&id, &hash, &summary, &model); err != nil {
 					return err
 				}
-				existing[id] = [2]string{hash, summary}
+				existing[id] = [3]string{hash, summary, model}
 			}
 			return rows.Err()
 		}(); err != nil {
@@ -72,10 +72,9 @@ func (s *Store) ReplaceDetection(comms []store.Community, members map[string][]s
 			prev := existing[c.ID]
 			summary, summaryHash, model := "", "", ""
 			if prev[0] == hash {
-				// Unchanged membership: preserve the cached summary. Model
-				// is re-read below — the clear only fires on hash mismatch.
-				row := tx.QueryRow(`SELECT COALESCE(summary,''), COALESCE(model,'') FROM communities WHERE id=?`, c.ID)
-				_ = row.Scan(&summary, &model)
+				// Unchanged membership: preserve the cached summary (the
+				// clear only fires on hash mismatch).
+				summary, model = prev[1], prev[2]
 				summaryHash = prev[0]
 			}
 			_, err := tx.Exec(
@@ -87,7 +86,7 @@ func (s *Store) ReplaceDetection(comms []store.Community, members map[string][]s
 				   member_count=excluded.member_count, edge_count=excluded.edge_count,
 				   summary=excluded.summary, summary_hash=excluded.summary_hash,
 				   model=excluded.model, updated_at=excluded.updated_at`,
-				c.ID, c.Level, c.ParentID, c.MemberCount, c.EdgeCount,
+				c.ID, c.Level, nilIfEmpty(c.ParentID), c.MemberCount, c.EdgeCount,
 				summary, summaryHash, model, c.UpdatedAt)
 			if err != nil {
 				return fmt.Errorf("ontology.ReplaceDetection: upsert %s: %w", c.ID, err)
@@ -130,6 +129,15 @@ func (s *Store) ReplaceDetection(comms []store.Community, members map[string][]s
 	}
 	sort.Strings(removed)
 	return removed, nil
+}
+
+// nilIfEmpty binds empty strings as NULL so SQLite matches the Postgres
+// representation (communityCols COALESCEs both to '').
+func nilIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func (s *Store) ListCommunities(level int) ([]store.Community, error) {

@@ -50,7 +50,7 @@ func TestGlobalQAHappyPath(t *testing.T) {
 	client := testClient(t, srv.URL)
 
 	res, err := GlobalQA(context.Background(), store.CommunityStore(h.ont), h.searcher, client,
-		"what are the main themes?", GlobalQAOpts{Model: "m", MaxTokens: 512, MinMembers: 3, MaxParallel: 2})
+		"attention mechanisms and distributed training?", GlobalQAOpts{Model: "m", MaxTokens: 512, MinMembers: 3, MaxParallel: 2})
 	if err != nil {
 		t.Fatalf("GlobalQA: %v", err)
 	}
@@ -112,5 +112,23 @@ func TestGlobalQAEmptyQuestion(t *testing.T) {
 	_, err := GlobalQA(context.Background(), store.CommunityStore(h.ont), h.searcher, nil, "", GlobalQAOpts{})
 	if err == nil || !strings.Contains(err.Error(), "question is required") {
 		t.Errorf("empty question must error, got %v", err)
+	}
+}
+
+// Empty-after-filter: search hits that are all non-community docs leave
+// nothing to map — the gate sentinel, per spec.
+func TestGlobalQAEmptyAfterFilterIsSentinel(t *testing.T) {
+	h := newGraphqaHarness(t)
+	seedCommunities(t, h)
+	// Bury the community docs under non-community hits for this query.
+	for i := 0; i < 30; i++ {
+		h.mem.Add(store.Entry{ID: "concept:filler" + string(rune('a'+i%26)), Content: "completely unrelated zebra giraffe platypus unrelated"})
+	}
+	srv, _, _ := graphqaServer(t, `{"answer":"x"}`)
+	client := testClient(t, srv.URL)
+	_, err := GlobalQA(context.Background(), store.CommunityStore(h.ont), h.searcher, client,
+		"zebra giraffe platypus?", GlobalQAOpts{Model: "m", MaxTokens: 64, MinMembers: 3})
+	if err != ErrNoCommunities {
+		t.Errorf("err = %v, want ErrNoCommunities (empty after filter)", err)
 	}
 }

@@ -44,19 +44,19 @@ func (s *communityStore) ReplaceDetection(comms []store.Community, members map[s
 
 	var removed []string
 	err := s.b.WriteTx(func(tx *sql.Tx) error {
-		existing := map[string][2]string{}
+		existing := map[string][3]string{}
 		if err := func() error {
-			rows, err := tx.Query(`SELECT id, COALESCE(summary_hash,''), COALESCE(summary,'') FROM communities`)
+			rows, err := tx.Query(`SELECT id, COALESCE(summary_hash,''), COALESCE(summary,''), COALESCE(model,'') FROM communities`)
 			if err != nil {
 				return fmt.Errorf("postgres.ReplaceDetection: read existing: %w", err)
 			}
 			defer rows.Close()
 			for rows.Next() {
-				var id, hash, summary string
-				if err := rows.Scan(&id, &hash, &summary); err != nil {
+				var id, hash, summary, model string
+				if err := rows.Scan(&id, &hash, &summary, &model); err != nil {
 					return err
 				}
-				existing[id] = [2]string{hash, summary}
+				existing[id] = [3]string{hash, summary, model}
 			}
 			return rows.Err()
 		}(); err != nil {
@@ -72,8 +72,7 @@ func (s *communityStore) ReplaceDetection(comms []store.Community, members map[s
 			prev := existing[c.ID]
 			summary, summaryHash, model := "", "", ""
 			if prev[0] == hash {
-				row := tx.QueryRow(`SELECT COALESCE(summary,''), COALESCE(model,'') FROM communities WHERE id=$1`, c.ID)
-				_ = row.Scan(&summary, &model)
+				summary, model = prev[1], prev[2]
 				summaryHash = prev[0]
 			}
 			_, err := tx.Exec(

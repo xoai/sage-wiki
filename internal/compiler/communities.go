@@ -15,6 +15,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/metrics"
+	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/store"
 )
 
@@ -60,6 +61,19 @@ func CommunitiesPass(
 		return
 	}
 	if len(nodes) == 0 {
+		// The graph shrank to nothing: clear stale communities (spec M2 —
+		// an early return would leave GlobalQA answering from summaries of
+		// a graph that no longer exists).
+		removed, err := cs.ReplaceDetection(nil, nil)
+		if err != nil {
+			log.Warn("communities: clear on empty graph failed", "error", err)
+			return
+		}
+		outDir := filepath.Join(projectDir, cfg.Output)
+		for _, id := range removed {
+			deleteCommunityArtifacts(mem, vec, outDir, id)
+		}
+		sweepCommunityFiles(outDir, map[string]bool{})
 		return
 	}
 	levels := community.Detect(nodes, edges, 4)
@@ -88,22 +102,18 @@ func CommunitiesPass(
 			membersOf[id] = members
 		}
 	}
-	// Edge counts per level-0 community (intra-community edges).
+	// Intra-community edge counts at every level (flattened membership —
+	// the input edge list is the level-0 graph for all levels).
 	commOfEntity := map[string]string{}
 	for li, lvl := range levels {
-		if li != 0 {
-			continue
-		}
 		for si, members := range lvl.Communities {
+			id := fmt.Sprintf("c%d-%d", li, si)
 			for _, e := range members {
-				commOfEntity[e] = fmt.Sprintf("c0-%d", si)
+				commOfEntity[e] = id
 			}
 		}
 	}
 	for i := range rows {
-		if rows[i].Level != 0 {
-			continue
-		}
 		count := 0
 		for _, e := range edges {
 			if commOfEntity[e.From] == rows[i].ID && commOfEntity[e.To] == rows[i].ID {
@@ -150,6 +160,14 @@ func CommunitiesPass(
 	for _, id := range dedupe(toDelete) {
 		deleteCommunityArtifacts(mem, vec, outDir, id)
 	}
+	// os.ReadDir sweep: any file without a current row is an orphan —
+	// covers the commit-then-cleanup crash window, where the DB row is gone
+	// and no future ReplaceDetection will ever return that ID (spec M1).
+	keepFiles := map[string]bool{}
+	for _, c := range current {
+		keepFiles[c.ID] = true
+	}
+	sweepCommunityFiles(outDir, keepFiles)
 
 	// Summarize eligible communities whose member hash or model is stale.
 	model := communityModel(cfg)
@@ -222,33 +240,35 @@ func communityModel(cfg *config.Config) string {
 // failure — the caller treats empty as "retry next compile".
 func summarizeCommunity(ctx context.Context, client *llm.Client, model string, maxTokens int, c store.Community, members []string, ont store.OntologyStore) string {
 	// Intra-community edges with evidence (truncated) ground the summary.
+	// One batch read (never N+1 GetRelations), filtered to live edges —
+	// the same LiveAt rule detection used.
 	var lines []string
 	set := map[string]bool{}
 	for _, m := range members {
 		set[m] = true
 	}
-	for _, m := range members {
-		rels, err := ont.GetRelations(m, store.Outbound, "")
-		if err != nil {
+	all, err := ont.AllRelations()
+	if err != nil {
+		log.Warn("communities: relations read failed", "id", c.ID, "error", err)
+		return ""
+	}
+	now := time.Now().UTC()
+	for _, r := range all {
+		if !set[r.SourceID] || !set[r.TargetID] {
 			continue
 		}
-		for _, r := range rels {
-			if !set[r.TargetID] {
-				continue
-			}
-			ev := r.Evidence
-			if len(ev) > 200 {
-				ev = ev[:200]
-			}
-			line := fmt.Sprintf("- %s %s %s", r.SourceID, r.Relation, r.TargetID)
-			if ev != "" {
-				line += fmt.Sprintf(" (%s)", ev)
-			}
-			lines = append(lines, line)
-			if len(lines) >= 40 {
-				break
-			}
+		if !ontology.LiveAt(r, now) {
+			continue
 		}
+		ev := r.Evidence
+		if runes := []rune(ev); len(runes) > 200 {
+			ev = string(runes[:200]) // rune-safe: a byte cut can split a multi-byte rune
+		}
+		line := fmt.Sprintf("- %s %s %s", r.SourceID, r.Relation, r.TargetID)
+		if ev != "" {
+			line += fmt.Sprintf(" (%s)", ev)
+		}
+		lines = append(lines, line)
 		if len(lines) >= 40 {
 			break
 		}
@@ -302,7 +322,11 @@ func writeCommunityFile(outputDir string, c store.Community, members []string, s
 	b.WriteString("---\n")
 	fmt.Fprintf(&b, "id: %s\nlevel: %d\nmembers: %d\n", c.ID, c.Level, len(members))
 	if len(keywords) > 0 {
-		fmt.Fprintf(&b, "keywords: [%s]\n", strings.Join(keywords, ", "))
+		quoted := make([]string, len(keywords))
+		for i, k := range keywords {
+			quoted[i] = fmt.Sprintf("%q", k)
+		}
+		fmt.Fprintf(&b, "keywords: [%s]\n", strings.Join(quoted, ", "))
 	}
 	b.WriteString("---\n\n")
 	b.WriteString(summary)
@@ -329,6 +353,23 @@ func indexCommunity(mem store.EntryStore, vec store.VectorStore, embedder embed.
 	_ = vec.Delete(docID)
 	if err := vec.Upsert(docID, v); err != nil {
 		log.Warn("communities: vector index failed", "id", c.ID, "error", err)
+	}
+}
+
+// sweepCommunityFiles deletes communities/*.md files not in keep. Best-effort.
+func sweepCommunityFiles(outDir string, keep map[string]bool) {
+	entries, err := os.ReadDir(filepath.Join(outDir, "communities"))
+	if err != nil {
+		return // no directory yet
+	}
+	for _, e := range entries {
+		id := strings.TrimSuffix(e.Name(), ".md")
+		if e.IsDir() || id == e.Name() || keep[id] {
+			continue
+		}
+		if err := os.Remove(filepath.Join(outDir, "communities", e.Name())); err != nil {
+			log.Warn("communities: orphan file sweep failed", "file", e.Name(), "error", err)
+		}
 	}
 }
 
