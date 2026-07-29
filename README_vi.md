@@ -248,6 +248,42 @@ truy vấn, được suy ra từ cấu hình của bạn. Các target: `claude-c
 `wiki_learn`, khép kín vòng lặp đọc-ghi nhận-tiến hóa. Quy trình và mẹo:
 [Lớp bộ nhớ Agent](docs/guides/agent-memory-layer.md).
 
+### Nhúng vào chương trình Go
+
+Để gọi các công cụ từ chính tiến trình Go của bạn — không cần tiến trình con, không cần quản lý stdio hay cổng — hãy dùng `pkg/sagewiki` với transport in-process của mcp-go:
+
+```go
+srv, err := sagewiki.NewServer("/path/to/wiki")  // project must already exist
+if err != nil {
+    return err
+}
+defer srv.Close()  // the caller owns the DB handle here
+
+cli, err := client.NewInProcessClient(srv.MCPServer())
+if err != nil {
+    return err
+}
+defer cli.Close()
+
+if err := cli.Start(ctx); err != nil {
+    return err
+}
+if _, err := cli.Initialize(ctx, mcp.InitializeRequest{}); err != nil {
+    return err
+}
+
+res, err := cli.CallTool(ctx, mcp.CallToolRequest{
+    Params: mcp.CallToolParams{
+        Name:      "wiki_search",
+        Arguments: map[string]any{"query": "attention", "limit": 5},
+    },
+})
+```
+
+Dự án phải tồn tại sẵn và phía gọi sở hữu handle cơ sở dữ liệu, nên bắt buộc phải `Close` — khác với `serve`, không có gì khác đóng nó. Log ghi ra stderr của host, và `initialize` báo phiên bản build của sage-wiki (`dev` với `go build` thuần); gọi `sagewiki.SetVersion` khi khởi động để báo chuỗi phiên bản của riêng bạn.
+
+Package này **thử nghiệm** trong khi sage-wiki chưa đạt 1.0: các chữ ký Go dự kiến giữ nguyên, nhưng tên công cụ, schema đối số và cấu trúc `config.yaml` có thể thay đổi ở mỗi bản phát hành. Hãy ghim một phiên bản.
+
 ## Vận hành
 
 - **Lưu trữ** — SQLite theo mặc định (một tệp duy nhất, không cần cấu hình); PostgreSQL +

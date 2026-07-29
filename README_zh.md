@@ -222,6 +222,42 @@ sage-wiki serve --ui        # http://127.0.0.1:3333，需要 -tags webui 构建
 
 **知识捕获** —— Agent 通过 `wiki_capture` / `wiki_learn` 将洞见存回 wiki，闭合"读取-捕获-演进"循环。工作流与技巧：[Agent 记忆层](docs/guides/agent-memory-layer.md)。
 
+### 在 Go 程序中嵌入
+
+要在自己的 Go 进程中调用相同的工具——无需子进程，无需管理 stdio 或端口——请使用 `pkg/sagewiki` 配合 mcp-go 的进程内传输：
+
+```go
+srv, err := sagewiki.NewServer("/path/to/wiki")  // project must already exist
+if err != nil {
+    return err
+}
+defer srv.Close()  // the caller owns the DB handle here
+
+cli, err := client.NewInProcessClient(srv.MCPServer())
+if err != nil {
+    return err
+}
+defer cli.Close()
+
+if err := cli.Start(ctx); err != nil {
+    return err
+}
+if _, err := cli.Initialize(ctx, mcp.InitializeRequest{}); err != nil {
+    return err
+}
+
+res, err := cli.CallTool(ctx, mcp.CallToolRequest{
+    Params: mcp.CallToolParams{
+        Name:      "wiki_search",
+        Arguments: map[string]any{"query": "attention", "limit": 5},
+    },
+})
+```
+
+项目必须已存在，且调用方拥有数据库句柄，因此必须调用 `Close` —— 与 `serve` 不同，没有其他东西会关闭它。日志输出到宿主的 stderr，`initialize` 报告的是 sage-wiki 的构建版本（普通 `go build` 时为 `dev`）；在启动时调用 `sagewiki.SetVersion` 可以报告你自己的版本字符串。
+
+该包在 sage-wiki 未达 1.0 前处于**实验阶段**：Go 签名预期保持稳定，但工具名称、参数 schema 和 `config.yaml` 布局可能在任何版本中变化。请固定版本。
+
 ## 运维
 
 - **存储** —— 默认 SQLite（单文件、零配置）；服务器部署可用 PostgreSQL + pgvector。切换与连接池配置：[存储后端](docs/guides/storage-backends.md)。

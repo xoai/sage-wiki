@@ -248,6 +248,42 @@ Preact + Tailwind로 구축되어 `go:embed`로 임베딩됩니다 (~1.2 MB, gzi
 인사이트를 다시 저장하여 읽기-캡처-진화 루프를 완성합니다. 워크플로우와 팁:
 [에이전트 메모리 레이어](docs/guides/agent-memory-layer.md).
 
+### Go 프로그램에 임베딩
+
+서브프로세스, stdio, 포트 관리 없이 자체 Go 프로세스에서 동일한 도구를 호출하려면 mcp-go의 인프로세스 트랜스포트와 함께 `pkg/sagewiki`를 사용하세요:
+
+```go
+srv, err := sagewiki.NewServer("/path/to/wiki")  // project must already exist
+if err != nil {
+    return err
+}
+defer srv.Close()  // the caller owns the DB handle here
+
+cli, err := client.NewInProcessClient(srv.MCPServer())
+if err != nil {
+    return err
+}
+defer cli.Close()
+
+if err := cli.Start(ctx); err != nil {
+    return err
+}
+if _, err := cli.Initialize(ctx, mcp.InitializeRequest{}); err != nil {
+    return err
+}
+
+res, err := cli.CallTool(ctx, mcp.CallToolRequest{
+    Params: mcp.CallToolParams{
+        Name:      "wiki_search",
+        Arguments: map[string]any{"query": "attention", "limit": 5},
+    },
+})
+```
+
+프로젝트가 미리 존재해야 하며 호출자가 데이터베이스 핸들을 소유하므로 `Close`가 필수입니다 — `serve`와 달리 다른 무언가가 닫아주지 않습니다. 로그는 호스트의 stderr로 출력되고, `initialize`는 sage-wiki 빌드 버전을 보고합니다(일반 `go build`에서는 `dev`). 시작 시 `sagewiki.SetVersion`을 호출하면 자체 버전 문자열을 보고할 수 있습니다.
+
+이 패키지는 sage-wiki가 1.0 미만인 동안 **실험적**입니다: Go 시그니처는 유지될 예정이지만 도구 이름, 인자 스키마, `config.yaml` 레이아웃은 릴리스마다 바뀔 수 있습니다. 버전을 고정하세요.
+
 ## 운영
 
 - **스토리지** — 기본은 SQLite (단일 파일, 제로 설정); 서버 배포에는

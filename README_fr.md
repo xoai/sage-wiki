@@ -251,6 +251,42 @@ comment interroger, dérivée de votre config. Cibles : `claude-code`, `cursor`,
 via `wiki_capture` / `wiki_learn`, fermant la boucle lire-capturer-évoluer.
 Workflows et astuces : [Couche mémoire agent](docs/guides/agent-memory-layer.md).
 
+### Intégration dans un programme Go
+
+Pour appeler les mêmes outils depuis votre propre processus Go — sans sous-processus, ni stdio ni port à gérer — utilisez `pkg/sagewiki` avec le transport in-process de mcp-go :
+
+```go
+srv, err := sagewiki.NewServer("/path/to/wiki")  // project must already exist
+if err != nil {
+    return err
+}
+defer srv.Close()  // the caller owns the DB handle here
+
+cli, err := client.NewInProcessClient(srv.MCPServer())
+if err != nil {
+    return err
+}
+defer cli.Close()
+
+if err := cli.Start(ctx); err != nil {
+    return err
+}
+if _, err := cli.Initialize(ctx, mcp.InitializeRequest{}); err != nil {
+    return err
+}
+
+res, err := cli.CallTool(ctx, mcp.CallToolRequest{
+    Params: mcp.CallToolParams{
+        Name:      "wiki_search",
+        Arguments: map[string]any{"query": "attention", "limit": 5},
+    },
+})
+```
+
+Le projet doit déjà exister et l'appelant possède le handle de base de données, donc `Close` est obligatoire — contrairement à `serve`, rien d'autre ne le ferme. Les logs vont sur le stderr de l'hôte, et `initialize` rapporte la version de build de sage-wiki (`dev` pour un simple `go build`) ; appelez `sagewiki.SetVersion` au démarrage pour rapporter votre propre version.
+
+Le package est **expérimental** tant que sage-wiki est en pré-1.0 : les signatures Go sont censées rester stables, mais les noms d'outils, les schémas d'arguments et le format de `config.yaml` peuvent changer à chaque release. Épinglez une version.
+
 ## Opérations
 
 - **Stockage** — SQLite par défaut (fichier unique, zéro config) ; PostgreSQL +

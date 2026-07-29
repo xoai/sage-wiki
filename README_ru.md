@@ -251,6 +251,42 @@ sage-wiki serve --ui        # http://127.0.0.1:3333, требуется сбор
 `wiki_learn`, замыкая цикл «чтение–захват–эволюция». Рабочие процессы и советы:
 [Слой памяти агента](docs/guides/agent-memory-layer.md).
 
+### Встраивание в Go-программу
+
+Чтобы вызывать те же инструменты из собственного Go-процесса — без подпроцесса, без stdio и порта — используйте `pkg/sagewiki` с in-process транспортом mcp-go:
+
+```go
+srv, err := sagewiki.NewServer("/path/to/wiki")  // project must already exist
+if err != nil {
+    return err
+}
+defer srv.Close()  // the caller owns the DB handle here
+
+cli, err := client.NewInProcessClient(srv.MCPServer())
+if err != nil {
+    return err
+}
+defer cli.Close()
+
+if err := cli.Start(ctx); err != nil {
+    return err
+}
+if _, err := cli.Initialize(ctx, mcp.InitializeRequest{}); err != nil {
+    return err
+}
+
+res, err := cli.CallTool(ctx, mcp.CallToolRequest{
+    Params: mcp.CallToolParams{
+        Name:      "wiki_search",
+        Arguments: map[string]any{"query": "attention", "limit": 5},
+    },
+})
+```
+
+Проект должен уже существовать, а вызывающая сторона владеет дескриптором базы данных, поэтому `Close` обязателен — в отличие от `serve`, никто другой его не закроет. Логи пишутся в stderr хоста, а `initialize` сообщает версию сборки sage-wiki (`dev` при обычном `go build`); вызовите `sagewiki.SetVersion` при запуске, чтобы сообщить свою строку версии.
+
+Пакет **экспериментальный**, пока sage-wiki pre-1.0: сигнатуры Go должны оставаться стабильными, но имена инструментов, схемы аргументов и формат `config.yaml` могут меняться в каждом релизе. Закрепите версию.
+
 ## Эксплуатация
 
 - **Хранение** — SQLite по умолчанию (один файл, нулевая конфигурация);

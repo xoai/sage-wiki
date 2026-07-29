@@ -247,6 +247,42 @@ Preact + Tailwindで構築され、`go:embed`で埋め込まれます（約1.2 M
 インサイトを書き戻し、読み取り・キャプチャ・進化のループを閉じます。
 ワークフローとヒント：[エージェントメモリレイヤー](docs/guides/agent-memory-layer.md)。
 
+### Goプログラムへの埋め込み
+
+サブプロセスや stdio、ポート管理なしに、自分の Go プロセスから同じツールを呼び出すには、mcp-go のインプロセストランスポートと `pkg/sagewiki` を使います：
+
+```go
+srv, err := sagewiki.NewServer("/path/to/wiki")  // project must already exist
+if err != nil {
+    return err
+}
+defer srv.Close()  // the caller owns the DB handle here
+
+cli, err := client.NewInProcessClient(srv.MCPServer())
+if err != nil {
+    return err
+}
+defer cli.Close()
+
+if err := cli.Start(ctx); err != nil {
+    return err
+}
+if _, err := cli.Initialize(ctx, mcp.InitializeRequest{}); err != nil {
+    return err
+}
+
+res, err := cli.CallTool(ctx, mcp.CallToolRequest{
+    Params: mcp.CallToolParams{
+        Name:      "wiki_search",
+        Arguments: map[string]any{"query": "attention", "limit": 5},
+    },
+})
+```
+
+プロジェクトは事前に存在している必要があり、呼び出し側がデータベースハンドルを所有するため `Close` は必須です — `serve` とは異なり、他の何かが閉じてくれることはありません。ログはホストの stderr に出力され、`initialize` は sage-wiki のビルドバージョンを報告します（素の `go build` では `dev`）。起動時に `sagewiki.SetVersion` を呼ぶと、独自のバージョン文字列を報告できます。
+
+このパッケージは sage-wiki が 1.0 未満の間は**実験的**です：Go のシグネチャは維持される想定ですが、ツール名、引数スキーマ、`config.yaml` のレイアウトはリリースごとに変わる可能性があります。バージョンを固定してください。
+
 ## 運用
 
 - **ストレージ** — デフォルトはSQLite（単一ファイル、設定不要）。サーバー
