@@ -1920,32 +1920,42 @@ func InvalidateFunctionalConformance(new BackendFactory) func(*testing.T) {
 			}
 		}
 
-		// Clamp: winner back-dated before loser's valid_from → valid_to =
-		// valid_from + 1s, never earlier, so valid_from < valid_to holds.
+		// Back-dated winner (2020) vs loser valid from 2026: valid_to =
+		// max(2020, 2026) = 2026 == valid_from → the loser is live at NO T
+		// (retroactive win; the winner claims the fact was true before the
+		// loser even started). Probe anywhere must not return it.
 		hist, err := os.GetRelationsAt("a2", store.Outbound, "", time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC))
 		if err != nil {
 			t.Fatal(err)
 		}
-		foundOld := false
 		for _, r := range hist {
 			if r.TargetID == "o1" {
-				t.Errorf("clamped loser must not be live at 2027 (window is 1s), %+v", r)
+				t.Errorf("retroactively-won loser must not be live at 2027, %+v", r)
 			}
 		}
-		_ = foundOld
-
-		// Point-in-time BEFORE the clamp still shows the loser... its window is
-		// [2026-01-01, 2026-01-01T00:00:01Z) — probe inside it.
 		inside, err := os.GetRelationsAt("a2", store.Outbound, "", time.Date(2026, 1, 1, 0, 0, 0, 500000000, time.UTC))
 		if err != nil {
 			t.Fatal(err)
 		}
-		insideIDs := map[string]bool{}
 		for _, r := range inside {
-			insideIDs[r.ID] = true
+			if r.ID == "r-old" {
+				t.Errorf("loser with valid_to == valid_from is live at no T, got %+v", r)
+			}
 		}
-		if !insideIDs["r-old"] {
-			t.Errorf("loser must be live inside its clamped 1s window, got %v", insideIDs)
+		// But its history is preserved, not deleted: the unfiltered read
+		// still returns it, stamped.
+		allR, err := os.AllRelations()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var stamped *store.Relation
+		for i := range allR {
+			if allR[i].ID == "r-old" {
+				stamped = &allR[i]
+			}
+		}
+		if stamped == nil || stamped.ValidTo != "2026-01-01T00:00:00Z" || stamped.InvalidatedBy != "r-new" {
+			t.Errorf("loser must be preserved with valid_to == valid_from: %+v", stamped)
 		}
 
 		// Mirror: the same-value edge (a2 -> o2) must be PRESERVED (o2 ∈ keepForms).
@@ -1971,6 +1981,44 @@ func InvalidateFunctionalConformance(new BackendFactory) func(*testing.T) {
 		}
 		if len(again) != 0 {
 			t.Errorf("re-run must be a no-op, invalidated %v", again)
+		}
+
+		// Normal-order branch of the per-row MAX: the winner's newValidFrom
+		// (2026) is LATER than the loser's valid_from (2024), so the loser
+		// stays live until exactly 2026 — the spec's literal acceptance
+		// narrative (A 2024 then B 2026; as_of 2025 → A, now → B).
+		for _, id := range []string{"s2", "x1", "x2"} {
+			mk(id)
+		}
+		add(store.Relation{ID: "n-old", SourceID: "s2", TargetID: "x1", Relation: "works_at",
+			Confidence: 0.9, ValidFrom: "2024-01-01T00:00:00Z"})
+		add(store.Relation{ID: "n-new", SourceID: "s2", TargetID: "x2", Relation: "works_at",
+			Confidence: 0.95, ValidFrom: "2026-01-01T00:00:00Z"})
+		if _, err := os.InvalidateFunctional("s2", "works_at", "x2",
+			"2026-01-01T00:00:00Z", "n-new"); err != nil {
+			t.Fatal(err)
+		}
+		at25, err := os.GetRelationsAt("s2", store.Outbound, "", time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC))
+		if err != nil {
+			t.Fatal(err)
+		}
+		live25 := map[string]bool{}
+		for _, r := range at25 {
+			live25[r.ID] = true
+		}
+		if !live25["n-old"] || live25["n-new"] {
+			t.Errorf("as_of 2025 must return the old fact only, got %v", live25)
+		}
+		at27, err := os.GetRelationsAt("s2", store.Outbound, "", time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC))
+		if err != nil {
+			t.Fatal(err)
+		}
+		live27 := map[string]bool{}
+		for _, r := range at27 {
+			live27[r.ID] = true
+		}
+		if live27["n-old"] || !live27["n-new"] {
+			t.Errorf("as_of 2027 must return the new fact only, got %v", live27)
 		}
 	}
 }

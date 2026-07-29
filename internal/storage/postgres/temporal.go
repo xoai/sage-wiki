@@ -10,11 +10,8 @@ import (
 )
 
 // P3-6: functional supersession — Postgres twin of
-// internal/ontology/temporal.go. Semantics are intended identical; the
-// placeholder style and clamp expression differ, and one behavioral
-// divergence is deliberate (spec i5): unparseable valid_from degrades
-// silently to newValidFrom on SQLite but fails loudly on the ::timestamptz
-// cast here.
+// internal/ontology/temporal.go. Semantics are identical; only the
+// placeholder style differs.
 
 // aliasRoot / idForms: see the SQLite twin. Edges are written with
 // pre-resolution LLM IDs and LinkAlias rewrites only derived copies, so one
@@ -127,17 +124,16 @@ func (s *ontologyStore) InvalidateFunctional(sourceID, predicate, keepTargetID, 
 			if len(ids) == 0 {
 				continue
 			}
-			// Per-row clamp: valid_to = GREATEST(newValidFrom, valid_from+1s).
-			// AT TIME ZONE 'UTC' is mandatory — to_char(timestamptz) renders
-			// in the session TimeZone GUC otherwise, mislabeling local time
-			// as Z (spec i4). COLLATE "C" makes the text max
-			// collation-independent. Empty valid_from → newValidFrom; garbage
-			// valid_from fails loudly on the cast (by design, spec i5).
-			// Placeholders RESTART at $1: the UPDATE is a separate statement
-			// from the SELECT above, so its bind positions are independent.
+			// Per-row rule: valid_to = GREATEST(newValidFrom, valid_from) —
+			// plain text max, no timestamptz arithmetic (the earlier +1s
+			// clamp left a 1-second overlap window — Gate-8 QA; see the
+			// SQLite twin for the full rationale). Equality = retroactive
+			// win: the loser is live at no T. COLLATE "C" keeps the max
+			// collation-independent. Placeholders RESTART at $1: the UPDATE
+			// is a separate statement from the SELECT above.
 			// uargs = [newValidFrom($1), newValidFrom($2), invalidatedBy($3), ids($4…)].
 			clamp := `CASE WHEN COALESCE(valid_from,'')='' THEN $1` +
-				` ELSE GREATEST($2 COLLATE "C", to_char((valid_from::timestamptz + interval '1 second') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') COLLATE "C") END`
+				` ELSE GREATEST($2 COLLATE "C", valid_from COLLATE "C") END`
 			idPH, _ := pgPlaceholders(len(ids), 4)
 			upd := `UPDATE ` + table + ` SET valid_to = ` + clamp +
 				`, invalidated_by = $3 WHERE id IN (` + idPH + `)`

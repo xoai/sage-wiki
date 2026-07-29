@@ -126,7 +126,8 @@ func TestFunctionalSupersessionAutoApplies(t *testing.T) {
 	if len(sup) != 1 || sup[0].KeepTargetID != "initech" || sup[0].Predicate != "works_at" {
 		t.Errorf("supersession not collected for sweep: %+v", sup)
 	}
-	// The loser is invalidated, not deleted: point-in-time read still sees it.
+	// The loser is invalidated, not deleted: the unfiltered admin read still
+	// returns it, stamped with valid_to + invalidated_by.
 	all, err := ont.AllRelations()
 	if err != nil {
 		t.Fatal(err)

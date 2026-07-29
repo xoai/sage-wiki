@@ -101,16 +101,16 @@ func (s *Store) InvalidateFunctional(sourceID, predicate, keepTargetID, newValid
 
 	var invalidated []string
 	err = s.db.WriteTx(func(tx *sql.Tx) error {
-		// Per-row clamp: valid_to = max(newValidFrom, valid_from + 1s), so
-		// valid_from < valid_to always and the loser's window ends exactly
-		// when the winner's begins (mutual exclusion in every window).
-		// strftime (NOT datetime()) emits RFC3339 — datetime() emits
-		// space-separated text that breaks lexical comparison (spec i3).
-		// COALESCE around strftime keeps unparseable legacy text from
-		// producing NULL, which MAX would propagate and silently keep the
-		// row live (spec i4).
-		clamp := `CASE WHEN COALESCE(valid_from,'')='' THEN ?` +
-			` ELSE MAX(?, COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', valid_from, '+1 second'), '')) END`
+		// Per-row rule: valid_to = max(newValidFrom, valid_from) — plain
+		// string max over RFC3339, NO datetime arithmetic (the earlier +1s
+		// clamp left a 1-second overlap window whenever the winner's start
+		// was not later than the loser's, breaking same-second corrections —
+		// Gate-8 QA). Equality means the winner claims the fact was true at
+		// or before the loser started: the loser is then live at NO T
+		// (valid_from <= T AND valid_to > T is unsatisfiable), i.e. a clean
+		// retroactive win. Empty valid_from → newValidFrom. Invariant:
+		// winner and loser are never live at the same T.
+		clamp := `CASE WHEN COALESCE(valid_from,'')='' THEN ? ELSE MAX(?, valid_from) END`
 
 		where := `relation = ? AND source_id IN (` + placeholders(len(sourceForms)) + `)` +
 			` AND target_id NOT IN (` + placeholders(len(keepForms)) + `)` +
