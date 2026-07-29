@@ -78,10 +78,12 @@ type OntologyStore interface {
 	// (any ID form of sourceID, predicate, target NOT any ID form of
 	// keepTargetID) by setting valid_to/invalidated_by in relations AND
 	// derived_relations, in one transaction (P3-6). ID forms close over the
-	// applied-alias chain root. valid_to is clamped per row:
-	// max(newValidFrom, old.valid_from + 1s) — guaranteeing valid_from <
-	// valid_to and mutual exclusion with the winner in every window. An
-	// empty newValidFrom is treated as now. Returns the invalidated edge IDs.
+	// applied-alias chain root. valid_to is set per row:
+	// max(newValidFrom, old.valid_from) — plain string max over RFC3339.
+	// Equality means the winner was not later than the loser: the loser is
+	// then live at NO T (a retroactive win), which is what makes winner and
+	// loser mutually exclusive at every T. An empty newValidFrom is treated
+	// as now. Returns the invalidated edge IDs.
 	// No-op (nil, nil) when the store was built with temporal behavior
 	// disabled.
 	InvalidateFunctional(sourceID, predicate, keepTargetID, newValidFrom, invalidatedBy string) ([]string, error)

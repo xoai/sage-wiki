@@ -1843,7 +1843,8 @@ func TemporalUpsertBackfillConformance(new BackendFactory) func(*testing.T) {
 // InvalidateFunctionalConformance (P3-6 T5): functional-predicate supersession
 // must behave identically on both backends — form sets close over the alias
 // chain root, both relations and derived_relations are invalidated, the
-// per-row clamp guarantees valid_from < valid_to, and re-runs are idempotent.
+// per-row plain max gives strict mutual exclusion (equality = retroactive
+// win, loser live at no T), and re-runs are idempotent.
 func InvalidateFunctionalConformance(new BackendFactory) func(*testing.T) {
 	return func(t *testing.T) {
 		b := new(t)
