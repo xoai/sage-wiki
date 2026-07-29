@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## 0.2.4 — 2026-07-29
+
 ### Added
 
 - **Bi-temporal graph edges (P3-6).** Relations now carry live validity:
