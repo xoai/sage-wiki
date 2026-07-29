@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## 0.2.5 — 2026-07-29
+
 ### Added
 
 - **Graph communities + global queries (P3-5).** Opt-in GraphRAG-style
