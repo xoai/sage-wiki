@@ -47,8 +47,8 @@ sage-wiki ontology query --entity kubernetes --depth 3 --direction both
 sage-wiki provenance "service mesh"    # những nguồn nào sinh ra khái niệm này
 ```
 
-**Điều nó chưa làm được**, nói thẳng: các trường hiệu lực theo thời gian (`valid_from` / `valid_to`) được lưu nhưng chưa dùng khi truy vấn, và chưa có phát hiện mâu thuẫn tự động — các khẳng định xung đột lộ ra qua khâu duyệt
-[độ tin cậy đầu ra](docs/guides/output-trust.md), không phải bằng luật đồ thị. Chi tiết:
+Các cạnh mang tính lưỡng thời gian (bi-temporal): khi một sự thật bị bác bỏ, cạnh cũ bị vô hiệu thay vì xung đột, câu trả lời mặc định không còn mâu thuẫn, và truy vấn `as_of` trả lời "tháng Giêng chúng ta đã tin điều gì?". Các mâu thuẫn không rõ ràng vẫn lộ ra qua khâu duyệt
+[độ tin cậy đầu ra](docs/guides/output-trust.md). Chi tiết:
 [bộ nhớ đồ thị](docs/guides/graph-memory.md).
 
 ## Hướng dẫn

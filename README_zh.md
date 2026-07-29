@@ -47,8 +47,8 @@ sage-wiki ontology query --entity kubernetes --depth 3 --direction both
 sage-wiki provenance "service mesh"    # 哪些来源产生了这个概念
 ```
 
-**目前尚未支持的能力**，如实说明：时间有效性字段（`valid_from` / `valid_to`）已存储但尚未参与查询，也没有自动矛盾检测 —— 冲突主张通过
-[输出可信度](docs/guides/output-trust.md)复核浮现，而非由图规则处理。深入了解：
+边是双时态（bi-temporal）的：事实被更正时旧边会被作废而非冲突，默认答案不含矛盾，`as_of` 查询可回答"一月份我们相信什么？"。有歧义的矛盾仍通过
+[输出可信度](docs/guides/output-trust.md)复核浮现。深入了解：
 [图记忆](docs/guides/graph-memory.md)。
 
 ## 指南
