@@ -236,3 +236,26 @@ func TestTemporalEnabledByDefault(t *testing.T) {
 		t.Errorf("absence of option must mean enabled (default), got %v", relIDs(rels))
 	}
 }
+
+func TestInvalidateFunctionalDisabledNoOp(t *testing.T) {
+	dir := t.TempDir()
+	db, err := storage.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s := NewStore(db, ValidRelationNames(BuiltinRelations), ValidEntityTypeNames(BuiltinEntityTypes),
+		WithTemporalEnabled(false))
+	temporalSeed(t, s)
+	ids, err := s.InvalidateFunctional("a", RelExtends, "b", "", "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids != nil {
+		t.Errorf("disabled store must no-op, got %v", ids)
+	}
+	rels, _ := s.GetRelations("a", Outbound, "")
+	if len(rels) != 3 {
+		t.Errorf("disabled store must leave all edges live, got %d", len(rels))
+	}
+}

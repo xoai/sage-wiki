@@ -29,6 +29,7 @@ func RunConformance(t *testing.T, newBackend BackendFactory) {
 	t.Run("traverse_alias_d2", TraverseAliasSeesOwnEdgesOnly(newBackend))
 	t.Run("temporal_validity", TemporalValidityConformance(newBackend))
 	t.Run("temporal_upsert_backfill", TemporalUpsertBackfillConformance(newBackend))
+	t.Run("invalidate_functional", InvalidateFunctionalConformance(newBackend))
 	t.Run("trust", TrustConformance(newBackend))
 	t.Run("compile_items", CompileItemsConformance(newBackend))
 	t.Run("compile_items_queue", CompileItemsQueueConformance(newBackend))
@@ -1835,6 +1836,141 @@ func TemporalUpsertBackfillConformance(new BackendFactory) func(*testing.T) {
 		}
 		if vf := rels[0].ValidFrom; vf != "" {
 			t.Errorf("losing re-assertion must backfill nothing, got %q", vf)
+		}
+	}
+}
+
+// InvalidateFunctionalConformance (P3-6 T5): functional-predicate supersession
+// must behave identically on both backends — form sets close over the alias
+// chain root, both relations and derived_relations are invalidated, the
+// per-row clamp guarantees valid_from < valid_to, and re-runs are idempotent.
+func InvalidateFunctionalConformance(new BackendFactory) func(*testing.T) {
+	return func(t *testing.T) {
+		b := new(t)
+		os := b.Ontology()
+		mk := func(id string) {
+			t.Helper()
+			if err := os.AddEntity(store.Entity{ID: id, Type: "concept", Name: id}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, id := range []string{"c", "a1", "a2", "o1", "o2"} {
+			mk(id)
+		}
+		add := func(r store.Relation) {
+			t.Helper()
+			if err := os.AddRelation(r); err != nil {
+				t.Fatalf("AddRelation(%s): %v", r.ID, err)
+			}
+		}
+		// a1->c and a2->c both applied (sibling alias forms).
+		link := func(alias string) {
+			t.Helper()
+			_, err := os.LinkAlias(store.EntityAlias{
+				Alias: alias, CanonicalID: "c", EntityType: "concept",
+				Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-29T00:00:00Z",
+			})
+			if err != nil {
+				t.Fatalf("LinkAlias(%s): %v", alias, err)
+			}
+		}
+
+		// The loser, keyed by sibling form a2, valid from 2026.
+		add(store.Relation{ID: "r-old", SourceID: "a2", TargetID: "o1", Relation: "works_at",
+			Confidence: 0.9, ValidFrom: "2026-01-01T00:00:00Z"})
+		// The mirror trap: same VALUE as the new edge but keyed by sibling a2 —
+		// must be preserved because o2's forms include a2-keyed... no: o2 is a
+		// distinct entity here; this edge tests target-form preservation below.
+		add(store.Relation{ID: "r-same-val", SourceID: "a2", TargetID: "o2", Relation: "works_at",
+			Confidence: 0.9, ValidFrom: "2026-01-01T00:00:00Z"})
+		// The winner, asserted by form a1 against o2, back-dated to 2020.
+		add(store.Relation{ID: "r-new", SourceID: "a1", TargetID: "o2", Relation: "works_at",
+			Confidence: 0.95, ValidFrom: "2020-01-01T00:00:00Z"})
+
+		link("a1")
+		link("a2")
+
+		invalidated, err := os.InvalidateFunctional("a1", "works_at", "o2",
+			"2020-01-01T00:00:00Z", "r-new")
+		if err != nil {
+			t.Fatalf("InvalidateFunctional: %v", err)
+		}
+		if len(invalidated) == 0 {
+			t.Fatal("expected at least one invalidated edge")
+		}
+
+		// Loser invalidated on BOTH arms: default (filtered) reads must not
+		// surface o1 under ANY form; as_of 2027 must show the clamped window.
+		def, err := os.GetRelations("c", store.Outbound, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range def {
+			if r.TargetID == "o1" {
+				t.Errorf("superseded edge still live under canonical read: %+v", r)
+			}
+		}
+		orig, err := os.GetRelationsAt("a2", store.Outbound, "", time.Time{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range orig {
+			if r.TargetID == "o1" {
+				t.Errorf("superseded alias-keyed original still live: %+v", r)
+			}
+		}
+
+		// Clamp: winner back-dated before loser's valid_from → valid_to =
+		// valid_from + 1s, never earlier, so valid_from < valid_to holds.
+		hist, err := os.GetRelationsAt("a2", store.Outbound, "", time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC))
+		if err != nil {
+			t.Fatal(err)
+		}
+		foundOld := false
+		for _, r := range hist {
+			if r.TargetID == "o1" {
+				t.Errorf("clamped loser must not be live at 2027 (window is 1s), %+v", r)
+			}
+		}
+		_ = foundOld
+
+		// Point-in-time BEFORE the clamp still shows the loser... its window is
+		// [2026-01-01, 2026-01-01T00:00:01Z) — probe inside it.
+		inside, err := os.GetRelationsAt("a2", store.Outbound, "", time.Date(2026, 1, 1, 0, 0, 0, 500000000, time.UTC))
+		if err != nil {
+			t.Fatal(err)
+		}
+		insideIDs := map[string]bool{}
+		for _, r := range inside {
+			insideIDs[r.ID] = true
+		}
+		if !insideIDs["r-old"] {
+			t.Errorf("loser must be live inside its clamped 1s window, got %v", insideIDs)
+		}
+
+		// Mirror: the same-value edge (a2 -> o2) must be PRESERVED (o2 ∈ keepForms).
+		sameVal, err := os.GetRelations("a2", store.Outbound, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		preserved := false
+		for _, r := range sameVal {
+			if r.ID == "r-same-val" {
+				preserved = true
+			}
+		}
+		if !preserved {
+			t.Error("same-value edge under sibling form must be preserved (keepForms closure)")
+		}
+
+		// Idempotent re-run: nothing left to invalidate.
+		again, err := os.InvalidateFunctional("a1", "works_at", "o2",
+			"2020-01-01T00:00:00Z", "r-new")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(again) != 0 {
+			t.Errorf("re-run must be a no-op, invalidated %v", again)
 		}
 	}
 }
