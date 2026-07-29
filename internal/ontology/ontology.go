@@ -268,16 +268,17 @@ func (s *Store) DeleteEntity(id string) error {
 // Re-assertion (P3-1): an existing edge is updated ONLY when the incoming
 // confidence is strictly higher than the stored one. created_at is never in the
 // SET list, so the earliest assertion's timestamp survives, and the stored id
-// is kept. The three temporal columns are insert-only until P3-6 — a
-// re-assertion leaves them untouched, so P3-6 must add them to the SET list
-// when it starts writing them.
+// is kept. P3-6 added valid_from to the SET list with first-writer-wins
+// semantics: a winning re-assertion backfills an EMPTY stored valid_from
+// (the fact became true at its first dated assertion), never overwrites one.
+// valid_to/invalidated_by stay supersession-only (InvalidateFunctional).
 //
 // The WHERE clause is the back-compat proof: every caller that predates P3-1
 // passes Confidence 0, so `0 > COALESCE(stored, 0)` is false and the statement
 // is a no-op — bit-identical to the DO NOTHING it replaces. It also means the
 // Pass-3 keyword extractor, which re-asserts the same (source, target,
 // relation) on every compile, can never erase an LLM-extracted edge's
-// evidence.
+// evidence, and never writes temporal fields.
 func (s *Store) AddRelation(r Relation) error {
 	if r.SourceID == r.TargetID {
 		return fmt.Errorf("ontology: self-loops not allowed (entity %q)", r.SourceID)
@@ -297,7 +298,9 @@ func (s *Store) AddRelation(r Relation) error {
 			 ON CONFLICT(source_id, target_id, relation) DO UPDATE SET
 			   evidence   = excluded.evidence,
 			   confidence = excluded.confidence,
-			   source_doc = excluded.source_doc
+			   source_doc = excluded.source_doc,
+			   valid_from = CASE WHEN COALESCE(relations.valid_from,'') = ''
+			                     THEN excluded.valid_from ELSE relations.valid_from END
 			 WHERE excluded.confidence > COALESCE(relations.confidence, 0)`,
 			r.ID, r.SourceID, r.TargetID, r.Relation, r.CreatedAt,
 			r.Evidence, r.Confidence, r.SourceDoc,

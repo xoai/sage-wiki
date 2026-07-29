@@ -27,6 +27,8 @@ func RunConformance(t *testing.T, newBackend BackendFactory) {
 	t.Run("derived_union", DerivedUnionConformance(newBackend))
 	t.Run("unlink", UnlinkConformance(newBackend))
 	t.Run("traverse_alias_d2", TraverseAliasSeesOwnEdgesOnly(newBackend))
+	t.Run("temporal_validity", TemporalValidityConformance(newBackend))
+	t.Run("temporal_upsert_backfill", TemporalUpsertBackfillConformance(newBackend))
 	t.Run("trust", TrustConformance(newBackend))
 	t.Run("compile_items", CompileItemsConformance(newBackend))
 	t.Run("compile_items_queue", CompileItemsQueueConformance(newBackend))
@@ -413,10 +415,13 @@ func OntologyConformance(new BackendFactory) func(*testing.T) {
 		// backends. Postgres stores confidence as DOUBLE PRECISION and the
 		// three temporal columns as TEXT (not TIMESTAMPTZ) precisely so this
 		// comparison is byte-for-byte rather than format-dependent.
+		// P3-6: values are RFC3339 (writer normalization mandate) and ValidTo
+		// is far-future so the edge stays live under default validity
+		// filtering — RelationsByType (used below) is a filtered read now.
 		evidenced := store.Relation{
 			ID: "r3", SourceID: "e1", TargetID: "e3", Relation: "extends",
 			Evidence: "e1 extends e3", Confidence: 0.75, SourceDoc: "raw/doc.md",
-			ValidFrom: "2026-01-15", ValidTo: "2026-06-01", InvalidatedBy: "r9",
+			ValidFrom: "2026-01-15T00:00:00Z", ValidTo: "2099-06-01T00:00:00Z", InvalidatedBy: "r9",
 		}
 		if err := os.AddRelation(evidenced); err != nil {
 			t.Fatalf("AddRelation evidenced: %v", err)
@@ -1646,6 +1651,190 @@ func TraverseAliasSeesOwnEdgesOnly(new BackendFactory) func(*testing.T) {
 			t.Errorf("Traverse(alias) returned the canonical's neighbourhood (%v) — "+
 				"a store method resolved the alias; resolution belongs at consumer "+
 				"boundaries only (D2)", ids)
+		}
+	}
+}
+
+// TemporalValidityConformance (P3-6): bi-temporal filtering must behave
+// identically on both backends — default reads are live-at-now, GetRelationsAt
+// and TraverseOpts.AsOf are point-in-time, RelationsByType is filtered, and
+// the predicate is COALESCE-based so legacy zero-value rows stay live.
+func TemporalValidityConformance(new BackendFactory) func(*testing.T) {
+	return func(t *testing.T) {
+		b := new(t)
+		os := b.Ontology()
+		mk := func(id string) {
+			t.Helper()
+			if err := os.AddEntity(store.Entity{ID: id, Type: "concept", Name: id}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, id := range []string{"a", "b", "c", "d"} {
+			mk(id)
+		}
+		add := func(r store.Relation) {
+			t.Helper()
+			if err := os.AddRelation(r); err != nil {
+				t.Fatalf("AddRelation(%s): %v", r.ID, err)
+			}
+		}
+		add(store.Relation{ID: "r-live", SourceID: "a", TargetID: "b", Relation: "extends", Confidence: 0.9})
+		add(store.Relation{ID: "r-dead", SourceID: "a", TargetID: "c", Relation: "extends", Confidence: 0.9,
+			ValidFrom: "2020-01-01T00:00:00Z", ValidTo: "2025-06-01T00:00:00Z", InvalidatedBy: "r-live"})
+		add(store.Relation{ID: "r-future", SourceID: "a", TargetID: "d", Relation: "extends", Confidence: 0.9,
+			ValidFrom: "2099-01-01T00:00:00Z"})
+
+		ids := func(rels []store.Relation) map[string]bool {
+			out := map[string]bool{}
+			for _, r := range rels {
+				out[r.ID] = true
+			}
+			return out
+		}
+
+		def, err := os.GetRelations("a", store.Outbound, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := ids(def)
+		if !got["r-live"] || got["r-dead"] || got["r-future"] {
+			t.Errorf("default read must be live-at-now (r-live only), got %v", got)
+		}
+
+		asOf, _ := time.Parse(time.RFC3339, "2022-01-01T00:00:00Z")
+		past, err := os.GetRelationsAt("a", store.Outbound, "", asOf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = ids(past)
+		if !got["r-live"] || !got["r-dead"] || got["r-future"] {
+			t.Errorf("as_of 2022 must return r-live and r-dead, got %v", got)
+		}
+
+		// Strict boundary: as_of == valid_to is NOT live.
+		edge, _ := time.Parse(time.RFC3339, "2025-06-01T00:00:00Z")
+		at, err := os.GetRelationsAt("a", store.Outbound, "", edge)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ids(at)["r-dead"] {
+			t.Error("as_of == valid_to must not be live")
+		}
+
+		// Zero asOf = live-at-now.
+		zero, err := os.GetRelationsAt("a", store.Outbound, "", time.Time{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(zero) != 1 || zero[0].ID != "r-live" {
+			t.Errorf("zero asOf must equal default, got %v", ids(zero))
+		}
+
+		byType, err := os.RelationsByType("extends")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = ids(byType)
+		if !got["r-live"] || got["r-dead"] || got["r-future"] {
+			t.Errorf("RelationsByType must be filtered live-at-now, got %v", got)
+		}
+
+		// Traverse honors AsOf.
+		now, err := os.Traverse("a", store.TraverseOpts{Direction: store.Outbound, MaxDepth: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(now) != 1 || now[0].ID != "b" {
+			t.Errorf("default traverse must reach only b, got %+v", now)
+		}
+		then, err := os.Traverse("a", store.TraverseOpts{Direction: store.Outbound, MaxDepth: 1, AsOf: asOf})
+		if err != nil {
+			t.Fatal(err)
+		}
+		reached := map[string]bool{}
+		for _, e := range then {
+			reached[e.ID] = true
+		}
+		if !reached["b"] || !reached["c"] || len(then) != 2 {
+			t.Errorf("as_of traverse must reach b and c, got %v", reached)
+		}
+	}
+}
+
+// TemporalUpsertBackfillConformance (P3-6 T4): valid_from joins the upsert
+// SET list with first-writer-wins semantics — a winning re-assertion backfills
+// an empty stored valid_from but never overwrites a set one; valid_to and
+// invalidated_by remain supersession-only; the confidence guard gates the
+// whole UPDATE, so a losing re-assertion backfills nothing.
+func TemporalUpsertBackfillConformance(new BackendFactory) func(*testing.T) {
+	return func(t *testing.T) {
+		b := new(t)
+		os := b.Ontology()
+		for _, id := range []string{"s1", "t1"} {
+			if err := os.AddEntity(store.Entity{ID: id, Type: "concept", Name: id}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		get := func() store.Relation {
+			t.Helper()
+			rels, err := os.GetRelations("s1", store.Outbound, "")
+			if err != nil || len(rels) != 1 {
+				t.Fatalf("GetRelations: %v %v", rels, err)
+			}
+			return rels[0]
+		}
+
+		// Legacy insert: no temporal fields.
+		if err := os.AddRelation(store.Relation{
+			ID: "r1", SourceID: "s1", TargetID: "t1", Relation: "extends", Confidence: 0.5,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if vf := get().ValidFrom; vf != "" {
+			t.Fatalf("legacy insert must stay zero-valued, got %q", vf)
+		}
+
+		// Winning re-assertion backfills valid_from.
+		if err := os.AddRelation(store.Relation{
+			ID: "r1b", SourceID: "s1", TargetID: "t1", Relation: "extends", Confidence: 0.9,
+			ValidFrom: "2024-03-01T00:00:00Z",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if vf := get().ValidFrom; vf != "2024-03-01T00:00:00Z" {
+			t.Errorf("winning re-assertion must backfill valid_from, got %q", vf)
+		}
+
+		// First writer wins: a later winning re-assertion does NOT overwrite.
+		if err := os.AddRelation(store.Relation{
+			ID: "r1c", SourceID: "s1", TargetID: "t1", Relation: "extends", Confidence: 0.95,
+			ValidFrom: "2025-01-01T00:00:00Z",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if vf := get().ValidFrom; vf != "2024-03-01T00:00:00Z" {
+			t.Errorf("first writer must win, got %q", vf)
+		}
+
+		// Losing re-assertion (confidence not strictly higher) backfills nothing
+		// — covers the guard gating the SET clause. Reset via a fresh edge.
+		if err := os.AddRelation(store.Relation{
+			ID: "r2", SourceID: "t1", TargetID: "s1", Relation: "extends", Confidence: 0.9,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.AddRelation(store.Relation{
+			ID: "r2b", SourceID: "t1", TargetID: "s1", Relation: "extends", Confidence: 0.5,
+			ValidFrom: "2024-01-01T00:00:00Z",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		rels, err := os.GetRelations("t1", store.Outbound, "")
+		if err != nil || len(rels) != 1 {
+			t.Fatalf("GetRelations t1: %v %v", rels, err)
+		}
+		if vf := rels[0].ValidFrom; vf != "" {
+			t.Errorf("losing re-assertion must backfill nothing, got %q", vf)
 		}
 	}
 }

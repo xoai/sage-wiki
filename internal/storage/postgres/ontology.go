@@ -162,7 +162,9 @@ func (s *ontologyStore) AddRelation(r store.Relation) error {
 			ON CONFLICT (source_id, target_id, relation) DO UPDATE SET
 			  evidence   = excluded.evidence,
 			  confidence = excluded.confidence,
-			  source_doc = excluded.source_doc
+			  source_doc = excluded.source_doc,
+			  valid_from = CASE WHEN COALESCE(relations.valid_from,'') = ''
+			                    THEN excluded.valid_from ELSE relations.valid_from END
 			WHERE excluded.confidence > COALESCE(relations.confidence, 0)`,
 			r.ID, r.SourceID, r.TargetID, r.Relation, nullRFC(r.CreatedAt),
 			nullStr(r.Evidence), r.Confidence, nullStr(r.SourceDoc),
