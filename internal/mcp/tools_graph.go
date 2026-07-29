@@ -44,6 +44,14 @@ func (s *Server) handleGraphQuery(ctx context.Context, req mcp.CallToolRequest) 
 		asOf = t
 	}
 
+	mode, _ := args["mode"].(string)
+	if mode == "" {
+		mode = "local"
+	}
+	if mode != "local" && mode != "global" {
+		return errorResult(fmt.Sprintf("invalid mode %q: expected 'local' or 'global'", mode)), nil
+	}
+
 	client, err := auth.NewLLMClient(s.cfg)
 	if err != nil {
 		return errorResult(err.Error()), nil
@@ -51,6 +59,26 @@ func (s *Server) handleGraphQuery(ctx context.Context, req mcp.CallToolRequest) 
 	model := s.cfg.Models.Query
 	if model == "" {
 		model = s.cfg.Models.Write
+	}
+
+	if mode == "global" {
+		if !s.cfg.Ontology.Communities.Enabled {
+			return errorResult("global mode requires ontology.communities.enabled (currently false)"), nil
+		}
+		cs := s.backend.Communities()
+		gres, err := query.GlobalQA(ctx, cs, s.searcher, client, question, query.GlobalQAOpts{
+			Model:          model,
+			MaxCommunities: s.cfg.Ontology.Communities.MaxCommunitiesOrDefault(),
+			MaxTokens:      s.cfg.Ontology.Communities.MaxTokensOrDefault(),
+			MinMembers:     s.cfg.Ontology.Communities.MinMembersOrDefault(),
+			MaxParallel:    s.cfg.Compiler.MaxParallel,
+			Embedder:       s.embedder,
+		})
+		if err != nil {
+			return errorResult(err.Error()), nil
+		}
+		data, _ := json.MarshalIndent(gres, "", "  ")
+		return textResult(string(data)), nil
 	}
 
 	res, err := query.GraphQA(ctx, s.ont, s.searcher, client, question, query.GraphQAOpts{
