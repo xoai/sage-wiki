@@ -37,7 +37,7 @@ func twoNodeGraph() ExtractedGraph {
 
 func TestPersistGraphWritesEntitiesAndEvidencedRelations(t *testing.T) {
 	ont := persistStore(t)
-	if e, r, _ := persistGraph(ont, twoNodeGraph(), nil, "raw/paper.pdf", "2026-01-01T00:00:00Z"); e != 2 || r != 1 {
+	if e, r, _, _ := persistGraph(ont, twoNodeGraph(), nil, "raw/paper.pdf", "2026-01-01T00:00:00Z", temporalHooks{}); e != 2 || r != 1 {
 		t.Fatalf("persistGraph wrote %d entities / %d relations, want 2/1", e, r)
 	}
 
@@ -94,7 +94,7 @@ func TestPersistGraphRelationIDsAreCollisionFree(t *testing.T) {
 			{Source: "a-extends-b", Predicate: ontology.RelExtends, Target: "c", Evidence: "e2", Confidence: 0.8},
 		},
 	}
-	if _, r, _ := persistGraph(ont, g, nil, "raw/a.md", ""); r != 2 {
+	if _, r, _, _ := persistGraph(ont, g, nil, "raw/a.md", "", temporalHooks{}); r != 2 {
 		t.Fatalf("persistGraph wrote %d relations, want 2 — both triples must persist", r)
 	}
 	n, err := ont.RelationCount()
@@ -126,7 +126,7 @@ func TestPersistGraphUpsertsOverKeywordEdge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if e, r, _ := persistGraph(ont, twoNodeGraph(), nil, "raw/paper.pdf", "2026-01-01T00:00:00Z"); e != 2 || r != 1 {
+	if e, r, _, _ := persistGraph(ont, twoNodeGraph(), nil, "raw/paper.pdf", "2026-01-01T00:00:00Z", temporalHooks{}); e != 2 || r != 1 {
 		t.Fatalf("persistGraph wrote %d entities / %d relations, want 2/1", e, r)
 	}
 	rels, _ := ont.GetRelations("backpressure", ontology.Outbound, "")
@@ -155,7 +155,7 @@ func TestPersistGraphNeverRetypesAnExistingEntity(t *testing.T) {
 
 	g := twoNodeGraph()
 	g.Entities[0].Type = ontology.TypeClaim // the model's guess, which must lose
-	persistGraph(ont, g, nil, "raw/paper.pdf", "")
+	persistGraph(ont, g, nil, "raw/paper.pdf", "", temporalHooks{})
 
 	e, _ := ont.GetEntity("backpressure")
 	if e.Type != ontology.TypeTechnique {
@@ -179,7 +179,7 @@ func TestPersistGraphUsesConceptTypeForThisRunsConcepts(t *testing.T) {
 	g := twoNodeGraph()
 	g.Entities[0].Type = ontology.TypeClaim // model guess, overridden by the concept
 
-	persistGraph(ont, g, concepts, "raw/paper.pdf", "")
+	persistGraph(ont, g, concepts, "raw/paper.pdf", "", temporalHooks{})
 	e, _ := ont.GetEntity("backpressure")
 	if e.Type != ontology.TypeTechnique {
 		t.Errorf("Type = %q, want Pass 3's derivation %q", e.Type, ontology.TypeTechnique)
@@ -189,7 +189,7 @@ func TestPersistGraphUsesConceptTypeForThisRunsConcepts(t *testing.T) {
 // Type precedence rule 3: an entity the pass invented keeps its normalized type.
 func TestPersistGraphKeepsInventedEntityType(t *testing.T) {
 	ont := persistStore(t)
-	if e, r, _ := persistGraph(ont, twoNodeGraph(), nil, "raw/paper.pdf", "2026-01-01T00:00:00Z"); e != 2 || r != 1 {
+	if e, r, _, _ := persistGraph(ont, twoNodeGraph(), nil, "raw/paper.pdf", "2026-01-01T00:00:00Z", temporalHooks{}); e != 2 || r != 1 {
 		t.Fatalf("persistGraph wrote %d entities / %d relations, want 2/1", e, r)
 	}
 	e, _ := ont.GetEntity("backpressure")
@@ -221,7 +221,7 @@ func TestPersistGraphSkipsEntityOnLookupError(t *testing.T) {
 	g := twoNodeGraph()
 	g.Entities[0].Type = ontology.TypeClaim // the guess that must not land
 
-	entities, _, _ := persistGraph(failingLookupStore{ont}, g, nil, "raw/paper.pdf", "")
+	entities, _, _, _ := persistGraph(failingLookupStore{ont}, g, nil, "raw/paper.pdf", "", temporalHooks{})
 	if entities != 0 {
 		t.Errorf("entities written = %d, want 0 — a lookup failure must skip, not guess", entities)
 	}

@@ -71,6 +71,7 @@ type FullPipelineOpts struct {
 	VecStore     store.VectorStore
 	ChunkStore   store.ChunkStore
 	OntStore     store.OntologyStore
+	TrustStore   store.TrustStore // optional — edge conflicts skipped when nil (P3-6)
 	Embedder     embed.Embedder
 	Backpressure *BackpressureController
 	ItemStore    store.CompileItemStore // optional — for per-article quality scoring
@@ -317,7 +318,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	// zero-concept early return below — otherwise triples would silently never
 	// persist on an incremental compile where every concept dedup-merged, which
 	// is the ordinary case. Never fails the compile; see ExtractTriplesPass.
-	touched, supersessions := ExtractTriplesPass(opts.Ctx, writeOntStore, successfulSummaries, concepts, cfg, client, false, opts.ProjectDir, mf)
+	touched, supersessions := ExtractTriplesPass(opts.Ctx, writeOntStore, successfulSummaries, concepts, cfg, client, false, opts.ProjectDir, mf, opts.TrustStore)
 	_ = supersessions // consumed by the post-resolution sweep (T7)
 
 	// Pass 4: entity resolution (P3-3, opt-in). Deferred rather than called

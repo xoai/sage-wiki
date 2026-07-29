@@ -15,6 +15,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -118,7 +119,7 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	// is true here: this path loads summary FILES from disk, so Summary holds
 	// the frontmatter and SourcePath is the summary's filename, not the source
 	// document.
-	touched, supersessions := ExtractTriplesPass(context.Background(), ontStore, summaries, concepts, cfg, client, true, projectDir, mf)
+	touched, supersessions := ExtractTriplesPass(context.Background(), ontStore, summaries, concepts, cfg, client, true, projectDir, mf, trust.NewStore(db))
 	_ = supersessions // consumed by the post-resolution sweep (T7)
 
 	// Pass 3: Write articles
