@@ -121,7 +121,9 @@ func (s *Server) Close() error {
 	return s.closeDB()
 }
 
-// MCPServer returns the underlying MCP server for testing.
+// MCPServer returns the underlying MCP server, for tests and for wiring into
+// a transport — pkg/sagewiki re-exports this so embedders can hand it to
+// mcp-go's in-process client.
 func (s *Server) MCPServer() *server.MCPServer {
 	return s.mcp
 }

@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`pkg/sagewiki` — in-process Go embedding (#112).** A supported, non-internal
+  entry point for embedding sage-wiki in another Go program without spawning
+  `sage-wiki serve` as a subprocess. `NewServer(projectDir)` returns a handle
+  exposing `MCPServer()` and `Close()`; pair it with mcp-go's
+  `client.NewInProcessClient` to call the same wiki tools an editor integration
+  calls over stdio. `SetVersion` lets an embedder report its own version string
+  in the initialize response. The package is experimental while sage-wiki is
+  pre-1.0: the Go signatures are meant to stay put, but tool names, argument
+  schemas, and `config.yaml` layout can change in any release.
+
+### Fixed
+
+- **MCP server reports the real build version.** `initialize` returned a
+  hardcoded `0.1.0` in `serverInfo.version` regardless of the binary's actual
+  version; it now reports the `-ldflags`-injected build version (`dev` from a
+  plain `go build`), mirroring `internal/pack.Version`.
+
 ## 0.2.5 — 2026-07-29
 
 ### Added
