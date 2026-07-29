@@ -15,16 +15,20 @@ import (
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
 // OnDemandOpts configures a compile-on-demand request.
 type OnDemandOpts struct {
-	Topic       string
-	MaxSources  int // default 20
-	ProjectDir  string
-	Config      *config.Config
-	DB          store.DBHandle
+	Topic      string
+	MaxSources int // default 20
+	ProjectDir string
+	Config     *config.Config
+	DB         store.DBHandle
+	// TrustStore is optional (P3-6): pass the Backend's Trust store under
+	// storage.backend=postgres; nil falls back to the sqlite implementation.
+	TrustStore  store.TrustStore
 	Searcher    *hybrid.Searcher
 	Embedder    embed.Embedder
 	Client      *llm.Client
@@ -33,12 +37,12 @@ type OnDemandOpts struct {
 
 // OnDemandResult summarizes what compile-on-demand produced.
 type OnDemandResult struct {
-	CompiledSources   int            `json:"compiled_sources"`
-	ArticlesWritten   int            `json:"articles_written"`
-	ConceptsExtracted int            `json:"concepts_extracted"`
-	DurationSeconds   float64        `json:"duration_seconds"`
-	Articles          []ArticleInfo  `json:"articles,omitempty"`
-	Message           string         `json:"message,omitempty"` // status message (e.g., "compile in progress")
+	CompiledSources   int           `json:"compiled_sources"`
+	ArticlesWritten   int           `json:"articles_written"`
+	ConceptsExtracted int           `json:"concepts_extracted"`
+	DurationSeconds   float64       `json:"duration_seconds"`
+	Articles          []ArticleInfo `json:"articles,omitempty"`
+	Message           string        `json:"message,omitempty"` // status message (e.g., "compile in progress")
 }
 
 // ArticleInfo describes a newly written article.
@@ -100,10 +104,10 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 		}
 
 		uncompiled = append(uncompiled, SourceInfo{
-			Path:     item.SourcePath,
-			Hash:     item.Hash,
-			Type:     item.FileType,
-			Size:     item.SizeBytes,
+			Path: item.SourcePath,
+			Hash: item.Hash,
+			Type: item.FileType,
+			Size: item.SizeBytes,
 		})
 
 		if len(uncompiled) >= opts.MaxSources {
@@ -136,7 +140,8 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 		chunkStore := memory.NewChunkStore(opts.DB)
 		merged := ontology.MergedRelations(cfg.Ontology.Relations)
 		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-		ontStore := ontology.NewStore(opts.DB, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
+		ontStore := ontology.NewStore(opts.DB, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
+			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
 
 		mfPath := filepath.Join(opts.ProjectDir, ".manifest.json")
 		mf, err := manifest.Load(mfPath)
@@ -149,6 +154,10 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 
 		bp := NewBackpressureController(cfg.Compiler.MaxParallel)
 		cacheEnabled := cfg.Compiler.PromptCacheEnabled()
+		trustStore := opts.TrustStore
+		if trustStore == nil {
+			trustStore = trust.NewStore(opts.DB)
+		}
 
 		pResult := runFullPipeline(uncompiled, FullPipelineOpts{
 			Ctx:          ctx,
@@ -161,6 +170,7 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 			VecStore:     vecStore,
 			ChunkStore:   chunkStore,
 			OntStore:     ontStore,
+			TrustStore:   trustStore,
 			Embedder:     opts.Embedder,
 			Backpressure: bp,
 			ItemStore:    items,

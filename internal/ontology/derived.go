@@ -107,6 +107,20 @@ func (s *Store) derivedExists() bool {
 	return s.hasDerived
 }
 
+// derivedExistsFresh probes WITHOUT the rate-limited cache. Write paths
+// (InvalidateFunctional) use this: the cached guard's fail-safe is tuned for
+// reads ("stale false HIDES EDGES" is worse than slow), but on a write a
+// stale false silently skips derived invalidation — under compile-vs-serve
+// concurrency another process can land the first derived row inside the 1s
+// cache window. One 5µs EXISTS query per supersession removes the window.
+// Errors (e.g. a pre-v12 schema with no derived_relations) return false:
+// skipping the UPDATE is safe, running it would fail the whole tx.
+func (s *Store) derivedExistsFresh() bool {
+	var n int
+	err := s.db.ReadDB().QueryRow(`SELECT EXISTS(SELECT 1 FROM derived_relations)`).Scan(&n)
+	return err == nil && n == 1
+}
+
 // markDerivedWritten is called after any insert into derived_relations. Setting
 // the flag true is always safe.
 func (s *Store) markDerivedWritten() {

@@ -59,10 +59,10 @@ sage-wiki ontology query --entity kubernetes --depth 3 --direction both
 sage-wiki provenance "service mesh"    # which sources produced this concept
 ```
 
-**What it does not do yet**, stated plainly: temporal validity fields
-(`valid_from` / `valid_to`) are stored but not yet queried, and there is no
-automatic contradiction detection — conflicting claims surface through
-[output trust](docs/guides/output-trust.md) review, not a graph rule. Depth
+Edges are bi-temporal: contradicting a fact invalidates the old edge instead
+of colliding, default answers are contradiction-free, and `as_of` queries
+answer "what did we believe in January?" Ambiguous contradictions still
+surface through [output trust](docs/guides/output-trust.md) review. Depth
 and mechanics: [graph memory](docs/guides/graph-memory.md).
 
 ## Guides

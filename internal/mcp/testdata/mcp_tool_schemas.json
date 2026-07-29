@@ -194,6 +194,10 @@
     "description": "Answer a relational question by graph traversal: seed entities are resolved from the question (aliases resolve to their canonical entity), a bounded multi-hop subgraph is serialized, and the answer is grounded ONLY in those edges — every citation carries source_doc and confidence provenance.",
     "inputSchema": {
       "properties": {
+        "as_of": {
+          "description": "Optional RFC3339 timestamp: answer using only facts valid at that time (P3-6)",
+          "type": "string"
+        },
         "hops": {
           "description": "Traversal depth 1-5 (default 2)",
           "type": "number"

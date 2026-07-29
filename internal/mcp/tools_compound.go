@@ -71,6 +71,7 @@ func (s *Server) handleLint(ctx context.Context, req mcplib.CallToolRequest) (*m
 		ValidRelations:   ontology.ValidRelationNames(mergedRels),
 		ValidEntityTypes: ontology.ValidEntityTypeNames(mergedTypes),
 		QualityThreshold: s.cfg.Compiler.QualityThreshold(),
+		TemporalEnabled:  s.cfg.Ontology.Temporal.Enabled,
 	}
 
 	runner := linter.NewRunner()

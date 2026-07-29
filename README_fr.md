@@ -47,8 +47,8 @@ sage-wiki ontology query --entity kubernetes --depth 3 --direction both
 sage-wiki provenance "service mesh"    # quelles sources ont produit ce concept
 ```
 
-**Ce qu'il ne fait pas encore**, dit clairement : les champs de validité temporelle (`valid_from` / `valid_to`) sont stockés mais pas encore interrogés, et il n'y a pas de détection automatique de contradictions — les affirmations conflictuelles remontent via la revue de
-[confiance des sorties](docs/guides/output-trust.md), pas par une règle de graphe. Détails :
+Les arêtes sont bi-temporelles : contredire un fait invalide l'ancienne arête au lieu d'entrer en collision, les réponses par défaut sont sans contradiction, et les requêtes `as_of` répondent à « qu'est-ce qu'on croyait en janvier ? ». Les contradictions ambiguës remontent toujours via la revue de
+[confiance des sorties](docs/guides/output-trust.md). Détails :
 [mémoire de graphe](docs/guides/graph-memory.md).
 
 ## Guides

@@ -22,7 +22,7 @@ Every relation can carry:
 | `evidence` | the text span supporting the edge |
 | `confidence` | 0–1, how strongly the source supports it |
 | `source_doc` | the document the edge came from |
-| `valid_from`, `valid_to`, `invalidated_by` | reserved for temporal validity; stored but not yet used |
+| `valid_from`, `valid_to`, `invalidated_by` | bi-temporal validity window and the edge that superseded this one (see "Temporal validity" below) |
 
 These are additive. Relations created before this feature — and relations
 created today by keyword extraction — simply have them empty, and every existing
@@ -274,13 +274,49 @@ for the pass and discarded, and each enabled compile re-embeds up to
 ### What it does not do yet
 
 - **Collapsing into one node.** Resolution links; both rows remain.
-- **Temporal validity.** The three temporal columns are stored and returned but
-  nothing reads them; contradicting facts collide rather than invalidating each
-  other.
+- **Re-asserting an invalidated edge.** Supersession is one-way; reviving a
+  fact is a deliberate future operation, not a side effect of re-compilation.
 
-(Un-linking, alias-aware seeding, and multi-hop graph query — once on this
-list — now exist: `ontology resolve --unlink`, canonical seed resolution at
-every user surface, and `wiki_graph_query` below.)
+(Un-linking, alias-aware seeding, multi-hop graph query, and temporal
+validity — once on this list — now exist: `ontology resolve --unlink`,
+canonical seed resolution at every user surface, `wiki_graph_query` below,
+and the bi-temporal edges of the next section.)
+
+## Temporal validity
+
+Edges are bi-temporal: `valid_from` records when a fact became true (the
+source document's frontmatter date, else file mtime, else when it was first
+compiled) and `valid_to` when it stopped (empty = still true). Default reads
+return only currently-valid edges, so a corrected fact does not collide with
+its predecessor — the old edge is invalidated (`valid_to` set,
+`invalidated_by` pointing at the winner), never deleted, and point-in-time
+questions remain answerable:
+
+- `wiki_graph_query` accepts an optional `as_of` (RFC3339) — "what did we
+  believe in January?"
+- `ontology query --as-of <RFC3339>` traverses only edges valid then.
+
+Supersession is driven by **functional predicates** — relations with at most
+one live target per source. Mark them in config:
+
+```yaml
+ontology:
+  temporal:
+    enabled: true               # default
+    auto_apply_threshold: 0.8   # default
+  relations:
+    - name: works_at
+      functional: true          # OUTBOUND uniqueness: one live employer per person
+```
+
+`functional` means outbound uniqueness ("each source has at most one live
+target"); edges are stored only as asserted, so an inbound-unique relation
+(employs) should be expressed as its outbound form instead. A new edge on a
+functional predicate invalidates the previous one when its confidence meets
+`auto_apply_threshold`; below the threshold both stay live and a reviewable
+conflict appears in `trust outputs list --state conflict`. Entity-level
+`contradicts` edges always surface a conflict rather than auto-invalidating —
+an A-contradicts-B edge does not identify which specific fact it disputes.
 
 ## Asking the graph
 

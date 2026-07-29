@@ -16,6 +16,8 @@ import (
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
 
@@ -834,5 +836,119 @@ func TestWriteArticle_EntityTypeAndNameFromFrontmatter(t *testing.T) {
 	}
 	if e.Name != "Self Attention" {
 		t.Errorf("Name = %q, want the formatted display name", e.Name)
+	}
+}
+
+// P3-6: a functional-predicate add via wiki_add_ontology auto-applies
+// supersession (manual = explicit intent) and stamps ValidFrom; a bare
+// contradicts add records a dedup'd trust conflict instead.
+func TestAddOntologyFunctionalSupersedes(t *testing.T) {
+	dir := t.TempDir()
+	wiki.InitGreenfield(dir, "test", "gemini-2.5-flash")
+	// Configure works_at as functional before the server loads config.
+	cfgPath := filepath.Join(dir, "config.yaml")
+	cfgBytes, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfgBytes = append(cfgBytes, []byte("\nontology:\n  relation_types:\n    - name: works_at\n      functional: true\n")...)
+	if err := os.WriteFile(cfgPath, cfgBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	srv, _ := NewServer(dir)
+	defer srv.Close()
+
+	for _, e := range []ontology.Entity{
+		{ID: "alice", Type: "concept", Name: "Alice"},
+		{ID: "acme", Type: "concept", Name: "Acme"},
+		{ID: "initech", Type: "concept", Name: "Initech"},
+	} {
+		if err := srv.ont.AddEntity(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add := func(target string) string {
+		res := srv.CallTool(context.Background(), "wiki_add_ontology", mcplib.CallToolRequest{
+			Params: mcplib.CallToolParams{
+				Name:      "wiki_add_ontology",
+				Arguments: map[string]any{"source_id": "alice", "target_id": target, "relation": "works_at"},
+			},
+		})
+		if res.IsError {
+			t.Fatalf("add %s: %s", target, res.Content[0].(mcplib.TextContent).Text)
+		}
+		return res.Content[0].(mcplib.TextContent).Text
+	}
+
+	msg1 := add("acme")
+	msg2 := add("initech")
+	if !strings.Contains(msg1, "Relation: alice -[works_at]-> acme") {
+		t.Errorf("first add message: %q", msg1)
+	}
+	if !strings.Contains(msg2, "superseded 1 prior edge") {
+		t.Errorf("second add must report supersession: %q", msg2)
+	}
+
+	rels, err := srv.ont.GetRelations("alice", ontology.Outbound, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rels) != 1 || rels[0].TargetID != "initech" {
+		t.Fatalf("default read must return only the winner, got %+v", rels)
+	}
+	if rels[0].ValidFrom == "" {
+		t.Error("manual add must stamp ValidFrom (asserted now)")
+	}
+	all, _ := srv.ont.AllRelations()
+	var loser *ontology.Relation
+	for i := range all {
+		if all[i].TargetID == "acme" {
+			loser = &all[i]
+		}
+	}
+	if loser == nil || loser.ValidTo == "" || loser.InvalidatedBy == "" {
+		t.Errorf("loser must be invalidated, not deleted: %+v", loser)
+	}
+}
+
+func TestAddOntologyContradictsConflict(t *testing.T) {
+	dir := t.TempDir()
+	wiki.InitGreenfield(dir, "test", "gemini-2.5-flash")
+	srv, _ := NewServer(dir)
+	defer srv.Close()
+
+	for _, e := range []ontology.Entity{
+		{ID: "a1", Type: "concept", Name: "A1"},
+		{ID: "a2", Type: "concept", Name: "A2"},
+	} {
+		if err := srv.ont.AddEntity(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	call := func() {
+		res := srv.CallTool(context.Background(), "wiki_add_ontology", mcplib.CallToolRequest{
+			Params: mcplib.CallToolParams{
+				Name:      "wiki_add_ontology",
+				Arguments: map[string]any{"source_id": "a1", "target_id": "a2", "relation": "contradicts"},
+			},
+		})
+		if res.IsError {
+			t.Fatalf("add: %s", res.Content[0].(mcplib.TextContent).Text)
+		}
+	}
+	call()
+	call() // dedup: still exactly one conflict row
+
+	ts := trust.NewStore(srv.db)
+	rows, err := ts.ListByState(store.StateConflict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected exactly one dedup'd conflict, got %d", len(rows))
+	}
+	if !strings.Contains(rows[0].Question, "a1 contradicts a2") {
+		t.Errorf("conflict question: %q", rows[0].Question)
 	}
 }

@@ -47,8 +47,8 @@ sage-wiki ontology query --entity kubernetes --depth 3 --direction both
 sage-wiki provenance "service mesh"    # この概念を生んだソース
 ```
 
-**まだできないこと** を明記します: 時間妥当性フィールド（`valid_from` / `valid_to`）は保存されますが検索には未使用で、矛盾の自動検出もありません。矛盾する主張は
-[出力信頼](docs/guides/output-trust.md)のレビューで表面化し、グラフ規則では扱いません。詳細:
+エッジはバイテンポラルです: 事実を更新すると古いエッジは衝突せず無効化され、デフォルトの回答は矛盾のないものになり、`as_of` クエリで「1月時点では何を信じていたか」を答えられます。曖昧な矛盾は引き続き
+[出力信頼](docs/guides/output-trust.md)のレビューで表面化します。詳細:
 [グラフメモリ](docs/guides/graph-memory.md)。
 
 ## ガイド

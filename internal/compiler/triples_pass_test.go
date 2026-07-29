@@ -61,7 +61,7 @@ func TestExtractTriplesPassDisabledMakesNoCall(t *testing.T) {
 
 	ExtractTriplesPass(context.Background(), ont,
 		[]SummaryResult{{SourcePath: "raw/a.md", Summary: "text"}}, nil,
-		&config.Config{}, triplesClient(t, srv.URL), false)
+		&config.Config{}, triplesClient(t, srv.URL), false, t.TempDir(), nil, nil)
 
 	if got := calls.Load(); got != 0 {
 		t.Errorf("LLM calls = %d, want 0 when triples are disabled", got)
@@ -85,7 +85,7 @@ func TestExtractTriplesPassZeroValuedConfigStillExtracts(t *testing.T) {
 		defer close(done)
 		ExtractTriplesPass(context.Background(), ont,
 			[]SummaryResult{{SourcePath: "raw/a.md", Summary: "text"}}, nil,
-			enabledCfg(), triplesClient(t, srv.URL), false)
+			enabledCfg(), triplesClient(t, srv.URL), false, t.TempDir(), nil, nil)
 	}()
 
 	select {
@@ -111,7 +111,7 @@ func TestExtractTriplesPassToleratesNilContext(t *testing.T) {
 	//nolint:staticcheck // deliberately nil: the call site can pass a nil ctx.
 	ExtractTriplesPass(nil, ont,
 		[]SummaryResult{{SourcePath: "raw/a.md", Summary: "text"}}, nil,
-		enabledCfg(), triplesClient(t, srv.URL), false)
+		enabledCfg(), triplesClient(t, srv.URL), false, t.TempDir(), nil, nil)
 
 	if n, _ := ont.RelationCount(); n != 1 {
 		t.Errorf("relations = %d, want 1", n)
@@ -130,7 +130,7 @@ func TestExtractTriplesPassContainsProviderFailure(t *testing.T) {
 
 	ExtractTriplesPass(context.Background(), ont,
 		[]SummaryResult{{SourcePath: "raw/a.md", Summary: "text"}}, nil,
-		enabledCfg(), triplesClient(t, srv.URL), false)
+		enabledCfg(), triplesClient(t, srv.URL), false, t.TempDir(), nil, nil)
 
 	if n, _ := ont.RelationCount(); n != 0 {
 		t.Errorf("relations = %d, want 0", n)
@@ -157,7 +157,7 @@ func TestExtractTriplesPassLogsCancellationOnce(t *testing.T) {
 	for i := range summaries {
 		summaries[i] = SummaryResult{SourcePath: "raw/a.md", Summary: "text"}
 	}
-	ExtractTriplesPass(ctx, ont, summaries, nil, enabledCfg(), triplesClient(t, srv.URL), false)
+	ExtractTriplesPass(ctx, ont, summaries, nil, enabledCfg(), triplesClient(t, srv.URL), false, t.TempDir(), nil, nil)
 
 	mu.Lock()
 	out := buf.String()
@@ -194,7 +194,7 @@ func TestExtractTriplesPassRestoresCostLabel(t *testing.T) {
 
 	ExtractTriplesPass(context.Background(), passStore(t),
 		[]SummaryResult{{SourcePath: "raw/a.md", Summary: "text"}}, nil,
-		enabledCfg(), client, false)
+		enabledCfg(), client, false, t.TempDir(), nil, nil)
 
 	if got := client.Pass(); got != "extract" {
 		t.Errorf("Pass() = %q after the triples pass, want the prior label restored", got)
@@ -227,7 +227,7 @@ func TestExtractTriplesPassModelChainFallsBackToSummarize(t *testing.T) {
 
 	ExtractTriplesPass(context.Background(), passStore(t),
 		[]SummaryResult{{SourcePath: "raw/a.md", Summary: "text"}}, nil,
-		cfg, triplesClient(t, srv.URL), false)
+		cfg, triplesClient(t, srv.URL), false, t.TempDir(), nil, nil)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -265,7 +265,7 @@ func TestExtractTriplesPassResolvesSourceDocFromFrontmatter(t *testing.T) {
 		"compiled_at: 2026-01-01T00:00:00Z\nchunk_count: 3\n---\n\nBackpressure extends flow control.\n"
 	ExtractTriplesPass(context.Background(), ont,
 		[]SummaryResult{{SourcePath: "some-summary.md", Summary: withFM}}, nil,
-		enabledCfg(), triplesClient(t, srv.URL), true)
+		enabledCfg(), triplesClient(t, srv.URL), true, t.TempDir(), nil, nil)
 
 	rels, _ := ont.GetRelations("backpressure", ontology.Outbound, "")
 	if len(rels) != 1 {
@@ -291,7 +291,7 @@ func TestExtractTriplesPassParsesBatchFrontmatter(t *testing.T) {
 	batchFM := "---\nsource: raw/batch.md\ncompiled_at: 2026-01-01T00:00:00Z\nbatch: true\n---\n\nBody.\n"
 	ExtractTriplesPass(context.Background(), ont,
 		[]SummaryResult{{SourcePath: "b.md", Summary: batchFM}}, nil,
-		enabledCfg(), triplesClient(t, srv.URL), true)
+		enabledCfg(), triplesClient(t, srv.URL), true, t.TempDir(), nil, nil)
 
 	rels, _ := ont.GetRelations("backpressure", ontology.Outbound, "")
 	if len(rels) != 1 || rels[0].SourceDoc != "raw/batch.md" {
@@ -308,7 +308,7 @@ func TestExtractTriplesPassUsesSourcePathWithoutFrontmatterFlag(t *testing.T) {
 	body := "---\n\nA horizontal rule opened this summary.\n"
 	ExtractTriplesPass(context.Background(), ont,
 		[]SummaryResult{{SourcePath: "raw/normal.md", Summary: body}}, nil,
-		enabledCfg(), triplesClient(t, srv.URL), false)
+		enabledCfg(), triplesClient(t, srv.URL), false, t.TempDir(), nil, nil)
 
 	rels, _ := ont.GetRelations("backpressure", ontology.Outbound, "")
 	if len(rels) != 1 || rels[0].SourceDoc != "raw/normal.md" {
@@ -346,7 +346,7 @@ func TestExtractTriplesPassFansOutConcurrently(t *testing.T) {
 		summaries[i] = SummaryResult{SourcePath: "raw/a.md", Summary: "Backpressure extends flow control."}
 	}
 	ont := passStore(t)
-	ExtractTriplesPass(context.Background(), ont, summaries, nil, cfg, triplesClient(t, srv.URL), false)
+	ExtractTriplesPass(context.Background(), ont, summaries, nil, cfg, triplesClient(t, srv.URL), false, t.TempDir(), nil, nil)
 
 	if peak.Load() < 2 {
 		t.Errorf("peak concurrent requests = %d, want >1 — the fan-out never ran in parallel", peak.Load())
@@ -383,7 +383,7 @@ func TestExtractTriplesPassClassifiesMidFlightCancel(t *testing.T) {
 
 	ExtractTriplesPass(ctx, passStore(t),
 		[]SummaryResult{{SourcePath: "raw/a.md", Summary: "text"}}, nil,
-		enabledCfg(), triplesClient(t, srv.URL), false)
+		enabledCfg(), triplesClient(t, srv.URL), false, t.TempDir(), nil, nil)
 
 	mu.Lock()
 	out := buf.String()
@@ -420,7 +420,7 @@ func TestExtractTriplesPassKeepsCompletedWorkOnCancel(t *testing.T) {
 	ExtractTriplesPass(ctx, ont, []SummaryResult{
 		{SourcePath: "raw/a.md", Summary: "Backpressure extends flow control."},
 		{SourcePath: "raw/b.md", Summary: "text"},
-	}, nil, cfg, triplesClient(t, srv.URL), false)
+	}, nil, cfg, triplesClient(t, srv.URL), false, t.TempDir(), nil, nil)
 
 	if n, _ := ont.RelationCount(); n != 1 {
 		t.Errorf("RelationCount = %d, want 1 — the completed extraction was discarded on cancel", n)
@@ -444,7 +444,7 @@ func TestExtractTriplesPassReportsProviderFailure(t *testing.T) {
 
 	ExtractTriplesPass(context.Background(), passStore(t),
 		[]SummaryResult{{SourcePath: "raw/a.md", Summary: "text"}}, nil,
-		enabledCfg(), triplesClient(t, srv.URL), false)
+		enabledCfg(), triplesClient(t, srv.URL), false, t.TempDir(), nil, nil)
 
 	mu.Lock()
 	out := buf.String()
@@ -464,7 +464,7 @@ func TestExtractTriplesPassSkipsEmptyBodies(t *testing.T) {
 
 	ExtractTriplesPass(context.Background(), passStore(t),
 		[]SummaryResult{{SourcePath: "s.md", Summary: onlyFrontmatter}}, nil,
-		enabledCfg(), triplesClient(t, srv.URL), true)
+		enabledCfg(), triplesClient(t, srv.URL), true, t.TempDir(), nil, nil)
 
 	if got := calls.Load(); got != 0 {
 		t.Errorf("LLM calls = %d, want 0 for a frontmatter-only summary", got)
@@ -480,7 +480,7 @@ func TestExtractTriplesPassParsesCRLFFrontmatter(t *testing.T) {
 
 	ExtractTriplesPass(context.Background(), ont,
 		[]SummaryResult{{SourcePath: "s.md", Summary: crlf}}, nil,
-		enabledCfg(), triplesClient(t, srv.URL), true)
+		enabledCfg(), triplesClient(t, srv.URL), true, t.TempDir(), nil, nil)
 
 	rels, _ := ont.GetRelations("backpressure", ontology.Outbound, "")
 	if len(rels) != 1 || rels[0].SourceDoc != "raw/windows.md" {

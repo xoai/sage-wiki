@@ -11,13 +11,18 @@ import (
 	"sync"
 	"time"
 
+	"path/filepath"
+
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/prompts"
+	"github.com/xoai/sage-wiki/internal/sourcedate"
 	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/internal/trust"
 )
 
 // ExtractedEntity is one node the LLM found in a document.
@@ -337,10 +342,109 @@ func tripleRelationID(source, predicate, target string) string {
 //     (write.go), so both passes assert the same type for the row they share.
 //  3. otherwise -> the normalized model type. Nothing else claims these.
 //
+// FunctionalSupersession records one functional-predicate edge asserted this
+// compile so the post-resolution sweep can re-fire InvalidateFunctional once
+// this run's alias links exist (P3-6 two-trigger design: persistGraph runs
+// strictly BEFORE ResolveEntitiesPass, so alias forms created by THIS run's
+// resolution are invisible to the write-time trigger).
+type FunctionalSupersession struct {
+	SourceID      string
+	Predicate     string
+	KeepTargetID  string
+	NewValidFrom  string
+	InvalidatedBy string
+}
+
+// temporalHooks carries the write-time supersession context into persistGraph
+// (P3-6 T6b). trust is nilable: conflicts are skipped with a debug log.
+type temporalHooks struct {
+	enabled    bool
+	functional map[string]bool
+	threshold  float64
+	trust      store.TrustStore
+	projectDir string
+}
+
+// emitEdgeConflict records a trust conflict for a contradiction the pipeline
+// could not auto-resolve (P3-6): below-threshold functional clashes and bare
+// entity-level contradicts edges (which carry no deterministic mapping to the
+// contradicted triple, so auto-invalidation would be guesswork). Dedup is by
+// deterministic ID: a recompile of the same doc re-generates the same ID and
+// the Get short-circuits; the residual race between concurrent MCP callers
+// loses to the PK constraint and is swallowed at debug — never surfaced.
+func emitEdgeConflict(h temporalHooks, sourceDoc, question, answer string) {
+	if h.trust == nil {
+		log.Debug("triples: edge conflict (no trust store wired)", "question", question)
+		return
+	}
+	sum := sha256.Sum256([]byte(question))
+	id := "edgeconflict-" + hex.EncodeToString(sum[:])[:16]
+	if existing, err := h.trust.Get(id); err == nil && existing != nil {
+		return
+	}
+	sourcesUsed, _ := json.Marshal([]string{sourceDoc})
+	o := &store.PendingOutput{
+		ID:           id,
+		Question:     question,
+		QuestionHash: trust.HashQuestion(question),
+		Answer:       answer,
+		AnswerHash:   trust.HashAnswer(answer),
+		State:        store.StateConflict,
+		SourcesUsed:  string(sourcesUsed),
+		SourcesHash:  trust.ComputeSourcesHash(h.projectDir, string(sourcesUsed)),
+		CreatedAt:    time.Now().UTC(),
+	}
+	if err := h.trust.InsertPending(o); err != nil {
+		// Duplicate under a concurrent writer, or a store failure: either way
+		// the conflict surfacing is best-effort and must never fail a compile.
+		log.Debug("triples: edge conflict insert skipped", "id", id, "error", err)
+	}
+}
+
+// runSupersessionSweep is the second trigger of the P3-6 two-trigger design:
+// it re-fires InvalidateFunctional for this compile's functional edges AFTER
+// ResolveEntitiesPass. The write-time trigger runs before resolution, so an
+// alias form created or applied by THIS run is invisible to its form-set
+// expansion — and the resolution replay would re-derive a live copy of the
+// superseded edge. InvalidateFunctional only touches not-yet-invalidated
+// rows, so re-firing is a no-op wherever the first trigger sufficed.
+func runSupersessionSweep(ont store.OntologyStore, supersessions []FunctionalSupersession) {
+	for _, sup := range supersessions {
+		if _, err := ont.InvalidateFunctional(sup.SourceID, sup.Predicate,
+			sup.KeepTargetID, sup.NewValidFrom, sup.InvalidatedBy); err != nil {
+			log.Warn("triples: post-resolution sweep failed", "source", sup.SourceID,
+				"predicate", sup.Predicate, "error", err)
+		}
+	}
+}
+
+// validFromForDoc resolves when the facts in sourceDoc became true (P3-6):
+// frontmatter date → file mtime → manifest added-at, via sourcedate.Resolve.
+// Zero means unknown and stays EMPTY — writing the epoch would date every
+// undated fact 1970. sourceDoc is project-relative on both call paths
+// (resolveSourceDoc strips to the source: key or the relative SourcePath).
+func validFromForDoc(projectDir string, mf *manifest.Manifest, sourceDoc string) string {
+	abs := sourceDoc
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(projectDir, sourceDoc)
+	}
+	addedAt := ""
+	if mf != nil {
+		if src, ok := mf.Sources[sourceDoc]; ok {
+			addedAt = src.AddedAt
+		}
+	}
+	ts := sourcedate.Resolve(abs, addedAt)
+	if ts == 0 {
+		return ""
+	}
+	return time.Unix(ts, 0).UTC().Format(time.RFC3339)
+}
+
 // Persistence is sequential by contract: GetEntity reads outside the write
 // mutex, so concurrent callers would both observe "absent" and race on the
 // type. ExtractTriplesPass fans out extraction and joins before calling this.
-func persistGraph(ont store.OntologyStore, g ExtractedGraph, concepts []ExtractedConcept, sourceDoc string) (entities, relations int, persisted []string) {
+func persistGraph(ont store.OntologyStore, g ExtractedGraph, concepts []ExtractedConcept, sourceDoc, validFrom string, hooks temporalHooks) (entities, relations int, persisted []string, supersessions []FunctionalSupersession) {
 	conceptTypes := make(map[string]string, len(concepts))
 	for _, c := range concepts {
 		t := c.Type
@@ -401,22 +505,78 @@ func persistGraph(ont store.OntologyStore, g ExtractedGraph, concepts []Extracte
 				"source", r.Source, "predicate", r.Predicate, "target", r.Target)
 			continue
 		}
+		edgeID := tripleRelationID(r.Source, r.Predicate, r.Target)
 		if err := ont.AddRelation(store.Relation{
-			ID:         tripleRelationID(r.Source, r.Predicate, r.Target),
+			ID:         edgeID,
 			SourceID:   r.Source,
 			TargetID:   r.Target,
 			Relation:   r.Predicate,
 			Evidence:   r.Evidence,
 			Confidence: r.Confidence,
 			SourceDoc:  sourceDoc,
+			ValidFrom:  validFrom,
 		}); err != nil {
 			log.Warn("triples: relation write failed",
 				"source", r.Source, "predicate", r.Predicate, "target", r.Target, "error", err)
 			continue
 		}
 		relations++
+
+		if !hooks.enabled {
+			continue
+		}
+		// Bare contradicts edges never auto-invalidate: an entity-level
+		// A --contradicts--> B carries no deterministic mapping to the
+		// contradicted triple (spec rev 2 scope decision).
+		if r.Predicate == ontology.RelContradicts {
+			emitEdgeConflict(hooks, sourceDoc,
+				fmt.Sprintf("Edge conflict: %s contradicts %s (source: %s)", r.Source, r.Target, sourceDoc),
+				"Deferred: entity-level contradicts edge recorded for review; no auto-invalidation.")
+			continue
+		}
+		if !hooks.functional[r.Predicate] {
+			continue
+		}
+		if r.Confidence >= hooks.threshold {
+			vf := validFrom
+			if vf == "" {
+				vf = time.Now().UTC().Format(time.RFC3339)
+			}
+			if _, err := ont.InvalidateFunctional(r.Source, r.Predicate, r.Target, vf, edgeID); err != nil {
+				// Best-effort like every write in this pass: the compile must
+				// not fail over supersession. The post-resolution sweep
+				// re-fires idempotently.
+				log.Warn("triples: supersession failed", "source", r.Source,
+					"predicate", r.Predicate, "error", err)
+			}
+			supersessions = append(supersessions, FunctionalSupersession{
+				SourceID:      r.Source,
+				Predicate:     r.Predicate,
+				KeepTargetID:  r.Target,
+				NewValidFrom:  vf,
+				InvalidatedBy: edgeID,
+			})
+		} else {
+			var current []string
+			if rels, err := ont.GetRelations(r.Source, store.Outbound, r.Predicate); err == nil {
+				for _, cr := range rels {
+					if cr.TargetID != r.Target {
+						current = append(current, cr.TargetID)
+					}
+				}
+			}
+			// Sorted: the conflict text keys the deterministic dedup ID, and
+			// GetRelations has no ORDER BY on SQLite — an unstable list would
+			// mint a new conflict row per compile (Gate-3 review).
+			sort.Strings(current)
+			emitEdgeConflict(hooks, sourceDoc,
+				fmt.Sprintf("Edge conflict: %s %s %v vs %s (source: %s)",
+					r.Source, r.Predicate, current, r.Target, sourceDoc),
+				fmt.Sprintf("Deferred: confidence %.2f below auto-apply threshold %.2f; both values kept live.",
+					r.Confidence, hooks.threshold))
+		}
 	}
-	return entities, relations, persisted
+	return entities, relations, persisted, supersessions
 }
 
 // Per-document caps and fan-out defaults. Applied in-function because
@@ -452,9 +612,12 @@ func ExtractTriplesPass(
 	cfg *config.Config,
 	client *llm.Client,
 	summariesCarryFrontmatter bool,
-) []string {
+	projectDir string,
+	mf *manifest.Manifest,
+	trustStore store.TrustStore,
+) (touched []string, supersessions []FunctionalSupersession) {
 	if cfg == nil || !cfg.Ontology.Triples.Enabled || ont == nil || client == nil || len(summaries) == 0 {
-		return nil
+		return nil, nil
 	}
 	// opts.Ctx is nilable at the fullpipeline call site; a per-document
 	// ctx.Err() on a nil interface panics.
@@ -498,6 +661,20 @@ func ExtractTriplesPass(
 	defs := ontology.MergedRelations(cfg.Ontology.Relations)
 	validPredicates := ontology.ValidRelationNames(defs)
 	validTypes := ontology.ValidEntityTypeNames(ontology.MergedEntityTypes(cfg.Ontology.EntityTypes))
+
+	hooks := temporalHooks{
+		enabled:    cfg.Ontology.Temporal.EnabledOrDefault(),
+		functional: map[string]bool{},
+		threshold:  cfg.Ontology.Temporal.AutoApplyThresholdOrDefault(),
+		trust:      trustStore,
+		projectDir: projectDir,
+	}
+	// config.Load normalizes relation_types into Relations — one loop only.
+	for _, rc := range cfg.Ontology.Relations {
+		if rc.Functional {
+			hooks.functional[rc.Name] = true
+		}
+	}
 
 	// Cost attribution. Set before the fan-out and restored after the join:
 	// c.pass is unsynchronized and trackUsage reads it from request goroutines.
@@ -594,10 +771,11 @@ func ExtractTriplesPass(
 		}
 		// Counts are what actually landed, not what was attempted: a failed
 		// write must not be reported as an extracted entity.
-		e, rel, ids := persistGraph(ont, g, concepts, r.sourceDoc)
+		e, rel, ids, sup := persistGraph(ont, g, concepts, r.sourceDoc, validFromForDoc(projectDir, mf, r.sourceDoc), hooks)
 		entities += e
 		relations += rel
 		persisted = append(persisted, ids...)
+		supersessions = append(supersessions, sup...)
 	}
 
 	if failures > 0 {
@@ -605,7 +783,7 @@ func ExtractTriplesPass(
 			"failed", failures, "of", len(summaries))
 	}
 	log.Info("triples extracted", "entities", entities, "relations", relations, "documents", len(summaries))
-	return dedupeIDs(persisted)
+	return dedupeIDs(persisted), supersessions
 }
 
 // dedupeIDs collapses the per-document id lists into one stable set. The same

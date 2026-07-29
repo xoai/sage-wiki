@@ -30,6 +30,7 @@ func Open(cfg config.StorageConfig, opts store.OpenOptions) (store.Backend, erro
 			ValidRelations:   opts.ValidRelations,
 			ValidEntityTypes: opts.ValidEntityTypes,
 			ANN:              opts.ANN,
+			TemporalEnabled:  opts.TemporalEnabled, // P3-6: nil = enabled
 		})
 	case "postgres":
 		return postgres.Open(cfg.DSN, opts)
@@ -81,5 +82,6 @@ func OpenProject(projectDir string, mode store.Mode) (store.Backend, error) {
 		VectorDimension:  cfg.Storage.VectorDimension,
 		ValidRelations:   ontology.ValidRelationNames(mergedRels),
 		ValidEntityTypes: ontology.ValidEntityTypeNames(mergedTypes),
+		TemporalEnabled:  cfg.Ontology.Temporal.Enabled,
 	})
 }

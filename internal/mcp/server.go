@@ -210,6 +210,7 @@ func (s *Server) registerReadTools() {
 			mcp.WithString("question", mcp.Required(), mcp.Description("Natural-language question about relations between entities")),
 			mcp.WithNumber("hops", mcp.Description("Traversal depth 1-5 (default 2)")),
 			mcp.WithNumber("max_edges", mcp.Description("Subgraph edge cap 1-500 (default 60)")),
+			mcp.WithString("as_of", mcp.Description("Optional RFC3339 timestamp: answer using only facts valid at that time (P3-6)")),
 		),
 		s.handleGraphQuery,
 	)

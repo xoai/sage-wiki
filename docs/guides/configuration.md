@@ -181,6 +181,8 @@ serve:
 #       synonyms: ["thực hiện", "triển khai"]
 #     - name: regulates            # add a custom relation type
 #       synonyms: ["regulates", "regulated by", "调控"]
+#     - name: works_at
+#       functional: true           # P3-6: outbound uniqueness — a new edge invalidates the old one
 #   entity_types:
 #     - name: decision
 #       description: "A recorded decision with rationale"
@@ -190,6 +192,9 @@ serve:
 #     max_tokens: 4096
 #     max_entities_per_doc: 40
 #     max_relations_per_doc: 60
+#   temporal:                      # bi-temporal edge validity (P3-6)
+#     enabled: true                # DEFAULT — false disables filtering, supersession, as_of
+#     auto_apply_threshold: 0.8    # DEFAULT — confidence to auto-invalidate a superseded edge
 #   resolve:                       # entity resolution (P3-3, opt-in)
 #     enabled: true                # default false — pairs with triples (see below)
 #     model: ""                    # default: models.extract, then models.summarize

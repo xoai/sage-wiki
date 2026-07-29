@@ -219,3 +219,87 @@ func TestMCPGraphQuerySchemasAdditive(t *testing.T) {
 		}
 	}
 }
+
+// P3-6: as_of point-in-time graph QA — invalid values error before any LLM
+// call; a valid value reaches the prompt with its disclosure note, and
+// point-in-time subgraphs include edges that default (live-at-now) reads
+// filter out.
+func TestMCPGraphQueryAsOf(t *testing.T) {
+	var captured string
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		for _, mm := range body["messages"].([]any) {
+			m := mm.(map[string]any)
+			if m["role"] == "user" {
+				captured, _ = m["content"].(string)
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{
+				"content": `{"answer":"grounded answer","cited":[1]}`,
+			}}},
+			"model": "gpt-4o-mini",
+			"usage": map[string]int{"total_tokens": 10},
+		})
+	}))
+	defer fake.Close()
+
+	dir := graphQueryProject(t, fake.URL)
+	srv, err := NewServer(dir)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer srv.Close()
+
+	for _, e := range []ontology.Entity{{ID: "A", Type: "concept", Name: "A"}, {ID: "B", Type: "concept", Name: "B"}} {
+		if err := srv.ont.AddEntity(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Dead edge: valid 2020 → 2025. Default reads filter it; as_of 2022 sees it.
+	if err := srv.ont.AddRelation(ontology.Relation{ID: "r-old", SourceID: "A", TargetID: "B",
+		Relation: "extends", SourceDoc: "raw/a.md", Confidence: 0.9,
+		ValidFrom: "2020-01-01T00:00:00Z", ValidTo: "2025-01-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.mem.Add(memory.Entry{ID: "concept:A", Content: "alpha chain zebra"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Bad as_of errors before any LLM call.
+	bad := srv.CallTool(context.Background(), "wiki_graph_query", makeToolRequest(map[string]any{
+		"question": "alpha chain zebra", "as_of": "january 2022",
+	}))
+	if !bad.IsError {
+		t.Error("invalid as_of must error")
+	}
+	if captured != "" {
+		t.Error("invalid as_of must not reach the LLM")
+	}
+
+	// Default: dead edge filtered — the no-edges short-circuit answer.
+	def := srv.CallTool(context.Background(), "wiki_graph_query", makeToolRequest(map[string]any{
+		"question": "alpha chain zebra", "hops": float64(1),
+	}))
+	if def.IsError {
+		t.Fatal("default call errored")
+	}
+	if !strings.Contains(def.Content[0].(mcplib.TextContent).Text, "no edges found") {
+		t.Errorf("default must filter the dead edge, got: %s", def.Content[0].(mcplib.TextContent).Text)
+	}
+
+	// as_of 2022: edge visible, prompt discloses the window.
+	ok := srv.CallTool(context.Background(), "wiki_graph_query", makeToolRequest(map[string]any{
+		"question": "alpha chain zebra", "hops": float64(1), "as_of": "2022-06-01T00:00:00Z",
+	}))
+	if ok.IsError {
+		t.Fatalf("as_of call errored: %s", ok.Content[0].(mcplib.TextContent).Text)
+	}
+	if !strings.Contains(captured, "(A) --[extends]--> (B)") {
+		t.Errorf("as_of 2022 must include the then-valid edge:\n%s", captured)
+	}
+	if !strings.Contains(captured, "as of 2022-06-01T00:00:00Z") {
+		t.Errorf("prompt must disclose the as-of window:\n%s", captured)
+	}
+}

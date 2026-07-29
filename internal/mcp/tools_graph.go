@@ -3,6 +3,8 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/xoai/sage-wiki/internal/auth"
@@ -30,6 +32,18 @@ func (s *Server) handleGraphQuery(ctx context.Context, req mcp.CallToolRequest) 
 		maxEdges = int(v)
 	}
 
+	var asOf time.Time
+	if raw, _ := args["as_of"].(string); raw != "" {
+		if !s.cfg.Ontology.Temporal.EnabledOrDefault() {
+			return errorResult("as_of requires ontology.temporal.enabled (currently false)"), nil
+		}
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return errorResult(fmt.Sprintf("invalid as_of %q: expected RFC3339 (e.g. 2026-01-15T00:00:00Z)", raw)), nil
+		}
+		asOf = t
+	}
+
 	client, err := auth.NewLLMClient(s.cfg)
 	if err != nil {
 		return errorResult(err.Error()), nil
@@ -47,6 +61,7 @@ func (s *Server) handleGraphQuery(ctx context.Context, req mcp.CallToolRequest) 
 		GraphQuery:   s.cfg.Ontology.GraphQuery,
 		Hops:         hops,
 		MaxEdges:     maxEdges,
+		AsOf:         asOf,
 	})
 	if err != nil {
 		return errorResult(err.Error()), nil

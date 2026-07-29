@@ -1,9 +1,12 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/xoai/sage-wiki/internal/cli"
@@ -12,6 +15,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/storedial"
+	"github.com/xoai/sage-wiki/internal/trust"
 )
 
 var ontologyCmd = &cobra.Command{
@@ -42,6 +46,7 @@ func init() {
 	ontologyQueryCmd.Flags().String("relation", "", "Filter by relation type")
 	ontologyQueryCmd.Flags().String("direction", "outbound", "outbound, inbound, or both")
 	ontologyQueryCmd.Flags().Int("depth", 1, "Traversal depth 1-5")
+	ontologyQueryCmd.Flags().String("as-of", "", "RFC3339 timestamp: traverse only edges valid at that time (P3-6)")
 	ontologyQueryCmd.MarkFlagRequired("entity")
 
 	ontologyAddCmd.Flags().String("from", "", "Source entity ID (for relations)")
@@ -59,18 +64,19 @@ func init() {
 	ontologyCmd.AddCommand(ontologyQueryCmd, ontologyAddCmd, ontologyListCmd)
 }
 
-func openOntStore(dir string) (*storage.DB, *ontology.Store, error) {
+func openOntStore(dir string) (*storage.DB, *ontology.Store, *config.Config, error) {
 	cfg, err := config.Load(resolveConfigPath(dir))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	db, err := storedial.OpenConcrete(dir, cfg.Storage)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	merged := ontology.MergedRelations(cfg.Ontology.Relations)
 	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-	return db, ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes)), nil
+	return db, ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
+		ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault())), cfg, nil
 }
 
 func runOntologyQuery(cmd *cobra.Command, args []string) error {
@@ -80,11 +86,23 @@ func runOntologyQuery(cmd *cobra.Command, args []string) error {
 	dirStr, _ := cmd.Flags().GetString("direction")
 	depth, _ := cmd.Flags().GetInt("depth")
 
-	db, ont, err := openOntStore(dir)
+	db, ont, cfg, err := openOntStore(dir)
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
 	defer db.Close()
+
+	var asOf time.Time
+	if raw, _ := cmd.Flags().GetString("as-of"); raw != "" {
+		if !cfg.Ontology.Temporal.EnabledOrDefault() {
+			return cli.CLIError(outputFormat, fmt.Errorf("--as-of requires ontology.temporal.enabled (currently false)"))
+		}
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return cli.CLIError(outputFormat, fmt.Errorf("invalid --as-of %q: expected RFC3339 (e.g. 2026-01-15T00:00:00Z)", raw))
+		}
+		asOf = t
+	}
 
 	traverseDir := ontology.Outbound
 	switch dirStr {
@@ -105,6 +123,7 @@ func runOntologyQuery(cmd *cobra.Command, args []string) error {
 		Direction:    traverseDir,
 		RelationType: relType,
 		MaxDepth:     depth,
+		AsOf:         asOf,
 	})
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
@@ -132,7 +151,7 @@ func runOntologyAdd(cmd *cobra.Command, args []string) error {
 	relType, _ := cmd.Flags().GetString("relation")
 	entityID, _ := cmd.Flags().GetString("entity-id")
 
-	db, ont, err := openOntStore(dir)
+	db, ont, cfg, err := openOntStore(dir)
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
@@ -143,10 +162,31 @@ func runOntologyAdd(cmd *cobra.Command, args []string) error {
 		relID := fromID + "-" + relType + "-" + toID
 		if err := ont.AddRelation(ontology.Relation{
 			ID: relID, SourceID: fromID, TargetID: toID, Relation: relType,
+			ValidFrom: time.Now().UTC().Format(time.RFC3339), // manual add = asserted now (P3-6)
 		}); err != nil {
 			return cli.CLIError(outputFormat, err)
 		}
 		msg := fmt.Sprintf("Relation: %s -[%s]-> %s", fromID, relType, toID)
+		// P3-6: same rule as wiki_ontology_add — functional predicates
+		// auto-apply supersession (manual add = explicit intent); bare
+		// contradicts edges surface a dedup'd trust conflict for review.
+		if cfg.Ontology.Temporal.EnabledOrDefault() {
+			if relType == ontology.RelContradicts {
+				cliEmitEdgeConflict(db,
+					fmt.Sprintf("Edge conflict: %s contradicts %s (source: manual add)", fromID, toID),
+					"Deferred: entity-level contradicts edge recorded for review; no auto-invalidation.")
+				msg += " (conflict recorded for review)"
+			} else if cliFunctionalPredicate(cfg, relType) {
+				invalidated, err := ont.InvalidateFunctional(fromID, relType, toID,
+					time.Now().UTC().Format(time.RFC3339), relID)
+				if err != nil {
+					return cli.CLIError(outputFormat, err)
+				}
+				if len(invalidated) > 0 {
+					msg += fmt.Sprintf(" (superseded %d prior edge(s))", len(invalidated))
+				}
+			}
+		}
 		if outputFormat == "json" {
 			fmt.Println(cli.FormatJSON(true, map[string]string{"message": msg}, ""))
 		} else {
@@ -184,7 +224,7 @@ func runOntologyList(cmd *cobra.Command, args []string) error {
 	listType, _ := cmd.Flags().GetString("type")
 	limit, _ := cmd.Flags().GetInt("limit")
 
-	db, ont, err := openOntStore(dir)
+	db, ont, _, err := openOntStore(dir)
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
@@ -228,4 +268,41 @@ func runOntologyList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("unknown list type %q, use 'entities' or 'relations'", listType)
 	}
 	return nil
+}
+
+// cliFunctionalPredicate reports whether relType is configured functional
+// (outbound uniqueness, P3-6) in either relation config key.
+func cliFunctionalPredicate(cfg *config.Config, relType string) bool {
+	// config.Load normalizes relation_types into Relations — one loop only.
+	for _, rc := range cfg.Ontology.Relations {
+		if rc.Name == relType && rc.Functional {
+			return true
+		}
+	}
+	return false
+}
+
+// cliEmitEdgeConflict records a trust conflict for a manually added
+// contradicts edge (P3-6), mirroring the MCP emitter: deterministic ID
+// dedups repeats; insert races lose to the PK and are swallowed.
+func cliEmitEdgeConflict(db *storage.DB, question, answer string) {
+	ts := trust.NewStore(db)
+	sum := sha256.Sum256([]byte(question))
+	id := "edgeconflict-" + hex.EncodeToString(sum[:])[:16]
+	if existing, err := ts.Get(id); err == nil && existing != nil {
+		return
+	}
+	if err := ts.InsertPending(&store.PendingOutput{
+		ID:           id,
+		Question:     question,
+		QuestionHash: trust.HashQuestion(question),
+		Answer:       answer,
+		AnswerHash:   trust.HashAnswer(answer),
+		State:        store.StateConflict,
+		SourcesUsed:  "[]",
+		SourcesHash:  trust.ComputeSourcesHash("", "[]"),
+		CreatedAt:    time.Now().UTC(),
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "note: conflict record skipped: %v\n", err)
+	}
 }

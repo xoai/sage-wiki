@@ -251,6 +251,7 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 				VecStore:     run.vecStore,
 				ChunkStore:   run.chunkStore,
 				OntStore:     run.pipelineOntStore,
+				TrustStore:   run.trustStore,
 				Embedder:     run.embedder,
 				Backpressure: run.bp,
 				ItemStore:    run.itemStore,

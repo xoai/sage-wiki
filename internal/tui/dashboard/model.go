@@ -75,7 +75,8 @@ func New(projectDir string, cfg *config.Config, db store.DBHandle) Model {
 			Embedder:             embed.NewFromConfig(cfg), // without it search.Run runs no vector leg at all
 			BM25Weight:           cfg.Search.HybridWeightBM25,
 			VectorWeight:         cfg.Search.HybridWeightVector,
-			Ont:                  ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes)),
+			Ont:                  ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes),
+		ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault())),
 			GraphWeight:          cfg.Search.HybridWeightGraph,
 			GraphRelationWeights: cfg.Search.GraphRelationWeights,
 			IncludeDoc:           trust.IncludePredicate(trustMode, trustStore),

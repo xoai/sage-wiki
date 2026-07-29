@@ -105,10 +105,12 @@ type Relation struct {
 	Confidence float64 `json:"confidence,omitempty"`
 	SourceDoc  string  `json:"source_doc,omitempty"`
 
-	// P3-1: reserved for P3-6 (temporal validity). Written on INSERT and
-	// returned by every read, but nothing populates them, no query filters on
-	// them, and they are NOT in the upsert SET list — P3-6 must add them there
-	// when it starts writing them.
+	// P3-6 (temporal validity): ValidFrom is when the fact became true
+	// (writer-populated, RFC3339 UTC, "" = always valid); ValidTo is when it
+	// stopped ("" = currently valid); InvalidatedBy names the superseding
+	// edge. Default reads filter to live edges; ValidFrom joins the upsert
+	// SET list first-writer-wins; ValidTo/InvalidatedBy are written only by
+	// InvalidateFunctional.
 	ValidFrom     string `json:"valid_from,omitempty"`
 	ValidTo       string `json:"valid_to,omitempty"`
 	InvalidatedBy string `json:"invalidated_by,omitempty"`
@@ -195,6 +197,10 @@ type TraverseOpts struct {
 	Direction    Direction
 	RelationType string // optional filter
 	MaxDepth     int    // 1-5, default 1
+	// AsOf makes the traversal point-in-time (P3-6): only edges live at AsOf
+	// are followed. Zero means now. Has no effect when the store was built
+	// with temporal behavior disabled.
+	AsOf time.Time
 }
 
 // --- trust ---

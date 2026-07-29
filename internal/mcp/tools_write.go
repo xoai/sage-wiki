@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -26,6 +27,8 @@ import (
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/sourcedate"
+	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/internal/trust"
 )
 
 func (s *Server) registerWriteTools() {
@@ -313,12 +316,36 @@ func (s *Server) handleAddOntology(ctx context.Context, req mcplib.CallToolReque
 		if targetID == "" || relType == "" {
 			return errorResult("target_id and relation required for relations"), nil
 		}
+		relID := sourceID + "-" + relType + "-" + targetID
 		if err := s.ont.AddRelation(ontology.Relation{
-			ID: sourceID + "-" + relType + "-" + targetID, SourceID: sourceID, TargetID: targetID, Relation: relType,
+			ID: relID, SourceID: sourceID, TargetID: targetID, Relation: relType,
+			ValidFrom: time.Now().UTC().Format(time.RFC3339), // manual add = asserted now (P3-6)
 		}); err != nil {
 			return errorResult(fmt.Sprintf("add relation failed: %v", err)), nil
 		}
-		return textResult(fmt.Sprintf("Relation: %s -[%s]-> %s", sourceID, relType, targetID)), nil
+		msg := fmt.Sprintf("Relation: %s -[%s]-> %s", sourceID, relType, targetID)
+		// P3-6: manual adds are explicit user intent — functional predicates
+		// auto-apply supersession; bare contradicts edges surface a trust
+		// conflict for review, same rule as the extraction path.
+		if s.cfg.Ontology.Temporal.EnabledOrDefault() {
+			if relType == ontology.RelContradicts {
+				s.emitEdgeConflict(
+					fmt.Sprintf("Edge conflict: %s contradicts %s (source: manual add)", sourceID, targetID),
+					"Deferred: entity-level contradicts edge recorded for review; no auto-invalidation.")
+			} else if s.functionalPredicate(relType) {
+				invalidated, err := s.ont.InvalidateFunctional(sourceID, relType, targetID,
+					time.Now().UTC().Format(time.RFC3339), relID)
+				if err != nil {
+					// The new edge is already committed and live; retrying
+					// the same add re-fires supersession idempotently.
+					return errorResult(fmt.Sprintf("relation added but supersession failed: %v (both values are now live; retry the add to re-apply)", err)), nil
+				}
+				if len(invalidated) > 0 {
+					msg += fmt.Sprintf(" (superseded %d prior edge(s))", len(invalidated))
+				}
+			}
+		}
+		return textResult(msg), nil
 	}
 
 	return errorResult("provide entity_id or source_id+target_id+relation"), nil
@@ -684,6 +711,7 @@ func (s *Server) handleCompileTopic(ctx context.Context, req mcplib.CallToolRequ
 		ProjectDir:  s.projectDir,
 		Config:      cfg,
 		DB:          s.db,
+		TrustStore:  s.trustStore(),
 		Searcher:    s.searcher,
 		Embedder:    s.embedder,
 		Client:      client,
@@ -714,4 +742,53 @@ var CaptureSchema = llm.JSONSchema{
 		},
 		"minItems": 0,
 	},
+}
+
+// trustStore returns the Backend's Trust store when one is wired (the
+// postgres path), falling back to the sqlite implementation over the raw
+// handle. trust.NewStore emits '?' placeholders and silently fails under a
+// Postgres backend (Gate-3 i2).
+func (s *Server) trustStore() store.TrustStore {
+	if s.backend != nil {
+		return s.backend.Trust()
+	}
+	return trust.NewStore(s.db)
+}
+
+// functionalPredicate reports whether relType is configured functional
+// (outbound uniqueness, P3-6) in either relation config key.
+func (s *Server) functionalPredicate(relType string) bool {
+	// config.Load normalizes relation_types into Relations — one loop only.
+	for _, rc := range s.cfg.Ontology.Relations {
+		if rc.Name == relType && rc.Functional {
+			return true
+		}
+	}
+	return false
+}
+
+// emitEdgeConflict records a trust conflict for a manually added contradicts
+// edge (P3-6). Deterministic ID dedups repeats; insert races lose to the PK
+// and are swallowed — conflict surfacing is best-effort.
+func (s *Server) emitEdgeConflict(question, answer string) {
+	ts := s.trustStore()
+	sum := sha256.Sum256([]byte(question))
+	id := "edgeconflict-" + hex.EncodeToString(sum[:])[:16]
+	if existing, err := ts.Get(id); err == nil && existing != nil {
+		return
+	}
+	o := &store.PendingOutput{
+		ID:           id,
+		Question:     question,
+		QuestionHash: trust.HashQuestion(question),
+		Answer:       answer,
+		AnswerHash:   trust.HashAnswer(answer),
+		State:        store.StateConflict,
+		SourcesUsed:  "[]",
+		SourcesHash:  trust.ComputeSourcesHash("", "[]"),
+		CreatedAt:    time.Now().UTC(),
+	}
+	if err := ts.InsertPending(o); err != nil {
+		log.Debug("wiki_ontology_add: edge conflict insert skipped", "id", id, "error", err)
+	}
 }

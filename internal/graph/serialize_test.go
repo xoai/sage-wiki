@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/ontology"
@@ -23,6 +24,9 @@ type fakeOntStore struct {
 }
 
 func (f *fakeOntStore) GetRelations(id string, _ store.Direction, _ string) ([]store.Relation, error) {
+	return f.rels[id], nil
+}
+func (f *fakeOntStore) GetRelationsAt(id string, _ store.Direction, _ string, _ time.Time) ([]store.Relation, error) {
 	return f.rels[id], nil
 }
 func (f *fakeOntStore) GetEntity(id string) (*store.Entity, error) {
@@ -107,6 +111,9 @@ type erroringEntityStore struct {
 }
 
 func (f *erroringEntityStore) GetRelations(id string, _ store.Direction, _ string) ([]store.Relation, error) {
+	return f.rels[id], nil
+}
+func (f *erroringEntityStore) GetRelationsAt(id string, _ store.Direction, _ string, _ time.Time) ([]store.Relation, error) {
 	return f.rels[id], nil
 }
 func (f *erroringEntityStore) GetEntity(string) (*store.Entity, error) {
@@ -335,5 +342,41 @@ func TestSerializeResolvesAliasSeeds(t *testing.T) {
 	}
 	if len(got.Seeds) != 1 || got.Seeds[0] != "canon" {
 		t.Errorf("Seeds = %v, want [canon] — post-resolution ids", got.Seeds)
+	}
+}
+
+// P3-6: the validity window rides the provenance tag when either temporal
+// field is set; an open window renders as "now".
+func TestProvenanceTagValidityWindow(t *testing.T) {
+	f := &fakeOntStore{
+		rels: map[string][]store.Relation{
+			"a": {
+				{SourceID: "a", TargetID: "b", Relation: "extends",
+					SourceDoc: "raw/x.md", ValidFrom: "2024-01-01T00:00:00Z"},
+				{SourceID: "a", TargetID: "c", Relation: "extends",
+					SourceDoc: "raw/x.md", ValidFrom: "2020-01-01T00:00:00Z", ValidTo: "2025-06-01T00:00:00Z"},
+				{SourceID: "a", TargetID: "d", Relation: "extends", SourceDoc: "raw/x.md"},
+			},
+		},
+		entities: map[string]*store.Entity{
+			"a": {ID: "a", Name: "A"}, "b": {ID: "b", Name: "B"},
+			"c": {ID: "c", Name: "C"}, "d": {ID: "d", Name: "D"},
+		},
+	}
+	sg, err := SerializeSubgraph(f, []string{"a"}, SubgraphOpts{MaxHops: 1, MaxEdges: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sg.Text, "valid: 2024-01-01T00:00:00Z→now") {
+		t.Errorf("open window must render →now:\n%s", sg.Text)
+	}
+	if !strings.Contains(sg.Text, "valid: 2020-01-01T00:00:00Z→2025-06-01T00:00:00Z") {
+		t.Errorf("closed window must render both ends:\n%s", sg.Text)
+	}
+	// The no-temporal edge carries no valid: tag at all.
+	for _, line := range strings.Split(sg.Text, "\n") {
+		if strings.Contains(line, "--[extends]--> (D)") && strings.Contains(line, "valid:") {
+			t.Errorf("edge without temporal fields must not render a window: %s", line)
+		}
 	}
 }

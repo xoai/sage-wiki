@@ -549,6 +549,39 @@ type OntologyConfig struct {
 	Triples       TriplesConfig      `yaml:"triples,omitempty"`
 	Resolve       ResolveConfig      `yaml:"resolve,omitempty"`
 	GraphQuery    GraphQueryConfig   `yaml:"graph_query,omitempty"`
+	Temporal      TemporalConfig     `yaml:"temporal,omitempty"`
+}
+
+// TemporalConfig controls bi-temporal edge validity (P3-6): default
+// live-at-now filtering on relation reads, functional-predicate supersession,
+// and as_of point-in-time queries.
+type TemporalConfig struct {
+	// Enabled gates all temporal behavior (default: true). False means: no
+	// validity filtering, no supersession, and as_of is rejected by callers.
+	// *bool so "unset" is distinguishable from an explicit false.
+	Enabled *bool `yaml:"enabled,omitempty"`
+	// AutoApplyThreshold is the minimum confidence for a contradicting edge to
+	// auto-invalidate the superseded one (default: 0.8). Below it, a trust
+	// conflict is recorded instead. Valid range: (0, 1].
+	AutoApplyThreshold float64 `yaml:"auto_apply_threshold,omitempty"`
+}
+
+// EnabledOrDefault returns whether temporal behavior is enabled (default: true).
+func (t TemporalConfig) EnabledOrDefault() bool {
+	if t.Enabled == nil {
+		return true
+	}
+	return *t.Enabled
+}
+
+// AutoApplyThresholdOrDefault returns the threshold or 0.8 when unset or out
+// of range — a zero/negative value would auto-apply everything, and >1 would
+// auto-apply nothing; both silently invert the intended semantics.
+func (t TemporalConfig) AutoApplyThresholdOrDefault() float64 {
+	if t.AutoApplyThreshold <= 0 || t.AutoApplyThreshold > 1 {
+		return 0.8
+	}
+	return t.AutoApplyThreshold
 }
 
 // GraphQueryConfig bounds the multi-hop graph-query surface (P3-4): the
@@ -666,6 +699,11 @@ type RelationConfig struct {
 	Synonyms     []string `yaml:"synonyms"`
 	ValidSources []string `yaml:"valid_sources,omitempty"`
 	ValidTargets []string `yaml:"valid_targets,omitempty"`
+	// Functional asserts OUTBOUND uniqueness (P3-6): each source has at most
+	// one live target for this predicate, so a new edge (s, p, o2) supersedes
+	// the live (s, p, o1). Edges are stored only as asserted — never mark an
+	// inbound-unique relation (e.g. employs) functional; use the outbound form.
+	Functional bool `yaml:"functional,omitempty"`
 }
 
 // EntityTypeConfig defines a custom or extended entity type.
@@ -992,6 +1030,16 @@ func (c *Config) Validate() error {
 		c.Ontology.RelationTypes = nil // normalize to single field
 	} else if len(c.Ontology.Relations) > 0 {
 		log.Println("config: ontology.relations is deprecated, use ontology.relation_types instead")
+	}
+	// Functional predicates promise single-valued edges, but the compile-time
+	// supersession trigger lives in the triples pass — without it, only
+	// manual MCP/CLI adds supersede. Warn rather than silently under-deliver.
+	if !c.Ontology.Triples.Enabled && c.Ontology.Temporal.EnabledOrDefault() {
+		for _, r := range c.Ontology.Relations {
+			if r.Functional {
+				log.Printf("config: relation %q is functional but ontology.triples.enabled is false — compile-time supersession is inactive (manual adds still supersede)", r.Name)
+			}
+		}
 	}
 	for _, r := range c.Ontology.Relations {
 		if r.Name == "" {

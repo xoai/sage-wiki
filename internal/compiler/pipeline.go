@@ -173,6 +173,7 @@ type compileRun struct {
 	embedder           embed.Embedder
 	pipelineOntStore   store.OntologyStore
 	itemStore          store.CompileItemStore
+	trustStore         store.TrustStore
 	tierMgr            *TierManager
 	bp                 *BackpressureController
 	exOpts             []extract.ExtractOpts
@@ -508,6 +509,10 @@ func setupStores(projectDir string, run *compileRun) error {
 		run.chunkStore = b.Chunks()
 		run.pipelineOntStore = b.Ontology()
 		run.itemStore = b.CompileItems()
+		// The Backend's own Trust store: trust.NewStore is the SQLITE
+		// implementation and emits '?' placeholders — under
+		// storage.backend=postgres every call on it fails (Gate-3 i2).
+		run.trustStore = b.Trust()
 	} else {
 		dbPath := filepath.Join(projectDir, ".sage", "wiki.db")
 		sdb, err := storage.Open(dbPath)
@@ -519,9 +524,11 @@ func setupStores(projectDir string, run *compileRun) error {
 		run.memStore = memory.NewStore(sdb)
 		run.vecStore = vectors.NewStore(sdb)
 		run.chunkStore = memory.NewChunkStore(sdb)
+		run.trustStore = trust.NewStore(sdb)
 		merged := ontology.MergedRelations(cfg.Ontology.Relations)
 		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-		run.pipelineOntStore = ontology.NewStore(sdb, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
+		run.pipelineOntStore = ontology.NewStore(sdb, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
+			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
 	}
 	run.db = db
 
@@ -530,7 +537,8 @@ func setupStores(projectDir string, run *compileRun) error {
 	merged := ontology.MergedRelations(cfg.Ontology.Relations)
 	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 	if run.pipelineOntStore == nil {
-		run.pipelineOntStore = ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
+		run.pipelineOntStore = ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
+			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
 	}
 
 	// Backfill chunk index if needed (after migration, before first compile)
@@ -716,6 +724,7 @@ func runTiers(projectDir string, run *compileRun) {
 				VecStore:     run.vecStore,
 				ChunkStore:   run.chunkStore,
 				OntStore:     run.pipelineOntStore,
+				TrustStore:   run.trustStore,
 				Embedder:     run.embedder,
 				Backpressure: run.bp,
 				ItemStore:    run.itemStore,
@@ -1197,7 +1206,8 @@ func resumeBatch(
 
 				merged := ontology.MergedRelations(cfg.Ontology.Relations)
 				mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-				ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
+				ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
+					ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
 				client.SetPass("write")
 				writeCacheID, _ := client.SetupCache("You are a knowledge base article writer. Write comprehensive, well-structured wiki articles.", writeModel)
 				relPatterns := ontology.RelationPatterns(merged)
@@ -1273,7 +1283,8 @@ func resumeBatch(
 		batchMergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 		stores := trust.IndexStores{
 			MemStore: memStore, VecStore: vecStore,
-			OntStore:   ontology.NewStore(db, ontology.ValidRelationNames(batchMerged), ontology.ValidEntityTypeNames(batchMergedTypes)),
+			OntStore: ontology.NewStore(db, ontology.ValidRelationNames(batchMerged), ontology.ValidEntityTypeNames(batchMergedTypes),
+				ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault())),
 			ChunkStore: chunkStore, DB: db,
 		}
 		demoted, err := trust.CheckSourceChanges(trustStore, projectDir, &stores)

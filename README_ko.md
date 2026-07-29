@@ -47,8 +47,8 @@ sage-wiki ontology query --entity kubernetes --depth 3 --direction both
 sage-wiki provenance "service mesh"    # 이 개념을 만든 출처
 ```
 
-**아직 하지 않는 것**을 분명히 밝힙니다: 시간 유효성 필드(`valid_from` / `valid_to`)는 저장되지만 아직 질의에 쓰이지 않고, 자동 모순 탐지도 없습니다. 상충하는 주장은
-[출력 신뢰](docs/guides/output-trust.md) 검토로 드러나며 그래프 규칙으로 처리되지 않습니다. 자세한 내용:
+엣지는 이중 시간(bi-temporal)입니다: 사실이 바뀌면 이전 엣지가 충돌 대신 무효화되고, 기본 답변은 모순이 없으며, `as_of` 쿼리로 "1월에는 무엇을 사실로 믿었는가"를 물을 수 있습니다. 모호한 모순은 여전히
+[출력 신뢰](docs/guides/output-trust.md) 검토로 드러납니다. 자세한 내용:
 [그래프 메모리](docs/guides/graph-memory.md).
 
 ## 가이드

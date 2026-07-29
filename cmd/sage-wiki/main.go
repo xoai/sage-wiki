@@ -445,7 +445,7 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("re-embed: load config: %w", err)
 		}
-		backend, err := storedial.Open(cfg.Storage, store.OpenOptions{Mode: store.ModeWriter, ProjectDir: dir})
+		backend, err := storedial.Open(cfg.Storage, store.OpenOptions{Mode: store.ModeWriter, ProjectDir: dir, TemporalEnabled: cfg.Ontology.Temporal.Enabled})
 		if err != nil {
 			return fmt.Errorf("re-embed: open db: %w", err)
 		}
@@ -527,7 +527,7 @@ func runCompile(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("compile: load config: %w", err)
 	}
-	backend, err := storedial.Open(cfg.Storage, store.OpenOptions{Mode: store.ModeWriter, ProjectDir: dir})
+	backend, err := storedial.Open(cfg.Storage, store.OpenOptions{Mode: store.ModeWriter, ProjectDir: dir, TemporalEnabled: cfg.Ontology.Temporal.Enabled})
 	if err != nil {
 		return fmt.Errorf("compile: open db: %w", err)
 	}
@@ -676,6 +676,7 @@ func runLint(cmd *cobra.Command, args []string) error {
 		ValidRelations:   ontology.ValidRelationNames(mergedRels),
 		ValidEntityTypes: ontology.ValidEntityTypeNames(mergedTypes),
 		QualityThreshold: cfg.Compiler.QualityThreshold(),
+		TemporalEnabled:  cfg.Ontology.Temporal.Enabled,
 	}
 
 	runner := linter.NewRunner()
@@ -809,7 +810,8 @@ func runSearch(cmd *cobra.Command, args []string) error {
 			Model:                cfg.Models.Query,
 			BM25Weight:           cfg.Search.HybridWeightBM25,
 			VectorWeight:         cfg.Search.HybridWeightVector,
-			Ont:                  ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes)),
+			Ont: ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes),
+				ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault())),
 			GraphWeight:          cfg.Search.HybridWeightGraph,
 			GraphRelationWeights: cfg.Search.GraphRelationWeights,
 			IncludeDoc:           trust.IncludePredicate(trustMode, trustStore),
@@ -1170,7 +1172,8 @@ func runScribe(cmd *cobra.Command, args []string) error {
 
 	merged := ontology.MergedRelations(cfg.Ontology.Relations)
 	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes))
+	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
+		ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
 
 	model := cfg.Models.Extract
 	if model == "" {

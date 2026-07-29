@@ -146,7 +146,8 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 		vecStore = vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled()))
 		mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
 		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-		ontStore = ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
+		ontStore = ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes),
+			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
 		embedder = embed.NewFromConfig(cfg)
 	}
 	chunkStore := memory.NewChunkStore(db)
@@ -184,7 +185,8 @@ func buildQueryContext(reqCtx context.Context, projectDir string, question strin
 	vecStore := vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled()))
 	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
 	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
+	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes),
+		ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
 	chunkStore := memory.NewChunkStore(db)
 	embedder := embed.NewFromConfig(cfg)
 
@@ -592,7 +594,8 @@ func SaveAnswer(projectDir string, question string, answer string, sources []str
 	vecStore := vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled()))
 	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
 	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
+	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes),
+		ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
 	embedder := embed.NewFromConfig(cfg)
 	chunkStore := memory.NewChunkStore(db)
 	result := &QueryResult{
@@ -864,7 +867,8 @@ func StreamQuery(ctx context.Context, projectDir string, question string, topK i
 			vecStore = vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled()))
 			mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
 			mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-			ontStore = ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
+			ontStore = ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes),
+				ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
 			embedder = embed.NewFromConfig(cfg)
 		}
 		chunkStore := memory.NewChunkStore(db)

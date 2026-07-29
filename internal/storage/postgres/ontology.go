@@ -13,6 +13,30 @@ type ontologyStore struct {
 	b *backend
 }
 
+// temporalEnabled resolves the P3-6 gate from OpenOptions (nil = enabled).
+func (s *ontologyStore) temporalEnabled() bool {
+	if s.b.opts.TemporalEnabled == nil {
+		return true
+	}
+	return *s.b.opts.TemporalEnabled
+}
+
+// liveAtPredicate is the Postgres twin of ontology.liveAtPredicate (P3-6):
+// "edge live at $n/$n+1" over COALESCE'd TEXT columns. Writer-produced values
+// are RFC3339 UTC, so TEXT comparison is chronological; COALESCE maps legacy
+// NULL (nullStr binds "" → NULL) to "unset". valid_to is strict.
+func liveAtPredicate(alias string, n int) (string, int) {
+	vf := alias + "valid_from"
+	vt := alias + "valid_to"
+	return fmt.Sprintf("(COALESCE(%s,'')='' OR COALESCE(%s,'')<=$%d) AND (COALESCE(%s,'')='' OR COALESCE(%s,'')>$%d)",
+		vf, vf, n, vt, vt, n+1), n + 2
+}
+
+// asOfString matches the SQLite twin: writers produce RFC3339 UTC.
+func asOfString(t time.Time) string {
+	return t.UTC().Format(time.RFC3339)
+}
+
 var _ store.OntologyStore = (*ontologyStore)(nil)
 
 func (s *ontologyStore) validSets() (rels, types map[string]bool) {
@@ -138,7 +162,9 @@ func (s *ontologyStore) AddRelation(r store.Relation) error {
 			ON CONFLICT (source_id, target_id, relation) DO UPDATE SET
 			  evidence   = excluded.evidence,
 			  confidence = excluded.confidence,
-			  source_doc = excluded.source_doc
+			  source_doc = excluded.source_doc,
+			  valid_from = CASE WHEN COALESCE(relations.valid_from,'') = ''
+			                    THEN excluded.valid_from ELSE relations.valid_from END
 			WHERE excluded.confidence > COALESCE(relations.confidence, 0)`,
 			r.ID, r.SourceID, r.TargetID, r.Relation, nullRFC(r.CreatedAt),
 			nullStr(r.Evidence), r.Confidence, nullStr(r.SourceDoc),
@@ -213,9 +239,20 @@ func (s *ontologyStore) AllRelations() ([]store.Relation, error) {
 }
 
 func (s *ontologyStore) RelationsByType(relationType string) ([]store.Relation, error) {
+	base, dcond := "SELECT "+relationCols+" FROM relations WHERE relation=$1", "d.relation=$1"
+	args := []any{relationType}
+	if s.temporalEnabled() {
+		// Live-at-now (P3-6) — see the SQLite twin.
+		asOfStr := asOfString(time.Now())
+		pred, _ := liveAtPredicate("", 2)
+		dpred, _ := liveAtPredicate("d.", 2)
+		base += " AND " + pred
+		dcond += " AND " + dpred
+		args = append(args, asOfStr, asOfStr)
+	}
 	rows, err := s.b.pool.Query(
-		s.unionIfDerived("SELECT "+relationCols+" FROM relations WHERE relation=$1", "d.relation=$1"),
-		relationType)
+		s.unionIfDerived(base, dcond),
+		args...)
 	if err != nil {
 		return nil, err
 	}
@@ -258,6 +295,13 @@ func (s *ontologyStore) DeleteEntity(id string) error {
 }
 
 func (s *ontologyStore) GetRelations(entityID string, direction store.Direction, relationType string) ([]store.Relation, error) {
+	return s.GetRelationsAt(entityID, direction, relationType, time.Now())
+}
+
+func (s *ontologyStore) GetRelationsAt(entityID string, direction store.Direction, relationType string, asOf time.Time) ([]store.Relation, error) {
+	if asOf.IsZero() {
+		asOf = time.Now()
+	}
 	var conds, dconds []string
 	var args []any
 	n := 1
@@ -281,7 +325,17 @@ func (s *ontologyStore) GetRelations(entityID string, direction store.Direction,
 	if relationType != "" {
 		conds = append(conds, fmt.Sprintf("relation=$%d", n))
 		dconds = append(dconds, fmt.Sprintf("d.relation=$%d", n))
+		n++
 		args = append(args, relationType)
+	}
+	if s.temporalEnabled() {
+		asOfStr := asOfString(asOf)
+		var pred, dpred string
+		pred, _ = liveAtPredicate("", n)
+		dpred, _ = liveAtPredicate("d.", n)
+		conds = append(conds, pred)
+		dconds = append(dconds, dpred)
+		args = append(args, asOfStr, asOfStr)
 	}
 	// ORDER BY moves outside the union so it sorts the whole result, not just
 	// the first arm. $N placeholders are reusable, so args are unchanged.
@@ -315,11 +369,11 @@ func (s *ontologyStore) Traverse(entityID string, opts store.TraverseOpts) ([]st
 			var err error
 			switch opts.Direction {
 			case store.Outbound:
-				rels, err = s.GetRelations(id, store.Outbound, opts.RelationType)
+				rels, err = s.GetRelationsAt(id, store.Outbound, opts.RelationType, opts.AsOf)
 			case store.Inbound:
-				rels, err = s.GetRelations(id, store.Inbound, opts.RelationType)
+				rels, err = s.GetRelationsAt(id, store.Inbound, opts.RelationType, opts.AsOf)
 			default:
-				rels, err = s.GetRelations(id, store.Both, opts.RelationType)
+				rels, err = s.GetRelationsAt(id, store.Both, opts.RelationType, opts.AsOf)
 			}
 			if err != nil {
 				return nil, err

@@ -69,6 +69,24 @@ type OntologyStore interface {
 	DeleteEntity(id string) error
 	AddRelation(r Relation) error
 	GetRelations(entityID string, direction Direction, relationType string) ([]Relation, error)
+	// GetRelationsAt is the point-in-time read (P3-6): only edges live at
+	// asOf are returned. A zero asOf behaves exactly like GetRelations
+	// (live-at-now when temporal behavior is enabled; unfiltered when the
+	// store was built with it disabled).
+	GetRelationsAt(entityID string, direction Direction, relationType string, asOf time.Time) ([]Relation, error)
+	// InvalidateFunctional supersedes every not-yet-invalidated edge
+	// (any ID form of sourceID, predicate, target NOT any ID form of
+	// keepTargetID) by setting valid_to/invalidated_by in relations AND
+	// derived_relations, in one transaction (P3-6). ID forms close over the
+	// applied-alias chain root. valid_to is set per row:
+	// max(newValidFrom, old.valid_from) — plain string max over RFC3339.
+	// Equality means the winner was not later than the loser: the loser is
+	// then live at NO T (a retroactive win), which is what makes winner and
+	// loser mutually exclusive at every T. An empty newValidFrom is treated
+	// as now. Returns the invalidated edge IDs.
+	// No-op (nil, nil) when the store was built with temporal behavior
+	// disabled.
+	InvalidateFunctional(sourceID, predicate, keepTargetID, newValidFrom, invalidatedBy string) ([]string, error)
 	Traverse(entityID string, opts TraverseOpts) ([]Entity, error)
 	DetectCycles(entityID string) ([][]string, error)
 	EntityCount(entityType string) (int, error)

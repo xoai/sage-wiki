@@ -61,14 +61,33 @@ type Store struct {
 	db               store.DBHandle
 	validRelations   map[string]bool
 	validEntityTypes map[string]bool
-	derivedGuard     // alias-derived edges (decision-035); see derived.go
+	// temporalEnabled gates P3-6 validity filtering and supersession. Default
+	// true; absence of WithTemporalEnabled must mean ENABLED, because the
+	// ~30 direct construction sites (and every test) predate the option and
+	// would otherwise silently disable filtering (spec rev-plan i2/i3).
+	temporalEnabled bool
+	derivedGuard    // alias-derived edges (decision-035); see derived.go
+}
+
+// StoreOption configures optional Store behavior (P3-6). Variadic so existing
+// NewStore call sites compile unchanged with default behavior.
+type StoreOption func(*Store)
+
+// WithTemporalEnabled toggles bi-temporal validity filtering (P3-6). Wire it
+// from config.Ontology.Temporal.EnabledOrDefault(); never pass a raw bool
+// literal outside tests.
+func WithTemporalEnabled(enabled bool) StoreOption {
+	return func(s *Store) { s.temporalEnabled = enabled }
 }
 
 // NewStore creates an ontology store with application-layer type validation.
 // validRelations lists the allowed relation type names. If nil, all types are accepted.
 // validEntityTypes lists the allowed entity type names. If nil, all types are accepted.
-func NewStore(db store.DBHandle, validRelations []string, validEntityTypes []string) *Store {
-	s := &Store{db: db}
+func NewStore(db store.DBHandle, validRelations []string, validEntityTypes []string, opts ...StoreOption) *Store {
+	s := &Store{db: db, temporalEnabled: true}
+	for _, opt := range opts {
+		opt(s)
+	}
 	if validRelations != nil {
 		s.validRelations = make(map[string]bool, len(validRelations))
 		for _, r := range validRelations {
@@ -249,16 +268,17 @@ func (s *Store) DeleteEntity(id string) error {
 // Re-assertion (P3-1): an existing edge is updated ONLY when the incoming
 // confidence is strictly higher than the stored one. created_at is never in the
 // SET list, so the earliest assertion's timestamp survives, and the stored id
-// is kept. The three temporal columns are insert-only until P3-6 — a
-// re-assertion leaves them untouched, so P3-6 must add them to the SET list
-// when it starts writing them.
+// is kept. P3-6 added valid_from to the SET list with first-writer-wins
+// semantics: a winning re-assertion backfills an EMPTY stored valid_from
+// (the fact became true at its first dated assertion), never overwrites one.
+// valid_to/invalidated_by stay supersession-only (InvalidateFunctional).
 //
 // The WHERE clause is the back-compat proof: every caller that predates P3-1
 // passes Confidence 0, so `0 > COALESCE(stored, 0)` is false and the statement
 // is a no-op — bit-identical to the DO NOTHING it replaces. It also means the
 // Pass-3 keyword extractor, which re-asserts the same (source, target,
 // relation) on every compile, can never erase an LLM-extracted edge's
-// evidence.
+// evidence, and never writes temporal fields.
 func (s *Store) AddRelation(r Relation) error {
 	if r.SourceID == r.TargetID {
 		return fmt.Errorf("ontology: self-loops not allowed (entity %q)", r.SourceID)
@@ -278,7 +298,9 @@ func (s *Store) AddRelation(r Relation) error {
 			 ON CONFLICT(source_id, target_id, relation) DO UPDATE SET
 			   evidence   = excluded.evidence,
 			   confidence = excluded.confidence,
-			   source_doc = excluded.source_doc
+			   source_doc = excluded.source_doc,
+			   valid_from = CASE WHEN COALESCE(relations.valid_from,'') = ''
+			                     THEN excluded.valid_from ELSE relations.valid_from END
 			 WHERE excluded.confidence > COALESCE(relations.confidence, 0)`,
 			r.ID, r.SourceID, r.TargetID, r.Relation, r.CreatedAt,
 			r.Evidence, r.Confidence, r.SourceDoc,
@@ -290,6 +312,13 @@ func (s *Store) AddRelation(r Relation) error {
 
 // GetRelations returns relations for an entity in a given direction.
 func (s *Store) GetRelations(entityID string, direction Direction, relationType string) ([]Relation, error) {
+	return s.GetRelationsAt(entityID, direction, relationType, time.Now())
+}
+
+func (s *Store) GetRelationsAt(entityID string, direction Direction, relationType string, asOf time.Time) ([]Relation, error) {
+	if asOf.IsZero() {
+		asOf = time.Now()
+	}
 	// The predicate is repeated into the derived arm rather than wrapping the
 	// whole thing, so that arm can seek its own indexes — see derived.go for
 	// why a view cannot.
@@ -322,6 +351,13 @@ func (s *Store) GetRelations(entityID string, direction Direction, relationType 
 		args = append(args, relationType)
 	}
 
+	if s.temporalEnabled {
+		asOfStr := asOfString(asOf)
+		base += " AND " + liveAtPredicate("")
+		dpred += " AND " + liveAtPredicate("d.")
+		args = append(args, asOfStr, asOfStr)
+	}
+
 	query := base
 	if s.derivedExists() {
 		query = base + "\nUNION ALL" + derivedArm(dpred)
@@ -352,7 +388,7 @@ func (s *Store) Traverse(entityID string, opts TraverseOpts) ([]Entity, error) {
 	for depth := 0; depth < opts.MaxDepth && len(queue) > 0; depth++ {
 		var nextQueue []string
 		for _, id := range queue {
-			rels, err := s.GetRelations(id, opts.Direction, opts.RelationType)
+			rels, err := s.GetRelationsAt(id, opts.Direction, opts.RelationType, opts.AsOf)
 			if err != nil {
 				return nil, err
 			}
@@ -548,10 +584,19 @@ func (s *Store) AllRelations() ([]Relation, error) {
 func (s *Store) RelationsByType(relationType string) ([]Relation, error) {
 	derived := s.derivedExists()
 	q := `SELECT ` + relationCols + ` FROM relations WHERE relation=?`
+	dpred := `d.relation=?`
 	args := []any{relationType}
+	if s.temporalEnabled {
+		// Live-at-now (P3-6): the linter's contradicts pass and other type
+		// scans must not see superseded edges.
+		asOfStr := asOfString(time.Now())
+		q += " AND " + liveAtPredicate("")
+		dpred += " AND " + liveAtPredicate("d.")
+		args = append(args, asOfStr, asOfStr)
+	}
 	if derived {
-		q += "\nUNION ALL" + derivedArm(`d.relation=?`)
-		args = append(args, relationType)
+		q += "\nUNION ALL" + derivedArm(dpred)
+		args = append(args, args...)
 	}
 	rows, err := s.db.ReadDB().Query(q, args...)
 	if err != nil {

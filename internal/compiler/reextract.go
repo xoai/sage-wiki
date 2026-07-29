@@ -15,6 +15,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -89,7 +90,8 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	vecStore := vectors.NewStore(db)
 	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
 	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes))
+	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes),
+		ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
 	embedder := embed.NewFromConfig(cfg)
 	chunkStore := memory.NewChunkStore(db)
 
@@ -117,7 +119,7 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	// is true here: this path loads summary FILES from disk, so Summary holds
 	// the frontmatter and SourcePath is the summary's filename, not the source
 	// document.
-	touched := ExtractTriplesPass(context.Background(), ontStore, summaries, concepts, cfg, client, true)
+	touched, supersessions := ExtractTriplesPass(context.Background(), ontStore, summaries, concepts, cfg, client, true, projectDir, mf, trust.NewStore(db))
 
 	// Pass 3: Write articles
 	if len(concepts) > 0 {
@@ -173,6 +175,10 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	// ReExtract has no cancellation context of its own, matching the calls
 	// above.
 	ResolveEntitiesPass(context.Background(), ontStore, touched, cfg, client, embedder)
+	// Second supersession trigger (P3-6): same pre-resolution hazard as the
+	// full pipeline — without it this path has no self-heal until a full
+	// compile.
+	runSupersessionSweep(ontStore, supersessions)
 
 	// Post-compile sweep: strip [[wikilinks]] pointing at concepts that don't
 	// exist on disk. Re-extract rewrites articles via Pass 3 and would

@@ -45,6 +45,17 @@ type LintContext struct {
 	ValidRelations   []string    // valid ontology relation type names
 	ValidEntityTypes []string    // valid ontology entity type names
 	QualityThreshold float64     // quality_score warning threshold (issue #97); 0 → pass default (0.5)
+	// TemporalEnabled gates P3-6 validity filtering on the stores passes
+	// build; nil = enabled (the config default).
+	TemporalEnabled *bool
+}
+
+// TemporalEnabledOrDefault resolves the P3-6 gate (nil = enabled).
+func (ctx *LintContext) TemporalEnabledOrDefault() bool {
+	if ctx.TemporalEnabled == nil {
+		return true
+	}
+	return *ctx.TemporalEnabled
 }
 
 // LintResult holds the aggregated output of a lint run.

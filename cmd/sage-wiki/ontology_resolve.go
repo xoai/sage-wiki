@@ -66,6 +66,7 @@ func openResolveStore(dir string) (store.Backend, store.OntologyStore, error) {
 		LockTimeout:      lt,
 		Pool:             store.PoolConfig{MaxOpen: cfg.Storage.Pool.MaxOpen, MaxIdle: cfg.Storage.Pool.MaxIdle},
 		VectorDimension:  cfg.Storage.VectorDimension,
+		TemporalEnabled:  cfg.Ontology.Temporal.Enabled,
 		ValidRelations:   ontology.ValidRelationNames(mergedRels),
 		ValidEntityTypes: ontology.ValidEntityTypeNames(mergedTypes),
 	})

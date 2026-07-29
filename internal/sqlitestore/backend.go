@@ -25,7 +25,16 @@ import (
 type Options struct {
 	ValidRelations   []string
 	ValidEntityTypes []string
-	ANN              bool // opt-in HNSW vector index (P2-7)
+	ANN              bool  // opt-in HNSW vector index (P2-7)
+	TemporalEnabled  *bool // nil = enabled (P3-6 default); see store.OpenOptions
+}
+
+// temporalEnabledOrDefault resolves the P3-6 gate: nil = enabled (default).
+func temporalEnabledOrDefault(p *bool) bool {
+	if p == nil {
+		return true
+	}
+	return *p
 }
 
 type backend struct {
@@ -88,7 +97,7 @@ func newBackend(db *storage.DB, path string, mode store.Mode, o Options) *backen
 		entries: memory.NewStore(db),
 		chunks:  memory.NewChunkStore(db),
 		vec:     vectors.NewStore(db, vectors.WithANN(o.ANN)),
-		ont:     ontology.NewStore(db, o.ValidRelations, o.ValidEntityTypes),
+		ont:     ontology.NewStore(db, o.ValidRelations, o.ValidEntityTypes, ontology.WithTemporalEnabled(temporalEnabledOrDefault(o.TemporalEnabled))),
 		trustS:  trust.NewStore(db),
 		items:   compiler.NewCompileItemStore(db),
 		outIdx:  storage.NewOutputIndex(db),

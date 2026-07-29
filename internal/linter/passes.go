@@ -147,7 +147,8 @@ func (p *OrphansPass) Run(ctx *LintContext) ([]Finding, error) {
 		return nil, nil
 	}
 
-	ontStore := ontology.NewStore(ctx.DB, ctx.ValidRelations, ctx.ValidEntityTypes)
+	ontStore := ontology.NewStore(ctx.DB, ctx.ValidRelations, ctx.ValidEntityTypes,
+		ontology.WithTemporalEnabled(ctx.TemporalEnabledOrDefault()))
 
 	entities, err := ontStore.ListEntities("")
 	if err != nil {
@@ -193,7 +194,8 @@ func (p *ConsistencyPass) Run(ctx *LintContext) ([]Finding, error) {
 	}
 
 	// Find contradicts edges (P2-1: via the OntologyStore seam)
-	ontStore := ontology.NewStore(ctx.DB, ctx.ValidRelations, ctx.ValidEntityTypes)
+	ontStore := ontology.NewStore(ctx.DB, ctx.ValidRelations, ctx.ValidEntityTypes,
+		ontology.WithTemporalEnabled(ctx.TemporalEnabledOrDefault()))
 	contradicts, err := ontStore.RelationsByType("contradicts")
 	if err != nil {
 		return nil, err
@@ -226,7 +228,8 @@ func (p *ConnectionsPass) Run(ctx *LintContext) ([]Finding, error) {
 	}
 
 	vecStore := vectors.NewStore(ctx.DB)
-	ontStore := ontology.NewStore(ctx.DB, ctx.ValidRelations, ctx.ValidEntityTypes)
+	ontStore := ontology.NewStore(ctx.DB, ctx.ValidRelations, ctx.ValidEntityTypes,
+		ontology.WithTemporalEnabled(ctx.TemporalEnabledOrDefault()))
 
 	// Get all concept entities with vectors
 	concepts, err := ontStore.ListEntities("concept")
