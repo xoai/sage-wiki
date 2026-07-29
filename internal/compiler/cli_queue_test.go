@@ -170,6 +170,7 @@ func (b *testBackend) Entries() store.EntryStore         { return b.entries }
 func (b *testBackend) Chunks() store.ChunkStore          { return b.chunks }
 func (b *testBackend) Vectors() store.VectorStore        { return b.vecs }
 func (b *testBackend) Ontology() store.OntologyStore     { return b.ont }
+func (b *testBackend) Communities() store.CommunityStore { return b.ont.(store.CommunityStore) }
 func (b *testBackend) Trust() store.TrustStore           { return nil }
 func (b *testBackend) CompileItems() store.CompileItemStore {
 	return b.items

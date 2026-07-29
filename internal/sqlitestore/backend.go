@@ -109,6 +109,7 @@ func (b *backend) Entries() store.EntryStore            { return b.entries }
 func (b *backend) Chunks() store.ChunkStore             { return b.chunks }
 func (b *backend) Vectors() store.VectorStore           { return b.vec }
 func (b *backend) Ontology() store.OntologyStore        { return b.ont }
+func (b *backend) Communities() store.CommunityStore    { return b.ont }
 func (b *backend) Trust() store.TrustStore              { return b.trustS }
 func (b *backend) CompileItems() store.CompileItemStore { return b.items }
 func (b *backend) OutputIndex() store.OutputIndexStore  { return b.outIdx }

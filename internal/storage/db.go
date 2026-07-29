@@ -156,7 +156,31 @@ var schemaMigrations = []migration{
 	{sql: migrationV11},
 	{sql: migrationV12},
 	{sql: migrationV13},
+	{sql: migrationV14},
 }
+
+// migrationV14 adds graph community storage (P3-5): detected communities
+// plus their entity membership. Membership is derived, rebuilt state —
+// replaced wholesale per detection run — so there is no data migration.
+const migrationV14 = `
+CREATE TABLE IF NOT EXISTS communities (
+	id           TEXT PRIMARY KEY,
+	level        INTEGER NOT NULL,
+	parent_id    TEXT,
+	member_count INTEGER NOT NULL DEFAULT 0,
+	edge_count   INTEGER NOT NULL DEFAULT 0,
+	summary      TEXT,
+	summary_hash TEXT,
+	model        TEXT,
+	updated_at   TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS community_members (
+	community_id TEXT NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
+	entity_id    TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+	level        INTEGER NOT NULL,
+	PRIMARY KEY (community_id, entity_id)
+);
+`
 
 // migrationV13 adds the entry_dates sidecar (20260728-search-upgrade M3,
 // ADR-039). A sidecar because entries is an FTS5 virtual table that cannot

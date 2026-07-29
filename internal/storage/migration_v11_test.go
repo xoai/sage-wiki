@@ -63,8 +63,8 @@ func TestMigrationV11CreatesAliasTable(t *testing.T) {
 	if err := db.ReadDB().QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_version").Scan(&version); err != nil {
 		t.Fatalf("read version: %v", err)
 	}
-	if version != 13 {
-		t.Fatalf("schema version = %d, want 13", version)
+	if version != 14 {
+		t.Fatalf("schema version = %d, want 14", version)
 	}
 
 	rows, err := db.ReadDB().Query("PRAGMA table_info(entity_aliases)")

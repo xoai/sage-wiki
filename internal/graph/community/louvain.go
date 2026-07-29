@@ -5,10 +5,9 @@
 package community
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"sort"
-	"strings"
+
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 // Edge is one undirected, unweighted edge between two entity IDs.
@@ -30,16 +29,10 @@ const (
 	maxLevelsCap = 4
 )
 
-// MemberHash is THE hash of a community's member set (sha256 of the sorted
-// IDs joined with \n), used by both the store's conditional summary clear
-// and the pass's staleness check — a shared helper so the two can never
-// diverge (spec i4).
-func MemberHash(members []string) string {
-	cp := append([]string(nil), members...)
-	sort.Strings(cp)
-	sum := sha256.Sum256([]byte(strings.Join(cp, "\n")))
-	return hex.EncodeToString(sum[:])
-}
+// MemberHash delegates to store.MemberHash — THE shared member-set hash
+// (it lives in store because the store layer itself uses it for the
+// conditional summary clear; keeping it here would import-cycle).
+var MemberHash = store.MemberHash
 
 // quotient is a weighted graph (Louvain aggregation levels need weights;
 // level 0 has all weights 1).

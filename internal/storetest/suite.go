@@ -30,6 +30,7 @@ func RunConformance(t *testing.T, newBackend BackendFactory) {
 	t.Run("temporal_validity", TemporalValidityConformance(newBackend))
 	t.Run("temporal_upsert_backfill", TemporalUpsertBackfillConformance(newBackend))
 	t.Run("invalidate_functional", InvalidateFunctionalConformance(newBackend))
+	t.Run("communities", CommunitiesConformance(newBackend))
 	t.Run("trust", TrustConformance(newBackend))
 	t.Run("compile_items", CompileItemsConformance(newBackend))
 	t.Run("compile_items_queue", CompileItemsQueueConformance(newBackend))
@@ -2020,6 +2021,110 @@ func InvalidateFunctionalConformance(new BackendFactory) func(*testing.T) {
 		}
 		if live27["n-old"] || !live27["n-new"] {
 			t.Errorf("as_of 2027 must return the new fact only, got %v", live27)
+		}
+	}
+}
+
+// CommunitiesConformance (P3-5 T3/T4): CommunityStore behaves identically on
+// both backends — upsert preserves summaries for surviving pinned IDs,
+// conditionally clears them on member-hash mismatch, returns removed IDs,
+// and the tx order holds FK constraints.
+func CommunitiesConformance(new BackendFactory) func(*testing.T) {
+	return func(t *testing.T) {
+		b := new(t)
+		cs := b.Communities()
+		os := b.Ontology()
+		for _, id := range []string{"e1", "e2", "e3", "e4"} {
+			if err := os.AddEntity(store.Entity{ID: id, Type: "concept", Name: id}); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		comms := []store.Community{
+			{ID: "c0-0", Level: 0, MemberCount: 2, EdgeCount: 1, UpdatedAt: "2026-07-29T00:00:00Z"},
+			{ID: "c0-1", Level: 0, MemberCount: 2, EdgeCount: 1, UpdatedAt: "2026-07-29T00:00:00Z"},
+			{ID: "c1-0", Level: 1, ParentID: "", MemberCount: 4, EdgeCount: 2, UpdatedAt: "2026-07-29T00:00:00Z"},
+		}
+		members := map[string][]string{
+			"c0-0": {"e1", "e2"},
+			"c0-1": {"e3", "e4"},
+			"c1-0": {"e1", "e2", "e3", "e4"},
+		}
+		removed, err := cs.ReplaceDetection(comms, members)
+		if err != nil {
+			t.Fatalf("ReplaceDetection: %v", err)
+		}
+		if len(removed) != 0 {
+			t.Errorf("first replace must remove nothing, got %v", removed)
+		}
+
+		// Seed a summary on c0-0 with the CURRENT member hash → must survive
+		// the next replace unchanged.
+		if err := cs.SetSummary("c0-0", "triangle of concepts", store.MemberHash(members["c0-0"]), "m"); err != nil {
+			t.Fatal(err)
+		}
+		// Seed a summary on c0-1 with a DIFFERENT hash (simulating membership
+		// drift) → the next replace must clear it.
+		if err := cs.SetSummary("c0-1", "stale summary", "old-hash", "m"); err != nil {
+			t.Fatal(err)
+		}
+
+		// Second replace: same communities except c1-0 gone; c0-0 members
+		// unchanged (summary kept), c0-1 members CHANGED (summary cleared).
+		comms2 := []store.Community{
+			{ID: "c0-0", Level: 0, MemberCount: 2, EdgeCount: 1, UpdatedAt: "2026-07-29T01:00:00Z"},
+			{ID: "c0-1", Level: 0, MemberCount: 2, EdgeCount: 1, UpdatedAt: "2026-07-29T01:00:00Z"},
+		}
+		members2 := map[string][]string{
+			"c0-0": {"e1", "e2"},
+			"c0-1": {"e3", "e1"}, // changed
+		}
+		removed, err = cs.ReplaceDetection(comms2, members2)
+		if err != nil {
+			t.Fatalf("second ReplaceDetection: %v", err)
+		}
+		if len(removed) != 1 || removed[0] != "c1-0" {
+			t.Errorf("removed = %v, want [c1-0]", removed)
+		}
+
+		got, err := cs.ListCommunities(0)
+		if err != nil || len(got) != 2 {
+			t.Fatalf("ListCommunities(0): %v %v", got, err)
+		}
+		byID := map[string]store.Community{}
+		for _, c := range got {
+			byID[c.ID] = c
+		}
+		if byID["c0-0"].Summary != "triangle of concepts" {
+			t.Errorf("surviving pinned community lost its summary: %+v", byID["c0-0"])
+		}
+		if byID["c0-1"].Summary != "" || byID["c0-1"].SummaryHash != "" {
+			t.Errorf("changed-membership community must have summary cleared: %+v", byID["c0-1"])
+		}
+
+		members3, err := cs.CommunityMembers("c0-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(members3) != 2 {
+			t.Errorf("members of c0-1 = %v", members3)
+		}
+
+		cid, err := cs.EntityCommunity("e2", 0)
+		if err != nil || cid != "c0-0" {
+			t.Errorf("EntityCommunity(e2,0) = %q %v", cid, err)
+		}
+
+		ml, err := cs.MaxLevel()
+		if err != nil || ml != 0 {
+			t.Errorf("MaxLevel = %d %v, want 0", ml, err)
+		}
+
+		if err := cs.ClearCommunities(); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := cs.ListCommunities(-1); len(got) != 0 {
+			t.Errorf("ClearCommunities left %d rows", len(got))
 		}
 	}
 }
