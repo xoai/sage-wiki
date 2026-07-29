@@ -516,6 +516,9 @@ func TestCommunitiesPassToleratesLLMFailure(t *testing.T) {
 	f.run(t) // must not panic or fail
 
 	comms := f.communities(t)
+	if len(comms) == 0 {
+		t.Fatal("no communities — test is vacuous without rows")
+	}
 	for _, c := range comms {
 		if c.Summary != "" {
 			t.Errorf("community %s summarized despite dead LLM", c.ID)
@@ -535,6 +538,9 @@ func TestCommunitiesPassMinMembersRoundTrip(t *testing.T) {
 
 	f.cfg.Ontology.Communities.MinMembers = 100
 	f.run(t)
+	if len(f.communities(t)) == 0 {
+		t.Fatal("raise deleted rows outright — expected clear-in-place")
+	}
 	for _, c := range f.communities(t) {
 		if c.Summary != "" || c.SummaryHash != "" {
 			t.Errorf("raise must clear stored summaries: %+v", c)
@@ -556,8 +562,8 @@ func TestCommunityFilesExcludedFromReconcile(t *testing.T) {
 	f.run(t)
 
 	m, err := manifest.Load(filepath.Join(f.dir, ".manifest.json"))
-	if err != nil && !os.IsNotExist(err) {
-		t.Fatal(err)
+	if err != nil {
+		t.Fatalf("manifest must exist after a compile pass ran: %v", err)
 	}
 	if m != nil {
 		for path := range m.Sources {
