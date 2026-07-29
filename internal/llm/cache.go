@@ -81,6 +81,13 @@ func (c *Client) ChatCompletionCachedCtx(ctx context.Context, cacheID string, me
 	if resp.StatusCode == http.StatusOK {
 		result, err := c.provider.ParseResponse(body)
 		if err != nil {
+			if IsTruncatedBodyErr(err) {
+				// Truncated cached 200 (issue #114): the direct path
+				// retries with validation; deterministic parse errors
+				// still fail fast below.
+				log.Warn("truncated cached response, falling back to direct", "error", err)
+				return c.chatCompletionDirect(ctx, messages, opts)
+			}
 			return nil, err
 		}
 		c.trackUsage(result.Model, result.Usage)
