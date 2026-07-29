@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Bi-temporal graph edges (P3-6).** Relations now carry live validity:
+  `valid_from` (when the fact became true — source frontmatter date, file
+  mtime, or manifest added-at) and `valid_to` (when it stopped). Default
+  relation reads return only currently-valid edges, so answers are
+  contradiction-free; `wiki_graph_query` and `ontology query --as-of` answer
+  point-in-time questions ("what did we believe in January?"), and edge
+  provenance in graph answers carries the validity window. Relations marked
+  `functional: true` in config (`ontology.relations`) are single-valued per
+  source: a new contradicting edge invalidates the old one (never deletes it)
+  instead of colliding — auto-applied at or above
+  `ontology.temporal.auto_apply_threshold` (default 0.8), surfaced as a
+  reviewable trust conflict below it, as are entity-level `contradicts`
+  edges. Set `ontology.temporal.enabled: false` to opt out entirely.
+
 ## 0.2.3 — 2026-07-28
 
 ### Documentation
