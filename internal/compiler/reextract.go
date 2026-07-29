@@ -180,6 +180,10 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	// compile.
 	runSupersessionSweep(ontStore, supersessions)
 
+	// Community detection (P3-5): runs last, on the final graph. The
+	// concrete store implements both interfaces.
+	CommunitiesPass(context.Background(), projectDir, ontStore, ontStore, memStore, vecStore, embedder, cfg, client)
+
 	// Post-compile sweep: strip [[wikilinks]] pointing at concepts that don't
 	// exist on disk. Re-extract rewrites articles via Pass 3 and would
 	// otherwise leave phantom links in place — same problem the strip pass

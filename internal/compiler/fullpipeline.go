@@ -333,6 +333,12 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		// Second supersession trigger (P3-6): links applied above may have
 		// created alias forms the write-time trigger could not see.
 		runSupersessionSweep(writeOntStore, supersessions)
+		// Community detection (P3-5): runs last, on the final graph. A nil
+		// CommunityStore (a store that predates P3-5) disables the pass.
+		cs, _ := writeOntStore.(store.CommunityStore)
+		if cs != nil {
+			CommunitiesPass(opts.Ctx, opts.ProjectDir, writeOntStore, cs, opts.MemStore, opts.VecStore, opts.Embedder, cfg, client)
+		}
 	}()
 
 	// Pass 3: Write articles
