@@ -29,6 +29,12 @@ import (
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
 
+// Version is the version this server reports to MCP clients during
+// initialize, set at build time via ldflags (mirrors internal/pack.Version).
+// When unset — running from source, or embedded via pkg/sagewiki in a host
+// that does not set it — clients see "dev".
+var Version = "dev"
+
 // Server wraps an MCP server with wiki tools.
 type Server struct {
 	mcp         *server.MCPServer
@@ -83,7 +89,7 @@ func NewServer(projectDir string, coordinator ...*compiler.CompileCoordinator) (
 
 	mcpServer := server.NewMCPServer(
 		"sage-wiki",
-		"0.1.0",
+		Version,
 		server.WithToolCapabilities(true),
 	)
 
