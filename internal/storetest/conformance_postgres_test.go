@@ -29,15 +29,29 @@ func TestConformancePostgres(t *testing.T) {
 	RunConformance(t, func(t *testing.T) store.Backend {
 		t.Helper()
 		dbName := fmt.Sprintf("conf_%d", time.Now().UnixNano())
-		boot, err := sql.Open("pgx", dsn)
+		// Bootstrap from the maintenance DB — a boot attached to the template
+		// triggers 55006 for every concurrent cloner, itself included.
+		boot, err := sql.Open("pgx", swapDBName(dsn, "postgres"))
 		if err != nil {
 			t.Fatalf("bootstrap connect: %v", err)
 		}
-		if _, err := boot.Exec("CREATE DATABASE " + dbName + " TEMPLATE " + templateDBName(dsn)); err != nil {
-			boot.Close()
-			t.Fatalf("create test database: %v", err)
+		// Retry through SQLSTATE 55006: go test runs packages in parallel and
+		// another cloner may hold the template briefly (P3-7 added one).
+		created := false
+		for attempt := 0; attempt < 10 && !created; attempt++ {
+			if _, err := boot.Exec("CREATE DATABASE " + dbName + " TEMPLATE " + templateDBName(dsn)); err == nil {
+				created = true
+			} else if !strings.Contains(err.Error(), "55006") {
+				boot.Close()
+				t.Fatalf("create test database: %v", err)
+			} else {
+				time.Sleep(time.Duration(100*(attempt+1)) * time.Millisecond)
+			}
 		}
 		boot.Close()
+		if !created {
+			t.Fatal("create test database: template busy after 10 retries")
+		}
 
 		b, err := postgres.Open(swapDBName(dsn, dbName), store.OpenOptions{
 			Mode:            store.ModeWriter,
@@ -48,7 +62,7 @@ func TestConformancePostgres(t *testing.T) {
 		}
 		t.Cleanup(func() {
 			b.Close()
-			clean, err := sql.Open("pgx", dsn)
+			clean, err := sql.Open("pgx", swapDBName(dsn, "postgres"))
 			if err == nil {
 				clean.Exec("DROP DATABASE " + dbName)
 				clean.Close()

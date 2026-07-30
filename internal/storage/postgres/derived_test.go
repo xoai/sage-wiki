@@ -17,14 +17,11 @@ func derivedTestBackend(t *testing.T) (*backend, *sql.DB, func()) {
 	t.Helper()
 	dsn := migrationTestDSN(t)
 	name := fmt.Sprintf("derived_%d", time.Now().UnixNano())
-	boot, err := sql.Open("pgx", dsn)
+	boot, err := sql.Open("pgx", swapDB(dsn, "postgres"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := boot.Exec("CREATE DATABASE " + name + " TEMPLATE " + dsnDB(dsn)); err != nil {
-		boot.Close()
-		t.Fatal(err)
-	}
+	createClone(t, boot, name, dsnDB(dsn))
 	boot.Close()
 	testDSN := swapDB(dsn, name)
 
@@ -45,7 +42,7 @@ func derivedTestBackend(t *testing.T) (*backend, *sql.DB, func()) {
 	cleanup := func() {
 		raw.Close()
 		b.Close()
-		c, err := sql.Open("pgx", dsn)
+		c, err := sql.Open("pgx", swapDB(dsn, "postgres"))
 		if err == nil {
 			c.Exec("DROP DATABASE " + name)
 			c.Close()
