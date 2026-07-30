@@ -28,14 +28,34 @@
   `storage.lock_timeout` then skips reconcile with a warning (never blocks
   startup).
 
+- **`/v1` REST facade + OpenAPI 3.1 + drift check (P4-1).** sage-wiki is
+  now callable from any language: 16 synchronous routes under `/v1`
+  dispatch 1:1 to the existing MCP tool handlers (`sage-wiki serve --ui`),
+  with a single JSON error envelope and fixed code vocabulary, structured
+  `/v1/status`, edge validation for precise 400s, `412 feature_disabled`
+  pre-checks for `as_of`/`mode=global`, a 100 KB cap on capture (413), and
+  `Idempotency-Key` replay on every write (in-memory, bounded — keys do not
+  survive restart, documented). Auth reuses the existing Bearer + Host
+  allowlist middleware; `/api/*` and all 18 MCP tool names are provably
+  unchanged (regression tests). The hand-authored `api/openapi.yaml` is
+  enforced against the registered routes and the tool registry by a new
+  drift test (`internal/api`), including a self-test that proves it catches
+  drift. Async job endpoints for compile/lint follow in P4-2. Guide:
+  `docs/guides/http-api.md`.
+
+- **Added the MIT `LICENSE` file (P4-0).** The README has always said MIT but
+  no license text shipped in the tree, leaving the default legal position at
+  all-rights-reserved and blocking corporate adoption review. `LICENSE` is
+  tracked in git, linked from the README's License section, and is picked up
+  by the release workflow's existing `[ -f LICENSE ]` guard, so release
+  archives include it from the next tag.
+
 - **`make ci` now covers the translation-drift check.** The documented local
   gate claimed to mirror CI but omitted MAINT-05, so a README.md-only change
   could pass `make ci` and still fail CI after merge. New `make translations`
   (same merge-base semantics as the CI job) and `make translations-self-test`;
   CONTRIBUTING documents the translations rule and the maintainer fork-PR
   workflow-approval step, and PRs get a checklist template. (#126)
-
-### Added
 
 - **`pkg/sagewiki` — in-process Go embedding (#112).** A supported, non-internal
   entry point for embedding sage-wiki in another Go program without spawning

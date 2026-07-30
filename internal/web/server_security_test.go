@@ -169,7 +169,7 @@ func TestCheckBindAuth(t *testing.T) {
 		{"0.0.0.0", "", true},
 		{"192.168.1.5", "", true},
 		{"0.0.0.0", "tok", false},
-		{"", "", true},    // empty bind = all interfaces → token required
+		{"", "", true}, // empty bind = all interfaces → token required
 		{"", "tok", false},
 	}
 	for _, tc := range cases {

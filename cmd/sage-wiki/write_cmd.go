@@ -144,7 +144,7 @@ func runWriteArticle(cmd *cobra.Command, args []string) error {
 		merged := ontology.MergedRelations(cfg.Ontology.Relations)
 		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 		ont := ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
-		ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
+			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
 		// Best-effort indexing, like the sibling FTS/vector writes below: the
 		// article file is already on disk and the reconciler heals the index.
 		_ = ont.AddEntity(ontology.Entity{
