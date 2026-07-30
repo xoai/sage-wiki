@@ -498,7 +498,8 @@ func TestReconcile_ArticleWithoutEntityTypeDefaultsToConcept(t *testing.T) {
 }
 
 // P3-7 T2: ReconcileBackend over an explicit backend heals drift
-// identically to the legacy wrapper (which delegates to it).
+// identically to the legacy Reconcile entry (independent construction
+// after the import-cycle course correction — no delegation either way).
 func TestReconcileBackendEquivalence(t *testing.T) {
 	e := setupReconcile(t)
 	// Drift: manifest expects an article the DB lacks (crash between write

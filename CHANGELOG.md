@@ -8,7 +8,8 @@
   `storage.backend`: on a Postgres vault it heals the Postgres store
   (previously it always opened the SQLite file, reconciling nothing real on
   PG vaults). `wiki.ReconcileBackend` is the new primary entry; the legacy
-  `Reconcile` path is byte-identical for SQLite. Completes the graph storage
+  `Reconcile` path is behavior-identical for SQLite (all existing call
+  sites unchanged). Completes the graph storage
   backend seam — see `.sage/docs/design/graph-storage-backend.md` for the
   cookbook 3-table mapping, traversal rationale, and the Neo4j follow-on.
   Note: on Postgres, a contended writer open at startup stalls up to

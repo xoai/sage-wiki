@@ -29,9 +29,11 @@ type ReconcileResult struct {
 	VectorsDeferred int // re-indexed without vectors because the embedder was offline
 }
 
-// Reconcile heals file <-> DB drift at startup (REL-03 / D5). The manifest is
-// the authoritative "what should exist" set; for each expected output it makes
-// the DB consistent with the on-disk file:
+// ReconcileBackend is the primary, backend-neutral entry (P3-7): it heals
+// file <-> DB drift at startup (REL-03 / D5) on whichever backend the vault
+// is configured with — the P2-1 skip-list's sqlite-forced reconcile is gone.
+// The manifest is the authoritative "what should exist" set; for each
+// expected output it makes the DB consistent with the on-disk file:
 //   - file present, not indexed        -> re-index (crash between file and index)
 //   - file present, content changed    -> re-index (detected against output_index)
 //   - file absent, still indexed       -> drop the DB rows
@@ -42,10 +44,6 @@ type ReconcileResult struct {
 // output-hash completion signal LAST — so a crash mid-repair leaves the output
 // out of FTS and is simply re-detected next run. With no embedder (offline
 // launch) it reconciles FTS/chunks/ontology and defers vectors.
-// ReconcileBackend is the primary, backend-neutral entry (P3-7): it heals
-// whichever backend the vault is configured with — the P2-1 skip-list's
-// sqlite-forced reconcile is gone. The Backend supplies every store the
-// reconciler touches plus WriteTx and Trust.
 func ReconcileBackend(ctx context.Context, projectDir string, cfg *config.Config, b store.Backend, embedder embed.Embedder) (*ReconcileResult, error) {
 	rc := &reconciler{
 		projectDir:   projectDir,
