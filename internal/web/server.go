@@ -437,7 +437,11 @@ func (s *WebServer) securityMiddleware(next http.Handler) http.Handler {
 		if r.Method == http.MethodPost || r.URL.Path == "/api/query" {
 			if origin := r.Header.Get("Origin"); origin != "" {
 				if parsed, err := url.Parse(origin); err != nil || parsed.Host != r.Host {
-					http.Error(w, "origin mismatch", http.StatusForbidden)
+					if strings.HasPrefix(r.URL.Path, "/v1/") {
+						api.WriteError(w, http.StatusForbidden, api.CodeForbidden, "origin mismatch", nil)
+					} else {
+						http.Error(w, "origin mismatch", http.StatusForbidden)
+					}
 					return
 				}
 			}

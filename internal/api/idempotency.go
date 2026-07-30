@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/json"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -49,15 +51,42 @@ func newIdemStore() *idemStore {
 	}
 }
 
-// get returns the stored response for key, if present and fresh.
+// get returns the stored response for key, if present and fresh. Hits
+// refresh LRU position; expired entries are reclaimed lazily.
 func (s *idemStore) get(key string) (idemEntry, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.entries[key]
-	if !ok || s.now().Sub(e.stored) > idemTTL {
+	if !ok {
 		return idemEntry{}, false
 	}
+	if s.now().Sub(e.stored) > idemTTL {
+		s.removeLocked(key)
+		return idemEntry{}, false
+	}
+	s.moveToTailLocked(key)
 	return e, true
+}
+
+// removeLocked deletes key from both the map and the order slice.
+func (s *idemStore) removeLocked(key string) {
+	delete(s.entries, key)
+	for i, k := range s.order {
+		if k == key {
+			s.order = append(s.order[:i], s.order[i+1:]...)
+			return
+		}
+	}
+}
+
+// moveToTailLocked marks key as most-recently-used.
+func (s *idemStore) moveToTailLocked(key string) {
+	for i, k := range s.order {
+		if k == key {
+			s.order = append(append(s.order[:i], s.order[i+1:]...), key)
+			return
+		}
+	}
 }
 
 // begin reports whether this caller leads the dispatch for key. Followers
@@ -73,12 +102,14 @@ func (s *idemStore) begin(key string) (c *idemCall, leader bool) {
 	return c, true
 }
 
-// finish stores the leader's response (bounded) and wakes followers.
+// finish stores the leader's response (bounded, LRU-refreshed) and wakes
+// followers.
 func (s *idemStore) finish(key string, c *idemCall, e idemEntry) {
 	s.mu.Lock()
-	if _, ok := s.entries[key]; !ok {
-		s.order = append(s.order, key)
+	if _, ok := s.entries[key]; ok {
+		s.removeLocked(key)
 	}
+	s.order = append(s.order, key)
 	s.entries[key] = e
 	for len(s.order) > idemMaxEntries {
 		oldest := s.order[0]
@@ -147,6 +178,25 @@ func (rt *Router) idempotent(next http.HandlerFunc) http.HandlerFunc {
 			replayStored(w, c.entry)
 			return
 		}
+		// A panicking handler must not wedge the key: finish with a stored
+		// 500 (followers replay it, later retries get an answer) before the
+		// panic propagates to the server's per-connection recovery.
+		defer func() {
+			if p := recover(); p != nil {
+				log.Printf("api: handler panic under idempotency key: %v", p)
+				body, _ := json.Marshal(errorEnvelope{Error: apiError{
+					Code:    CodeInternal,
+					Message: "handler failed",
+				}})
+				rt.idem.finish(key, c, idemEntry{
+					status: http.StatusInternalServerError,
+					header: http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
+					body:   body,
+					stored: rt.idem.now(),
+				})
+				panic(p)
+			}
+		}()
 		rec := newResponseRecorder()
 		next(rec, req)
 		if rec.status == 0 {

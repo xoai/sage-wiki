@@ -40,12 +40,17 @@ type Dispatcher interface {
 	CallTool(ctx context.Context, name string, req mcp.CallToolRequest) *mcp.CallToolResult
 }
 
-// pathSensitiveTools embed filesystem paths in their error text. Their
-// IsError messages must not be returned to clients (04 §Error model: 500
-// messages must not leak paths); the tool text goes to the server log.
+// pathSensitiveTools embed filesystem paths (or git stderr that can carry
+// them) in their error text. Their IsError messages must not be returned
+// to clients (04 §Error model: 500 messages must not leak paths); the tool
+// text goes to the server log.
 var pathSensitiveTools = map[string]bool{
-	ToolRead:      true,
-	ToolAddSource: true,
+	ToolRead:         true,
+	ToolAddSource:    true,
+	ToolWriteSummary: true,
+	ToolWriteArticle: true,
+	ToolCapture:      true,
+	ToolCommit:       true,
 }
 
 // toolRequest builds the CallToolRequest for a dispatch.
@@ -116,6 +121,25 @@ func decodeJSONBody(r *http.Request) (map[string]any, error) {
 	}
 	if len(body) == 0 {
 		return nil, fmt.Errorf("request body is required")
+	}
+	var args map[string]any
+	if err := json.Unmarshal(body, &args); err != nil {
+		return nil, fmt.Errorf("request body must be a JSON object")
+	}
+	return args, nil
+}
+
+// decodeOptionalJSONBody is decodeJSONBody for endpoints whose body is
+// optional (e.g. git/commit — every field has a default): an empty body
+// yields an empty argument map instead of an error. Malformed JSON is
+// still an error.
+func decodeOptionalJSONBody(r *http.Request) (map[string]any, error) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+	if len(body) == 0 {
+		return map[string]any{}, nil
 	}
 	var args map[string]any
 	if err := json.Unmarshal(body, &args); err != nil {

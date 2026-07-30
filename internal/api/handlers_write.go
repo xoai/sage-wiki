@@ -148,7 +148,7 @@ func (r *Router) handleLearn(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) handleCommit(w http.ResponseWriter, req *http.Request) {
-	args, err := decodeJSONBody(req)
+	args, err := decodeOptionalJSONBody(req)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidArgument, err.Error(), nil)
 		return

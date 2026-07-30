@@ -2,6 +2,7 @@ package api
 
 import (
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"path"
@@ -88,6 +89,10 @@ func (r *Router) handleReadArticle(w http.ResponseWriter, req *http.Request) {
 	// The tool reads project-root-relative paths.
 	toolPath := path.Join(r.cfg.Output, filepath.ToSlash(p))
 	res := r.d.CallTool(req.Context(), ToolRead, toolRequest(ToolRead, map[string]any{"path": toolPath}))
+	if res == nil {
+		writeError(w, http.StatusInternalServerError, CodeInternal, "wiki_read returned no result", nil)
+		return
+	}
 	if res.IsError {
 		log.Printf("api: %s failed: %s", ToolRead, resultText(res))
 		writeError(w, http.StatusInternalServerError, CodeInternal, "wiki_read failed", nil)
@@ -155,15 +160,15 @@ func (r *Router) handleGraphQuery(w http.ResponseWriter, req *http.Request) {
 	}
 	if v, ok := args["hops"]; ok {
 		n, isNum := v.(float64)
-		if !isNum || n < 1 || n > 5 {
-			writeError(w, http.StatusBadRequest, CodeInvalidArgument, "hops must be between 1 and 5", map[string]any{"field": "hops", "got": v})
+		if !isNum || n != math.Trunc(n) || n < 1 || n > 5 {
+			writeError(w, http.StatusBadRequest, CodeInvalidArgument, "hops must be an integer between 1 and 5", map[string]any{"field": "hops", "got": v})
 			return
 		}
 	}
 	if v, ok := args["max_edges"]; ok {
 		n, isNum := v.(float64)
-		if !isNum || n < 1 || n > 500 {
-			writeError(w, http.StatusBadRequest, CodeInvalidArgument, "max_edges must be between 1 and 500", map[string]any{"field": "max_edges", "got": v})
+		if !isNum || n != math.Trunc(n) || n < 1 || n > 500 {
+			writeError(w, http.StatusBadRequest, CodeInvalidArgument, "max_edges must be an integer between 1 and 500", map[string]any{"field": "max_edges", "got": v})
 			return
 		}
 	}

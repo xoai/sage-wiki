@@ -76,7 +76,16 @@ func bodyJSON(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 
 func errCode(t *testing.T, w *httptest.ResponseRecorder) string {
 	t.Helper()
-	return bodyJSON(t, w)["error"].(map[string]any)["code"].(string)
+	var m map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &m); err != nil {
+		return ""
+	}
+	e, ok := m["error"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	code, _ := e["code"].(string)
+	return code
 }
 
 func writeArticle(t *testing.T, dir, rel, content string) {

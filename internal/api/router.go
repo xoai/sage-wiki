@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/xoai/sage-wiki/internal/config"
 )
@@ -88,6 +89,11 @@ func (r *Router) RegisterRoutes(mux *http.ServeMux) {
 	for _, rt := range r.routes {
 		mux.HandleFunc(rt.Method+" "+rt.Pattern, rt.Handler)
 	}
+	// Every non-2xx /v1 response uses the envelope (04 §Error model) —
+	// including paths that miss the route table, which would otherwise get
+	// ServeMux's plain-text 404. A path that exists under another method
+	// gets 405 with Allow.
+	mux.HandleFunc("/v1/", r.handleUnmatched)
 }
 
 // Handler returns the facade as a self-contained http.Handler for
@@ -96,4 +102,43 @@ func (r *Router) Handler() http.Handler {
 	mux := http.NewServeMux()
 	r.RegisterRoutes(mux)
 	return mux
+}
+
+// handleUnmatched is the /v1 catch-all: 404 not_found for unknown paths,
+// 405 for known paths under the wrong method.
+func (r *Router) handleUnmatched(w http.ResponseWriter, req *http.Request) {
+	var allow []string
+	for _, rt := range r.routes {
+		if pathMatches(rt.Path, req.URL.Path) && rt.Method != req.Method {
+			allow = append(allow, rt.Method)
+		}
+	}
+	if len(allow) > 0 {
+		w.Header().Set("Allow", strings.Join(allow, ", "))
+		writeError(w, http.StatusMethodNotAllowed, CodeInvalidArgument, "method not allowed for this path", map[string]any{"allow": allow})
+		return
+	}
+	writeError(w, http.StatusNotFound, CodeNotFound, "not found", nil)
+}
+
+// pathMatches compares an OpenAPI-form route path (with {param} and a
+// trailing {param...} wildcard) to a request path, segment by segment.
+func pathMatches(pattern, p string) bool {
+	ps := strings.Split(strings.Trim(pattern, "/"), "/")
+	rs := strings.Split(strings.Trim(p, "/"), "/")
+	for i, seg := range ps {
+		if strings.HasSuffix(seg, "...}") {
+			return true // wildcard matches the rest
+		}
+		if i >= len(rs) {
+			return false
+		}
+		if strings.HasPrefix(seg, "{") && strings.HasSuffix(seg, "}") {
+			continue // single-segment parameter
+		}
+		if seg != rs[i] {
+			return false
+		}
+	}
+	return len(ps) == len(rs)
 }
