@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Evidence gates for low-evidence concepts (#128).** Bare acronyms scraped
+  from legends and passing references no longer become standalone
+  boilerplate concept articles: extraction dedup now merges concepts on
+  normalized alias overlap (an extracted "rap" folds into
+  "remedial-action-plan" when the alias is known, in-batch or from prior
+  compiles via new manifest-stored aliases), and a new
+  `compiler.min_concept_sources` gate (default 1; 0 disables) fully
+  suppresses concepts with no declared sources — no article, no LLM call,
+  no manifest entry, on all three compile paths. The extraction prompt also
+  tells the model not to emit unresolvable acronyms as standalone concepts.
+
 ### Fixed
 
 - **`init` no longer destroys user files (#127).** Re-running `sage-wiki init`

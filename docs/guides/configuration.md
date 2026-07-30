@@ -96,6 +96,8 @@ compiler:
   # estimate_before: false    # prompt with cost estimate before compiling
   # prompt_cache: true        # enable prompt caching (default: true)
   # batch_threshold: 10       # min sources for auto-batch mode
+  # min_concept_sources: 1    # DEFAULT — concepts with fewer declared sources get no
+                              # article/entity/manifest entry (issue #128); 0 disables
   # token_price_per_million: 0  # override pricing (0 = use built-in)
   # timezone: Asia/Shanghai   # IANA timezone for user-facing timestamps (default: UTC)
   # quality:                  # zero-LLM article quality scorer (advisory, no gate)
@@ -187,7 +189,6 @@ serve:
 #     - name: decision
 #       description: "A recorded decision with rationale"
 #   triples:                       # LLM triple extraction (P3-2, opt-in)
-#     enabled: true                # default false — adds 1 LLM call per Tier-3 doc
 #     model: ""                    # default: models.extract, then models.summarize
 #     max_tokens: 4096
 #     max_entities_per_doc: 40
