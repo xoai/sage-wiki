@@ -126,3 +126,58 @@ func TestDedupTransitiveAlias(t *testing.T) {
 		t.Errorf("sources = %v, want all three", out[0].Sources)
 	}
 }
+
+// Review M1: rule2 → rule1-rename → rule2 must not merge into a detached
+// entry. The stale seen key would have swallowed the third acronym's data.
+func TestDedupRule2RenameRule2Chain(t *testing.T) {
+	existing := map[string]manifest.Concept{
+		"remedial-action-plan": {ArticlePath: "wiki/x.md", Sources: []string{"raw/old.md"}, Aliases: []string{"rap"}},
+	}
+	out := deduplicateConcepts([]ExtractedConcept{
+		{Name: "rap", Sources: []string{"raw/1.md"}},                                          // rule 2 entry
+		{Name: "remedial action planning", Aliases: []string{"remedial-action-plan"}, Sources: []string{"raw/2.md"}}, // rule 1: its alias matches the canonical name
+		{Name: "rap", Sources: []string{"raw/3.md"}},                                          // rule 2 again — must reach the WINNER
+	}, existing)
+	if len(out) != 1 {
+		t.Fatalf("want 1 entry, got %+v", out)
+	}
+	total := 0
+	for _, c := range out {
+		total += len(c.Sources)
+	}
+	if total < 4 {
+		t.Errorf("evidence lost to a detached entry: total sources = %d, want >= 4 (old+1+2+3), %+v", total, out)
+	}
+}
+
+// Review: self-alias must never land in Aliases (A→B→C→A chain).
+func TestDedupNoSelfAlias(t *testing.T) {
+	out := deduplicateConcepts([]ExtractedConcept{
+		{Name: "alpha-long", Aliases: []string{"beta-long"}, Sources: []string{"raw/1.md"}},
+		{Name: "beta-long", Aliases: []string{"alpha-long"}, Sources: []string{"raw/2.md"}},
+	}, nil)
+	for _, c := range out {
+		for _, a := range c.Aliases {
+			if a == c.Name {
+				t.Errorf("self-alias %q on %q", a, c.Name)
+			}
+		}
+	}
+}
+
+// Review: normalized alias dedup — "RAP" and "rap" do not accumulate.
+func TestDedupNormalizedAliasSet(t *testing.T) {
+	existing := map[string]manifest.Concept{
+		"remedial-action-plan": {ArticlePath: "wiki/x.md", Sources: []string{"raw/old.md"}, Aliases: []string{"RAP"}},
+	}
+	out := deduplicateConcepts([]ExtractedConcept{{Name: "rap", Sources: []string{"raw/1.md"}}}, existing)
+	count := 0
+	for _, a := range out[0].Aliases {
+		if a == "RAP" || a == "rap" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("normalized dedup: aliases = %v", out[0].Aliases)
+	}
+}

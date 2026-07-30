@@ -97,7 +97,9 @@ compiler:
   # prompt_cache: true        # enable prompt caching (default: true)
   # batch_threshold: 10       # min sources for auto-batch mode
   # min_concept_sources: 1    # DEFAULT — concepts with fewer declared sources get no
-                              # article/entity/manifest entry (issue #128); 0 disables
+                              # article/entity/manifest entry (issue #128); 0 disables.
+                              # Concept dedup also merges normalized alias overlaps;
+                              # when two merge, the LONGER name stays canonical.
   # token_price_per_million: 0  # override pricing (0 = use built-in)
   # timezone: Asia/Shanghai   # IANA timezone for user-facing timestamps (default: UTC)
   # quality:                  # zero-LLM article quality scorer (advisory, no gate)

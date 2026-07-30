@@ -42,3 +42,23 @@ func TestOldManifestWithoutAliasesLoads(t *testing.T) {
 		t.Errorf("old manifest must load nil aliases, got %v", m.Concepts["a"].Aliases)
 	}
 }
+
+// Review: no-change re-add must not bump LastCompiled (AutoCommit churn).
+// RFC3339 second granularity makes same-second bumps indistinguishable, so
+// the fixture pins an old timestamp.
+func TestAddConceptNoChangeKeepsTimestamp(t *testing.T) {
+	m := New()
+	m.AddConcept("a", "wiki/concepts/a.md", []string{"raw/a.md"}, "rap")
+	c := m.Concepts["a"]
+	c.LastCompiled = "2020-01-01T00:00:00Z" // pin: any real bump is detectable
+	m.Concepts["a"] = c
+
+	m.AddConcept("a", "wiki/concepts/a.md", []string{"raw/a.md"}, "rap") // identical re-add
+	if got := m.Concepts["a"].LastCompiled; got != "2020-01-01T00:00:00Z" {
+		t.Errorf("no-change re-add bumped LastCompiled to %q", got)
+	}
+	m.AddConcept("a", "wiki/concepts/a.md", []string{"raw/b.md"}, "rap")
+	if got := m.Concepts["a"].LastCompiled; got == "2020-01-01T00:00:00Z" {
+		t.Error("changed re-add must bump LastCompiled")
+	}
+}

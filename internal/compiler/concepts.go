@@ -306,16 +306,21 @@ func deduplicateConcepts(concepts []ExtractedConcept, existing map[string]manife
 				dst.Sources = append(dst.Sources, s)
 			}
 		}
-		aliasSet := map[string]bool{}
+		// Alias dedup keys are NORMALIZED (review: "RAP" and "rap" must not
+		// accumulate as distinct aliases), and the canonical's own name must
+		// never land in its alias list (review: self-alias polluted the
+		// manifest on A→B→C→A chains).
+		aliasSet := map[string]bool{normalizeName(dst.Name): true}
 		for _, a := range dst.Aliases {
-			aliasSet[a] = true
+			aliasSet[normalizeName(a)] = true
 		}
 		for _, a := range src.Aliases {
-			if !aliasSet[a] {
+			if !aliasSet[normalizeName(a)] {
+				aliasSet[normalizeName(a)] = true
 				dst.Aliases = append(dst.Aliases, a)
 			}
 		}
-		if !aliasSet[src.Name] && normalizeName(src.Name) != normalizeName(dst.Name) {
+		if !aliasSet[normalizeName(src.Name)] && normalizeName(src.Name) != normalizeName(dst.Name) {
 			dst.Aliases = append(dst.Aliases, src.Name) // loser's name becomes an alias
 		}
 	}
@@ -375,9 +380,27 @@ func deduplicateConcepts(concepts []ExtractedConcept, existing map[string]manife
 			// acronym) — "remedial-action-plan" beats "rap" either way.
 			if len(normalizeName(c.Name)) > len(normalizeName(r.Name)) {
 				winner := &ExtractedConcept{Name: c.Name, Type: c.Type}
+				if winner.Type == "" {
+					winner.Type = r.Type // don't drop the loser's type (review)
+				}
 				merge(winner, r) // r is the heap accumulator — no stale copy
 				merge(winner, c)
-				delete(seen, normalizeName(r.Name))
+				// Purge EVERY seen key pointing at the loser, not just its
+				// canonical name: rule-2 entries are double-registered
+				// (acronym key + canonical key), and a stale key would merge
+				// a later acronym into the detached loser (review M1). The
+				// purged keys are re-registered at the winner, so a later
+				// rule-2 hit on the same canonical still finds it.
+				var loserKeys []string
+				for k, v := range seen {
+					if v == r {
+						loserKeys = append(loserKeys, k)
+						delete(seen, k)
+					}
+				}
+				for _, k := range loserKeys {
+					seen[k] = winner
+				}
 				seen[key] = winner
 				result[ri] = winner
 				log.Info("dedup: folded into existing concept", "from", r.Name, "into", c.Name)
