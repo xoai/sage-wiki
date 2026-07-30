@@ -123,7 +123,7 @@ func (r *Router) handleUnmatched(w http.ResponseWriter, req *http.Request) {
 	writeError(w, http.StatusNotFound, CodeNotFound, "not found", nil)
 }
 
-// pathMatches compares an OpenAPI-form route path (with {param} and a
+// pathMatches compares a ServeMux-form route pattern (with {param} and a
 // trailing {param...} wildcard) to a request path, segment by segment.
 func pathMatches(pattern, p string) bool {
 	ps := strings.Split(strings.Trim(pattern, "/"), "/")

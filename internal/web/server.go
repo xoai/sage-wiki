@@ -155,6 +155,12 @@ func (s *WebServer) Handler() http.Handler {
 	// Public REST facade (P4-1) — same middleware envelope as /api/*.
 	if s.v1Handler != nil {
 		mux.Handle("/v1/", s.v1Handler)
+	} else {
+		// Without a facade wired, /v1/* must not fall through to the SPA
+		// fallback and answer 200 HTML — answer the envelope instead.
+		mux.Handle("/v1/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "not found", nil)
+		}))
 	}
 
 	// Optional observability endpoint (P2-2). NOT build-tagged — ships in

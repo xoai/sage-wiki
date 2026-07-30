@@ -150,6 +150,36 @@ func TestV1_APIRoutesUnchanged(t *testing.T) {
 	}
 }
 
+// Idempotency through the mounted Handler(): middleware composed with
+// auth/security — same key twice on a write replays byte-identically with
+// no second dispatch.
+func TestV1_IdempotencyThroughMountedHandler(t *testing.T) {
+	srv := setupV1(t)
+	srv.SetAuth("s3cret", nil)
+	h := srv.Handler()
+
+	var bodies [2]string
+	for i := 0; i < 2; i++ {
+		req := loopbackReq("POST", "/v1/learnings")
+		req.Header.Set("Authorization", "Bearer s3cret")
+		req.Header.Set("Idempotency-Key", "through-handler-key")
+		req.Header.Set("Content-Type", "application/json")
+		req.Body = io.NopCloser(strings.NewReader(`{"type":"gotcha","content":"via mounted handler"}`))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("request %d → %d (%s)", i, w.Code, w.Body.String())
+		}
+		if i == 1 && w.Header().Get("X-Idempotent-Replay") != "true" {
+			t.Fatalf("second request missing replay header: %v", w.Header())
+		}
+		bodies[i] = w.Body.String()
+	}
+	if bodies[0] != bodies[1] {
+		t.Fatalf("replays differ:\n%s\n%s", bodies[0], bodies[1])
+	}
+}
+
 // An unauthenticated failure happens BEFORE the idempotency middleware —
 // a 401 must never be stored under a key; the authenticated retry must
 // dispatch fresh.

@@ -532,7 +532,7 @@ paths:
               type: object
               required: [content]
               properties:
-                content: {type: string, maxLength: 102400}
+                content: {type: string, maxLength: 102400, description: "Max 102400 bytes (100 KB); multi-byte UTF-8 counts per byte"}
                 context: {type: string}
                 tags: {type: string, description: "Comma-separated"}
       responses:

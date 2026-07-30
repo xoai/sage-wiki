@@ -174,8 +174,12 @@ func (rt *Router) idempotent(next http.HandlerFunc) http.HandlerFunc {
 		}
 		c, leader := rt.idem.begin(key)
 		if !leader {
-			<-c.done
-			replayStored(w, c.entry)
+			// Free the goroutine if our own client hangs up while waiting.
+			select {
+			case <-c.done:
+				replayStored(w, c.entry)
+			case <-req.Context().Done():
+			}
 			return
 		}
 		// A panicking handler must not wedge the key: finish with a stored

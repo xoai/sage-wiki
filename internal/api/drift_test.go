@@ -95,6 +95,13 @@ func driftErrors(routes []Route, spec openapiDoc, toolArgs map[string][]string) 
 			}
 		}
 	}
+	// Exclusions must name real tools — a renamed tool must rot the
+	// exclusion loudly, not silently.
+	for name := range driftExcludedTools {
+		if _, ok := toolArgs[name]; !ok {
+			errs = append(errs, "rule 1: exclusion list names unknown tool "+name+" (renamed? update the exclusion)")
+		}
+	}
 
 	// Rule 2, routes → spec: every registered route exists in the spec.
 	for _, rt := range routes {

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+### Added
+
 - **`/v1` REST facade + OpenAPI 3.1 + drift check (P4-1).** sage-wiki is
   now callable from any language: 16 synchronous routes under `/v1`
   dispatch 1:1 to the existing MCP tool handlers (`sage-wiki serve --ui`),
@@ -30,8 +32,6 @@
   (same merge-base semantics as the CI job) and `make translations-self-test`;
   CONTRIBUTING documents the translations rule and the maintainer fork-PR
   workflow-approval step, and PRs get a checklist template. (#126)
-
-### Added
 
 - **`pkg/sagewiki` — in-process Go embedding (#112).** A supported, non-internal
   entry point for embedding sage-wiki in another Go program without spawning
