@@ -248,6 +248,33 @@ vivent dans le [guide de la couche mémoire agent](docs/guides/agent-memory-laye
 comment interroger, dérivée de votre config. Cibles : `claude-code`, `cursor`,
 `windsurf`, `agents-md` (Antigravity), `codex`, `gemini`, `generic`.
 
+### Compétences agent
+
+Installez la compétence de référence de sage-wiki pour qu'un assistant de
+codage connaisse toute la surface d'outils — les 18 outils MCP, les
+équivalents REST `/v1`, les drapeaux opt-in, les tiers, la sémantique de
+compilation asynchrone et les codes d'erreur — sans lire ce README :
+
+```bash
+# Claude Code
+npx skills add https://github.com/xoai/sage-wiki --skill sage-wiki
+
+# Ou manuellement : copiez skills/sage-wiki/SKILL.md dans .claude/skills/
+```
+
+La compétence pipeline `sage-wiki-integrate` intègre sage-wiki dans un
+nouveau dépôt de façon interactive (détection du langage → installation du
+client ou configuration MCP → test de fumée stocker-et-retrouver) :
+
+```bash
+npx skills add https://github.com/xoai/sage-wiki --skill sage-wiki-integrate
+```
+
+Les deux compétences sont générées depuis le registre MCP réel
+(`go run ./tools/skillgen/`) et vérifiées contre la dérive en CI — elles ne
+peuvent pas devenir obsolètes quand les outils changent. Pre-1.0 —
+épinglez une version.
+
 **Capture de connaissances** — les agents stockent leurs découvertes en retour
 via `wiki_capture` / `wiki_learn`, fermant la boucle lire-capturer-évoluer.
 Workflows et astuces : [Couche mémoire agent](docs/guides/agent-memory-layer.md).

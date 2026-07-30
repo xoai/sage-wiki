@@ -245,6 +245,32 @@ một phần kỹ năng hành vi vào tệp hướng dẫn của agent (CLAUDE.m
 truy vấn, được suy ra từ cấu hình của bạn. Các target: `claude-code`, `cursor`,
 `windsurf`, `agents-md` (Antigravity), `codex`, `gemini`, `generic`.
 
+### Kỹ năng agent
+
+Cài đặt kỹ năng tham chiếu của sage-wiki để trợ lý lập trình biết toàn bộ
+bề mặt công cụ — cả 18 công cụ MCP, các tương đương REST `/v1`, cờ opt-in,
+các tier, ngữ nghĩa biên dịch bất đồng bộ và mã lỗi — mà không cần đọc
+README này:
+
+```bash
+# Claude Code
+npx skills add https://github.com/xoai/sage-wiki --skill sage-wiki
+
+# Hoặc thủ công: sao chép skills/sage-wiki/SKILL.md vào .claude/skills/
+```
+
+Kỹ năng pipeline `sage-wiki-integrate` kết nối sage-wiki vào một repo mới một
+cách tương tác (phát hiện ngôn ngữ → cài client hoặc cấu hình MCP → smoke
+test lưu-và-truy-xuất):
+
+```bash
+npx skills add https://github.com/xoai/sage-wiki --skill sage-wiki-integrate
+```
+
+Cả hai kỹ năng được tạo từ registry MCP trực tiếp (`go run ./tools/skillgen/`)
+và được kiểm tra trôi lệch trong CI — chúng không thể lỗi thời khi công cụ
+thay đổi. Pre-1.0 — hãy ghim một phiên bản.
+
 **Ghi nhận tri thức** — agent lưu lại các phát hiện qua `wiki_capture` /
 `wiki_learn`, khép kín vòng lặp đọc-ghi nhận-tiến hóa. Quy trình và mẹo:
 [Lớp bộ nhớ Agent](docs/guides/agent-memory-layer.md).

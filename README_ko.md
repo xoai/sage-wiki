@@ -245,6 +245,30 @@ Preact + Tailwind로 구축되어 `go:embed`로 임베딩됩니다 (~1.2 MB, gzi
 내용은 설정에서 파생됩니다. 대상: `claude-code`, `cursor`,
 `windsurf`, `agents-md` (Antigravity), `codex`, `gemini`, `generic`.
 
+### 에이전트 스킬
+
+sage-wiki의 레퍼런스 스킬을 설치하면 코딩 어시스턴트가 이 README를 읽지
+않고도 전체 도구 표면—18개 MCP 도구, `/v1` REST 대응, 옵트인 플래그, 티어,
+비동기 컴파일 의미, 에러 코드—을 알게 됩니다:
+
+```bash
+# Claude Code
+npx skills add https://github.com/xoai/sage-wiki --skill sage-wiki
+
+# 또는 수동으로: skills/sage-wiki/SKILL.md를 .claude/skills/에 복사
+```
+
+파이프라인 스킬 `sage-wiki-integrate`는 새 리포지토리에 sage-wiki를 대화형으로
+연결합니다(언어 감지 → 클라이언트 설치 또는 MCP 설정 → 저장-검색 스모크 테스트):
+
+```bash
+npx skills add https://github.com/xoai/sage-wiki --skill sage-wiki-integrate
+```
+
+두 스킬 모두 라이브 MCP 레지스트리에서 생성되며(`go run ./tools/skillgen/`)
+CI에서 드리프트 검사를 받습니다 — 도구가 바뀌어도 오래되지 않습니다.
+Pre-1.0 — 버전을 고정하세요.
+
 **지식 캡처** — 에이전트는 `wiki_capture` / `wiki_learn`을 통해
 인사이트를 다시 저장하여 읽기-캡처-진화 루프를 완성합니다. 워크플로우와 팁:
 [에이전트 메모리 레이어](docs/guides/agent-memory-layer.md).

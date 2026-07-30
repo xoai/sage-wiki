@@ -248,6 +248,32 @@ sage-wiki serve --ui        # http://127.0.0.1:3333, требуется сбор
 запрашивать, — на основе вашей конфигурации. Цели: `claude-code`, `cursor`,
 `windsurf`, `agents-md` (Antigravity), `codex`, `gemini`, `generic`.
 
+### Навыки агента
+
+Установите справочный навык sage-wiki, чтобы помощник по коду знал всю
+поверхность инструментов — все 18 MCP-инструментов, REST-эквиваленты `/v1`,
+флаги opt-in, уровни, семантику асинхронной компиляции и коды ошибок — не
+читая этот README:
+
+```bash
+# Claude Code
+npx skills add https://github.com/xoai/sage-wiki --skill sage-wiki
+
+# Или вручную: скопируйте skills/sage-wiki/SKILL.md в .claude/skills/
+```
+
+Навык-конвейер `sage-wiki-integrate` подключает sage-wiki к новому
+репозиторию интерактивно (определение языка → установка клиента или
+настройка MCP → smoke-тест «сохранить-и-найти»):
+
+```bash
+npx skills add https://github.com/xoai/sage-wiki --skill sage-wiki-integrate
+```
+
+Оба навыка генерируются из живого реестра MCP (`go run ./tools/skillgen/`) и
+проверяются на дрейф в CI — они не устаревают при изменении инструментов.
+Pre-1.0 — зафиксируйте версию.
+
 **Захват знаний** — агенты сохраняют выводы обратно через `wiki_capture` /
 `wiki_learn`, замыкая цикл «чтение–захват–эволюция». Рабочие процессы и советы:
 [Слой памяти агента](docs/guides/agent-memory-layer.md).

@@ -221,6 +221,25 @@ sage-wiki serve --ui        # http://127.0.0.1:3333，需要 -tags webui 构建
 
 **Agent 技能文件** —— `sage-wiki skill refresh --target <agent>` 会向 Agent 的指令文件（CLAUDE.md、.cursorrules 等）写入一段行为规范，根据你的配置生成，教会它何时搜索、捕获什么、如何查询。支持的目标：`claude-code`、`cursor`、`windsurf`、`agents-md`（Antigravity）、`codex`、`gemini`、`generic`。
 
+### Agent 技能
+
+安装 sage-wiki 的参考技能，让编程助手无需阅读本 README 即可了解完整的工具面——全部 18 个 MCP 工具、`/v1` REST 对应接口、可选开关、层级、异步编译语义和错误码：
+
+```bash
+# Claude Code
+npx skills add https://github.com/xoai/sage-wiki --skill sage-wiki
+
+# 或手动：将 skills/sage-wiki/SKILL.md 复制到 .claude/skills/
+```
+
+流水线技能 `sage-wiki-integrate` 以交互方式将 sage-wiki 接入新仓库（检测语言 → 安装客户端或配置 MCP → 存取冒烟测试）：
+
+```bash
+npx skills add https://github.com/xoai/sage-wiki --skill sage-wiki-integrate
+```
+
+两个技能都从实时 MCP 注册表生成（`go run ./tools/skillgen/`），并在 CI 中进行漂移检查——工具变更时不会过时。Pre-1.0 —— 请锁定版本。
+
 **知识捕获** —— Agent 通过 `wiki_capture` / `wiki_learn` 将洞见存回 wiki，闭合"读取-捕获-演进"循环。工作流与技巧：[Agent 记忆层](docs/guides/agent-memory-layer.md)。
 
 ### 在 Go 程序中嵌入

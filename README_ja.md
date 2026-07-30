@@ -244,6 +244,32 @@ Preact + Tailwindで構築され、`go:embed`で埋め込まれます（約1.2 M
 内容はあなたの設定から導出されます。ターゲット：`claude-code`、`cursor`、
 `windsurf`、`agents-md`（Antigravity）、`codex`、`gemini`、`generic`。
 
+### エージェントスキル
+
+sage-wikiのリファレンススキルをインストールすると、コーディングアシスタントが
+このREADMEを読まなくてもツールの全表面—18のMCPツール、`/v1` REST相当、
+オプトインフラグ、ティア、非同期コンパイルのセマンティクス、エラーコード—を
+把握できます：
+
+```bash
+# Claude Code
+npx skills add https://github.com/xoai/sage-wiki --skill sage-wiki
+
+# または手動で：skills/sage-wiki/SKILL.md を .claude/skills/ にコピー
+```
+
+パイプラインスキル `sage-wiki-integrate` は、新しいリポジトリへのsage-wikiの
+組み込みを対話的に行います（言語検出 → クライアントのインストールまたは
+MCP設定 → 保存と検索のスモークテスト）：
+
+```bash
+npx skills add https://github.com/xoai/sage-wiki --skill sage-wiki-integrate
+```
+
+両スキルはライブのMCPレジストリから生成され（`go run ./tools/skillgen/`）、
+CIでドリフトチェックされます—ツールが変わっても陳腐化しません。
+Pre-1.0 — バージョンを固定してください。
+
 **知識キャプチャ** — エージェントは`wiki_capture` / `wiki_learn`を介して
 インサイトを書き戻し、読み取り・キャプチャ・進化のループを閉じます。
 ワークフローとヒント：[エージェントメモリレイヤー](docs/guides/agent-memory-layer.md)。
