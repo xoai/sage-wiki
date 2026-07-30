@@ -7,10 +7,13 @@
 
 GO ?= go
 GOLANGCI_LINT_VERSION ?= v2.12.2
-# Base branch for the new-issues lint filter (mirrors CI's --new-from-merge-base).
-LINT_BASE ?= main
+# Base branch for the new-issues lint filter (mirrors CI's --new-from-merge-base)
+# and the translation-drift range. Falls back to origin/main when no local main
+# exists (detached worktrees); shallow clones need full history for merge-base.
+BASE ?= main
+LINT_BASE ?= $(BASE)
 
-.PHONY: build build-webui vet test lint lint-new vuln tidy ci
+.PHONY: build build-webui vet test lint lint-new vuln tidy ci translations translations-self-test
 
 build:
 	CGO_ENABLED=0 $(GO) build ./...
@@ -41,6 +44,19 @@ vuln:
 tidy:
 	$(GO) mod tidy
 
-# The CI *gates* only (build/vet/test/new-issue lint). `vuln` is advisory in CI,
-# so it is deliberately excluded here — run `make vuln` separately.
-ci: build build-webui vet test lint-new
+# Translation drift (MAINT-05): README.md must move with at least one
+# README_*.md translation, or a commit in the range carries
+# `translations: lag-ok`. One shell per target: recipe lines would otherwise
+# lose the computed vars between lines.
+translations:
+	@mb=$$(git merge-base "$$(git rev-parse --verify --quiet $(BASE) || git rev-parse --verify --quiet origin/main)" HEAD); 	COMMIT_MSGS="$$(git log --format=%B $$mb..HEAD)"; 	BASE="$(BASE)" HEAD=HEAD COMMIT_MSGS="$$COMMIT_MSGS" bash scripts/check-readme-translations.sh
+
+# Contract test for the check itself (no repo state needed).
+translations-self-test:
+	bash scripts/check-readme-translations.sh --self-test
+
+# The CI *gates* only (build/vet/test/new-issue lint/translations). `vuln` is
+# advisory in CI, so it is deliberately excluded here — run `make vuln`
+# separately. Run on your feature branch: on main itself the drift range is
+# empty and `translations` is a no-op by design.
+ci: build build-webui vet test lint-new translations
