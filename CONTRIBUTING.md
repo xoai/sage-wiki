@@ -2,7 +2,8 @@
 
 **Before opening a PR:** run `make ci` on your feature branch — it mirrors the
 CI quality gate (build, vet, race tests, new-issue lint, translation drift).
-On `main` itself the drift range is empty, so always check from your branch.
+On `main` itself the *local* drift range is empty (CI's push path checks
+`before..after` and is not), so always check from your branch.
 
 ## Translations
 

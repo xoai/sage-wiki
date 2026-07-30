@@ -2,8 +2,6 @@
 
 ## [Unreleased]
 
-### Fixed
-
 - **`make ci` now covers the translation-drift check.** The documented local
   gate claimed to mirror CI but omitted MAINT-05, so a README.md-only change
   could pass `make ci` and still fail CI after merge. New `make translations`
