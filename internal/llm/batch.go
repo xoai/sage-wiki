@@ -144,7 +144,10 @@ func (p *anthropicProvider) SubmitBatch(requests []BatchRequest) (string, error)
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("anthropic batch: submit: read response body: %w", err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		recordRateLimited(resp.StatusCode)
 		return "", fmt.Errorf("anthropic batch: submit returned %d: %s", resp.StatusCode, string(body))
@@ -179,7 +182,10 @@ func (p *anthropicProvider) PollBatch(batchID string) (*BatchStatusResponse, err
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("batch: read response body: %w", err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		recordRateLimited(resp.StatusCode)
 		return nil, fmt.Errorf("anthropic batch: poll returned %d: %s", resp.StatusCode, string(body))
@@ -202,7 +208,38 @@ func (p *anthropicProvider) PollBatch(batchID string) (*BatchStatusResponse, err
 	}, nil
 }
 
+// retrieveWithRetry runs a provider retrieve with #114-pattern retries on
+// truncation-class errors (#124): a 200-OK body that fails to parse is
+// transient provider flakiness, so re-issue the GET and parse the fresh
+// response. Anything else fails fast.
+func retrieveWithRetry(provider string, fetch func() ([]BatchResult, error)) ([]BatchResult, error) {
+	const maxAttempts = 4 // matches #114 (structured.go)
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		results, err := fetch()
+		if err == nil {
+			return results, nil
+		}
+		lastErr = err
+		if !IsTruncatedBodyErr(err) {
+			return nil, err
+		}
+		if attempt < maxAttempts-1 {
+			delay := backoffDelayFn(attempt)
+			log.Warn("batch: truncated retrieve body, retrying", "provider", provider, "attempt", attempt+1, "delay", delay, "error", err)
+			time.Sleep(delay)
+		}
+	}
+	return nil, lastErr
+}
+
 func (p *anthropicProvider) RetrieveBatch(resultsURL string) ([]BatchResult, error) {
+	return retrieveWithRetry("anthropic", func() ([]BatchResult, error) {
+		return p.retrieveBatchOnce(resultsURL)
+	})
+}
+
+func (p *anthropicProvider) retrieveBatchOnce(resultsURL string) ([]BatchResult, error) {
 	// Validate URL to prevent SSRF — resultsURL may come from checkpoint file on disk.
 	expectedHost := "api.anthropic.com"
 	if p.baseURL != "" {
@@ -230,7 +267,10 @@ func (p *anthropicProvider) RetrieveBatch(resultsURL string) ([]BatchResult, err
 
 	if resp.StatusCode != http.StatusOK {
 		recordRateLimited(resp.StatusCode)
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("anthropic batch: retrieve returned %d and the error body could not be read: %w", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("anthropic batch: retrieve returned %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -271,12 +311,12 @@ func parseAnthropicBatchResults(r io.Reader) ([]BatchResult, error) {
 			} `json:"result"`
 		}
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			truncated := line
-			if len(truncated) > 200 {
-				truncated = truncated[:200] + "..."
-			}
-			log.Warn("batch: skipping malformed JSONL line", "error", err, "line", truncated)
-			continue
+			// Malformed JSONL from a machine-generated results file means
+			// corruption (usually truncation), not content — error out
+			// %w-wrapped so IsTruncatedBodyErr can classify it for retry
+			// (#124). Skipping silently dropped batch results.
+			log.Warn("batch: malformed JSONL line", "error", err)
+			return nil, fmt.Errorf("anthropic batch: malformed JSONL line: %w", err)
 		}
 
 		br := BatchResult{CustomID: entry.CustomID}
@@ -371,7 +411,10 @@ func (p *openaiProvider) SubmitBatch(requests []BatchRequest) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("openai batch: create: read response body: %w", err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		recordRateLimited(resp.StatusCode)
 		return "", fmt.Errorf("openai batch: create returned %d: %s", resp.StatusCode, string(body))
@@ -419,7 +462,10 @@ func (p *openaiProvider) uploadBatchFile(content []byte) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("openai batch: upload: read response body: %w", err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		recordRateLimited(resp.StatusCode)
 		return "", fmt.Errorf("openai batch: upload returned %d: %s", resp.StatusCode, string(body))
@@ -451,7 +497,10 @@ func (p *openaiProvider) PollBatch(batchID string) (*BatchStatusResponse, error)
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("batch: read response body: %w", err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		recordRateLimited(resp.StatusCode)
 		return nil, fmt.Errorf("openai batch: poll returned %d: %s", resp.StatusCode, string(body))
@@ -475,6 +524,12 @@ func (p *openaiProvider) PollBatch(batchID string) (*BatchStatusResponse, error)
 }
 
 func (p *openaiProvider) RetrieveBatch(outputFileID string) ([]BatchResult, error) {
+	return retrieveWithRetry("openai", func() ([]BatchResult, error) {
+		return p.retrieveBatchOnce(outputFileID)
+	})
+}
+
+func (p *openaiProvider) retrieveBatchOnce(outputFileID string) ([]BatchResult, error) {
 	req, err := http.NewRequest("GET", p.baseURL+"/files/"+outputFileID+"/content", nil)
 	if err != nil {
 		return nil, err
@@ -492,7 +547,10 @@ func (p *openaiProvider) RetrieveBatch(outputFileID string) ([]BatchResult, erro
 
 	if resp.StatusCode != http.StatusOK {
 		recordRateLimited(resp.StatusCode)
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("batch: read response body: %w", err)
+		}
 		return nil, fmt.Errorf("openai batch: retrieve returned %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -533,12 +591,10 @@ func parseOpenAIBatchResults(r io.Reader) ([]BatchResult, error) {
 			} `json:"response"`
 		}
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			truncated := line
-			if len(truncated) > 200 {
-				truncated = truncated[:200] + "..."
-			}
-			log.Warn("batch: skipping malformed JSONL line", "error", err, "line", truncated)
-			continue
+			// See the anthropic twin — malformed JSONL is corruption, not
+			// content; %w so IsTruncatedBodyErr classifies for retry (#124).
+			log.Warn("batch: malformed JSONL line", "error", err)
+			return nil, fmt.Errorf("openai batch: malformed JSONL line: %w", err)
 		}
 
 		br := BatchResult{CustomID: entry.CustomID}

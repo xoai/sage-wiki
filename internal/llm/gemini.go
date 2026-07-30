@@ -603,6 +603,12 @@ func (p *geminiProvider) PollBatch(batchID string) (*BatchStatusResponse, error)
 // RetrieveBatch downloads and parses results from a completed Gemini batch.
 // resultsRef is the file resource name from PollBatch (e.g. "files/abc123-responses").
 func (p *geminiProvider) RetrieveBatch(resultsRef string) ([]BatchResult, error) {
+	return retrieveWithRetry("gemini", func() ([]BatchResult, error) {
+		return p.retrieveBatchOnce(resultsRef)
+	})
+}
+
+func (p *geminiProvider) retrieveBatchOnce(resultsRef string) ([]BatchResult, error) {
 	// Validate the download URL points to the expected host to prevent SSRF.
 	// p.batchHost is derived from p.baseURL so custom endpoints are honoured.
 	if err := validateBatchURL(
@@ -627,7 +633,10 @@ func (p *geminiProvider) RetrieveBatch(resultsRef string) ([]BatchResult, error)
 
 	if resp.StatusCode != http.StatusOK {
 		recordRateLimited(resp.StatusCode)
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("gemini batch: download returned %d and the error body could not be read: %w", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("gemini batch: download returned %d: %s", resp.StatusCode, sanitizeGeminiError(string(body)))
 	}
 
@@ -673,12 +682,11 @@ func parseGeminiBatchResults(r io.Reader) ([]BatchResult, error) {
 		}
 
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			truncated := line
-			if len(truncated) > 200 {
-				truncated = truncated[:200] + "..."
-			}
-			log.Warn("gemini batch: skipping malformed JSONL line", "error", err, "line", truncated)
-			continue
+			// Malformed JSONL from a machine-generated results file is
+			// corruption (usually truncation), not content — %w so
+			// IsTruncatedBodyErr classifies it for retry (#124).
+			log.Warn("gemini batch: malformed JSONL line", "error", err)
+			return nil, fmt.Errorf("gemini batch: malformed JSONL line: %w", err)
 		}
 
 		br := BatchResult{CustomID: entry.Key}
