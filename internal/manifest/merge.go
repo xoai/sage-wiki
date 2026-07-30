@@ -32,6 +32,11 @@ func (m *Manifest) Clone() *Manifest {
 			copy(cs, con.Sources)
 			con.Sources = cs
 		}
+		if con.Aliases != nil {
+			as := make([]string, len(con.Aliases))
+			copy(as, con.Aliases)
+			con.Aliases = as
+		}
 		c.Concepts[k] = con
 	}
 	return c
