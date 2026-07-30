@@ -92,8 +92,7 @@ go build -tags webui -o sage-wiki ./cmd/sage-wiki/
 ### グリーンフィールド（新規プロジェクト）
 
 ```bash
-mkdir my-wiki && cd my-wiki
-sage-wiki init
+sage-wiki init my-wiki && cd my-wiki
 # raw/ にソースを追加
 cp ~/papers/*.pdf raw/
 # config.yaml を編集して API キーを追加し、LLM を選択

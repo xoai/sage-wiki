@@ -92,8 +92,7 @@ go build -tags webui -o sage-wiki ./cmd/sage-wiki/
 ### С нуля (новый проект)
 
 ```bash
-mkdir my-wiki && cd my-wiki
-sage-wiki init
+sage-wiki init my-wiki && cd my-wiki
 # Добавьте источники в raw/
 cp ~/papers/*.pdf raw/
 # Отредактируйте config.yaml — добавьте API-ключ и выберите LLM

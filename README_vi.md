@@ -92,8 +92,7 @@ go build -tags webui -o sage-wiki ./cmd/sage-wiki/
 ### Dự án mới (greenfield)
 
 ```bash
-mkdir my-wiki && cd my-wiki
-sage-wiki init
+sage-wiki init my-wiki && cd my-wiki
 # Thêm nguồn vào raw/
 cp ~/papers/*.pdf raw/
 # Chỉnh sửa config.yaml để thêm api key và chọn LLM

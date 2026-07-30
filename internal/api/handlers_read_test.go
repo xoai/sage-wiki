@@ -1,6 +1,7 @@
 package api
 
 import (
+	"os/exec"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -25,6 +26,14 @@ func newTestRouter(t *testing.T, cfgRewrite func(string) string) (*Router, *http
 	dir := t.TempDir()
 	if err := wiki.InitGreenfield(dir, "test", "gemini-2.5-flash"); err != nil {
 		t.Fatalf("InitGreenfield: %v", err)
+	}
+	// Repo-local git identity: CI runners have no global git config, and
+	// wiki_commit tests commit to the initialized repo (git.Commit needs
+	// user.email/user.name or it dies with "Author identity unknown").
+	for _, kv := range [][2]string{{"user.email", "test@sage-wiki.local"}, {"user.name", "sage-wiki test"}} {
+		if out, err := exec.Command("git", "-C", dir, "config", kv[0], kv[1]).CombinedOutput(); err != nil {
+			t.Fatalf("git config %s: %v (%s)", kv[0], err, out)
+		}
 	}
 	if cfgRewrite != nil {
 		p := filepath.Join(dir, "config.yaml")
