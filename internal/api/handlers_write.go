@@ -17,7 +17,7 @@ var conceptIDShape = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 func (r *Router) handleAddSource(w http.ResponseWriter, req *http.Request) {
 	args, err := decodeJSONBody(req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, CodeInvalidArgument, err.Error(), nil)
+		writeBodyError(w, err)
 		return
 	}
 	p, _ := args["path"].(string)
@@ -45,7 +45,7 @@ func (r *Router) handleAddSource(w http.ResponseWriter, req *http.Request) {
 func (r *Router) handleWriteSummary(w http.ResponseWriter, req *http.Request) {
 	args, err := decodeJSONBody(req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, CodeInvalidArgument, err.Error(), nil)
+		writeBodyError(w, err)
 		return
 	}
 	source, _ := args["source"].(string)
@@ -65,7 +65,7 @@ func (r *Router) handleWriteArticle(w http.ResponseWriter, req *http.Request) {
 	}
 	args, err := decodeJSONBody(req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, CodeInvalidArgument, err.Error(), nil)
+		writeBodyError(w, err)
 		return
 	}
 	content, _ := args["content"].(string)
@@ -86,7 +86,7 @@ func (r *Router) handleWriteArticle(w http.ResponseWriter, req *http.Request) {
 func (r *Router) handleAddOntologyEntity(w http.ResponseWriter, req *http.Request) {
 	args, err := decodeJSONBody(req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, CodeInvalidArgument, err.Error(), nil)
+		writeBodyError(w, err)
 		return
 	}
 	id, _ := args["id"].(string)
@@ -107,7 +107,7 @@ func (r *Router) handleAddOntologyEntity(w http.ResponseWriter, req *http.Reques
 func (r *Router) handleAddOntologyRelation(w http.ResponseWriter, req *http.Request) {
 	args, err := decodeJSONBody(req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, CodeInvalidArgument, err.Error(), nil)
+		writeBodyError(w, err)
 		return
 	}
 	sourceID, _ := args["source_id"].(string)
@@ -131,7 +131,7 @@ var learnTypes = map[string]bool{
 func (r *Router) handleLearn(w http.ResponseWriter, req *http.Request) {
 	args, err := decodeJSONBody(req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, CodeInvalidArgument, err.Error(), nil)
+		writeBodyError(w, err)
 		return
 	}
 	learnType, _ := args["type"].(string)
@@ -150,7 +150,7 @@ func (r *Router) handleLearn(w http.ResponseWriter, req *http.Request) {
 func (r *Router) handleCommit(w http.ResponseWriter, req *http.Request) {
 	args, err := decodeOptionalJSONBody(req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, CodeInvalidArgument, err.Error(), nil)
+		writeBodyError(w, err)
 		return
 	}
 	dispatch(req.Context(), w, r.d, ToolCommit, args, "result")
@@ -159,7 +159,7 @@ func (r *Router) handleCommit(w http.ResponseWriter, req *http.Request) {
 func (r *Router) handleCapture(w http.ResponseWriter, req *http.Request) {
 	args, err := decodeJSONBody(req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, CodeInvalidArgument, err.Error(), nil)
+		writeBodyError(w, err)
 		return
 	}
 	content, _ := args["content"].(string)

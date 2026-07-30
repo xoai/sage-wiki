@@ -117,6 +117,13 @@ func (s *WebServer) SetV1Handler(h http.Handler) {
 	s.v1Handler = h
 }
 
+// Config returns the server's loaded configuration (read-only callers —
+// e.g. the /v1 facade's feature-gate pre-checks). It is the same *Config
+// the server itself uses, so facade and server cannot diverge.
+func (s *WebServer) Config() *config.Config {
+	return s.cfg
+}
+
 // splitHosts parses a comma-separated host list, trimming blanks.
 func splitHosts(csv string) []string {
 	var out []string

@@ -94,6 +94,31 @@ func TestIdempotency_ConcurrentSameKeySingleDispatch(t *testing.T) {
 	}
 }
 
+func TestIdemStore_EvictionAtCap(t *testing.T) {
+	s := newIdemStore()
+	put := func(k string) {
+		c, leader := s.begin(k)
+		if !leader {
+			t.Fatalf("%s unexpectedly in flight", k)
+		}
+		s.finish(k, c, idemEntry{status: 200, stored: s.now()})
+	}
+	put("oldest")
+	for i := 0; i < idemMaxEntries; i++ {
+		put(strings.Repeat("k", 1) + string(rune('a'+i%26)) + strings.Repeat("x", i/26))
+	}
+	s.mu.Lock()
+	n := len(s.entries)
+	_, oldestPresent := s.entries["oldest"]
+	s.mu.Unlock()
+	if n != idemMaxEntries {
+		t.Fatalf("entries = %d, want capped at %d", n, idemMaxEntries)
+	}
+	if oldestPresent {
+		t.Fatal("least-recently-used key should have been evicted at cap")
+	}
+}
+
 func TestIdempotency_ReplaysErrorResponses(t *testing.T) {
 	// A 4xx from edge validation inside the wrapped handler is also stored
 	// — the client retried the identical request, it gets the identical

@@ -79,7 +79,12 @@ func (r *Router) handleReadArticle(w http.ResponseWriter, req *http.Request) {
 	}
 	info, err := os.Stat(abs)
 	if err != nil {
-		writeError(w, http.StatusNotFound, CodeNotFound, "article not found", map[string]any{"path": p})
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, CodeNotFound, "article not found", map[string]any{"path": p})
+			return
+		}
+		log.Printf("api: stat %s: %v", p, err)
+		writeError(w, http.StatusInternalServerError, CodeInternal, "article unavailable", nil)
 		return
 	}
 	if info.IsDir() {
@@ -150,7 +155,7 @@ func (r *Router) handleTraverse(w http.ResponseWriter, req *http.Request) {
 func (r *Router) handleGraphQuery(w http.ResponseWriter, req *http.Request) {
 	args, err := decodeJSONBody(req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, CodeInvalidArgument, err.Error(), nil)
+		writeBodyError(w, err)
 		return
 	}
 	question, _ := args["question"].(string)

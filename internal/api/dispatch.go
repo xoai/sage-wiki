@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -110,14 +111,36 @@ func resultText(res *mcp.CallToolResult) string {
 	return out
 }
 
+// maxBodyBytes bounds JSON request bodies. It is unrelated to the 100 KB
+// capture cap — a body beyond it is 413 payload_too_large, not a
+// misleading 400 JSON error.
+const maxBodyBytes = 1 << 20
+
+// errBodyTooLarge is the sentinel decode*Body returns past maxBodyBytes;
+// writeBodyError maps it to 413.
+var errBodyTooLarge = fmt.Errorf("request body exceeds %d bytes", maxBodyBytes)
+
+// writeBodyError translates a body-decode failure: oversized → 413,
+// anything else → 400 invalid_argument.
+func writeBodyError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errBodyTooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, CodePayloadTooLarge, errBodyTooLarge.Error(), nil)
+		return
+	}
+	writeError(w, http.StatusBadRequest, CodeInvalidArgument, err.Error(), nil)
+}
+
 // decodeJSONBody decodes a request body into a tool argument map. Numbers
 // decode as float64, matching what MCP handlers assert (req.GetArguments().
 // (float64)). Empty or malformed bodies are caller-visible errors — the
 // handlers translate them to 400 invalid_argument, never 500.
 func decodeJSONBody(r *http.Request) (map[string]any, error) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read body: %w", err)
+	}
+	if len(body) > maxBodyBytes {
+		return nil, errBodyTooLarge
 	}
 	if len(body) == 0 {
 		return nil, fmt.Errorf("request body is required")
@@ -134,9 +157,12 @@ func decodeJSONBody(r *http.Request) (map[string]any, error) {
 // yields an empty argument map instead of an error. Malformed JSON is
 // still an error.
 func decodeOptionalJSONBody(r *http.Request) (map[string]any, error) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read body: %w", err)
+	}
+	if len(body) > maxBodyBytes {
+		return nil, errBodyTooLarge
 	}
 	if len(body) == 0 {
 		return map[string]any{}, nil

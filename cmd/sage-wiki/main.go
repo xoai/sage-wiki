@@ -620,11 +620,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		defer mcpSrv.Close()
-		apiCfg, err := config.Load(filepath.Join(dir, "config.yaml"))
-		if err != nil {
-			return fmt.Errorf("load config for /v1: %w", err)
-		}
-		webSrv.SetV1Handler(api.New(mcpSrv, apiCfg, dir).Handler())
+		webSrv.SetV1Handler(api.New(mcpSrv, webSrv.Config(), dir).Handler())
 
 		// Refuse to expose beyond loopback without a token (invariant: loopback
 		// stays zero-config; anything wider must be authenticated).
@@ -821,14 +817,14 @@ func runSearch(cmd *cobra.Command, args []string) error {
 			trustStore = trust.NewStore(db)
 		}
 		resp, err := search.Run(cmd.Context(), search.Deps{
-			Mem:                  memStore,
-			Chunks:               memory.NewChunkStore(db),
-			Vec:                  vecStore,
-			Embedder:             embedder,
-			Client:               client,
-			Model:                cfg.Models.Query,
-			BM25Weight:           cfg.Search.HybridWeightBM25,
-			VectorWeight:         cfg.Search.HybridWeightVector,
+			Mem:          memStore,
+			Chunks:       memory.NewChunkStore(db),
+			Vec:          vecStore,
+			Embedder:     embedder,
+			Client:       client,
+			Model:        cfg.Models.Query,
+			BM25Weight:   cfg.Search.HybridWeightBM25,
+			VectorWeight: cfg.Search.HybridWeightVector,
 			Ont: ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes),
 				ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault())),
 			GraphWeight:          cfg.Search.HybridWeightGraph,

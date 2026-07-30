@@ -150,6 +150,39 @@ func TestV1_APIRoutesUnchanged(t *testing.T) {
 	}
 }
 
+// An unauthenticated failure happens BEFORE the idempotency middleware —
+// a 401 must never be stored under a key; the authenticated retry must
+// dispatch fresh.
+func TestV1_UnauthorizedNotStoredUnderKey(t *testing.T) {
+	srv := setupV1(t)
+	srv.SetAuth("s3cret", nil)
+	h := srv.Handler()
+
+	mk := func(auth string) *httptest.ResponseRecorder {
+		req := loopbackReq("POST", "/v1/learnings")
+		req.Header.Set("Idempotency-Key", "auth-then-retry")
+		req.Header.Set("Content-Type", "application/json")
+		req.Body = io.NopCloser(strings.NewReader(`{"type":"gotcha","content":"x"}`))
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
+
+	if w := mk(""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("no cred → %d, want 401", w.Code)
+	}
+	w := mk("Bearer s3cret")
+	if w.Code != http.StatusOK {
+		t.Fatalf("authed retry → %d (%s), want a fresh 200 dispatch", w.Code, w.Body.String())
+	}
+	if w.Header().Get("X-Idempotent-Replay") == "true" {
+		t.Fatal("the 401 was replayed — middleware order stored an auth failure")
+	}
+}
+
 func TestV1_ToolSetImmutability(t *testing.T) {
 	srv := setupTestProject(t)
 	mcpSrv, err := wikimcp.NewServer(srv.projectDir)

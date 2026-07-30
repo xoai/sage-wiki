@@ -35,7 +35,10 @@ curl "http://127.0.0.1:3333/v1/status?token=$SAGE_WIKI_TOKEN"
 ```
 
 Failures: no/invalid token → `401 unauthenticated`; a Host outside the
-allowlist → `403 forbidden`.
+allowlist → `403 forbidden`. State-changing requests (POST/PUT/DELETE/
+PATCH on `/v1/*`) whose `Origin` header does not match the Host are also
+refused 403 — non-browser clients should simply not send an `Origin`
+header.
 
 ## Errors
 
@@ -78,7 +81,12 @@ without re-dispatching — use it on every agent-driven retry, especially
 deduplicated in flight: one dispatch, all callers get the same response.
 
 **Keys are held in memory: the store is bounded (1000 entries, 24 h TTL)
-and does not survive restart.** The key is ignored on GET routes.
+and does not survive restart.** The key is ignored on GET routes. Keys are
+global, not scoped per endpoint — reuse a key only for a retry of the same
+request; a fresh operation needs a fresh key. JSON request bodies are
+capped at 1 MiB (`413 payload_too_large` beyond; the separate 100 KB cap
+applies to `/v1/capture` content). Unknown paths answer `404 not_found`;
+a known path under the wrong method answers 405 with an `Allow` header.
 
 ## Routes
 

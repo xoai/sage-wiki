@@ -23,6 +23,12 @@ info:
     one; loopback is zero-config. Writes accept `Idempotency-Key` — a
     replayed key returns the stored response verbatim without re-dispatching.
     Keys are held in memory and do NOT survive restart.
+
+    Conventions not repeated per-operation: JSON bodies are capped at 1 MiB
+    (413 `payload_too_large` beyond). Unknown paths under `/v1` answer 404
+    `not_found`; a known path under the wrong method answers 405
+    (`invalid_argument` code) with an `Allow` header. State-changing
+    requests whose `Origin` header does not match the Host are refused 403.
   license:
     name: MIT
 servers:
@@ -174,9 +180,23 @@ paths:
                   pending_count: {type: integer}
                   concept_count: {type: integer}
                   entry_count: {type: integer}
+                  vector_count: {type: integer}
+                  vector_dims: {type: integer}
                   entity_count: {type: integer}
                   relation_count: {type: integer}
                   learning_count: {type: integer}
+                  embed_provider: {type: string}
+                  embed_dims: {type: integer}
+                  dim_mismatch: {type: boolean}
+                  git_clean: {type: boolean}
+                  last_commit: {type: string}
+                  last_message: {type: string}
+                  tier_distribution: {type: object, additionalProperties: {type: integer}}
+                  fully_compiled: {type: integer}
+                  with_errors: {type: integer}
+                  avg_quality: {type: number}
+                  source_types: {type: object, additionalProperties: {type: integer}}
+                  compile_queue: {type: object, additionalProperties: {type: integer}}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "500": {$ref: "#/components/responses/Internal"}
