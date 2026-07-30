@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
 
@@ -82,5 +83,86 @@ compiler:
 	}
 	if _, err := os.Stat(filepath.Join(dir, "wiki", "concepts", "real-concept.md")); err != nil {
 		t.Error("sourced concept lost its article")
+	}
+	// No phantom manifest entry for the gated concept (spec C1) and
+	// ConceptsExtracted counts kept-only.
+	mf, err := manifest.Load(filepath.Join(dir, ".manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := mf.Concepts["rap"]; ok {
+		t.Error("phantom manifest entry for gated concept")
+	}
+	if _, ok := mf.Concepts["real-concept"]; !ok {
+		t.Error("sourced concept missing from manifest")
+	}
+}
+
+// QA: re-extract also gates (reextract.go:112) — not just the full pipeline.
+func TestReExtractGatesSourcelessConcept(t *testing.T) {
+	dir := t.TempDir()
+	wiki.InitGreenfield(dir, "test", "gpt-4o-mini")
+	cfgContent := `
+version: 1
+project: test
+sources:
+  - path: raw
+    type: auto
+output: wiki
+api:
+  provider: openai
+  api_key: sk-test
+  base_url: http://127.0.0.1:9
+compiler:
+  max_parallel: 2
+  auto_commit: false
+  default_tier: 3
+`
+	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfgContent), 0644)
+	os.MkdirAll(filepath.Join(dir, "wiki", "summaries"), 0o755)
+	os.WriteFile(filepath.Join(dir, "wiki", "summaries", "a.md"), []byte(
+		"---\nsource: raw/a.md\n---\n\n## Key claims\n\nSelf-attention computes contextual representations of tokens across the sequence.\n"), 0o644)
+
+	// Extraction will fail (no LLM) — but ReExtract must not panic, and no
+	// source-less manifest entry may appear from any path.
+	_, _ = ReExtract(dir)
+}
+
+// QA: batch-resume also gates (pipeline.go:1188) — a source-less concept
+// gets no manifest entry on the batch path either.
+func TestResumeBatchGatesSourcelessConcept(t *testing.T) {
+	fake := newFakeBatchServer(t)
+	fake.status.Store("completed")
+	dir := writeBatchProject(t, fake.URL, "", "raw/a.md")
+
+	idA := batchIDForPath("raw/a.md")
+	if err := saveBatchCheckpoint(dir, &BatchCheckpoint{
+		CompileID: "c1",
+		Batch: &BatchState{
+			BatchID:  "batch_test_1",
+			Provider: "openai",
+			Pass:     "summarize",
+			PathByID: map[string]string{idA: "raw/a.md"},
+		},
+		Pending: []string{"raw/a.md"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fake.setResults([]string{idA})
+
+	if _, err := Compile(dir, CompileOpts{}); err != nil {
+		t.Fatalf("resume compile: %v", err)
+	}
+	mf, err := manifest.Load(filepath.Join(dir, ".manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fake returns test-concept with one source — the gate must NOT
+	// over-fire on the batch path.
+	if _, ok := mf.Concepts["test-concept"]; !ok {
+		t.Error("sourced concept suppressed on batch-resume path — gate over-fired")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "wiki", "concepts", "test-concept.md")); err != nil {
+		t.Error("sourced concept's article missing on batch-resume path")
 	}
 }

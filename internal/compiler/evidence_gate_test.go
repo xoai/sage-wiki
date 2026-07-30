@@ -64,3 +64,21 @@ func TestGateBeforeAddConcept(t *testing.T) {
 		t.Error("acronym must not stand alone in the manifest")
 	}
 }
+
+// QA: the embedding-drop path's union keeps aliases (and sources) with
+// independent dedup sets.
+func TestMergeConceptIntoManifest(t *testing.T) {
+	m := manifest.New()
+	m.AddConcept("c", "wiki/concepts/c.md", []string{"raw/old.md"}, "rap")
+	mergeConceptIntoManifest(m, "c", ExtractedConcept{
+		Name: "c", Sources: []string{"raw/new.md", "rap"}, Aliases: []string{"rap", "wsp"},
+	})
+	got := m.Concepts["c"]
+	if len(got.Sources) != 3 { // old + new + "rap" (a source path that equals an alias — must NOT be dropped)
+		t.Errorf("sources = %v, want old+new+rap", got.Sources)
+	}
+	if len(got.Aliases) != 2 { // rap + wsp, deduped
+		t.Errorf("aliases = %v, want rap+wsp", got.Aliases)
+	}
+	mergeConceptIntoManifest(m, "missing", ExtractedConcept{Name: "x"}) // no-op, no panic
+}

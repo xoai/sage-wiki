@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/internal/manifest"
 )
 
 // filterLowEvidence splits extracted concepts into those with enough
@@ -24,4 +25,36 @@ func filterLowEvidence(concepts []ExtractedConcept, minSources int) (kept, skipp
 		log.Info("article skipped: no evidence", "concept", c.Name, "sources", len(c.Sources))
 	}
 	return kept, skipped
+}
+
+// mergeConceptIntoManifest unions an extracted concept's sources AND aliases
+// into an existing manifest concept (independent dedup sets — an alias
+// string equal to a source path must not be dropped). Shared by the
+// embedding-dedup drop path (which never reaches AddConcept) so rule-2
+// renamed concepts keep their aliases (issue #128, gates i1/QA).
+func mergeConceptIntoManifest(mf *manifest.Manifest, match string, c ExtractedConcept) {
+	existing, ok := mf.Concepts[match]
+	if !ok {
+		return
+	}
+	seenSrc := make(map[string]bool)
+	for _, s := range existing.Sources {
+		seenSrc[s] = true
+	}
+	for _, s := range c.Sources {
+		if !seenSrc[s] {
+			existing.Sources = append(existing.Sources, s)
+		}
+	}
+	seenAlias := make(map[string]bool)
+	for _, a := range existing.Aliases {
+		seenAlias[a] = true
+	}
+	for _, a := range c.Aliases {
+		if !seenAlias[a] {
+			seenAlias[a] = true
+			existing.Aliases = append(existing.Aliases, a)
+		}
+	}
+	mf.Concepts[match] = existing
 }
