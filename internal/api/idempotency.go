@@ -102,6 +102,31 @@ func (s *idemStore) begin(key string) (c *idemCall, leader bool) {
 	return c, true
 }
 
+// beginOrReplay atomically resolves a key under one lock: a fresh stored
+// entry returns (entry, true, nil, false) for replay; an in-flight call
+// marks the caller follower (zero, false, c, false); otherwise the caller
+// leads (zero, false, c, true). Folding the freshness check into the same
+// lock closes the get→begin window where a leader finishing between the two
+// calls could elect a second leader (double dispatch — the CI-observed
+// flake in TestIdempotency_ConcurrentSameKeySingleDispatch).
+func (s *idemStore) beginOrReplay(key string) (idemEntry, bool, *idemCall, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e, ok := s.entries[key]; ok {
+		if s.now().Sub(e.stored) <= idemTTL {
+			s.moveToTailLocked(key)
+			return e, true, nil, false
+		}
+		s.removeLocked(key)
+	}
+	if c, ok := s.inflight[key]; ok {
+		return idemEntry{}, false, c, false
+	}
+	c := &idemCall{done: make(chan struct{})}
+	s.inflight[key] = c
+	return idemEntry{}, false, c, true
+}
+
 // finish stores the leader's response (bounded, LRU-refreshed) and wakes
 // followers.
 func (s *idemStore) finish(key string, c *idemCall, e idemEntry) {
@@ -168,11 +193,11 @@ func (rt *Router) idempotent(next http.HandlerFunc) http.HandlerFunc {
 			next(w, req)
 			return
 		}
-		if e, ok := rt.idem.get(key); ok {
-			replayStored(w, e)
+		stored, replay, c, leader := rt.idem.beginOrReplay(key)
+		if replay {
+			replayStored(w, stored)
 			return
 		}
-		c, leader := rt.idem.begin(key)
 		if !leader {
 			// Free the goroutine if our own client hangs up while waiting.
 			select {
