@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -29,12 +30,13 @@ type ExtractedConcept struct {
 // concept set at write time (it includes concepts from prior compiles, not
 // just the current batch), so the write pass sources related-concept
 // candidates from here to cover incremental compiles as well as full ones.
-// Aliases are not stored in the manifest; callers that need them use the
-// in-batch concept slice. Issue #106.
+// Aliases ARE stored in the manifest as of #128 (Concept.Aliases); refs
+// carry them so alias-overlap dedup can match extracted acronyms against
+// existing concepts' aliases.
 func manifestConceptRefs(m map[string]manifest.Concept) []ExtractedConcept {
 	refs := make([]ExtractedConcept, 0, len(m))
 	for name, c := range m {
-		refs = append(refs, ExtractedConcept{Name: name, Sources: c.Sources})
+		refs = append(refs, ExtractedConcept{Name: name, Sources: c.Sources, Aliases: c.Aliases})
 	}
 	return refs
 }
@@ -203,7 +205,7 @@ func ExtractConcepts(
 	allConcepts = filterNoisyConcepts(allConcepts)
 
 	// Deduplicate across batches
-	allConcepts = deduplicateConcepts(allConcepts)
+	allConcepts = deduplicateConcepts(allConcepts, existingConcepts)
 
 	// A total failure (every batch errored) must not look like a clean empty
 	// extraction — return an error so the caller increments result.Errors instead
@@ -257,47 +259,140 @@ func filterNoisyConcepts(concepts []ExtractedConcept) []ExtractedConcept {
 	return filtered
 }
 
-// deduplicateConcepts merges concepts with the same name across batches.
-func deduplicateConcepts(concepts []ExtractedConcept) []ExtractedConcept {
-	seen := map[string]*ExtractedConcept{}
-	var result []ExtractedConcept
+// normalizeName canonicalizes a concept/alias name for matching: lowercase,
+// trimmed. Applied to ALL comparisons including within-set keys (issue #128 —
+// deliberate change from raw c.Name keys, so "RAP " and "rap" unify).
+func normalizeName(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
 
-	for _, c := range concepts {
-		if existing, ok := seen[c.Name]; ok {
-			// Merge sources
-			srcSet := map[string]bool{}
-			for _, s := range existing.Sources {
-				srcSet[s] = true
+// deduplicateConcepts merges concepts across batches: exact-normalized
+// name==name (as before), PLUS alias overlap in both directions (issue
+// #128). An extracted concept whose name matches an existing concept's
+// alias — within the batch or in the manifest — folds into the canonical
+// concept instead of standing alone (the bare-acronym case).
+func deduplicateConcepts(concepts []ExtractedConcept, existing map[string]manifest.Concept) []ExtractedConcept {
+	// Manifest alias index: alias → canonical name (deterministic: sorted
+	// manifest keys, first alias wins).
+	manifestAlias := map[string]string{}
+	var mKeys []string
+	for k := range existing {
+		mKeys = append(mKeys, k)
+	}
+	sort.Strings(mKeys)
+	for _, name := range mKeys {
+		for _, a := range existing[name].Aliases {
+			if _, ok := manifestAlias[normalizeName(a)]; !ok {
+				manifestAlias[normalizeName(a)] = name
 			}
-			for _, s := range c.Sources {
-				if !srcSet[s] {
-					existing.Sources = append(existing.Sources, s)
-				}
-			}
-			// Merge aliases
-			aliasSet := map[string]bool{}
-			for _, a := range existing.Aliases {
-				aliasSet[a] = true
-			}
-			for _, a := range c.Aliases {
-				if !aliasSet[a] {
-					existing.Aliases = append(existing.Aliases, a)
-				}
-			}
-		} else {
-			copy := c
-			seen[c.Name] = &copy
-			result = append(result, copy)
 		}
 	}
 
-	// Apply merged data back
+	seen := map[string]*ExtractedConcept{} // normalized name → canonical entry
+	var result []ExtractedConcept
+
+	merge := func(dst, src *ExtractedConcept) {
+		srcSet := map[string]bool{}
+		for _, s := range dst.Sources {
+			srcSet[s] = true
+		}
+		for _, s := range src.Sources {
+			if !srcSet[s] {
+				dst.Sources = append(dst.Sources, s)
+			}
+		}
+		aliasSet := map[string]bool{}
+		for _, a := range dst.Aliases {
+			aliasSet[a] = true
+		}
+		for _, a := range src.Aliases {
+			if !aliasSet[a] {
+				dst.Aliases = append(dst.Aliases, a)
+			}
+		}
+		if !aliasSet[src.Name] && normalizeName(src.Name) != normalizeName(dst.Name) {
+			dst.Aliases = append(dst.Aliases, src.Name) // loser's name becomes an alias
+		}
+	}
+
+	for _, c := range concepts {
+		key := normalizeName(c.Name)
+		// Rule 2: acronym matches a manifest concept's alias → rename to
+		// canonical and carry union(manifest sources+aliases, A's).
+		if canonical, ok := manifestAlias[key]; ok {
+			if existing, ok := seen[key]; ok {
+				merge(existing, &c)
+				continue
+			}
+			mc := existing[canonical]
+			merged := ExtractedConcept{
+				Name:    canonical,
+				Sources: append(append([]string(nil), mc.Sources...), c.Sources...),
+				Aliases: append(append([]string(nil), mc.Aliases...), c.Aliases...),
+				Type:    c.Type,
+			}
+			// Union aliases + the extracted name (dedup).
+			merged.Aliases = append(merged.Aliases, c.Name)
+			seen[key] = &merged
+			seen[normalizeName(canonical)] = &merged
+			result = append(result, merged)
+			log.Info("dedup: folded into existing concept", "from", c.Name, "into", canonical)
+			continue
+		}
+		if existing, ok := seen[key]; ok {
+			merge(existing, &c)
+			continue
+		}
+		// Rule 1: new concept's name is another entry's alias (either direction).
+		folded := false
+		for ri, r := range result {
+			aliasRelated := false
+			for _, a := range r.Aliases {
+				if normalizeName(a) == key {
+					aliasRelated = true
+					break
+				}
+			}
+			if !aliasRelated {
+				for _, a := range c.Aliases {
+					if normalizeName(a) == normalizeName(r.Name) {
+						aliasRelated = true
+						break
+					}
+				}
+			}
+			if !aliasRelated {
+				continue
+			}
+			// Canonical = the longer normalized name (the expansion, not the
+			// acronym) — "remedial-action-plan" beats "rap" either way.
+			if len(normalizeName(c.Name)) > len(normalizeName(r.Name)) {
+				merge(&c, &r)
+				result[ri] = c
+				delete(seen, normalizeName(r.Name))
+				seen[key] = &result[ri]
+				log.Info("dedup: folded into existing concept", "from", r.Name, "into", c.Name)
+			} else {
+				merge(seen[normalizeName(r.Name)], &c)
+				log.Info("dedup: folded into existing concept", "from", c.Name, "into", r.Name)
+			}
+			folded = true
+			break
+		}
+		if folded {
+			continue
+		}
+		copy := c
+		seen[key] = &copy
+		result = append(result, copy)
+	}
+
+	// Apply merged data back (preserves prior behavior for exact-name merges).
 	for i := range result {
-		if merged, ok := seen[result[i].Name]; ok {
+		if merged, ok := seen[normalizeName(result[i].Name)]; ok {
 			result[i] = *merged
 		}
 	}
-
 	return result
 }
 
