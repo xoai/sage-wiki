@@ -1,0 +1,534 @@
+openapi: 3.1.0
+info:
+  title: sage-wiki HTTP API
+  version: "0.1.0"
+  description: |-
+    REST facade over sage-wiki's MCP tool set (P4-1).
+
+    **Experimental, pre-1.0.** This surface — like `pkg/sagewiki` — is not
+    stable: tool semantics can change between releases. Pin a version and
+    read the CHANGELOG before upgrading.
+
+    MCP is the canonical contract. Every route here dispatches to the MCP
+    tool named in its `x-mcp-tool` extension; there is no behaviour in this
+    API that the corresponding tool does not provide. The older `/api/*`
+    routes are INTERNAL to the web UI, unstable by design, and deliberately
+    excluded from this document — do not build on them.
+
+    Long-running operations (compile, compile_topic, lint) are not part of
+    this version; they land as an async job API (see `wiki_compile`,
+    `wiki_compile_topic`, `wiki_lint` over MCP until then).
+
+    Auth: Bearer token (`SAGE_WIKI_TOKEN`) when the server is started with
+    one; loopback is zero-config. Writes accept `Idempotency-Key` — a
+    replayed key returns the stored response verbatim without re-dispatching.
+    Keys are held in memory and do NOT survive restart.
+  license:
+    name: MIT
+servers:
+  - url: http://127.0.0.1:3333
+    description: local server (default bind)
+tags:
+  - name: read
+  - name: write
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - invalid_argument
+                - unauthenticated
+                - forbidden
+                - not_found
+                - conflict
+                - feature_disabled
+                - payload_too_large
+                - rate_limited
+                - internal
+                - unavailable
+              description: Fixed vocabulary — branch on this, never on message.
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+    Result:
+      type: object
+      required: [result]
+      properties:
+        result:
+          type: string
+          description: The tool's confirmation text, passed through verbatim.
+  responses:
+    BadRequest:
+      description: Invalid argument (400)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Missing or invalid bearer token (401)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Host not allowed, or path containment violation (403)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Internal:
+      description: Unclassified tool failure (500)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+security:
+  - bearerAuth: []
+paths:
+  /v1/search:
+    get:
+      tags: [read]
+      summary: Hybrid search over the compiled wiki
+      x-mcp-tool: wiki_search
+      parameters:
+        - {name: query, in: query, required: true, schema: {type: string}}
+        - {name: tags, in: query, schema: {type: string, description: "Comma-separated (the tool parses commas)"}}
+        - {name: boost_tags, in: query, schema: {type: string, description: "Comma-separated"}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, default: 10}}
+        - {name: channels, in: query, schema: {type: string, description: "Comma-separated subset of bm25,vector,graph (default all)"}}
+        - {name: expand, in: query, schema: {type: boolean, default: false}}
+        - {name: rerank, in: query, schema: {type: boolean, default: false}}
+      responses:
+        "200":
+          description: Search results. `uncompiled_sources` (when > 0) counts matching sources not yet fully compiled — the compile-on-demand signal.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results: {type: array, items: {type: object}}
+                  uncompiled_sources: {type: integer}
+                  compile_hint: {type: string}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "500": {$ref: "#/components/responses/Internal"}
+  /v1/articles/{path}:
+    get:
+      tags: [read]
+      summary: Read a compiled article
+      x-mcp-tool: wiki_read
+      parameters:
+        - {name: path, in: path, required: true, schema: {type: string}, description: "Article path relative to the wiki output directory (e.g. concepts/self-attention.md)"}
+      responses:
+        "200":
+          description: The article
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [path, content]
+                properties:
+                  path: {type: string}
+                  content: {type: string}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404":
+          description: Article not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500": {$ref: "#/components/responses/Internal"}
+  /v1/status:
+    get:
+      tags: [read]
+      summary: Project status (structured)
+      x-mcp-tool: wiki_status
+      responses:
+        "200":
+          description: Structured status info (the MCP tool's prose rendering of the same data)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  project: {type: string}
+                  mode: {type: string}
+                  source_count: {type: integer}
+                  pending_count: {type: integer}
+                  concept_count: {type: integer}
+                  entry_count: {type: integer}
+                  entity_count: {type: integer}
+                  relation_count: {type: integer}
+                  learning_count: {type: integer}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "500": {$ref: "#/components/responses/Internal"}
+  /v1/ontology/{entity}/traverse:
+    get:
+      tags: [read]
+      summary: Traverse the entity graph
+      x-mcp-tool: wiki_ontology_query
+      parameters:
+        - {name: entity, in: path, required: true, schema: {type: string}}
+        - {name: relation, in: query, schema: {type: string, description: "Optional relation-type filter (open vocabulary)"}}
+        - {name: direction, in: query, schema: {type: string, enum: [outbound, inbound, both], default: outbound}}
+        - {name: depth, in: query, schema: {type: integer, minimum: 1, maximum: 5, default: 1}}
+      responses:
+        "200":
+          description: Entities reached by the traversal
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {type: object}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "500": {$ref: "#/components/responses/Internal"}
+  /v1/graph/query:
+    post:
+      tags: [read]
+      summary: Grounded Q&A over the entity graph
+      x-mcp-tool: wiki_graph_query
+      description: |-
+        POST because `question` is free text. Feature gates:
+        `as_of` requires `ontology.temporal.enabled` (412 otherwise);
+        `mode: global` requires `ontology.communities.enabled` (412 otherwise).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question: {type: string}
+                hops: {type: integer, minimum: 1, maximum: 5, default: 2}
+                max_edges: {type: integer, minimum: 1, maximum: 500, default: 60}
+                as_of: {type: string, format: date-time, description: "RFC3339 point-in-time (local mode only)"}
+                mode: {type: string, enum: [local, global], default: local}
+      responses:
+        "200":
+          description: Grounded answer with citations
+          content:
+            application/json:
+              schema:
+                type: object
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "412":
+          description: Feature disabled (as_of without temporal; global without communities)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500": {$ref: "#/components/responses/Internal"}
+  /v1/entities:
+    get:
+      tags: [read]
+      summary: List entities
+      x-mcp-tool: wiki_list
+      description: "Complete and unpaginated (pagination lands only if the tool grows it)."
+      parameters:
+        - {name: type, in: query, schema: {type: string, enum: [concept, technique, source, claim, artifact]}}
+      responses:
+        "200":
+          description: Entity list
+          content:
+            application/json:
+              schema:
+                type: object
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "500": {$ref: "#/components/responses/Internal"}
+  /v1/provenance:
+    get:
+      tags: [read]
+      summary: Provenance for a source or article (exactly one)
+      x-mcp-tool: wiki_provenance
+      parameters:
+        - {name: source, in: query, schema: {type: string}}
+        - {name: article, in: query, schema: {type: string}}
+      responses:
+        "200":
+          description: Provenance mapping
+          content:
+            application/json:
+              schema:
+                type: object
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "500": {$ref: "#/components/responses/Internal"}
+  /v1/compile/diff:
+    get:
+      tags: [read]
+      summary: What a compile would process
+      x-mcp-tool: wiki_compile_diff
+      responses:
+        "200":
+          description: Diff report
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [diff]
+                properties:
+                  diff: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "500": {$ref: "#/components/responses/Internal"}
+  /v1/sources:
+    post:
+      tags: [write]
+      summary: Register a source file
+      x-mcp-tool: wiki_add_source
+      parameters:
+        - {name: Idempotency-Key, in: header, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path: {type: string, description: "Path relative to the project root"}
+                type: {type: string, enum: [article, paper, code], description: "Default: auto-detect"}
+      responses:
+        "200":
+          description: Source registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Result"
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "500": {$ref: "#/components/responses/Internal"}
+  /v1/summaries:
+    put:
+      tags: [write]
+      summary: Write a source summary (upsert by source)
+      x-mcp-tool: wiki_write_summary
+      parameters:
+        - {name: Idempotency-Key, in: header, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source, content]
+              properties:
+                source: {type: string}
+                content: {type: string}
+                concepts: {type: string, description: "Comma-separated concept ids"}
+      responses:
+        "200":
+          description: Summary written
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Result"
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "500": {$ref: "#/components/responses/Internal"}
+  /v1/articles/{concept}:
+    put:
+      tags: [write]
+      summary: Write a concept article (upsert by concept)
+      x-mcp-tool: wiki_write_article
+      parameters:
+        - {name: concept, in: path, required: true, schema: {type: string, pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"}}
+        - {name: Idempotency-Key, in: header, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: {type: string, description: "Markdown with frontmatter"}
+      responses:
+        "200":
+          description: Article written
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Result"
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "500": {$ref: "#/components/responses/Internal"}
+  /v1/ontology/entities:
+    post:
+      tags: [write]
+      summary: Create an entity
+      x-mcp-tool: wiki_add_ontology
+      description: "One half of the wiki_add_ontology split (INT-05); the MCP tool keeps its combined form."
+      parameters:
+        - {name: Idempotency-Key, in: header, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id: {type: string}
+                type: {type: string}
+                name: {type: string}
+      responses:
+        "200":
+          description: Entity created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Result"
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "500": {$ref: "#/components/responses/Internal"}
+  /v1/ontology/relations:
+    post:
+      tags: [write]
+      summary: Create a relation
+      x-mcp-tool: wiki_add_ontology
+      description: "The other half of the wiki_add_ontology split (INT-05)."
+      parameters:
+        - {name: Idempotency-Key, in: header, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source_id, target_id, relation]
+              properties:
+                source_id: {type: string}
+                target_id: {type: string}
+                relation: {type: string}
+      responses:
+        "200":
+          description: Relation created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Result"
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "500": {$ref: "#/components/responses/Internal"}
+  /v1/learnings:
+    post:
+      tags: [write]
+      summary: Store a learning
+      x-mcp-tool: wiki_learn
+      parameters:
+        - {name: Idempotency-Key, in: header, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, content]
+              properties:
+                type: {type: string, enum: [gotcha, correction, convention, error-fix, api-drift]}
+                content: {type: string}
+                tags: {type: string, description: "Comma-separated"}
+      responses:
+        "200":
+          description: Learning stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Result"
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "500": {$ref: "#/components/responses/Internal"}
+  /v1/git/commit:
+    post:
+      tags: [write]
+      summary: Commit pending wiki changes
+      x-mcp-tool: wiki_commit
+      parameters:
+        - {name: Idempotency-Key, in: header, schema: {type: string}}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message: {type: string, description: "Default: auto-generated"}
+      responses:
+        "200":
+          description: Committed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Result"
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "500": {$ref: "#/components/responses/Internal"}
+  /v1/capture:
+    post:
+      tags: [write]
+      summary: Capture knowledge (spends LLM budget)
+      x-mcp-tool: wiki_capture
+      description: "Max 100 KB of content (413 above). Idempotency-Key is strongly recommended — a retried capture re-spends budget."
+      parameters:
+        - {name: Idempotency-Key, in: header, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: {type: string, maxLength: 102400}
+                context: {type: string}
+                tags: {type: string, description: "Comma-separated"}
+      responses:
+        "200":
+          description: Captured (or raw-saved when no LLM is configured)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Result"
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "413":
+          description: Content over 100 KB
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500": {$ref: "#/components/responses/Internal"}
