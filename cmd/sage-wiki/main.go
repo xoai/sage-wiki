@@ -408,11 +408,13 @@ func reconcileStartup(ctx context.Context, dir string) {
 	if err != nil {
 		return // not initialized — nothing to reconcile
 	}
-	// P3-7: uniform manifest-presence guard. No manifest means nothing was
-	// ever compiled — skip BEFORE opening any backend, so a sqlite writer
-	// open can't create a stray wiki.db and a PG writer open can't take the
-	// advisory lock on an empty vault.
-	if _, err := os.Stat(filepath.Join(dir, ".manifest.json")); err != nil {
+	// P3-7: uniform nothing-compiled guard. InitGreenfield writes an EMPTY
+	// manifest, so presence alone is not enough — skip when the manifest is
+	// absent OR has no sources and no concepts. Without this a sqlite writer
+	// open creates a stray wiki.db on every startup of a never-compiled
+	// vault, and a PG writer open takes the advisory lock for nothing.
+	mf, mfErr := manifest.Load(filepath.Join(dir, ".manifest.json"))
+	if mfErr != nil || (len(mf.Sources) == 0 && len(mf.Concepts) == 0) {
 		return
 	}
 	// Backend selection honors storage.backend (P3-7 — the P2-1 skip-list
@@ -420,21 +422,7 @@ func reconcileStartup(ctx context.Context, dir string) {
 	// writes. On PG, a contended writer open stalls up to the configured
 	// lock_timeout then fails — the warn below converts that to a skipped
 	// reconcile, never a blocked startup.
-	lt, err := cfg.Storage.LockTimeoutDuration()
-	if err != nil {
-		log.Warn("startup reconcile: bad lock_timeout", "error", err)
-		return
-	}
-	backend, err := storedial.Open(cfg.Storage, store.OpenOptions{
-		Mode:             store.ModeWriter,
-		ProjectDir:       dir,
-		LockTimeout:      lt,
-		Pool:             store.PoolConfig{MaxOpen: cfg.Storage.Pool.MaxOpen, MaxIdle: cfg.Storage.Pool.MaxIdle},
-		VectorDimension:  cfg.Storage.VectorDimension,
-		ValidRelations:   ontology.ValidRelationNames(ontology.MergedRelations(cfg.Ontology.Relations)),
-		ValidEntityTypes: ontology.ValidEntityTypeNames(ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)),
-		TemporalEnabled:  cfg.Ontology.Temporal.Enabled,
-	})
+	backend, err := storedial.OpenWithConfig(cfg, dir, store.ModeWriter)
 	if err != nil {
 		log.Warn("startup reconcile: open backend failed", "error", err)
 		return

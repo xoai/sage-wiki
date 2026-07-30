@@ -15,7 +15,6 @@ import (
 
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/manifest"
-	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/storedial"
 )
@@ -110,23 +109,12 @@ storage:
 		t.Fatal(err)
 	}
 
-	// The startup wiring, exactly as reconcileStartup computes it (T3).
-	lt, err := cfg.Storage.LockTimeoutDuration()
+	// The startup wiring itself: ONE shared option literal
+	// (storedial.OpenWithConfig) — drift here breaks reconcileStartup and
+	// this test together, which is the point (Gate-8).
+	backend, err := storedial.OpenWithConfig(cfg, dir, store.ModeWriter)
 	if err != nil {
-		t.Fatal(err)
-	}
-	backend, err := storedial.Open(cfg.Storage, store.OpenOptions{
-		Mode:             store.ModeWriter,
-		ProjectDir:       dir,
-		LockTimeout:      lt,
-		Pool:             store.PoolConfig{MaxOpen: cfg.Storage.Pool.MaxOpen, MaxIdle: cfg.Storage.Pool.MaxIdle},
-		VectorDimension:  cfg.Storage.VectorDimension,
-		ValidRelations:   ontology.ValidRelationNames(ontology.MergedRelations(cfg.Ontology.Relations)),
-		ValidEntityTypes: ontology.ValidEntityTypeNames(ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)),
-		TemporalEnabled:  cfg.Ontology.Temporal.Enabled,
-	})
-	if err != nil {
-		t.Fatalf("storedial.Open (the startup literal): %v", err)
+		t.Fatalf("storedial.OpenWithConfig (the startup literal): %v", err)
 	}
 	defer backend.Close()
 
