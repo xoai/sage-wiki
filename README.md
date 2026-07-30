@@ -257,6 +257,13 @@ exposes 18 tools — search, read, graph query, capture, compile-on-demand
 and more; setup per agent and capture workflows live in the
 [Agent Memory Layer guide](docs/guides/agent-memory-layer.md).
 
+**HTTP API (`/v1`, experimental)** — any language can call the same tools
+over REST: `sage-wiki serve --ui --port 3333` mounts 16 routes under `/v1`
+(Bearer auth via `SAGE_WIKI_TOKEN`, structured errors, idempotent writes).
+Contract: [`api/openapi.yaml`](api/openapi.yaml) (OpenAPI 3.1, drift-checked
+against the MCP tool set). Guide: [docs/guides/http-api.md](docs/guides/http-api.md).
+Pre-1.0 — pin a version.
+
 **Agent skill files** — `sage-wiki skill refresh --target <agent>` writes
 a behavioral section into the agent's instruction file (CLAUDE.md,
 .cursorrules, …) teaching it when to search, what to capture, and how to
