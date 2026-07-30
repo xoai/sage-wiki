@@ -31,6 +31,19 @@ func textRes(text string) *mcp.CallToolResult {
 	}
 }
 
+// call invokes a tool on a real MCP server and fails the test on tool error.
+func call(t *testing.T, srv interface {
+	CallTool(context.Context, string, mcp.CallToolRequest) *mcp.CallToolResult
+}, name string, args map[string]any) {
+	t.Helper()
+	res := srv.CallTool(context.Background(), name, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{Name: name, Arguments: args},
+	})
+	if res.IsError {
+		t.Fatalf("%s: %s", name, resultText(res))
+	}
+}
+
 func errRes(msg string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{
 		IsError: true,

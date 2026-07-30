@@ -48,6 +48,13 @@ var pathSensitiveTools = map[string]bool{
 	ToolAddSource: true,
 }
 
+// toolRequest builds the CallToolRequest for a dispatch.
+func toolRequest(tool string, args map[string]any) mcp.CallToolRequest {
+	return mcp.CallToolRequest{
+		Params: mcp.CallToolParams{Name: tool, Arguments: args},
+	}
+}
+
 // dispatch invokes a tool and translates the result to the HTTP response.
 //
 // Translation rules (spec §Rationale): a tool result whose text parses as a
@@ -58,9 +65,7 @@ var pathSensitiveTools = map[string]bool{
 // codes before dispatch, so anything reaching here is unclassified. Error
 // text is never string-matched to pick a code.
 func dispatch(ctx context.Context, w http.ResponseWriter, d Dispatcher, tool string, args map[string]any, envelopeKey string) {
-	res := d.CallTool(ctx, tool, mcp.CallToolRequest{
-		Params: mcp.CallToolParams{Name: tool, Arguments: args},
-	})
+	res := d.CallTool(ctx, tool, toolRequest(tool, args))
 	if res == nil {
 		writeError(w, http.StatusInternalServerError, CodeInternal, "tool returned no result", nil)
 		return
