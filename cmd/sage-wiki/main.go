@@ -84,8 +84,9 @@ var rootCmd = &cobra.Command{
 }
 
 var initCmd = &cobra.Command{
-	Use:   "init",
+	Use:   "init [dir]",
 	Short: "Initialize a new sage-wiki project",
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runInit,
 }
 
@@ -176,6 +177,7 @@ func init() {
 
 	// Init flags
 	initCmd.Flags().Bool("vault", false, "Initialize as vault overlay on existing Obsidian vault")
+	initCmd.Flags().Bool("force", false, "Rewrite .gitignore and .manifest.json even when they exist (config.yaml is always preserved)")
 	initCmd.Flags().Bool("prompts", false, "Scaffold prompt templates for customization")
 	initCmd.Flags().String("model", "gemini-2.5-flash", "Default LLM model for all tasks (e.g. gemini-2.5-flash, gemini-3.1-flash-lite)")
 	initCmd.Flags().String("skill", "", "Generate agent skill file (claude-code, cursor, windsurf, agents-md, codex, gemini, generic)")
@@ -255,6 +257,16 @@ func resolveConfigPath(dir string) string {
 func runInit(cmd *cobra.Command, args []string) error {
 	vaultMode, _ := cmd.Flags().GetBool("vault")
 	model, _ := cmd.Flags().GetString("model")
+	force, _ := cmd.Flags().GetBool("force")
+	// The positional arg is an alias for --project (#127): without this,
+	// `init <dir>` silently initialized the CURRENT directory — and could
+	// wipe the wrong vault's manifest before preservation existed.
+	if len(args) == 1 {
+		if projectDir != "." && projectDir != "" && projectDir != args[0] {
+			fmt.Fprintf(os.Stderr, "note: positional dir %q overrides --project %q\n", args[0], projectDir)
+		}
+		projectDir = args[0]
+	}
 	dir, _ := filepath.Abs(projectDir)
 
 	// Derive project name from directory
@@ -303,11 +315,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Ignored folders: %v\n", ignoreFolders)
 		fmt.Println("\nEdit config.yaml to adjust source/ignore folders.")
 
-		if err := wiki.InitVaultOverlay(dir, project, sourceFolders, ignoreFolders, "_wiki", model); err != nil {
+		if err := wiki.InitVaultOverlay(dir, project, sourceFolders, ignoreFolders, "_wiki", model, wiki.WithForce(force)); err != nil {
 			return err
 		}
 	} else {
-		if err := wiki.InitGreenfield(dir, project, model); err != nil {
+		if err := wiki.InitGreenfield(dir, project, model, wiki.WithForce(force)); err != nil {
 			return err
 		}
 	}

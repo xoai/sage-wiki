@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`init` no longer destroys user files (#127).** Re-running `sage-wiki init`
+  preserves `.gitignore` (appends `.sage/` instead of clobbering) and
+  `.manifest.json` (skips when present — previously every re-init wiped
+  compile history and orphaned the vault). New `--force` flag rewrites both
+  intentionally (`config.yaml` stays preserved unconditionally). Also:
+  `sage-wiki init <dir>` now honors the positional directory argument —
+  previously it was silently ignored and the current directory was
+  initialized instead, which could scatter (and wipe) the wrong directory.
+  More than one positional argument is now an explicit error.
+
 ### Added
 
 - **Backend-neutral reconciler (P3-7).** The startup reconcile now honors

@@ -170,7 +170,7 @@ La surface principale ; exécutez `sage-wiki <command> --help` pour les flags.
 
 | Commande | Description |
 | ------- | ----------- |
-| `sage-wiki init [--vault] [--skill <agent>] [--pack <name>] [--prompts]` | Initialiser le projet (greenfield ou surcouche vault) |
+| `sage-wiki init [dir] [--vault] [--skill <agent>] [--pack <name>] [--prompts] [--force]` | Initialiser le projet (greenfield ou surcouche vault) |
 | `sage-wiki compile [--watch] [--batch] [--estimate] [--dry-run] [--no-cache] [--fresh] [--re-embed] [--re-extract] [--prune]` | Compiler les sources en articles wiki |
 | `sage-wiki serve [--transport stdio\|sse] [--ui] [--port 3333]` | Serveur MCP / interface web |
 | `sage-wiki reindex [--drop-chunk-vectors]` | Reconstruit l'index de chunks à partir des documents sur disque avec les `chunk_size` / `chunk_overlap_tokens` actuels |

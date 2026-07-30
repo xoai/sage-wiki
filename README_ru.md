@@ -170,7 +170,7 @@ sage-wiki compile --watch
 
 | Команда | Описание |
 | ------- | ----------- |
-| `sage-wiki init [--vault] [--skill <agent>] [--pack <name>] [--prompts]` | Инициализация проекта (с нуля или оверлей хранилища) |
+| `sage-wiki init [dir] [--vault] [--skill <agent>] [--pack <name>] [--prompts] [--force]` | Инициализация проекта (с нуля или оверлей хранилища) |
 | `sage-wiki compile [--watch] [--batch] [--estimate] [--dry-run] [--no-cache] [--fresh] [--re-embed] [--re-extract] [--prune]` | Компиляция источников в вики-статьи |
 | `sage-wiki serve [--transport stdio\|sse] [--ui] [--port 3333]` | MCP-сервер / веб-интерфейс |
 | `sage-wiki reindex [--drop-chunk-vectors]` | Перестраивает индекс чанков по документам на диске с текущими `chunk_size` / `chunk_overlap_tokens` |

@@ -167,7 +167,7 @@ sage-wiki compile --watch
 
 | 명령어 | 설명 |
 | ------- | ----------- |
-| `sage-wiki init [--vault] [--skill <agent>] [--pack <name>] [--prompts]` | 프로젝트 초기화 (새 프로젝트 또는 볼트 오버레이) |
+| `sage-wiki init [dir] [--vault] [--skill <agent>] [--pack <name>] [--prompts] [--force]` | 프로젝트 초기화 (새 프로젝트 또는 볼트 오버레이) |
 | `sage-wiki compile [--watch] [--batch] [--estimate] [--dry-run] [--no-cache] [--fresh] [--re-embed] [--re-extract] [--prune]` | 소스를 위키 문서로 컴파일 |
 | `sage-wiki serve [--transport stdio\|sse] [--ui] [--port 3333]` | MCP 서버 / 웹 UI |
 | `sage-wiki reindex [--drop-chunk-vectors]` | 현재의 `chunk_size` / `chunk_overlap_tokens` 로 디스크의 문서에서 청크 인덱스를 재구축 |

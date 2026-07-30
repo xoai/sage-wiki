@@ -167,7 +167,7 @@ Bề mặt lệnh cốt lõi; chạy `sage-wiki <command> --help` để xem các
 
 | Lệnh | Mô tả |
 | ------- | ----------- |
-| `sage-wiki init [--vault] [--skill <agent>] [--pack <name>] [--prompts]` | Khởi tạo dự án (greenfield hoặc lớp phủ vault) |
+| `sage-wiki init [dir] [--vault] [--skill <agent>] [--pack <name>] [--prompts] [--force]` | Khởi tạo dự án (greenfield hoặc lớp phủ vault) |
 | `sage-wiki compile [--watch] [--batch] [--estimate] [--dry-run] [--no-cache] [--fresh] [--re-embed] [--re-extract] [--prune]` | Biên dịch nguồn thành bài viết wiki |
 | `sage-wiki serve [--transport stdio\|sse] [--ui] [--port 3333]` | Máy chủ MCP / web UI |
 | `sage-wiki reindex [--drop-chunk-vectors]` | Dựng lại chỉ mục chunk từ các tài liệu trên đĩa với `chunk_size` / `chunk_overlap_tokens` hiện tại |
