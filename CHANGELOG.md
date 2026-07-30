@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- **Added the MIT `LICENSE` file (P4-0).** The README has always said MIT but
+  no license text shipped in the tree, leaving the default legal position at
+  all-rights-reserved and blocking corporate adoption review. `LICENSE` is
+  tracked in git, linked from the README's License section, and is picked up
+  by the release workflow's existing `[ -f LICENSE ]` guard, so release
+  archives include it from the next tag.
+
 - **`make ci` now covers the translation-drift check.** The documented local
   gate claimed to mirror CI but omitted MAINT-05, so a README.md-only change
   could pass `make ci` and still fail CI after merge. New `make translations`

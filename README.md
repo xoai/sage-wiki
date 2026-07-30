@@ -451,4 +451,4 @@ Zero CGO. Pure Go. Cross-platform.
 
 ## License
 
-MIT
+[MIT](LICENSE)
