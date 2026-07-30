@@ -36,6 +36,10 @@ type Source struct {
 type Concept struct {
 	ArticlePath  string   `json:"article_path"`
 	Sources      []string `json:"sources"`
+	// Aliases carries the concept's extracted alias names (issue #128).
+	// omitempty + additive: old binaries ignore it on read; an old binary's
+	// Load+Save silently strips it on any manifest write (documented).
+	Aliases      []string `json:"aliases,omitempty"`
 	LastCompiled string   `json:"last_compiled"`
 }
 
@@ -154,12 +158,58 @@ func (m *Manifest) RemoveSource(path string) {
 }
 
 // AddConcept registers a concept.
-func (m *Manifest) AddConcept(name string, articlePath string, sources []string) {
-	m.Concepts[name] = Concept{
-		ArticlePath:  articlePath,
-		Sources:      sources,
-		LastCompiled: time.Now().UTC().Format(time.RFC3339),
+// AddConcept records a concept. On re-add it UNIONS sources and aliases
+// (dedup, order-preserving) instead of replacing — a replace would wipe
+// accumulated evidence and, once aliases exist, the very aliases acronym
+// dedup relies on (issue #128).
+func (m *Manifest) AddConcept(name string, articlePath string, sources []string, aliases ...string) {
+	c := m.Concepts[name]
+	newSources := unionStrings(c.Sources, sources)
+	newAliases := unionStrings(c.Aliases, aliases)
+	changed := c.ArticlePath != articlePath ||
+		len(newSources) != len(c.Sources) || len(newAliases) != len(c.Aliases) ||
+		!sameStrings(newSources, c.Sources) || !sameStrings(newAliases, c.Aliases)
+	c.ArticlePath = articlePath
+	c.Sources = newSources
+	c.Aliases = newAliases
+	if changed {
+		// Every compile re-adds every extracted concept; bumping the
+		// timestamp unconditionally dirtied the manifest for AutoCommit
+		// vaults on no-change recompiles (review).
+		c.LastCompiled = time.Now().UTC().Format(time.RFC3339)
 	}
+	m.Concepts[name] = c
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// unionStrings appends items not already present, preserving order.
+func unionStrings(existing, add []string) []string {
+	if len(add) == 0 {
+		return existing
+	}
+	seen := make(map[string]bool, len(existing))
+	for _, s := range existing {
+		seen[s] = true
+	}
+	out := append([]string(nil), existing...)
+	for _, s := range add {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // PendingSources returns sources with status "pending".

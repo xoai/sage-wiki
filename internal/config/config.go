@@ -125,6 +125,11 @@ type CompilerConfig struct {
 	// Tiered compilation
 	DefaultTier    int            `yaml:"default_tier,omitempty"`  // default tier for sources (default: 3)
 	TierDefaults   map[string]int `yaml:"tier_defaults,omitempty"` // file extension → default tier
+	// MinConceptSources is the minimum declared sources a concept needs
+	// before an article is written for it (issue #128). *int so "unset"
+	// (nil → 1, skip only truly source-less concepts) is distinguishable
+	// from an explicit 0 (gate disabled).
+	MinConceptSources *int         `yaml:"min_concept_sources,omitempty"`
 	AutoPromote    *bool          `yaml:"auto_promote,omitempty"`  // auto-promote based on signals (default: true)
 	PromoteSignals PromoteSignals `yaml:"promote_signals,omitempty"`
 	AutoDemote     *bool          `yaml:"auto_demote,omitempty"` // auto-demote stale articles (default: true)
@@ -220,6 +225,15 @@ const (
 	defaultQualityWeightWikilink    = 0.15
 	defaultQualityWeightAntiPattern = 0.20
 )
+
+// MinConceptSourcesOrDefault resolves the gate: nil → 1, explicit 0 →
+// disabled (no filtering), N → N.
+func (c CompilerConfig) MinConceptSourcesOrDefault() int {
+	if c.MinConceptSources == nil {
+		return 1
+	}
+	return *c.MinConceptSources
+}
 
 // QualityThreshold returns the configured low-quality warning threshold,
 // or the default (0.5) when unset.

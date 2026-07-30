@@ -108,11 +108,13 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("re-extract: concept extraction: %w", err)
 	}
+	// Evidence gate (#128): source-less concepts are suppressed entirely.
+	concepts, _ = filterLowEvidence(concepts, cfg.Compiler.MinConceptSourcesOrDefault())
 	result.ConceptsExtracted = len(concepts)
 
 	// Update manifest with concepts
 	for _, c := range concepts {
-		mf.AddConcept(c.Name, filepath.ToSlash(filepath.Join(cfg.Output, "concepts", c.Name+".md")), c.Sources)
+		mf.AddConcept(c.Name, filepath.ToSlash(filepath.Join(cfg.Output, "concepts", c.Name+".md")), c.Sources, c.Aliases...)
 	}
 
 	// Pass 2b: LLM triple extraction (P3-2, opt-in). summariesCarryFrontmatter

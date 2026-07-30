@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -29,12 +30,13 @@ type ExtractedConcept struct {
 // concept set at write time (it includes concepts from prior compiles, not
 // just the current batch), so the write pass sources related-concept
 // candidates from here to cover incremental compiles as well as full ones.
-// Aliases are not stored in the manifest; callers that need them use the
-// in-batch concept slice. Issue #106.
+// Aliases ARE stored in the manifest as of #128 (Concept.Aliases); refs
+// carry them so alias-overlap dedup can match extracted acronyms against
+// existing concepts' aliases.
 func manifestConceptRefs(m map[string]manifest.Concept) []ExtractedConcept {
 	refs := make([]ExtractedConcept, 0, len(m))
 	for name, c := range m {
-		refs = append(refs, ExtractedConcept{Name: name, Sources: c.Sources})
+		refs = append(refs, ExtractedConcept{Name: name, Sources: c.Sources, Aliases: c.Aliases})
 	}
 	return refs
 }
@@ -203,7 +205,7 @@ func ExtractConcepts(
 	allConcepts = filterNoisyConcepts(allConcepts)
 
 	// Deduplicate across batches
-	allConcepts = deduplicateConcepts(allConcepts)
+	allConcepts = deduplicateConcepts(allConcepts, existingConcepts)
 
 	// A total failure (every batch errored) must not look like a clean empty
 	// extraction — return an error so the caller increments result.Errors instead
@@ -257,48 +259,171 @@ func filterNoisyConcepts(concepts []ExtractedConcept) []ExtractedConcept {
 	return filtered
 }
 
-// deduplicateConcepts merges concepts with the same name across batches.
-func deduplicateConcepts(concepts []ExtractedConcept) []ExtractedConcept {
+// normalizeName canonicalizes a concept/alias name for matching: lowercase,
+// trimmed. Applied to ALL comparisons including within-set keys (issue #128 —
+// deliberate change from raw c.Name keys, so "RAP " and "rap" unify).
+func normalizeName(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
+// deduplicateConcepts merges concepts across batches: exact-normalized
+// name==name (as before), PLUS alias overlap in both directions (issue
+// #128). An extracted concept whose name matches an existing concept's
+// alias — within the batch or in the manifest — folds into the canonical
+// concept instead of standing alone (the bare-acronym case).
+func deduplicateConcepts(concepts []ExtractedConcept, existing map[string]manifest.Concept) []ExtractedConcept {
+	// Manifest alias index: alias → canonical name (deterministic: sorted
+	// manifest keys, first alias wins).
+	manifestAlias := map[string]string{}
+	var mKeys []string
+	for k := range existing {
+		mKeys = append(mKeys, k)
+	}
+	sort.Strings(mKeys)
+	for _, name := range mKeys {
+		for _, a := range existing[name].Aliases {
+			if _, ok := manifestAlias[normalizeName(a)]; !ok {
+				manifestAlias[normalizeName(a)] = name
+			}
+		}
+	}
+
+	// seen maps normalized name → the ONE heap entry per canonical concept;
+	// result holds pointers into the same entries, so every merge is visible
+	// to every later alias check (transitive) and nothing reads stale copies
+	// (gates i1: the loop-copy/apply-back pattern lost accumulated merges and
+	// aliased a growable slice element).
 	seen := map[string]*ExtractedConcept{}
-	var result []ExtractedConcept
+	var result []*ExtractedConcept
 
-	for _, c := range concepts {
-		if existing, ok := seen[c.Name]; ok {
-			// Merge sources
-			srcSet := map[string]bool{}
-			for _, s := range existing.Sources {
-				srcSet[s] = true
+	merge := func(dst, src *ExtractedConcept) {
+		srcSet := map[string]bool{}
+		for _, s := range dst.Sources {
+			srcSet[s] = true
+		}
+		for _, s := range src.Sources {
+			if !srcSet[s] {
+				dst.Sources = append(dst.Sources, s)
 			}
-			for _, s := range c.Sources {
-				if !srcSet[s] {
-					existing.Sources = append(existing.Sources, s)
-				}
+		}
+		// Alias dedup keys are NORMALIZED (review: "RAP" and "rap" must not
+		// accumulate as distinct aliases), and the canonical's own name must
+		// never land in its alias list (review: self-alias polluted the
+		// manifest on A→B→C→A chains).
+		aliasSet := map[string]bool{normalizeName(dst.Name): true}
+		for _, a := range dst.Aliases {
+			aliasSet[normalizeName(a)] = true
+		}
+		for _, a := range src.Aliases {
+			if !aliasSet[normalizeName(a)] {
+				aliasSet[normalizeName(a)] = true
+				dst.Aliases = append(dst.Aliases, a)
 			}
-			// Merge aliases
-			aliasSet := map[string]bool{}
-			for _, a := range existing.Aliases {
-				aliasSet[a] = true
-			}
-			for _, a := range c.Aliases {
-				if !aliasSet[a] {
-					existing.Aliases = append(existing.Aliases, a)
-				}
-			}
-		} else {
-			copy := c
-			seen[c.Name] = &copy
-			result = append(result, copy)
+		}
+		if !aliasSet[normalizeName(src.Name)] && normalizeName(src.Name) != normalizeName(dst.Name) {
+			dst.Aliases = append(dst.Aliases, src.Name) // loser's name becomes an alias
 		}
 	}
 
-	// Apply merged data back
-	for i := range result {
-		if merged, ok := seen[result[i].Name]; ok {
-			result[i] = *merged
+	for i := range concepts {
+		c := &concepts[i]
+		key := normalizeName(c.Name)
+		// Rule 2: acronym matches a manifest concept's alias → fold into the
+		// canonical concept, carrying union(manifest sources+aliases, A's)
+		// deduped via merge(). A SECOND acronym hitting the same canonical
+		// merges into the same entry (gates i1 Major 2).
+		if canonical, ok := manifestAlias[key]; ok {
+			entry := seen[key]
+			if entry == nil {
+				entry = seen[normalizeName(canonical)]
+			}
+			if entry != nil {
+				merge(entry, c)
+				continue
+			}
+			mc := existing[canonical]
+			entry = &ExtractedConcept{Name: canonical, Type: c.Type}
+			merge(entry, &ExtractedConcept{Sources: mc.Sources, Aliases: mc.Aliases})
+			merge(entry, c)
+			seen[key] = entry
+			seen[normalizeName(canonical)] = entry
+			result = append(result, entry)
+			log.Info("dedup: folded into existing concept", "from", c.Name, "into", canonical)
+			continue
 		}
+		if existingEntry, ok := seen[key]; ok {
+			merge(existingEntry, c)
+			continue
+		}
+		// Rule 1: new concept's name is another entry's alias (either direction).
+		folded := false
+		for ri, r := range result {
+			aliasRelated := false
+			for _, a := range r.Aliases {
+				if normalizeName(a) == key {
+					aliasRelated = true
+					break
+				}
+			}
+			if !aliasRelated {
+				for _, a := range c.Aliases {
+					if normalizeName(a) == normalizeName(r.Name) {
+						aliasRelated = true
+						break
+					}
+				}
+			}
+			if !aliasRelated {
+				continue
+			}
+			// Canonical = the longer normalized name (the expansion, not the
+			// acronym) — "remedial-action-plan" beats "rap" either way.
+			if len(normalizeName(c.Name)) > len(normalizeName(r.Name)) {
+				winner := &ExtractedConcept{Name: c.Name, Type: c.Type}
+				if winner.Type == "" {
+					winner.Type = r.Type // don't drop the loser's type (review)
+				}
+				merge(winner, r) // r is the heap accumulator — no stale copy
+				merge(winner, c)
+				// Purge EVERY seen key pointing at the loser, not just its
+				// canonical name: rule-2 entries are double-registered
+				// (acronym key + canonical key), and a stale key would merge
+				// a later acronym into the detached loser (review M1). The
+				// purged keys are re-registered at the winner, so a later
+				// rule-2 hit on the same canonical still finds it.
+				var loserKeys []string
+				for k, v := range seen {
+					if v == r {
+						loserKeys = append(loserKeys, k)
+						delete(seen, k)
+					}
+				}
+				for _, k := range loserKeys {
+					seen[k] = winner
+				}
+				seen[key] = winner
+				result[ri] = winner
+				log.Info("dedup: folded into existing concept", "from", r.Name, "into", c.Name)
+			} else {
+				merge(r, c)
+				log.Info("dedup: folded into existing concept", "from", c.Name, "into", r.Name)
+			}
+			folded = true
+			break
+		}
+		if folded {
+			continue
+		}
+		entry := &ExtractedConcept{Name: c.Name, Aliases: c.Aliases, Sources: c.Sources, Type: c.Type}
+		seen[key] = entry
+		result = append(result, entry)
 	}
 
-	return result
+	out := make([]ExtractedConcept, len(result))
+	for i, r := range result {
+		out[i] = *r
+	}
+	return out
 }
 
 // ConceptsSchema is the canonical schema for concept extraction (P2-4).

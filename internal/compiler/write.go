@@ -630,6 +630,16 @@ func sanitizeWikilinks(content string, aliasMap map[string]string) string {
 // falls back to the batch, preserving the original issue-#95 behavior.
 func buildAliasMap(concepts []ExtractedConcept, allConcepts []ExtractedConcept) map[string]string {
 	m := make(map[string]string)
+	// Manifest aliases first (#128: manifest.Concept carries them since the
+	// evidence-gate work) — an out-of-batch alias link like [[RAP]] can then
+	// canonicalize to remedial-action-plan. In-batch aliases override.
+	for _, c := range allConcepts {
+		for _, a := range c.Aliases {
+			if a != "" {
+				m[a] = c.Name
+			}
+		}
+	}
 	for _, c := range concepts {
 		for _, a := range c.Aliases {
 			if a != "" {

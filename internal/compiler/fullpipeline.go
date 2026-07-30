@@ -260,18 +260,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 			if match != "" {
 				log.Info("concept dedup: merging", "new", c.Name, "existing", match, "score", score)
 				// Merge sources into existing concept (deduplicate source list)
-				if existing, ok := mf.Concepts[match]; ok {
-					seen := make(map[string]bool)
-					for _, s := range existing.Sources {
-						seen[s] = true
-					}
-					for _, s := range c.Sources {
-						if !seen[s] {
-							existing.Sources = append(existing.Sources, s)
-						}
-					}
-					mf.Concepts[match] = existing
-				}
+				mergeConceptIntoManifest(mf, match, c)
 				merged++
 				continue
 			}
@@ -290,12 +279,15 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		concepts = dedupedConcepts
 	}
 
+	// Evidence gate (#128): source-less concepts are suppressed entirely —
+	// no manifest entry, no article, no entity, no cites.
+	concepts, _ = filterLowEvidence(concepts, cfg.Compiler.MinConceptSourcesOrDefault())
 	result.ConceptsExtracted = len(concepts)
 
 	var conceptNames []string
 	for _, c := range concepts {
 		conceptNames = append(conceptNames, c.Name)
-		mf.AddConcept(c.Name, filepath.ToSlash(filepath.Join(cfg.Output, "concepts", c.Name+".md")), c.Sources)
+		mf.AddConcept(c.Name, filepath.ToSlash(filepath.Join(cfg.Output, "concepts", c.Name+".md")), c.Sources, c.Aliases...)
 	}
 	progress.ConceptsDiscovered(conceptNames)
 	progress.EndPhase()

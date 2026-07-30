@@ -18,4 +18,9 @@ For each concept, provide:
 - type: concept, technique, or claim
 
 Merge with existing concepts when appropriate (detect aliases).
+Acronyms and legend/diagram symbols: do NOT emit a bare acronym (e.g. "RAP",
+"WSP") as a standalone concept unless its expansion is inferable from the
+surrounding text. When an acronym clearly abbreviates a known concept, put
+it in that concept's aliases instead; if the expansion is not inferable,
+drop the acronym entirely.
 Output ONLY a JSON array of objects. No markdown, no explanation.
