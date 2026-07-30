@@ -1,7 +1,8 @@
 name: CI
 
 # Quality gate for every push to main and every PR: build (incl. the `webui`
-# build tag), vet, race-test, lint, vuln-scan, and typecheck the frontend.
+# build tag), vet, race-test, lint, vuln-scan, typecheck the frontend, and the
+# translation-drift check (MAINT-05). Local mirror: `make ci`.
 #
 # CGO policy: the release build is pure-Go (`modernc.org/sqlite`) and MUST stay
 # CGO_ENABLED=0 (see .github/workflows/release.yml) — so build/vet run with cgo

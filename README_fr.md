@@ -30,6 +30,8 @@ _Les points sur la bordure extérieure représentent les résumés de tous les d
 
 ## Graphe de connaissances & mémoire de graphe
 
+![moteur de graphe sage-wiki](sage-wiki-graph-engine.png)
+
 La recherche vectorielle retrouve des passages qui *ressemblent* à la requête. Un graphe enregistre en plus **comment les choses sont reliées** : une question qui demande deux ou trois sauts se résout par traversée, au lieu d'espérer qu'un seul fragment contienne toute la chaîne. sage-wiki construit ce graphe comme une sortie de compilation — pas une seconde base à synchroniser.
 
 - **Entités et relations typées.** Chaque compilation extrait des entités (concepts, sources, artefacts) et les relie par des relations typées. Le vocabulaire des relations vous appartient — voir

@@ -27,6 +27,8 @@ _Dots on the outer boundary represent summaries of all documents in the knowledg
 
 ## Knowledge graph & graph memory
 
+![sage-wiki graph engine](sage-wiki-graph-engine.png)
+
 Vector search retrieves passages that *look like* the query. A graph also
 records **how things relate**, so a question needing two or three hops is
 answered by traversal instead of hoping one chunk happens to contain the whole

@@ -30,6 +30,8 @@ _Các điểm trên đường biên ngoài đại diện cho tóm tắt của t�
 
 ## Đồ thị tri thức & bộ nhớ đồ thị
 
+![engine đồ thị sage-wiki](sage-wiki-graph-engine.png)
+
 Tìm kiếm vector trả về những đoạn *trông giống* câu hỏi. Đồ thị còn lưu **các sự vật liên hệ với nhau ra sao**, nên một câu hỏi cần hai ba bước suy luận được trả lời bằng cách duyệt đồ thị, thay vì hy vọng một đoạn văn chứa trọn chuỗi lập luận. sage-wiki dựng đồ thị đó như một sản phẩm của quá trình biên dịch — không phải một cơ sở dữ liệu thứ hai phải đồng bộ.
 
 - **Thực thể và quan hệ có kiểu.** Mỗi lần biên dịch sẽ trích xuất thực thể (khái niệm, nguồn, hiện vật) và nối chúng bằng quan hệ có kiểu. Bộ từ vựng quan hệ do bạn định nghĩa — xem
