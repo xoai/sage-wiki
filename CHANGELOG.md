@@ -4,7 +4,9 @@
 
 ### Fixed
 
-- **Batch API truncation no longer silently drops sources (#124).** A
+- **Batch API truncation no longer silently drops sources (#124).** Also
+  fixes a pre-existing Gemini batch bug: retrieve failed SSRF validation on
+  any port-bearing base URL (host comparison dropped the port). A
   truncated 200-OK results body previously produced a partial result set
   that was processed as complete (malformed JSONL lines were skipped
   silently). Retrieving batch results now retries truncation-class errors
