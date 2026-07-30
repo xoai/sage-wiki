@@ -12,6 +12,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/sqlitestore"
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
@@ -492,5 +493,33 @@ func TestReconcile_ArticleWithoutEntityTypeDefaultsToConcept(t *testing.T) {
 	}
 	if ent.Type != ontology.TypeConcept {
 		t.Errorf("Type = %q, want %q", ent.Type, ontology.TypeConcept)
+	}
+}
+
+// P3-7 T2: ReconcileBackend over an explicit backend heals drift
+// identically to the legacy wrapper (which delegates to it).
+func TestReconcileBackendEquivalence(t *testing.T) {
+	e := setupReconcile(t)
+	// Drift: manifest expects an article the DB lacks (crash between write
+	// and index) — the same fixture as TestReconcile_FileNoDB_Indexes.
+	rel := e.writeConceptFile(t, "beta", "# Beta\n\nContent about beta.")
+	m := manifest.New()
+	m.AddConcept("beta", rel, []string{"raw/b.md"})
+	e.saveManifest(t, m)
+
+	backend := sqlitestore.Wrap(e.db, e.dir, sqlitestore.Options{
+		ValidRelations:   ontology.ValidRelationNames(ontology.MergedRelations(nil)),
+		ValidEntityTypes: ontology.ValidEntityTypeNames(ontology.MergedEntityTypes(nil)),
+		ANN:              false,
+	})
+	res, err := ReconcileBackend(context.Background(), e.dir, e.cfg, backend, nil)
+	if err != nil {
+		t.Fatalf("ReconcileBackend: %v", err)
+	}
+	if res.Reindexed != 1 {
+		t.Errorf("Reindexed = %d, want 1", res.Reindexed)
+	}
+	if got, _ := e.mem.Get("concept:beta"); got == nil {
+		t.Error("beta not indexed into FTS via ReconcileBackend")
 	}
 }

@@ -16,10 +16,9 @@ import (
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/sourcedate"
+	"github.com/xoai/sage-wiki/internal/sqlitestore"
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/store"
-	"github.com/xoai/sage-wiki/internal/trust"
-	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
 // ReconcileResult summarizes a reconcile pass.
@@ -42,26 +41,48 @@ type ReconcileResult struct {
 // output-hash completion signal LAST — so a crash mid-repair leaves the output
 // out of FTS and is simply re-detected next run. With no embedder (offline
 // launch) it reconciles FTS/chunks/ontology and defers vectors.
-func Reconcile(ctx context.Context, projectDir string, cfg *config.Config, db store.DBHandle, embedder embed.Embedder) (*ReconcileResult, error) {
-	merged := ontology.MergedRelations(cfg.Ontology.Relations)
-	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+// ReconcileBackend is the primary, backend-neutral entry (P3-7): it heals
+// whichever backend the vault is configured with — the P2-1 skip-list's
+// sqlite-forced reconcile is gone. The Backend supplies every store the
+// reconciler touches plus WriteTx and Trust.
+func ReconcileBackend(ctx context.Context, projectDir string, cfg *config.Config, b store.Backend, embedder embed.Embedder) (*ReconcileResult, error) {
 	rc := &reconciler{
 		projectDir:   projectDir,
 		manifestPath: filepath.Join(projectDir, ".manifest.json"),
 		outputRel:    cfg.Output,
 		chunkSize:    cfg.Search.ChunkSizeOrDefault(),
 		chunkOverlap: cfg.Search.ChunkOverlapOrDefault(),
-		db:           db,
-		mem:          memory.NewStore(db),
-		vec:          vectors.NewStore(db),
-		chunks:       memory.NewChunkStore(db),
-		ont:          ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
-		ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault())),
-		oi:           storage.NewOutputIndex(db),
+		backend:      b,
+		mem:          b.Entries(),
+		vec:          b.Vectors(),
+		chunks:       b.Chunks(),
+		ont:          b.Ontology(),
+		oi:           b.OutputIndex(),
 		embedder:     embedder,
 		res:          &ReconcileResult{},
 	}
 	return rc.run(ctx)
+}
+
+// Reconcile is the legacy sqlite entry, kept so existing callers and tests
+// are byte-identical: it wraps the caller's handle in a ModeWriter backend
+// (sqlitestore.Wrap, non-owning) and delegates. db must be a concrete
+// *storage.DB — anything else means the caller should be on
+// ReconcileBackend directly.
+func Reconcile(ctx context.Context, projectDir string, cfg *config.Config, db store.DBHandle, embedder embed.Embedder) (*ReconcileResult, error) {
+	sdb, ok := db.(*storage.DB)
+	if !ok {
+		return nil, fmt.Errorf("reconcile: sqlite wrapper requires *storage.DB, got %T — use ReconcileBackend", db)
+	}
+	merged := ontology.MergedRelations(cfg.Ontology.Relations)
+	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+	b := sqlitestore.Wrap(sdb, projectDir, sqlitestore.Options{
+		ValidRelations:   ontology.ValidRelationNames(merged),
+		ValidEntityTypes: ontology.ValidEntityTypeNames(mergedTypes),
+		ANN:              false, // brute-force, matching the pre-P3-7 construction
+		TemporalEnabled:  cfg.Ontology.Temporal.Enabled,
+	})
+	return ReconcileBackend(ctx, projectDir, cfg, b, embedder)
 }
 
 type reconciler struct {
@@ -70,12 +91,12 @@ type reconciler struct {
 	outputRel    string
 	chunkSize    int
 	chunkOverlap int
-	db           store.DBHandle
-	mem          *memory.Store
-	vec          *vectors.Store
-	chunks       *memory.ChunkStore
-	ont          *ontology.Store
-	oi           *storage.OutputIndex
+	backend      store.Backend
+	mem          store.EntryStore
+	vec          store.VectorStore
+	chunks       store.ChunkStore
+	ont          store.OntologyStore
+	oi           store.OutputIndexStore
 	embedder     embed.Embedder
 	res          *ReconcileResult
 }
@@ -112,7 +133,7 @@ func (rc *reconciler) run(ctx context.Context) (*ReconcileResult, error) {
 		log.Info("reconcile: source dates backfilled", "count", n)
 	}
 	// Pre-existing promoted Q&A outputs date from their trust records.
-	if n, err := sourcedate.BackfillOutputs(rc.mem, trust.NewStore(rc.db)); err != nil {
+	if n, err := sourcedate.BackfillOutputs(rc.mem, rc.backend.Trust()); err != nil {
 		log.Warn("reconcile: output-date backfill failed", "error", err)
 	} else if n > 0 {
 		log.Info("reconcile: output dates backfilled", "count", n)
@@ -287,7 +308,7 @@ func (rc *reconciler) applyReindex(eo expectedOutput, indexText, hash string, ch
 	docID := eo.ftsID
 	_ = rc.vec.Delete(docID)
 	_ = rc.vec.DeleteDocChunkVectors(docID)
-	if err := rc.db.WriteTx(func(tx *sql.Tx) error {
+	if err := rc.backend.WriteTx(func(tx *sql.Tx) error {
 		if err := rc.chunks.DeleteDocChunks(tx, docID); err != nil {
 			return err
 		}
@@ -367,7 +388,7 @@ func (rc *reconciler) dropByID(ftsID string, isArticle bool, name, outputPath st
 	_ = rc.mem.Delete(ftsID)
 	_ = rc.vec.Delete(ftsID)
 	_ = rc.vec.DeleteDocChunkVectors(ftsID)
-	if err := rc.db.WriteTx(func(tx *sql.Tx) error {
+	if err := rc.backend.WriteTx(func(tx *sql.Tx) error {
 		return rc.chunks.DeleteDocChunks(tx, ftsID)
 	}); err != nil {
 		log.Warn("reconcile: drop chunks failed", "doc", ftsID, "error", err)
