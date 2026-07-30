@@ -1,5 +1,22 @@
 # Contributing to sage-wiki
 
+**Before opening a PR:** run `make ci` on your feature branch — it mirrors the
+CI quality gate (build, vet, race tests, new-issue lint, translation drift).
+On `main` itself the drift range is empty, so always check from your branch.
+
+## Translations
+
+`README.md` and its six translations (`README_fr/ja/ko/ru/vi/zh.md`) move
+together. A change range that touches `README.md` without any `README_*.md`
+fails CI's Translation drift job (MAINT-05) — `make ci` runs the same check
+locally. If the change genuinely should not be translated yet, add
+`translations: lag-ok` to a commit message in the range to document the debt.
+
+**Maintainers merging external PRs:** GitHub holds CI for first-time
+contributors at `action_required` — checks must have *run and passed*, not
+merely be absent. Click "Approve and run workflows" on fork PRs, and treat a
+PR showing zero checks as unverified regardless of local runs.
+
 ## Adding a file format parser
 
 ### Go (built-in)

@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`make ci` now covers the translation-drift check.** The documented local
+  gate claimed to mirror CI but omitted MAINT-05, so a README.md-only change
+  could pass `make ci` and still fail CI after merge. New `make translations`
+  (same merge-base semantics as the CI job) and `make translations-self-test`;
+  CONTRIBUTING documents the translations rule and the maintainer fork-PR
+  workflow-approval step, and PRs get a checklist template. (#126)
+
 ### Added
 
 - **`pkg/sagewiki` — in-process Go embedding (#112).** A supported, non-internal
