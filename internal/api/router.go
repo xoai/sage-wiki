@@ -27,12 +27,13 @@ type Router struct {
 	cfg        *config.Config
 	projectDir string
 	routes     []Route
+	idem       *idemStore
 }
 
 // New builds the facade router. cfg is read at request time for the
 // feature-gate pre-checks (the same predicates the tools use).
 func New(d Dispatcher, cfg *config.Config, projectDir string) *Router {
-	r := &Router{d: d, cfg: cfg, projectDir: projectDir}
+	r := &Router{d: d, cfg: cfg, projectDir: projectDir, idem: newIdemStore()}
 	r.routes = []Route{
 		{"GET", "/v1/search", "/v1/search", ToolSearch,
 			[]string{"query", "tags", "boost_tags", "limit", "channels", "expand", "rerank"}, r.handleSearch},
@@ -50,6 +51,24 @@ func New(d Dispatcher, cfg *config.Config, projectDir string) *Router {
 			[]string{"source", "article"}, r.handleProvenance},
 		{"GET", "/v1/compile/diff", "/v1/compile/diff", ToolCompileDiff,
 			nil, r.handleCompileDiff},
+		{"POST", "/v1/sources", "/v1/sources", ToolAddSource,
+			[]string{"path", "type"}, r.idempotent(r.handleAddSource)},
+		{"PUT", "/v1/summaries", "/v1/summaries", ToolWriteSummary,
+			[]string{"source", "content", "concepts"}, r.idempotent(r.handleWriteSummary)},
+		{"PUT", "/v1/articles/{concept}", "/v1/articles/{concept}", ToolWriteArticle,
+			[]string{"concept", "content"}, r.idempotent(r.handleWriteArticle)},
+		// INT-05 allow-listed split: both dispatch to wiki_add_ontology
+		// with an argument subset; the tool keeps its combined form.
+		{"POST", "/v1/ontology/entities", "/v1/ontology/entities", ToolAddOntology,
+			[]string{"entity_id", "entity_type", "entity_name"}, r.idempotent(r.handleAddOntologyEntity)},
+		{"POST", "/v1/ontology/relations", "/v1/ontology/relations", ToolAddOntology,
+			[]string{"source_id", "target_id", "relation"}, r.idempotent(r.handleAddOntologyRelation)},
+		{"POST", "/v1/learnings", "/v1/learnings", ToolLearn,
+			[]string{"type", "content", "tags"}, r.idempotent(r.handleLearn)},
+		{"POST", "/v1/git/commit", "/v1/git/commit", ToolCommit,
+			[]string{"message"}, r.idempotent(r.handleCommit)},
+		{"POST", "/v1/capture", "/v1/capture", ToolCapture,
+			[]string{"content", "context", "tags"}, r.idempotent(r.handleCapture)},
 	}
 	return r
 }
