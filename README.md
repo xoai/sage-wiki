@@ -257,8 +257,10 @@ and more; setup per agent and capture workflows live in the
 [Agent Memory Layer guide](docs/guides/agent-memory-layer.md).
 
 **HTTP API (`/v1`, experimental)** — any language can call the same tools
-over REST: `sage-wiki serve --ui --port 3333` mounts 16 routes under `/v1`
+over REST: `sage-wiki serve --ui --port 3333` mounts 20 routes under `/v1`
 (Bearer auth via `SAGE_WIKI_TOKEN`, structured errors, idempotent writes).
+Long-running compile/lint run as async jobs: `POST /v1/jobs/compile` or
+`POST /v1/jobs/lint` returns `202` + a `job_id` to poll.
 Contract: [`api/openapi.yaml`](api/openapi.yaml) (OpenAPI 3.1, drift-checked
 against the MCP tool set). Guide: [docs/guides/http-api.md](docs/guides/http-api.md).
 Pre-1.0 — pin a version.
@@ -268,6 +270,32 @@ a behavioral section into the agent's instruction file (CLAUDE.md,
 .cursorrules, …) teaching it when to search, what to capture, and how to
 query, derived from your config. Targets: `claude-code`, `cursor`,
 `windsurf`, `agents-md` (Antigravity), `codex`, `gemini`, `generic`.
+
+### Agent skills
+
+Install sage-wiki's reference skill so a coding assistant knows the full
+tool surface — all 18 MCP tools, the `/v1` REST equivalents, opt-in flags,
+tiers, async compile semantics, and error codes — without reading this
+README:
+
+```bash
+# Claude Code
+npx skills add https://github.com/xoai/sage-wiki --skill sage-wiki
+
+# Or manually: copy skills/sage-wiki/SKILL.md to .claude/skills/
+```
+
+The `sage-wiki-integrate` pipeline skill wires sage-wiki into a new repo
+interactively (detect language → install client or configure MCP →
+smoke-test store-and-retrieve):
+
+```bash
+npx skills add https://github.com/xoai/sage-wiki --skill sage-wiki-integrate
+```
+
+Both skills are generated from the live MCP registry
+(`go run ./tools/skillgen/`) and drift-checked in CI — they cannot go stale
+when tools change. Pre-1.0 — pin a version.
 
 **Knowledge capture** — agents store insights back via `wiki_capture` /
 `wiki_learn`, closing the read-capture-evolve loop. Workflows and tips:

@@ -28,7 +28,7 @@ func setupV1(t *testing.T) *WebServer {
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
-	srv.SetV1Handler(api.New(mcpSrv, cfg, dir).Handler())
+	srv.SetV1Handler(api.New(mcpSrv, cfg, dir, nil).Handler())
 	return srv
 }
 

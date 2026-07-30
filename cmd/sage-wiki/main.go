@@ -648,7 +648,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		defer mcpSrv.Close()
-		webSrv.SetV1Handler(api.New(mcpSrv, webSrv.Config(), dir).Handler())
+		webSrv.SetV1Handler(api.New(mcpSrv, webSrv.Config(), dir, newJobRunner(deps, mcpSrv), deps.progress).Handler())
 
 		// Refuse to expose beyond loopback without a token (invariant: loopback
 		// stays zero-config; anything wider must be authenticated).

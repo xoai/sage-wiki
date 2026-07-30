@@ -60,11 +60,22 @@ func (s *Server) handleLint(ctx context.Context, req mcplib.CallToolRequest) (*m
 	passName, _ := args["pass"].(string)
 	fix, _ := args["fix"].(bool)
 
+	results, err := s.RunLint(passName, fix)
+	if err != nil {
+		return errorResult(fmt.Sprintf("lint failed: %v", err)), nil
+	}
+
+	return textResult(linter.FormatFindings(results)), nil
+}
+
+// RunLint executes the linter over the server's project. Exported so the
+// REST job runner (P4-2) shares the exact MCP wiring.
+func (s *Server) RunLint(passName string, fix bool) ([]linter.LintResult, error) {
 	mergedRels := ontology.MergedRelations(s.cfg.Ontology.Relations)
 	mergedTypes := ontology.MergedEntityTypes(s.cfg.Ontology.EntityTypes)
 	lintCtx := &linter.LintContext{
-		ProjectDir:       s.projectDir,
-		OutputDir:        s.cfg.Output,
+		ProjectDir: s.projectDir,
+		OutputDir:  s.cfg.Output,
 		// DBPath omitted: DB is always set here, so EnsureDB never opens a
 		// fallback (P2-1: a bare path has no meaning for the postgres backend).
 		DB:               s.db,
@@ -75,10 +86,5 @@ func (s *Server) handleLint(ctx context.Context, req mcplib.CallToolRequest) (*m
 	}
 
 	runner := linter.NewRunner()
-	results, err := runner.Run(lintCtx, passName, fix)
-	if err != nil {
-		return errorResult(fmt.Sprintf("lint failed: %v", err)), nil
-	}
-
-	return textResult(linter.FormatFindings(results)), nil
+	return runner.Run(lintCtx, passName, fix)
 }

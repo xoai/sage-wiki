@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Async job API for compile and lint (`/v1/jobs/*`, P4-2).** Long-running
+  operations are now job submissions over REST: `POST /v1/jobs/compile`
+  (full mode via compile flags, or topic mode via `{topic, max_sources?}`)
+  and `POST /v1/jobs/lint` return `202 Accepted` with a `job_id`; poll
+  `GET /v1/jobs/{id}` through `pending → running → done | failed |
+  cancelled`, list recent jobs via `GET /v1/jobs` (bounded to 100, FIFO
+  eviction), cancel via `DELETE /v1/jobs/{id}` (best-effort; the compile
+  checkpoint stays resumable). Submitting while a compile is active returns
+  `409 conflict` with the active job's ID; `Idempotency-Key` on submit
+  replays the same `job_id` without re-dispatching (per-kind scoped,
+  `X-Idempotent-Replay: true`); compile jobs mirror the shared progress hub
+  into the job's `progress` field. Jobs dispatch to the same compile/lint
+  functions the MCP tools call — no parallel job system; records are
+  in-memory (same restart semantics as the idempotency store). MCP tool
+  behaviour is unchanged.
+- **Agent skills: `sage-wiki` reference + `sage-wiki-integrate` pipeline
+  (P4-5).** Two installable skills generated from the live MCP tool
+  registry (`go run ./tools/skillgen/`): the reference skill documents all
+  18 MCP tools with REST equivalents, the fixed error-code vocabulary,
+  opt-in flags with their true defaults, tiers 0/1/3, and async compile
+  semantics; the pipeline skill wires sage-wiki into an existing repo
+  (detect language → client or MCP config → smoke test). A CI drift check
+  regenerates and `git diff --exit-code`s the `skills/` tree, so a tool
+  change cannot ship with stale skills. Install:
+  `npx skills add https://github.com/xoai/sage-wiki --skill sage-wiki`.
+
 ### Fixed
 
 - **Batch API truncation no longer silently drops sources (#124).** Also
