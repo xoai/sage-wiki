@@ -58,7 +58,9 @@ func swapDB(dsn, dbName string) string {
 	if i := strings.LastIndex(path, "/"); i >= 0 {
 		return path[:i+1] + dbName + suffix
 	}
-	return dsn
+	// No path component (keyword-form DSN): append — an unswapped return
+	// would boot onto the template and reintroduce the 55006 livelock.
+	return dsn + "/" + dbName + suffix
 }
 
 func dsnDB(dsn string) string {

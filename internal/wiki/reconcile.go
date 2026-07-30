@@ -45,6 +45,13 @@ type ReconcileResult struct {
 // out of FTS and is simply re-detected next run. With no embedder (offline
 // launch) it reconciles FTS/chunks/ontology and defers vectors.
 func ReconcileBackend(ctx context.Context, projectDir string, cfg *config.Config, b store.Backend, embedder embed.Embedder) (*ReconcileResult, error) {
+	// The interface permits nil accessors (cli_queue_test's fake exercises
+	// exactly that); a nil Trust/OutputIndex would panic mid-run instead of
+	// erroring. Both real backends return non-nil; the check is the boundary
+	// guard, not a behavior change.
+	if b.Trust() == nil || b.OutputIndex() == nil {
+		return nil, fmt.Errorf("reconcile: backend %T must provide Trust and OutputIndex stores", b)
+	}
 	rc := &reconciler{
 		projectDir:   projectDir,
 		manifestPath: filepath.Join(projectDir, ".manifest.json"),

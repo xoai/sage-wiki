@@ -1,6 +1,7 @@
 package wiki
 
 import (
+	"errors"
 	"context"
 	"database/sql"
 	"os"
@@ -528,3 +529,35 @@ func TestReconcileBackendEquivalence(t *testing.T) {
 		t.Error("beta not indexed into FTS via ReconcileBackend")
 	}
 }
+
+// Review: ReconcileBackend must error (not panic) on a backend with nil
+// Trust/OutputIndex accessors.
+func TestReconcileBackendRejectsNilStores(t *testing.T) {
+	e := setupReconcile(t)
+	_, err := ReconcileBackend(context.Background(), e.dir, e.cfg, nilStoresBackend{backend: nil}, nil)
+	if err == nil {
+		t.Fatal("expected an error for nil Trust/OutputIndex, got nil")
+	}
+}
+
+type nilStoresBackend struct{ backend interface{ store.Backend } }
+
+func (n nilStoresBackend) Entries() store.EntryStore            { return nil }
+func (n nilStoresBackend) Chunks() store.ChunkStore             { return nil }
+func (n nilStoresBackend) Vectors() store.VectorStore           { return nil }
+func (n nilStoresBackend) Ontology() store.OntologyStore        { return nil }
+func (n nilStoresBackend) Communities() store.CommunityStore    { return nil }
+func (n nilStoresBackend) Trust() store.TrustStore              { return nil }
+func (n nilStoresBackend) CompileItems() store.CompileItemStore { return nil }
+func (n nilStoresBackend) OutputIndex() store.OutputIndexStore  { return nil }
+func (n nilStoresBackend) Learnings() store.LearningStore       { return nil }
+func (n nilStoresBackend) WriteTx(fn func(tx *sql.Tx) error) error {
+	return fn(nil)
+}
+func (n nilStoresBackend) BeginWrite() (*store.Tx, error) { return nil, errors.New("unsupported") }
+func (n nilStoresBackend) ReadDB() *sql.DB                { return nil }
+func (n nilStoresBackend) WriteDB() *sql.DB               { return nil }
+func (n nilStoresBackend) Health(context.Context) error   { return nil }
+func (n nilStoresBackend) SchemaReady() bool              { return true }
+func (n nilStoresBackend) Location() string               { return "nil" }
+func (n nilStoresBackend) Close() error                   { return nil }

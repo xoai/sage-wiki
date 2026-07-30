@@ -414,7 +414,15 @@ func reconcileStartup(ctx context.Context, dir string) {
 	// open creates a stray wiki.db on every startup of a never-compiled
 	// vault, and a PG writer open takes the advisory lock for nothing.
 	mf, mfErr := manifest.Load(filepath.Join(dir, ".manifest.json"))
-	if mfErr != nil || (len(mf.Sources) == 0 && len(mf.Concepts) == 0) {
+	if mfErr != nil {
+		if !os.IsNotExist(mfErr) {
+			// A corrupt manifest on a compiled vault is worth a line — the
+			// old path warned "load manifest"; absent is the intended skip.
+			log.Warn("startup reconcile: manifest unreadable, skipping", "error", mfErr)
+		}
+		return
+	}
+	if len(mf.Sources) == 0 && len(mf.Concepts) == 0 {
 		return
 	}
 	// Backend selection honors storage.backend (P3-7 — the P2-1 skip-list
