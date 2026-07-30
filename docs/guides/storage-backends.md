@@ -10,7 +10,11 @@ sage-wiki stores all persistent state through a backend seam
 
 Everything above the seam — CLI, MCP, TUI, web, compile, re-embed, query,
 reconcile — opens storage through the same factory and store interfaces, so
-all of them honor `storage.backend`. (The `status` command's no-shared-stores
+all of them honor `storage.backend` — including the startup reconcile
+(P3-7), which heals whichever backend is configured. On Postgres, if another
+writer holds the vault's advisory lock (e.g. a running `serve`), the startup
+reconcile stalls up to `storage.lock_timeout` (default 5s) then skips with a
+warning instead of blocking startup. (The `status` command's no-shared-stores
 fallback and `wiki init`'s bootstrap remain sqlite-only; see notes in
 `decisions.md` for those two residual paths.)
 
