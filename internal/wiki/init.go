@@ -1,6 +1,7 @@
 package wiki
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -156,6 +157,13 @@ func InitVaultOverlay(dir string, project string, sourceFolders []string, ignore
 		return fmt.Errorf("init: create db: %w", err)
 	}
 	db.Close()
+
+	// Write .gitignore — vaults are usually git-tracked Obsidian vaults;
+	// .sage/ belongs ignored there too (review: was greenfield-only).
+	gitignore := filepath.Join(dir, ".gitignore")
+	if err := writeGitignore(gitignore, io.force); err != nil {
+		return fmt.Errorf("init: write .gitignore: %w", err)
+	}
 
 	// Write manifest — same preservation rule as greenfield (#127: the vault
 	// path had the identical unconditional-overwrite bug).
@@ -397,7 +405,11 @@ func writeGitignore(path string, force bool) error {
 		return err
 	}
 	for _, line := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(line) == ".sage/" {
+		// git strips TRAILING whitespace from ignore patterns but NOT
+		// leading — a " .sage/" line does not ignore the dir, so it must not
+		// count as present (review). ".sage" (no slash) also covers the dir.
+		trimmed := strings.TrimRight(line, " \t\r")
+		if trimmed == ".sage/" || trimmed == ".sage" {
 			return nil // already ignored
 		}
 	}
@@ -416,11 +428,20 @@ func writeGitignore(path string, force bool) error {
 
 // writeEmptyManifest writes the empty starting manifest unless the file
 // already exists (preserved, like config.yaml) or force is set.
+// writeEmptyManifest writes the empty starting manifest unless the file
+// already exists AND parses as JSON (preserved, like config.yaml) or force
+// is set. A 0-byte or corrupt file left by an interrupted write is treated
+// as absent — re-init becomes self-healing instead of preserving a file
+// manifest.Load will choke on at every startup (review).
 func writeEmptyManifest(path string, force bool) error {
 	if !force {
-		if _, err := os.Stat(path); err == nil {
-			fmt.Fprintf(os.Stderr, ".manifest.json already exists, preserving it\n")
-			return nil
+		if data, err := os.ReadFile(path); err == nil {
+			var probe map[string]any
+			if json.Unmarshal(data, &probe) == nil {
+				fmt.Fprintf(os.Stderr, ".manifest.json already exists, preserving it\n")
+				return nil
+			}
+			fmt.Fprintf(os.Stderr, ".manifest.json is corrupt — reinitializing (back it up if needed)\n")
 		}
 	}
 	return os.WriteFile(path, []byte(`{"version":2,"sources":{},"concepts":{}}`+"\n"), 0644)

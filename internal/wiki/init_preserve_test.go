@@ -96,3 +96,50 @@ func TestInitVaultOverlayPreservesManifest(t *testing.T) {
 		t.Errorf("vault overlay destroyed manifest: %q", manifest)
 	}
 }
+
+// Review: corrupt manifests self-heal on re-init (not preserved forever).
+func TestInitManifestCorruptSelfHeals(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, ".manifest.json"), []byte(""), 0o644) // 0-byte interrupt
+	if err := InitGreenfield(dir, "test", "gpt-4o-mini"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, ".manifest.json"))
+	if len(data) == 0 {
+		t.Error("0-byte manifest was preserved — re-init must self-heal")
+	}
+}
+
+// Review: vault overlay also ignores .sage/ (git-tracked vault).
+func TestInitVaultOverlayWritesGitignore(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "notes"), 0o755)
+	if err := InitVaultOverlay(dir, "test", []string{"notes"}, nil, "wiki", "gpt-4o-mini"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil || string(data) != ".sage/\n" {
+		t.Errorf("vault overlay must write .gitignore with .sage/, got %q (err %v)", data, err)
+	}
+}
+
+// Review: leading-space ".sage/" does NOT count as ignored (git strips
+// trailing, not leading whitespace); ".sage" (no slash) DOES count.
+func TestInitGitignoreLeadingSpace(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(" .sage/\n"), 0o644)
+	if err := InitGreenfield(dir, "test", "gpt-4o-mini"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	var exact int
+	for _, l := range lines {
+		if strings.TrimRight(l, " \t\r") == ".sage/" || strings.TrimRight(l, " \t\r") == ".sage" {
+			exact++
+		}
+	}
+	if exact != 2 {
+		t.Errorf("leading-space entry must earn a real .sage/ append (2 matching lines), got %d: %q", exact, data)
+	}
+}

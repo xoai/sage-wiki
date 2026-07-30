@@ -262,6 +262,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 	// `init <dir>` silently initialized the CURRENT directory — and could
 	// wipe the wrong vault's manifest before preservation existed.
 	if len(args) == 1 {
+		if projectDir != "." && projectDir != "" && projectDir != args[0] {
+			fmt.Fprintf(os.Stderr, "note: positional dir %q overrides --project %q\n", args[0], projectDir)
+		}
 		projectDir = args[0]
 	}
 	dir, _ := filepath.Abs(projectDir)
