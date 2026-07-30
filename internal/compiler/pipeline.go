@@ -1021,6 +1021,43 @@ func resumeBatch(
 		return nil, fmt.Errorf("compile: retrieve batch: %w", err)
 	}
 
+	// Completeness check (#124): a truncated retrieve yields a SILENTLY
+	// incomplete result set, and the tail sources would vanish from this
+	// compile while the checkpoint is consumed. Error out BEFORE any
+	// processing — the checkpoint survives and the next compile re-polls.
+	// Errored items count as returned: they are the per-item-error contract
+	// (result.Errors++ below), not missing data.
+	{
+		expected := map[string]string{} // wire id → path (for the error message)
+		legacy := bs.PathByID == nil // same predicate the processing loop uses
+		if !legacy {
+			for id, path := range bs.PathByID {
+				expected[id] = path
+			}
+		} else {
+			for _, p := range bcp.Pending {
+				expected[p] = p
+			}
+		}
+		returned := map[string]bool{}
+		for _, br := range batchResults {
+			returned[br.CustomID] = true
+		}
+		matched := 0
+		var missing []string
+		for id, path := range expected {
+			if returned[id] {
+				matched++
+			} else {
+				missing = append(missing, path)
+			}
+		}
+		if len(missing) > 0 {
+			return nil, fmt.Errorf("compile: batch returned %d of %d expected results — missing: %s (batch state kept for re-poll)",
+				matched, len(expected), strings.Join(missing, ", "))
+		}
+	}
+
 	// Open DB for indexing
 	// P2-1 skip-list: import cycle (sqlitestore imports compiler) — see above.
 	dbPath := filepath.Join(projectDir, ".sage", "wiki.db")

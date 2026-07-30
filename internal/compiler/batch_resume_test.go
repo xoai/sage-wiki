@@ -497,3 +497,43 @@ func TestCompile_DeadBatchCheckpoint_DryRunRetains(t *testing.T) {
 		t.Error("dry-run wrote a summary")
 	}
 }
+
+// #124: a silently incomplete result set (truncated tail) must hard-error
+// and keep the checkpoint for re-poll — never consume it.
+func TestResumeBatch_MissingResultsKeepsCheckpoint(t *testing.T) {
+	fake := newFakeBatchServer(t)
+	fake.status.Store("completed")
+	dir := writeBatchProject(t, fake.URL, "", "raw/a.md", "raw/b.md")
+
+	idA, idB := batchIDForPath("raw/a.md"), batchIDForPath("raw/b.md")
+	if err := saveBatchCheckpoint(dir, &BatchCheckpoint{
+		CompileID: "c1",
+		Batch: &BatchState{
+			BatchID:  "batch_test_1",
+			Provider: "openai",
+			Pass:     "summarize",
+			PathByID: map[string]string{idA: "raw/a.md", idB: "raw/b.md"},
+		},
+		Pending: []string{"raw/a.md", "raw/b.md"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Only ONE of two results returned — the truncation case.
+	fake.setResults([]string{idA})
+
+	_, err := Compile(dir, CompileOpts{})
+	if err == nil {
+		t.Fatal("missing batch results must hard-error, not silently continue")
+	}
+	if !strings.Contains(err.Error(), "missing") || !strings.Contains(err.Error(), "raw/b.md") {
+		t.Errorf("error must name the missing source: %v", err)
+	}
+	// Checkpoint survives for re-poll — with content intact enough to retry.
+	data, statErr := os.ReadFile(batchCheckpointPath(dir))
+	if statErr != nil {
+		t.Error("checkpoint must be kept for re-poll after a completeness failure")
+	}
+	if !strings.Contains(string(data), "batch_test_1") || !strings.Contains(string(data), "raw/b.md") {
+		t.Errorf("checkpoint content incomplete for re-poll: %s", data)
+	}
+}

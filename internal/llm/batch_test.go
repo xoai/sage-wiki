@@ -322,6 +322,7 @@ func TestParseGeminiBatchResults(t *testing.T) {
 		name      string
 		jsonl     string
 		wantCount int
+		wantErr   bool
 		check     func(t *testing.T, results []BatchResult)
 	}{
 		{
@@ -409,14 +410,14 @@ func TestParseGeminiBatchResults(t *testing.T) {
 			},
 		},
 		{
-			name:      "malformed line is skipped",
+			// #124: malformed JSONL is corruption (usually truncation), not
+			// content — it now errors with a truncation-classifiable %w
+			// instead of being skipped silently.
+			name:      "malformed line errors",
 			jsonl:     "not-json\n{\"key\":\"good\",\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hi\"}]}}],\"usageMetadata\":{}}}",
-			wantCount: 1,
-			check: func(t *testing.T, results []BatchResult) {
-				if results[0].CustomID != "good" {
-					t.Errorf("CustomID = %q, want %q", results[0].CustomID, "good")
-				}
-			},
+			wantCount: 0,
+			wantErr:   true,
+			check:     func(t *testing.T, results []BatchResult) {},
 		},
 		{
 			name:      "empty input",
@@ -429,6 +430,12 @@ func TestParseGeminiBatchResults(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			results, err := parseGeminiBatchResults(strings.NewReader(tt.jsonl))
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got %d results", len(results))
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

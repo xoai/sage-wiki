@@ -53,7 +53,11 @@ func newGeminiProvider(apiKey string, baseURL string) *geminiProvider {
 	}
 	var batchHost string
 	if u, err := url.Parse(baseURL); err == nil {
-		batchHost = u.Hostname()
+		// u.Host (not Hostname): validateBatchURL compares against the parsed
+		// URL's Host, which keeps the port — Hostname() would make every
+		// port-bearing baseURL (localhost proxies, httptest) fail validation
+		// (pre-existing bug found by #124's gemini retry test).
+		batchHost = u.Host
 	}
 	return &geminiProvider{
 		apiKey:          apiKey,
@@ -603,6 +607,12 @@ func (p *geminiProvider) PollBatch(batchID string) (*BatchStatusResponse, error)
 // RetrieveBatch downloads and parses results from a completed Gemini batch.
 // resultsRef is the file resource name from PollBatch (e.g. "files/abc123-responses").
 func (p *geminiProvider) RetrieveBatch(resultsRef string) ([]BatchResult, error) {
+	return retrieveWithRetry("gemini", func() ([]BatchResult, error) {
+		return p.retrieveBatchOnce(resultsRef)
+	})
+}
+
+func (p *geminiProvider) retrieveBatchOnce(resultsRef string) ([]BatchResult, error) {
 	// Validate the download URL points to the expected host to prevent SSRF.
 	// p.batchHost is derived from p.baseURL so custom endpoints are honoured.
 	if err := validateBatchURL(
@@ -621,13 +631,19 @@ func (p *geminiProvider) RetrieveBatch(resultsRef string) ([]BatchResult, error)
 	hc := http.Client{Timeout: 300 * time.Second}
 	resp, err := hc.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("gemini batch: download results: %w", err)
+		// url.Error embeds the full request URL, including the API key in
+		// the query — sanitize before it can reach logs or callers (the
+		// retrieve retry logs this error, #124 review).
+		return nil, fmt.Errorf("gemini batch: download results: %s", sanitizeGeminiError(err.Error()))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		recordRateLimited(resp.StatusCode)
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("gemini batch: download returned %d and the error body could not be read: %w", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("gemini batch: download returned %d: %s", resp.StatusCode, sanitizeGeminiError(string(body)))
 	}
 
@@ -673,12 +689,11 @@ func parseGeminiBatchResults(r io.Reader) ([]BatchResult, error) {
 		}
 
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			truncated := line
-			if len(truncated) > 200 {
-				truncated = truncated[:200] + "..."
-			}
-			log.Warn("gemini batch: skipping malformed JSONL line", "error", err, "line", truncated)
-			continue
+			// Malformed JSONL from a machine-generated results file is
+			// corruption (usually truncation), not content — %w so
+			// IsTruncatedBodyErr classifies it for retry (#124).
+			log.Warn("gemini batch: malformed JSONL line", "error", err)
+			return nil, fmt.Errorf("gemini batch: malformed JSONL line: %w", err)
 		}
 
 		br := BatchResult{CustomID: entry.Key}
