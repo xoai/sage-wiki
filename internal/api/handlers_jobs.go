@@ -128,13 +128,23 @@ func (r *Router) handleJobSubmit(w http.ResponseWriter, req *http.Request) {
 		wf.Flush()
 	}
 
-	// Launch the job goroutine.
-	go r.runJob(req, j, kindToSet, topic, maxSources, compileOpts, lintPass, lintFix)
+	// Launch the job goroutine. The context is NOT derived from the request:
+	// net/http cancels a request's context when the handler returns, which
+	// would cancel every job the instant its 202 is sent (httptest never
+	// reproduces this — caught by the live contract test).
+	go r.runJob(j, kindToSet, topic, maxSources, compileOpts, lintPass, lintFix)
 }
 
-func (r *Router) runJob(req *http.Request, j *Job, kind JobKind, topic *string, maxSources int, opts compiler.CompileOpts, lintPass string, lintFix bool) {
-	ctx, cancel := contextWithJobTimeout(req.Context())
+func (r *Router) runJob(j *Job, kind JobKind, topic *string, maxSources int, opts compiler.CompileOpts, lintPass string, lintFix bool) {
+	ctx, cancel := contextWithJobTimeout(context.Background())
 	r.jobs.mu.Lock()
+	// A DELETE that landed before this goroutine started already won: do
+	// not resurrect a cancelled job by marking it running.
+	if j.Status == JobCancelled {
+		r.jobs.mu.Unlock()
+		cancel()
+		return
+	}
 	j.cancel = cancel
 	now := r.jobs.now()
 	j.Status = JobRunning

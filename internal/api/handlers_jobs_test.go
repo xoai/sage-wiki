@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -577,3 +578,45 @@ func TestJ24LintProgress(t *testing.T) {
 // J-11 (drift green with new routes) is covered by drift_test.go;
 // J-12 (18 tool names unchanged) by tools/skillgen TestToolCount and the
 // MCP adapter parity tests.
+
+// Regression (found by the Python contract test): net/http cancels a
+// request's context when the handler returns — a job derived from it was
+// cancelled the instant its 202 was sent. This drives the full stack
+// through a REAL server + client, the case httptest.NewRequest cannot
+// reproduce.
+func TestJobSurvivesRequestLifecycle(t *testing.T) {
+	f := &fakeJobRunner{}
+	_, mux := newJobTestRouter(t, f, nil)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/v1/jobs/compile", "application/json",
+		strings.NewReader(`{"dry_run": true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", resp.StatusCode)
+	}
+	id := resp.Header.Get("Location")[len("/v1/jobs/"):]
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		r, err := http.Get(srv.URL + "/v1/jobs/" + id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		json.NewDecoder(r.Body).Decode(&m)
+		r.Body.Close()
+		if m["status"] == "done" {
+			return
+		}
+		if m["status"] == "cancelled" {
+			t.Fatal("job was cancelled when the submit request returned")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("job did not reach done")
+}
