@@ -62,6 +62,13 @@ Branch on `code`, never on `message`:
 | 500 | `internal` | Unclassified tool failure |
 | 503 | `unavailable` | Backend/store unavailable |
 
+500 messages from file-writing tools (`wiki_read`, sources, summaries,
+articles, capture, git/commit) are deliberately generic — tool error text
+can contain absolute server paths, so it goes to the server log instead of
+the response. This also suppresses some path-free actionable messages
+(e.g. git identity misconfiguration); correlate a 500 from these tools
+with the server log, which carries the full text.
+
 ## Idempotency
 
 All writes accept an `Idempotency-Key` header. A repeated key replays the

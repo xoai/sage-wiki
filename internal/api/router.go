@@ -105,11 +105,13 @@ func (r *Router) Handler() http.Handler {
 }
 
 // handleUnmatched is the /v1 catch-all: 404 not_found for unknown paths,
-// 405 for known paths under the wrong method.
+// 405 for known paths under the wrong method. Matching runs against
+// rt.Pattern (the ServeMux form) so the {path...} multi-segment wildcard
+// is honoured — rt.Path's OpenAPI form has no "..." marker.
 func (r *Router) handleUnmatched(w http.ResponseWriter, req *http.Request) {
 	var allow []string
 	for _, rt := range r.routes {
-		if pathMatches(rt.Path, req.URL.Path) && rt.Method != req.Method {
+		if pathMatches(rt.Pattern, req.URL.Path) && rt.Method != req.Method {
 			allow = append(allow, rt.Method)
 		}
 	}

@@ -432,9 +432,14 @@ func (s *WebServer) securityMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Origin check for state-changing (POST) and streaming (/api/query SSE)
-		// endpoints — defeats a malicious page issuing cross-origin requests.
-		if r.Method == http.MethodPost || r.URL.Path == "/api/query" {
+		// Origin check for state-changing and streaming endpoints — defeats a
+		// malicious page issuing cross-origin requests. /api/* keeps its
+		// original POST-only scope (byte-unchanged); /v1/* extends it to every
+		// state-changing method the facade exposes (POST/PUT/DELETE/PATCH).
+		stateChanging := r.Method == http.MethodPost ||
+			(strings.HasPrefix(r.URL.Path, "/v1/") &&
+				(r.Method == http.MethodPut || r.Method == http.MethodDelete || r.Method == http.MethodPatch))
+		if stateChanging || r.URL.Path == "/api/query" {
 			if origin := r.Header.Get("Origin"); origin != "" {
 				if parsed, err := url.Parse(origin); err != nil || parsed.Host != r.Host {
 					if strings.HasPrefix(r.URL.Path, "/v1/") {

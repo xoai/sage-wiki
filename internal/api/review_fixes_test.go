@@ -162,6 +162,21 @@ func TestRouter_UnmatchedPathsEnvelope(t *testing.T) {
 	if w.Code != 405 || errCode(t, w) != "invalid_argument" {
 		t.Errorf("DELETE /v1/search → %d %q, want 405 envelope", w.Code, w.Body.String())
 	}
+	// Multi-segment wildcard routes must also 405, not 404.
+	w = serve(t, mux, "DELETE", "/v1/articles/a/b", "")
+	if w.Code != 405 || errCode(t, w) != "invalid_argument" {
+		t.Errorf("DELETE /v1/articles/a/b → %d %q, want 405 envelope", w.Code, w.Body.String())
+	}
+	if allow := w.Header().Get("Allow"); !strings.Contains(allow, "GET") {
+		t.Errorf("Allow = %q, want GET", allow)
+	}
+	w = serve(t, mux, "DELETE", "/v1/articles/some-concept", "")
+	if w.Code != 405 {
+		t.Errorf("DELETE /v1/articles/some-concept → %d, want 405", w.Code)
+	}
+	if allow := w.Header().Get("Allow"); !strings.Contains(allow, "GET") || !strings.Contains(allow, "PUT") {
+		t.Errorf("Allow = %q, want GET+PUT", allow)
+	}
 }
 
 // F-024 witness: fractional numeric args are rejected.

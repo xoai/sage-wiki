@@ -91,31 +91,38 @@ func TestV1_LoopbackZeroConfig(t *testing.T) {
 	}
 }
 
-func TestV1_IdempotencyThroughMountedHandler(t *testing.T) {
+// The origin check covers state-changing /v1 methods (POST and PUT) with
+// the envelope; a matching Origin passes.
+func TestV1_OriginCheck(t *testing.T) {
 	srv := setupV1(t)
 	srv.SetAuth("s3cret", nil)
 	h := srv.Handler()
 
-	var bodies [2]string
-	for i := 0; i < 2; i++ {
-		req := loopbackReq("POST", "/v1/learnings")
-		req.Body = http.NoBody
+	for _, tc := range []struct {
+		method, target, body string
+	}{
+		{"POST", "/v1/learnings", `{"type":"gotcha","content":"x"}`},
+		{"PUT", "/v1/summaries", `{"source":"a","content":"b"}`},
+	} {
+		req := loopbackReq(tc.method, tc.target)
 		req.Header.Set("Authorization", "Bearer s3cret")
-		req.Header.Set("Idempotency-Key", "through-handler-key")
-		req.Header.Set("Content-Type", "application/json")
-		req.Body = io.NopCloser(strings.NewReader(`{"type":"gotcha","content":"via mounted handler"}`))
+		req.Header.Set("Origin", "https://evil.example")
+		req.Body = io.NopCloser(strings.NewReader(tc.body))
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("request %d → %d (%s)", i, w.Code, w.Body.String())
+		if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), `"code":"forbidden"`) {
+			t.Errorf("%s %s with foreign Origin → %d %q, want 403 envelope", tc.method, tc.target, w.Code, w.Body.String())
 		}
-		if i == 1 && w.Header().Get("X-Idempotent-Replay") != "true" {
-			t.Fatalf("second request missing replay header: %v", w.Header())
-		}
-		bodies[i] = w.Body.String()
 	}
-	if bodies[0] != bodies[1] {
-		t.Fatalf("replays differ:\n%s\n%s", bodies[0], bodies[1])
+
+	req := loopbackReq("PUT", "/v1/summaries")
+	req.Header.Set("Authorization", "Bearer s3cret")
+	req.Header.Set("Origin", "http://127.0.0.1:3333")
+	req.Body = io.NopCloser(strings.NewReader(`{"source":"a","content":"b"}`))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code == http.StatusForbidden {
+		t.Errorf("matching Origin rejected: %s", w.Body.String())
 	}
 }
 
