@@ -270,6 +270,12 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 							existing.Sources = append(existing.Sources, s)
 						}
 					}
+					for _, a := range c.Aliases {
+						if !seen[a] {
+							seen[a] = true
+							existing.Aliases = append(existing.Aliases, a)
+						}
+					}
 					mf.Concepts[match] = existing
 				}
 				merged++
@@ -290,12 +296,15 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		concepts = dedupedConcepts
 	}
 
+	// Evidence gate (#128): source-less concepts are suppressed entirely —
+	// no manifest entry, no article, no entity, no cites.
+	concepts, _ = filterLowEvidence(concepts, cfg.Compiler.MinConceptSourcesOrDefault())
 	result.ConceptsExtracted = len(concepts)
 
 	var conceptNames []string
 	for _, c := range concepts {
 		conceptNames = append(conceptNames, c.Name)
-		mf.AddConcept(c.Name, filepath.ToSlash(filepath.Join(cfg.Output, "concepts", c.Name+".md")), c.Sources)
+		mf.AddConcept(c.Name, filepath.ToSlash(filepath.Join(cfg.Output, "concepts", c.Name+".md")), c.Sources, c.Aliases...)
 	}
 	progress.ConceptsDiscovered(conceptNames)
 	progress.EndPhase()

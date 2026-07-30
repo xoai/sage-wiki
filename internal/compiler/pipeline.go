@@ -1184,11 +1184,13 @@ func resumeBatch(
 			progress.EndPhase()
 			client.TeardownCache(extCacheID)
 		} else {
+			// Evidence gate (#128): source-less concepts are suppressed entirely.
+			concepts, _ = filterLowEvidence(concepts, cfg.Compiler.MinConceptSourcesOrDefault())
 			result.ConceptsExtracted = len(concepts)
 			var conceptNames []string
 			for _, c := range concepts {
 				conceptNames = append(conceptNames, c.Name)
-				mf.AddConcept(c.Name, filepath.ToSlash(filepath.Join(cfg.Output, "concepts", c.Name+".md")), c.Sources)
+				mf.AddConcept(c.Name, filepath.ToSlash(filepath.Join(cfg.Output, "concepts", c.Name+".md")), c.Sources, c.Aliases...)
 			}
 			progress.ConceptsDiscovered(conceptNames)
 			progress.EndPhase()
