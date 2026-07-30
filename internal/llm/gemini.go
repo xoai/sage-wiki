@@ -53,7 +53,11 @@ func newGeminiProvider(apiKey string, baseURL string) *geminiProvider {
 	}
 	var batchHost string
 	if u, err := url.Parse(baseURL); err == nil {
-		batchHost = u.Hostname()
+		// u.Host (not Hostname): validateBatchURL compares against the parsed
+		// URL's Host, which keeps the port — Hostname() would make every
+		// port-bearing baseURL (localhost proxies, httptest) fail validation
+		// (pre-existing bug found by #124's gemini retry test).
+		batchHost = u.Host
 	}
 	return &geminiProvider{
 		apiKey:          apiKey,
@@ -627,7 +631,10 @@ func (p *geminiProvider) retrieveBatchOnce(resultsRef string) ([]BatchResult, er
 	hc := http.Client{Timeout: 300 * time.Second}
 	resp, err := hc.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("gemini batch: download results: %w", err)
+		// url.Error embeds the full request URL, including the API key in
+		// the query — sanitize before it can reach logs or callers (the
+		// retrieve retry logs this error, #124 review).
+		return nil, fmt.Errorf("gemini batch: download results: %s", sanitizeGeminiError(err.Error()))
 	}
 	defer resp.Body.Close()
 

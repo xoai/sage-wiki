@@ -11,7 +11,7 @@ import (
 
 // #124: a truncated 200 body on retrieve is transient — retry until it succeeds.
 func TestRetrieveRetriesTruncatedBody(t *testing.T) {
-	defer func() { backoffDelayFn = backoffDelay }()
+	defer func(orig func(int) time.Duration) { backoffDelayFn = orig }(backoffDelayFn)
 	backoffDelayFn = func(int) time.Duration { return 0 }
 
 	good := `{"custom_id":"src-1","result":{"type":"succeeded","message":{"content":[{"type":"text","text":"ok"}],"model":"m","usage":{"input_tokens":1,"output_tokens":1}}}}`
@@ -43,7 +43,7 @@ func TestRetrieveRetriesTruncatedBody(t *testing.T) {
 // Persistent truncation exhausts retries and surfaces an error — never a
 // silent partial result.
 func TestRetrieveExhaustsRetries(t *testing.T) {
-	defer func() { backoffDelayFn = backoffDelay }()
+	defer func(orig func(int) time.Duration) { backoffDelayFn = orig }(backoffDelayFn)
 	backoffDelayFn = func(int) time.Duration { return 0 }
 
 	var attempts atomic.Int64
@@ -66,7 +66,7 @@ func TestRetrieveExhaustsRetries(t *testing.T) {
 // A malformed line errors (with %w so the classifier can see it) instead of
 // being silently skipped.
 func TestParseMalformedLineErrors(t *testing.T) {
-	defer func() { backoffDelayFn = backoffDelay }()
+	defer func(orig func(int) time.Duration) { backoffDelayFn = orig }(backoffDelayFn)
 	backoffDelayFn = func(int) time.Duration { return 0 }
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -84,7 +84,7 @@ func TestParseMalformedLineErrors(t *testing.T) {
 }
 
 func TestRetrieveNon200NotRetried(t *testing.T) {
-	defer func() { backoffDelayFn = backoffDelay }()
+	defer func(orig func(int) time.Duration) { backoffDelayFn = orig }(backoffDelayFn)
 	backoffDelayFn = func(int) time.Duration { return 0 }
 
 	var attempts atomic.Int64
@@ -100,5 +100,36 @@ func TestRetrieveNon200NotRetried(t *testing.T) {
 	}
 	if attempts.Load() != 1 {
 		t.Errorf("non-truncation errors must not retry: attempts = %d", attempts.Load())
+	}
+}
+
+// Gemini: the retry path works end-to-end, and transport errors are
+// sanitized (no API key in the logged/returned error — review Major).
+func TestGeminiRetrieveRetriesAndSanitizes(t *testing.T) {
+	defer func(orig func(int) time.Duration) { backoffDelayFn = orig }(backoffDelayFn)
+	backoffDelayFn = func(int) time.Duration { return 0 }
+
+	good := `{"key":"src-1","response":{"candidates":[{"content":{"parts":[{"text":"ok"}]}}],"usageMetadata":{}}}`
+	var attempts atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := attempts.Add(1)
+		if n == 1 {
+			fmt.Fprintln(w, good[:len(good)/2])
+			return
+		}
+		fmt.Fprintln(w, good)
+	}))
+	defer srv.Close()
+
+	p := newGeminiProvider("secret-key-123", srv.URL)
+	results, err := p.RetrieveBatch("files/abc123-responses")
+	if err != nil {
+		t.Fatalf("RetrieveBatch: %v", err)
+	}
+	if len(results) != 1 || results[0].CustomID != "src-1" {
+		t.Errorf("results = %+v", results)
+	}
+	if attempts.Load() != 2 {
+		t.Errorf("attempts = %d, want 2", attempts.Load())
 	}
 }

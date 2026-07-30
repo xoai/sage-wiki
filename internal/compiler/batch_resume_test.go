@@ -528,8 +528,12 @@ func TestResumeBatch_MissingResultsKeepsCheckpoint(t *testing.T) {
 	if !strings.Contains(err.Error(), "missing") || !strings.Contains(err.Error(), "raw/b.md") {
 		t.Errorf("error must name the missing source: %v", err)
 	}
-	// Checkpoint survives for re-poll.
-	if _, statErr := os.Stat(batchCheckpointPath(dir)); statErr != nil {
+	// Checkpoint survives for re-poll — with content intact enough to retry.
+	data, statErr := os.ReadFile(batchCheckpointPath(dir))
+	if statErr != nil {
 		t.Error("checkpoint must be kept for re-poll after a completeness failure")
+	}
+	if !strings.Contains(string(data), "batch_test_1") || !strings.Contains(string(data), "raw/b.md") {
+		t.Errorf("checkpoint content incomplete for re-poll: %s", data)
 	}
 }

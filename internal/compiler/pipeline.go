@@ -1029,10 +1029,12 @@ func resumeBatch(
 	// (result.Errors++ below), not missing data.
 	{
 		expected := map[string]string{} // wire id → path (for the error message)
-		for id, path := range bs.PathByID {
-			expected[id] = path
-		}
-		if len(expected) == 0 { // legacy checkpoint: custom_id IS the path
+		legacy := bs.PathByID == nil // same predicate the processing loop uses
+		if !legacy {
+			for id, path := range bs.PathByID {
+				expected[id] = path
+			}
+		} else {
 			for _, p := range bcp.Pending {
 				expected[p] = p
 			}
@@ -1041,15 +1043,18 @@ func resumeBatch(
 		for _, br := range batchResults {
 			returned[br.CustomID] = true
 		}
+		matched := 0
 		var missing []string
 		for id, path := range expected {
-			if !returned[id] {
+			if returned[id] {
+				matched++
+			} else {
 				missing = append(missing, path)
 			}
 		}
 		if len(missing) > 0 {
-			return nil, fmt.Errorf("compile: batch returned %d of %d results — missing: %s (batch state kept for re-poll)",
-				len(batchResults), len(expected), strings.Join(missing, ", "))
+			return nil, fmt.Errorf("compile: batch returned %d of %d expected results — missing: %s (batch state kept for re-poll)",
+				matched, len(expected), strings.Join(missing, ", "))
 		}
 	}
 
