@@ -11,8 +11,24 @@ import (
 	"github.com/xoai/sage-wiki/internal/storage"
 )
 
+// InitOption configures InitGreenfield/InitVaultOverlay behavior.
+type InitOption func(*initOptions)
+
+type initOptions struct{ force bool }
+
+// WithForce makes init rewrite .gitignore and .manifest.json even when they
+// exist. config.yaml is preserved unconditionally (#84) — force does NOT
+// overwrite it. Default (no option) preserves all three.
+func WithForce(force bool) InitOption {
+	return func(o *initOptions) { o.force = force }
+}
+
 // InitGreenfield creates a new sage-wiki project from scratch.
-func InitGreenfield(dir string, project string, model string) error {
+func InitGreenfield(dir string, project string, model string, opts ...InitOption) error {
+	var io initOptions
+	for _, opt := range opts {
+		opt(&io)
+	}
 	// Create directories. Note: "connections" is intentionally NOT created —
 	// concept-to-concept relations live in the SQLite relations table and
 	// surface via `sage-wiki ontology query`, the web UI graph, and the
@@ -56,15 +72,18 @@ func InitGreenfield(dir string, project string, model string) error {
 	}
 	db.Close()
 
-	// Write .gitignore
+	// Write .gitignore — append .sage/ when the file exists, never clobber
+	// user content (#127). Force rewrites it wholesale.
 	gitignore := filepath.Join(dir, ".gitignore")
-	if err := os.WriteFile(gitignore, []byte(".sage/\n"), 0644); err != nil {
+	if err := writeGitignore(gitignore, io.force); err != nil {
 		return fmt.Errorf("init: write .gitignore: %w", err)
 	}
 
-	// Write empty manifest
+	// Write empty manifest — skip when one exists: wiping it orphans every
+	// compiled output and (post-P3-7) silences the startup reconcile guard.
+	// Force rewrites it.
 	manifestPath := filepath.Join(dir, ".manifest.json")
-	if err := os.WriteFile(manifestPath, []byte(`{"version":2,"sources":{},"concepts":{}}`+"\n"), 0644); err != nil {
+	if err := writeEmptyManifest(manifestPath, io.force); err != nil {
 		return fmt.Errorf("init: write manifest: %w", err)
 	}
 
@@ -80,7 +99,11 @@ func InitGreenfield(dir string, project string, model string) error {
 }
 
 // InitVaultOverlay initializes sage-wiki on an existing Obsidian vault.
-func InitVaultOverlay(dir string, project string, sourceFolders []string, ignoreFolders []string, output string, model string) error {
+func InitVaultOverlay(dir string, project string, sourceFolders []string, ignoreFolders []string, output string, model string, opts ...InitOption) error {
+	var io initOptions
+	for _, opt := range opts {
+		opt(&io)
+	}
 	if output == "" {
 		output = "_wiki"
 	}
@@ -134,9 +157,10 @@ func InitVaultOverlay(dir string, project string, sourceFolders []string, ignore
 	}
 	db.Close()
 
-	// Write manifest
+	// Write manifest — same preservation rule as greenfield (#127: the vault
+	// path had the identical unconditional-overwrite bug).
 	manifestPath := filepath.Join(dir, ".manifest.json")
-	if err := os.WriteFile(manifestPath, []byte(`{"version":2,"sources":{},"concepts":{}}`+"\n"), 0644); err != nil {
+	if err := writeEmptyManifest(manifestPath, io.force); err != nil {
 		return fmt.Errorf("init: write manifest: %w", err)
 	}
 
@@ -356,4 +380,48 @@ serve:
 #     max_entities_per_doc: 40
 #     max_relations_per_doc: 60
 `, project, project, sourcesYAML, output, ignoreYAML, model, model, model, model, model)
+}
+
+// writeGitignore creates .gitignore with .sage/ when absent, appends a
+// line-exact .sage/ entry to an existing file (a commented "# .sage/" line
+// does NOT count), and rewrites wholesale under force.
+func writeGitignore(path string, force bool) error {
+	if force {
+		return os.WriteFile(path, []byte(".sage/\n"), 0644)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return os.WriteFile(path, []byte(".sage/\n"), 0644)
+		}
+		return err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == ".sage/" {
+			return nil // already ignored
+		}
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	prefix := ""
+	if len(data) > 0 && data[len(data)-1] != '\n' {
+		prefix = "\n"
+	}
+	_, err = f.WriteString(prefix + ".sage/\n")
+	return err
+}
+
+// writeEmptyManifest writes the empty starting manifest unless the file
+// already exists (preserved, like config.yaml) or force is set.
+func writeEmptyManifest(path string, force bool) error {
+	if !force {
+		if _, err := os.Stat(path); err == nil {
+			fmt.Fprintf(os.Stderr, ".manifest.json already exists, preserving it\n")
+			return nil
+		}
+	}
+	return os.WriteFile(path, []byte(`{"version":2,"sources":{},"concepts":{}}`+"\n"), 0644)
 }

@@ -166,7 +166,7 @@ Wikiは標準でキーワード近接からナレッジグラフを構築しま�
 
 | コマンド | 説明 |
 | ------- | ----------- |
-| `sage-wiki init [--vault] [--skill <agent>] [--pack <name>] [--prompts]` | プロジェクトの初期化（グリーンフィールドまたはボールトオーバーレイ） |
+| `sage-wiki init [dir] [--vault] [--skill <agent>] [--pack <name>] [--prompts] [--force]` | プロジェクトの初期化（グリーンフィールドまたはボールトオーバーレイ） |
 | `sage-wiki compile [--watch] [--batch] [--estimate] [--dry-run] [--no-cache] [--fresh] [--re-embed] [--re-extract] [--prune]` | ソースをWiki記事にコンパイル |
 | `sage-wiki serve [--transport stdio\|sse] [--ui] [--port 3333]` | MCPサーバー / Web UI |
 | `sage-wiki reindex [--drop-chunk-vectors]` | 現在の `chunk_size` / `chunk_overlap_tokens` でディスク上のドキュメントからチャンクインデックスを再構築 |

@@ -153,7 +153,7 @@ sage-wiki compile --watch
 
 | 命令 | 说明 |
 | ------- | ----------- |
-| `sage-wiki init [--vault] [--skill <agent>] [--pack <name>] [--prompts]` | 初始化项目（全新或 vault 覆盖模式） |
+| `sage-wiki init [dir] [--vault] [--skill <agent>] [--pack <name>] [--prompts] [--force]` | 初始化项目（全新或 vault 覆盖模式） |
 | `sage-wiki compile [--watch] [--batch] [--estimate] [--dry-run] [--no-cache] [--fresh] [--re-embed] [--re-extract] [--prune]` | 将源文件编译为 wiki 文章 |
 | `sage-wiki serve [--transport stdio\|sse] [--ui] [--port 3333]` | MCP 服务器 / Web UI |
 | `sage-wiki reindex [--drop-chunk-vectors]` | 以当前的 `chunk_size` / `chunk_overlap_tokens` 从磁盘上的文档重建 chunk 索引 |

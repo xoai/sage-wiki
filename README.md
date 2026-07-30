@@ -184,7 +184,7 @@ The core surface; run `sage-wiki <command> --help` for flags.
 
 | Command | Description |
 | ------- | ----------- |
-| `sage-wiki init [--vault] [--skill <agent>] [--pack <name>] [--prompts]` | Initialize project (greenfield or vault overlay) |
+| `sage-wiki init [dir] [--vault] [--skill <agent>] [--pack <name>] [--prompts] [--force]` | Initialize project (greenfield or vault overlay); preserves existing config/manifest/gitignore unless `--force` |
 | `sage-wiki compile [--watch] [--batch] [--estimate] [--dry-run] [--no-cache] [--fresh] [--re-embed] [--re-extract] [--prune]` | Compile sources into wiki articles |
 | `sage-wiki serve [--transport stdio\|sse] [--ui] [--port 3333]` | MCP server / web UI |
 | `sage-wiki reindex [--drop-chunk-vectors]` | Rebuild the chunk index from documents on disk with the current `chunk_size`/`chunk_overlap_tokens` |
