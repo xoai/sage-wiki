@@ -237,7 +237,24 @@ func TestGraphQuery_HappyPath(t *testing.T) {
 	defer fake.Close()
 
 	_, mux, dir := newTestRouter(t, func(raw string) string {
-		return raw + "\napi:\n  provider: openai\n  api_key: sk-test\n  base_url: " + fake.URL + "\nmodels:\n  query: gpt-4o-mini\n  write: gpt-4o-mini\n  summarize: gpt-4o-mini\n"
+		return `
+version: 1
+project: test
+sources:
+  - path: raw
+    type: auto
+output: wiki
+api:
+  provider: openai
+  api_key: sk-test
+  base_url: ` + fake.URL + `
+models:
+  summarize: gpt-4o-mini
+  query: gpt-4o-mini
+  write: gpt-4o-mini
+compiler:
+  auto_commit: false
+`
 	})
 	mcpSrv, err := wikimcp.NewServer(dir)
 	if err != nil {
@@ -248,7 +265,18 @@ func TestGraphQuery_HappyPath(t *testing.T) {
 	call(t, mcpSrv, "wiki_add_ontology", map[string]any{"entity_id": "b", "entity_type": "concept", "entity_name": "B"})
 	call(t, mcpSrv, "wiki_add_ontology", map[string]any{"source_id": "a", "target_id": "b", "relation": "extends"})
 
-	w := serve(t, mux, "POST", "/v1/graph/query", `{"question":"how does a relate to b","hops":2}`)
+	// GraphQA seeds retrieval from the memory store; add an entry the
+	// question matches (mirrors internal/mcp TestMCPGraphQuery fixture).
+	db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := memory.NewStore(db).Add(memory.Entry{ID: "concept:a", Content: "alpha chain zebra"}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := serve(t, mux, "POST", "/v1/graph/query", `{"question":"alpha chain zebra","hops":2}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d (%s)", w.Code, w.Body.String())
 	}
