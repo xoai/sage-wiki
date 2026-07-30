@@ -64,6 +64,24 @@ jobs:
         if: runner.os == 'Windows'
         run: CGO_ENABLED=0 go test ./...
 
+  skill-drift:
+    name: Agent skill drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      # Regenerate the agent skills from the live MCP registry; any diff
+      # means a tool/schema change shipped without re-running the generator.
+      - name: Check skill drift
+        run: |
+          go run ./tools/skillgen/
+          git diff --exit-code -- skills/
+
   postgres:
     name: Postgres backend
     runs-on: ubuntu-latest

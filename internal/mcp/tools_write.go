@@ -695,14 +695,26 @@ func (s *Server) handleCompileTopic(ctx context.Context, req mcplib.CallToolRequ
 		maxSources = int(ms)
 	}
 
+	result, err := s.CompileTopic(ctx, topic, maxSources)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+
+	data, _ := json.MarshalIndent(result, "", "  ")
+	return textResult(string(data)), nil
+}
+
+// CompileTopic runs compile-on-demand against the server's stores. Exported
+// so the REST job runner (P4-2) shares the exact MCP wiring.
+func (s *Server) CompileTopic(ctx context.Context, topic string, maxSources int) (*compiler.OnDemandResult, error) {
 	cfg, err := config.Load(filepath.Join(s.projectDir, "config.yaml"))
 	if err != nil {
-		return errorResult(fmt.Sprintf("load config: %v", err)), nil
+		return nil, fmt.Errorf("load config: %v", err)
 	}
 
 	client, err := auth.NewLLMClient(cfg)
 	if err != nil {
-		return errorResult(fmt.Sprintf("create LLM client: %v", err)), nil
+		return nil, fmt.Errorf("create LLM client: %v", err)
 	}
 
 	result, err := compiler.CompileTopic(ctx, compiler.OnDemandOpts{
@@ -718,11 +730,9 @@ func (s *Server) handleCompileTopic(ctx context.Context, req mcplib.CallToolRequ
 		Coordinator: s.coordinator,
 	})
 	if err != nil {
-		return errorResult(fmt.Sprintf("compile topic: %v", err)), nil
+		return nil, fmt.Errorf("compile topic: %v", err)
 	}
-
-	data, _ := json.MarshalIndent(result, "", "  ")
-	return textResult(string(data)), nil
+	return result, nil
 }
 
 // CaptureSchema is the canonical schema for wiki_capture parsing (P2-4).

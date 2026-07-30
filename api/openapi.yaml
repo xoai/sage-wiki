@@ -77,6 +77,36 @@ components:
         result:
           type: string
           description: The tool's confirmation text, passed through verbatim.
+    JobStatus:
+      type: string
+      enum: [pending, running, done, failed, cancelled]
+      description: Lifecycle state of an async job.
+    JobResponse:
+      type: object
+      required: [job_id, kind, status, submitted_at]
+      properties:
+        job_id: {type: string, description: "UUID v4, assigned at submission."}
+        kind: {type: string, enum: [compile, compile_topic, lint]}
+        status: {$ref: "#/components/schemas/JobStatus"}
+        submitted_at: {type: string, format: date-time}
+        started_at: {type: string, format: date-time}
+        finished_at: {type: string, format: date-time}
+        progress: {type: object, description: "Compile or lint progress data (implementation-defined)."}
+        result: {description: "Successful outcome — CompileResult, OnDemandResult, or lint findings."}
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string, enum: [invalid_argument, internal, unavailable]}
+            message: {type: string}
+            details: {type: object, additionalProperties: true}
+    JobList:
+      type: object
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/JobResponse"
   responses:
     BadRequest:
       description: Invalid argument (400)
@@ -552,3 +582,111 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "500": {$ref: "#/components/responses/Internal"}
+
+  /v1/jobs/{kind}:
+    post:
+      tags: [jobs]
+      summary: Submit an async compile or lint job
+      description: >
+        Topic-compile requests (`topic` in body) return `kind: compile_topic`;
+        full-compile requests return `kind: compile`.
+      parameters:
+        - {name: kind, in: path, required: true, schema: {type: string, enum: [compile, lint]}}
+        - {name: Idempotency-Key, in: header, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  required: [topic]
+                  properties:
+                    topic: {type: string}
+                    max_sources: {type: integer, default: 20}
+                - type: object
+                  properties:
+                    dry_run: {type: boolean}
+                    fresh: {type: boolean}
+                    prune: {type: boolean}
+                - type: object
+                  properties:
+                    pass: {type: string}
+                    fix: {type: boolean}
+      responses:
+        "202":
+          description: Job accepted
+          headers:
+            Location:
+              schema: {type: string, format: uri}
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobResponse"
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409":
+          description: A compile is already in progress
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500": {$ref: "#/components/responses/Internal"}
+  /v1/jobs/{id}:
+    get:
+      tags: [jobs]
+      summary: Poll job status
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Current job state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobResponse"
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags: [jobs]
+      summary: Request job cancellation (best-effort)
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "202":
+          description: Cancellation requested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobResponse"
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Job already finished
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /v1/jobs:
+    get:
+      tags: [jobs]
+      summary: List recent jobs (bounded to 100, FIFO eviction)
+      parameters:
+        - {name: status, in: query, schema: {$ref: "#/components/schemas/JobStatus"}}
+      responses:
+        "200":
+          description: Recent jobs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobList"
+        "400": {$ref: "#/components/responses/BadRequest"}

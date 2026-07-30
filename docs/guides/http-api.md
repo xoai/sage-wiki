@@ -92,8 +92,8 @@ a known path under the wrong method answers 405 with an `Allow` header.
 
 Every route dispatches to the named MCP tool — no behaviour exists here
 that the tool does not provide. Long-running operations (`wiki_compile`,
-`wiki_compile_topic`, `wiki_lint`) are not in this version; they arrive as
-an async job API.
+`wiki_compile_topic`, `wiki_lint`) run as async jobs — see
+[Async jobs](#async-jobs) below.
 
 | Route | MCP tool | Notes |
 |---|---|---|
@@ -113,6 +113,51 @@ an async job API.
 | `POST /v1/learnings` | `wiki_learn` | `type` enum: gotcha, correction, convention, error-fix, api-drift |
 | `POST /v1/git/commit` | `wiki_commit` | `{message?}` |
 | `POST /v1/capture` | `wiki_capture` | Spends LLM budget; 100 KB cap → 413; key strongly recommended |
+
+## Async jobs
+
+Compile and lint run for minutes, so they are job submissions, not blocking
+calls. Submit, poll, optionally cancel:
+
+```bash
+# Submit a full compile (any compile flag present selects full mode).
+curl -s -X POST $SW/v1/jobs/compile -d '{"dry_run": false}'
+# → 202 Accepted, Location: /v1/jobs/<job_id>
+#   {"job_id":"…","kind":"compile","status":"pending",…}
+
+# Topic compile (compile-on-demand) — mutually exclusive with compile flags.
+curl -s -X POST $SW/v1/jobs/compile -d '{"topic": "quantum computing", "max_sources": 20}'
+
+# Lint.
+curl -s -X POST $SW/v1/jobs/lint -d '{"pass": "connections", "fix": false}'
+
+# Poll.
+curl -s $SW/v1/jobs/<job_id>
+# status: pending → running → done | failed | cancelled
+
+# List (bounded to 100 most recent, FIFO eviction) and filter.
+curl -s "$SW/v1/jobs?status=running"
+
+# Cancel (best-effort: the checkpoint stays resumable).
+curl -s -X DELETE $SW/v1/jobs/<job_id>
+```
+
+Semantics that matter:
+
+- **Concurrency:** submitting a compile (either mode) while one is active
+  returns `409 conflict` with `details.active_job_id` — poll that job
+  instead. Lint jobs never block compiles and vice versa.
+- **Idempotency:** send `Idempotency-Key` on submit; a replayed key returns
+  the same `job_id` with `X-Idempotent-Replay: true` and does not dispatch
+  again (prevents duplicate LLM spend on client retry). Keys are scoped
+  per kind.
+- **Progress:** compile jobs mirror the compile progress hub into the job's
+  `progress` field; lint jobs report `{"stage": "running"|"done"}`.
+- **Retention:** job records are in-memory and process-scoped (same
+  restart semantics as the idempotency store) — a restart loses the list,
+  and the next compile resumes from the checkpoint.
+- **Errors:** a failed job carries the standard error envelope in its
+  `error` field; paths are scrubbed from messages.
 
 ## Examples
 

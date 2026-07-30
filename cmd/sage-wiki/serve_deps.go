@@ -6,9 +6,12 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/xoai/sage-wiki/internal/api"
 	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/linter"
+	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
 )
 
 // serveDeps assembles the shared serve-mode compile state (P2-3, spec C4):
@@ -65,3 +68,50 @@ func (d *serveDeps) Close() {
 		d.workerApp.Close()
 	}
 }
+
+// newJobRunner creates a JobRunner backed by serve-mode state. Full compile
+// runs against the worker backend; topic-compile and lint delegate to the
+// MCP server (P4-2: one execution path — the same wiring the MCP tools use).
+func newJobRunner(d *serveDeps, mcpSrv *mcppkg.Server) api.JobRunner {
+	return &serveJobRunner{deps: d, mcp: mcpSrv}
+}
+
+type serveJobRunner struct {
+	deps *serveDeps
+	mcp  *mcppkg.Server
+}
+
+func (r *serveJobRunner) RunCompile(ctx context.Context, projectDir string, opts compiler.CompileOpts) (*compiler.CompileResult, error) {
+	opts.Ctx = ctx
+	opts.Progress = r.deps.progress
+	if r.deps.workerApp != nil {
+		opts.Backend = r.deps.workerApp.Backend
+	}
+	var result *compiler.CompileResult
+	var err error
+	acquired, _ := r.deps.coord.TryCompile(func() error {
+		result, err = compiler.Compile(projectDir, opts)
+		return err
+	})
+	if !acquired {
+		return nil, fmt.Errorf("compile already in progress — another compile holds the coordinator lock")
+	}
+	return result, err
+}
+
+func (r *serveJobRunner) RunCompileTopic(ctx context.Context, opts compiler.OnDemandOpts) (*compiler.OnDemandResult, error) {
+	if r.mcp == nil {
+		return nil, fmt.Errorf("compile-on-demand not configured")
+	}
+	return r.mcp.CompileTopic(ctx, opts.Topic, opts.MaxSources)
+}
+
+func (r *serveJobRunner) RunLint(ctx context.Context, lintCtx *linter.LintContext, passName string, fix bool) ([]linter.LintResult, error) {
+	if r.mcp == nil {
+		return nil, fmt.Errorf("lint not configured")
+	}
+	return r.mcp.RunLint(passName, fix)
+}
+
+// Ensure serveJobRunner implements api.JobRunner.
+var _ api.JobRunner = (*serveJobRunner)(nil)

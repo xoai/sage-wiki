@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/log"
@@ -42,9 +43,9 @@ type LintContext struct {
 	OutputDir        string
 	DBPath           string
 	DB               store.DBHandle // shared DB connection (optional — opened from DBPath if nil)
-	ValidRelations   []string    // valid ontology relation type names
-	ValidEntityTypes []string    // valid ontology entity type names
-	QualityThreshold float64     // quality_score warning threshold (issue #97); 0 → pass default (0.5)
+	ValidRelations   []string       // valid ontology relation type names
+	ValidEntityTypes []string       // valid ontology entity type names
+	QualityThreshold float64        // quality_score warning threshold (issue #97); 0 → pass default (0.5)
 	// TemporalEnabled gates P3-6 validity filtering on the stores passes
 	// build; nil = enabled (the config default).
 	TemporalEnabled *bool
@@ -68,6 +69,26 @@ type LintResult struct {
 // Runner orchestrates lint passes.
 type Runner struct {
 	passes []LintPass
+}
+
+// PassNames returns the registered lint pass names (P4-2: the REST jobs
+// layer validates the `pass` argument at submit time).
+func PassNames() []string {
+	names := make([]string, 0, len(NewRunner().passes))
+	for _, p := range NewRunner().passes {
+		names = append(names, p.Name())
+	}
+	return names
+}
+
+// ValidPassName reports whether name is a registered lint pass.
+func ValidPassName(name string) bool {
+	for _, n := range PassNames() {
+		if n == name {
+			return true
+		}
+	}
+	return false
 }
 
 // NewRunner creates a runner with all registered passes.
@@ -108,6 +129,9 @@ func (ctx *LintContext) EnsureDB() (func(), error) {
 
 // Run executes lint passes. If passName is empty, runs all passes.
 func (r *Runner) Run(ctx *LintContext, passName string, fix bool) ([]LintResult, error) {
+	if passName != "" && !ValidPassName(passName) {
+		return nil, fmt.Errorf("lint: unknown pass %q (valid: %s)", passName, strings.Join(PassNames(), ", "))
+	}
 	cleanup, err := ctx.EnsureDB()
 	if err != nil {
 		return nil, fmt.Errorf("lint: open db: %w", err)

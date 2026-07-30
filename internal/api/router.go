@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
 )
 
@@ -29,12 +30,20 @@ type Router struct {
 	projectDir string
 	routes     []Route
 	idem       *idemStore
+	jobs       *jobStore
+	jobRunner  JobRunner
+	progress   *compiler.Progress // shared hub for job progress mirroring (nil OK)
 }
 
 // New builds the facade router. cfg is read at request time for the
-// feature-gate pre-checks (the same predicates the tools use).
-func New(d Dispatcher, cfg *config.Config, projectDir string) *Router {
-	r := &Router{d: d, cfg: cfg, projectDir: projectDir, idem: newIdemStore()}
+// feature-gate pre-checks (the same predicates the tools use). progress, when
+// non-nil, is the compile Progress hub job polling mirrors (P4-2).
+func New(d Dispatcher, cfg *config.Config, projectDir string, jobRunner JobRunner, progress ...*compiler.Progress) *Router {
+	var hub *compiler.Progress
+	if len(progress) > 0 {
+		hub = progress[0]
+	}
+	r := &Router{d: d, cfg: cfg, projectDir: projectDir, idem: newIdemStore(), jobs: newJobStore(), jobRunner: jobRunner, progress: hub}
 	r.routes = []Route{
 		{"GET", "/v1/search", "/v1/search", ToolSearch,
 			[]string{"query", "tags", "boost_tags", "limit", "channels", "expand", "rerank"}, r.handleSearch},
@@ -72,6 +81,14 @@ func New(d Dispatcher, cfg *config.Config, projectDir string) *Router {
 			[]string{"message"}, r.idempotent(r.handleCommit)},
 		{"POST", "/v1/capture", "/v1/capture", ToolCapture,
 			[]string{"content", "context", "tags"}, r.idempotent(r.handleCapture)},
+		{"POST", "/v1/jobs/{kind}", "/v1/jobs/{kind}", "",
+			nil, r.handleJobSubmit},
+		{"GET", "/v1/jobs/{id}", "/v1/jobs/{id}", "",
+			nil, r.handleJobGet},
+		{"GET", "/v1/jobs", "/v1/jobs", "",
+			nil, r.handleJobList},
+		{"DELETE", "/v1/jobs/{id}", "/v1/jobs/{id}", "",
+			nil, r.handleJobDelete},
 	}
 	return r
 }

@@ -18,17 +18,26 @@ import (
 // /v1 routes, and the MCP tool registry must provably agree. If any of the
 // three moves without the others, this test fails CI.
 
-// Tools deliberately NOT exposed in P4-1 (async job API lands in P4-2).
+// Tools deliberately NOT exposed as synchronous REST routes — they are
+// accessed through the async job API (P4-2) or excluded for other reasons.
 var driftExcludedTools = map[string]string{
-	"wiki_compile":       "P4-2: async job API",
-	"wiki_compile_topic": "P4-2: async job API",
-	"wiki_lint":          "P4-2: async job API",
+	"wiki_compile":       "P4-2: async job API (/v1/jobs/compile)",
+	"wiki_compile_topic": "P4-2: async job API (/v1/jobs/compile with topic)",
+	"wiki_lint":          "P4-2: async job API (/v1/jobs/lint)",
 }
 
 // Routes whose REST-facing params are intentionally NOT a subset of the
 // tool's argument names (04 rule 3 exception).
 var driftParamAllowlist = map[string]string{
 	"/v1/ontology/entities": "INT-05: REST presents {id,type,name} over wiki_add_ontology's entity_* arguments",
+}
+
+// Routes that do not map 1:1 to an MCP tool (async job endpoints, internal
+// catch-all). Rule 3 (param ⊆ tool args) does not apply to these.
+var driftNonToolRoutes = map[string]bool{
+	"/v1/jobs/{kind}": true,
+	"/v1/jobs/{id}":   true,
+	"/v1/jobs":        true,
 }
 
 type openapiDoc struct {
@@ -76,7 +85,7 @@ func toolArgsByName(t *testing.T) map[string][]string {
 
 func testRouterRoutes(t *testing.T) []Route {
 	t.Helper()
-	return New(nil, &config.Config{}, t.TempDir()).Routes()
+	return New(nil, &config.Config{}, t.TempDir(), nil).Routes()
 }
 
 // driftErrors computes every spec ⇄ route ⇄ tool mismatch (04 rules 1–4).
@@ -128,9 +137,13 @@ func driftErrors(routes []Route, spec openapiDoc, toolArgs map[string][]string) 
 		}
 	}
 
-	// Rule 3: route params ⊆ target tool's argument names (allowlist excepted).
+	// Rule 3: route params ⊆ target tool's argument names (allowlist excepted;
+	// non-tool routes like job endpoints are excluded — they don't map 1:1).
 	for _, rt := range routes {
 		if _, ok := driftParamAllowlist[rt.Path]; ok {
+			continue
+		}
+		if driftNonToolRoutes[rt.Path] {
 			continue
 		}
 		args, ok := toolArgs[rt.Tool]
@@ -168,12 +181,12 @@ func TestDrift_Counts(t *testing.T) {
 		t.Fatalf("tool count = %d, want 18", len(toolArgs))
 	}
 	routes := testRouterRoutes(t)
-	if len(routes) != 16 {
-		t.Fatalf("route count = %d, want 16", len(routes))
+	if len(routes) != 20 {
+		t.Fatalf("route count = %d, want 20", len(routes))
 	}
 	spec := loadSpec(t)
-	if len(spec.Paths) != 16 {
-		t.Fatalf("spec path count = %d, want 16", len(spec.Paths))
+	if len(spec.Paths) != 19 {
+		t.Fatalf("spec path count = %d, want 19", len(spec.Paths))
 	}
 }
 

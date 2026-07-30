@@ -54,7 +54,7 @@ func newTestRouter(t *testing.T, cfgRewrite func(string) string) (*Router, *http
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
-	r := New(mcpSrv, cfg, dir)
+	r := New(mcpSrv, cfg, dir, nil)
 	mux := http.NewServeMux()
 	r.RegisterRoutes(mux)
 	return r, mux, dir
