@@ -261,18 +261,24 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 				log.Info("concept dedup: merging", "new", c.Name, "existing", match, "score", score)
 				// Merge sources into existing concept (deduplicate source list)
 				if existing, ok := mf.Concepts[match]; ok {
-					seen := make(map[string]bool)
+					seenSrc := make(map[string]bool)
 					for _, s := range existing.Sources {
-						seen[s] = true
+						seenSrc[s] = true
 					}
 					for _, s := range c.Sources {
-						if !seen[s] {
+						if !seenSrc[s] {
 							existing.Sources = append(existing.Sources, s)
 						}
 					}
+					// Aliases dedup independently: an alias string that
+					// equals a source path must not be dropped (gates i1).
+					seenAlias := make(map[string]bool)
+					for _, a := range existing.Aliases {
+						seenAlias[a] = true
+					}
 					for _, a := range c.Aliases {
-						if !seen[a] {
-							seen[a] = true
+						if !seenAlias[a] {
+							seenAlias[a] = true
 							existing.Aliases = append(existing.Aliases, a)
 						}
 					}

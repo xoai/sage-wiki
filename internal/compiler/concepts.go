@@ -288,8 +288,13 @@ func deduplicateConcepts(concepts []ExtractedConcept, existing map[string]manife
 		}
 	}
 
-	seen := map[string]*ExtractedConcept{} // normalized name → canonical entry
-	var result []ExtractedConcept
+	// seen maps normalized name → the ONE heap entry per canonical concept;
+	// result holds pointers into the same entries, so every merge is visible
+	// to every later alias check (transitive) and nothing reads stale copies
+	// (gates i1: the loop-copy/apply-back pattern lost accumulated merges and
+	// aliased a growable slice element).
+	seen := map[string]*ExtractedConcept{}
+	var result []*ExtractedConcept
 
 	merge := func(dst, src *ExtractedConcept) {
 		srcSet := map[string]bool{}
@@ -315,32 +320,34 @@ func deduplicateConcepts(concepts []ExtractedConcept, existing map[string]manife
 		}
 	}
 
-	for _, c := range concepts {
+	for i := range concepts {
+		c := &concepts[i]
 		key := normalizeName(c.Name)
-		// Rule 2: acronym matches a manifest concept's alias → rename to
-		// canonical and carry union(manifest sources+aliases, A's).
+		// Rule 2: acronym matches a manifest concept's alias → fold into the
+		// canonical concept, carrying union(manifest sources+aliases, A's)
+		// deduped via merge(). A SECOND acronym hitting the same canonical
+		// merges into the same entry (gates i1 Major 2).
 		if canonical, ok := manifestAlias[key]; ok {
-			if existing, ok := seen[key]; ok {
-				merge(existing, &c)
+			entry := seen[key]
+			if entry == nil {
+				entry = seen[normalizeName(canonical)]
+			}
+			if entry != nil {
+				merge(entry, c)
 				continue
 			}
 			mc := existing[canonical]
-			merged := ExtractedConcept{
-				Name:    canonical,
-				Sources: append(append([]string(nil), mc.Sources...), c.Sources...),
-				Aliases: append(append([]string(nil), mc.Aliases...), c.Aliases...),
-				Type:    c.Type,
-			}
-			// Union aliases + the extracted name (dedup).
-			merged.Aliases = append(merged.Aliases, c.Name)
-			seen[key] = &merged
-			seen[normalizeName(canonical)] = &merged
-			result = append(result, merged)
+			entry = &ExtractedConcept{Name: canonical, Type: c.Type}
+			merge(entry, &ExtractedConcept{Sources: mc.Sources, Aliases: mc.Aliases})
+			merge(entry, c)
+			seen[key] = entry
+			seen[normalizeName(canonical)] = entry
+			result = append(result, entry)
 			log.Info("dedup: folded into existing concept", "from", c.Name, "into", canonical)
 			continue
 		}
-		if existing, ok := seen[key]; ok {
-			merge(existing, &c)
+		if existingEntry, ok := seen[key]; ok {
+			merge(existingEntry, c)
 			continue
 		}
 		// Rule 1: new concept's name is another entry's alias (either direction).
@@ -367,13 +374,15 @@ func deduplicateConcepts(concepts []ExtractedConcept, existing map[string]manife
 			// Canonical = the longer normalized name (the expansion, not the
 			// acronym) — "remedial-action-plan" beats "rap" either way.
 			if len(normalizeName(c.Name)) > len(normalizeName(r.Name)) {
-				merge(&c, &r)
-				result[ri] = c
+				winner := &ExtractedConcept{Name: c.Name, Type: c.Type}
+				merge(winner, r) // r is the heap accumulator — no stale copy
+				merge(winner, c)
 				delete(seen, normalizeName(r.Name))
-				seen[key] = &result[ri]
+				seen[key] = winner
+				result[ri] = winner
 				log.Info("dedup: folded into existing concept", "from", r.Name, "into", c.Name)
 			} else {
-				merge(seen[normalizeName(r.Name)], &c)
+				merge(r, c)
 				log.Info("dedup: folded into existing concept", "from", c.Name, "into", r.Name)
 			}
 			folded = true
@@ -382,18 +391,16 @@ func deduplicateConcepts(concepts []ExtractedConcept, existing map[string]manife
 		if folded {
 			continue
 		}
-		copy := c
-		seen[key] = &copy
-		result = append(result, copy)
+		entry := &ExtractedConcept{Name: c.Name, Aliases: c.Aliases, Sources: c.Sources, Type: c.Type}
+		seen[key] = entry
+		result = append(result, entry)
 	}
 
-	// Apply merged data back (preserves prior behavior for exact-name merges).
-	for i := range result {
-		if merged, ok := seen[normalizeName(result[i].Name)]; ok {
-			result[i] = *merged
-		}
+	out := make([]ExtractedConcept, len(result))
+	for i, r := range result {
+		out[i] = *r
 	}
-	return result
+	return out
 }
 
 // ConceptsSchema is the canonical schema for concept extraction (P2-4).

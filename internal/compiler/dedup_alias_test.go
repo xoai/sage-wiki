@@ -78,3 +78,51 @@ func TestDedupEmptyManifestMap(t *testing.T) {
 		t.Errorf("empty manifest map must be inert: %+v", out)
 	}
 }
+
+// Gates i1: accumulated merges must survive a later rename (M1), and two
+// acronyms hitting one manifest concept must share one entry (M2).
+func TestDedupRenameKeepsAccumulated(t *testing.T) {
+	out := deduplicateConcepts([]ExtractedConcept{
+		{Name: "rap", Sources: []string{"raw/1.md"}},
+		{Name: "rap", Sources: []string{"raw/2.md"}}, // exact-name re-extract
+		{Name: "remedial-action-plan", Aliases: []string{"rap"}, Sources: []string{"raw/3.md"}},
+	}, nil)
+	if len(out) != 1 || out[0].Name != "remedial-action-plan" {
+		t.Fatalf("want 1 canonical, got %+v", out)
+	}
+	if len(out[0].Sources) != 3 {
+		t.Errorf("accumulated sources lost on rename: %v", out[0].Sources)
+	}
+}
+
+func TestDedupTwoAcronymsOneCanonical(t *testing.T) {
+	existing := map[string]manifest.Concept{
+		"remedial-action-plan": {ArticlePath: "wiki/x.md", Sources: []string{"raw/old.md"}, Aliases: []string{"rap", "r.a.p"}},
+	}
+	out := deduplicateConcepts([]ExtractedConcept{
+		{Name: "rap", Sources: []string{"raw/1.md"}},
+		{Name: "r.a.p", Sources: []string{"raw/2.md"}},
+	}, existing)
+	if len(out) != 1 || out[0].Name != "remedial-action-plan" {
+		t.Fatalf("want exactly one canonical entry, got %+v", out)
+	}
+	if len(out[0].Sources) != 3 {
+		t.Errorf("sources = %v, want old+1+2 deduped", out[0].Sources)
+	}
+}
+
+// Transitive alias merge: an alias merged mid-loop must be visible to later
+// concepts.
+func TestDedupTransitiveAlias(t *testing.T) {
+	out := deduplicateConcepts([]ExtractedConcept{
+		{Name: "remedial-action-plan", Aliases: []string{"rap"}, Sources: []string{"raw/1.md"}},
+		{Name: "rap", Aliases: []string{"wsp"}, Sources: []string{"raw/2.md"}}, // folds, gains wsp as alias
+		{Name: "wsp", Sources: []string{"raw/3.md"}}, // must see the merged alias
+	}, nil)
+	if len(out) != 1 {
+		t.Fatalf("transitive fold: got %+v", out)
+	}
+	if len(out[0].Sources) != 3 {
+		t.Errorf("sources = %v, want all three", out[0].Sources)
+	}
+}
