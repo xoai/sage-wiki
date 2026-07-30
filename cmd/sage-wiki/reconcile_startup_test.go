@@ -58,3 +58,22 @@ func TestReconcileStartupNoConfigNoPanic(t *testing.T) {
 	dir := t.TempDir()
 	reconcileStartup(context.Background(), dir) // must not panic or error out
 }
+
+// P3-7: the manifest-presence guard — a vault with config but NO manifest
+// must not even open a backend (no stray wiki.db on sqlite, no advisory
+// lock on PG).
+func TestReconcileStartupSkipsWithoutManifest(t *testing.T) {
+	dir := t.TempDir()
+	if err := wiki.InitGreenfield(dir, "test", "gemini-2.5-flash"); err != nil {
+		t.Fatal(err)
+	}
+	// InitGreenfield bootstraps the sqlite db file (P2-1 skip-listed init) —
+	// remove it so the guard is what decides.
+	os.Remove(filepath.Join(dir, ".sage", "wiki.db"))
+
+	reconcileStartup(context.Background(), dir)
+
+	if _, err := os.Stat(filepath.Join(dir, ".sage", "wiki.db")); !os.IsNotExist(err) {
+		t.Error("guard absent: reconcileStartup created a wiki.db on a manifest-less vault")
+	}
+}

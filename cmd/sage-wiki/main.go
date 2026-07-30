@@ -408,20 +408,36 @@ func reconcileStartup(ctx context.Context, dir string) {
 	if err != nil {
 		return // not initialized — nothing to reconcile
 	}
-	dbPath := filepath.Join(dir, ".sage", "wiki.db")
-	if _, err := os.Stat(dbPath); err != nil {
-		return // no database yet
-	}
-	// P2-1 skip-list: no config in scope here; backend selection falls back
-	// to the sqlite default (decisions.md 2026-07-21).
-	db, err := storedial.OpenConcrete(dir, config.StorageConfig{})
-	if err != nil {
-		log.Warn("startup reconcile: open db failed", "error", err)
+	// P3-7: uniform nothing-compiled guard. InitGreenfield writes an EMPTY
+	// manifest, so presence alone is not enough — skip when the manifest is
+	// absent OR has no sources and no concepts. Without this a sqlite writer
+	// open creates a stray wiki.db on every startup of a never-compiled
+	// vault, and a PG writer open takes the advisory lock for nothing.
+	mf, mfErr := manifest.Load(filepath.Join(dir, ".manifest.json"))
+	if mfErr != nil {
+		if !os.IsNotExist(mfErr) {
+			// A corrupt manifest on a compiled vault is worth a line — the
+			// old path warned "load manifest"; absent is the intended skip.
+			log.Warn("startup reconcile: manifest unreadable, skipping", "error", mfErr)
+		}
 		return
 	}
-	defer db.Close()
+	if len(mf.Sources) == 0 && len(mf.Concepts) == 0 {
+		return
+	}
+	// Backend selection honors storage.backend (P3-7 — the P2-1 skip-list
+	// entry for this site is retired). ModeWriter is required: reconcile
+	// writes. On PG, a contended writer open stalls up to the configured
+	// lock_timeout then fails — the warn below converts that to a skipped
+	// reconcile, never a blocked startup.
+	backend, err := storedial.OpenWithConfig(cfg, dir, store.ModeWriter)
+	if err != nil {
+		log.Warn("startup reconcile: open backend failed", "error", err)
+		return
+	}
+	defer backend.Close()
 
-	res, err := wiki.Reconcile(ctx, dir, cfg, db, embed.NewFromConfig(cfg))
+	res, err := wiki.ReconcileBackend(ctx, dir, cfg, backend, embed.NewFromConfig(cfg))
 	if err != nil {
 		log.Warn("startup reconcile failed", "error", err)
 		return

@@ -11,7 +11,6 @@ import (
 	"github.com/xoai/sage-wiki/internal/cli"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
-	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/storedial"
 )
@@ -54,22 +53,9 @@ func openResolveStore(dir string) (store.Backend, store.OntologyStore, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	lt, err := cfg.Storage.LockTimeoutDuration()
-	if err != nil {
-		return nil, nil, err
-	}
-	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
-	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-	b, err := storedial.Open(cfg.Storage, store.OpenOptions{
-		Mode:             store.ModeWriter,
-		ProjectDir:       dir,
-		LockTimeout:      lt,
-		Pool:             store.PoolConfig{MaxOpen: cfg.Storage.Pool.MaxOpen, MaxIdle: cfg.Storage.Pool.MaxIdle},
-		VectorDimension:  cfg.Storage.VectorDimension,
-		TemporalEnabled:  cfg.Ontology.Temporal.Enabled,
-		ValidRelations:   ontology.ValidRelationNames(mergedRels),
-		ValidEntityTypes: ontology.ValidEntityTypeNames(mergedTypes),
-	})
+	// One shared option literal (P3-7): the same helper OpenProject and the
+	// startup reconcile use, so a drift breaks all consumers at once.
+	b, err := storedial.OpenWithConfig(cfg, dir, store.ModeWriter)
 	if err != nil {
 		return nil, nil, err
 	}

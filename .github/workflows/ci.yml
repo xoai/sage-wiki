@@ -121,7 +121,8 @@ jobs:
           CGO_ENABLED=0 go test -p 1 -count=1 \
             ./internal/storage/postgres/... \
             ./internal/storetest/... \
-            ./internal/hub/...
+            ./internal/hub/... \
+            ./internal/wiki/...
 
   lint:
     name: Lint

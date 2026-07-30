@@ -68,6 +68,15 @@ func OpenProject(projectDir string, mode store.Mode) (store.Backend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
+	return OpenWithConfig(cfg, projectDir, mode)
+}
+
+// OpenWithConfig opens the backend for an already-loaded config, computing
+// OpenOptions exactly the way OpenProject does. It exists so callers that
+// load config through a different path (reconcileStartup honors --config via
+// resolveConfigPath) share ONE option literal — a drift in the literal
+// breaks every consumer at once instead of one silently (Gate-8).
+func OpenWithConfig(cfg *config.Config, projectDir string, mode store.Mode) (store.Backend, error) {
 	lt, err := cfg.Storage.LockTimeoutDuration()
 	if err != nil {
 		return nil, err

@@ -1,6 +1,7 @@
 package wiki
 
 import (
+	"errors"
 	"context"
 	"database/sql"
 	"os"
@@ -12,7 +13,9 @@ import (
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/sqlitestore"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -494,3 +497,67 @@ func TestReconcile_ArticleWithoutEntityTypeDefaultsToConcept(t *testing.T) {
 		t.Errorf("Type = %q, want %q", ent.Type, ontology.TypeConcept)
 	}
 }
+
+// P3-7 T2: ReconcileBackend over an explicit backend heals drift
+// identically to the legacy Reconcile entry (independent construction
+// after the import-cycle course correction — no delegation either way).
+func TestReconcileBackendEquivalence(t *testing.T) {
+	e := setupReconcile(t)
+	// Drift: manifest expects an article the DB lacks (crash between write
+	// and index) — the same fixture as TestReconcile_FileNoDB_Indexes.
+	rel := e.writeConceptFile(t, "beta", "# Beta\n\nContent about beta.")
+	m := manifest.New()
+	m.AddConcept("beta", rel, []string{"raw/b.md"})
+	e.saveManifest(t, m)
+
+	backend, err := sqlitestore.Open(e.dir, store.ModeWriter, sqlitestore.Options{
+		ValidRelations:   ontology.ValidRelationNames(ontology.MergedRelations(nil)),
+		ValidEntityTypes: ontology.ValidEntityTypeNames(ontology.MergedEntityTypes(nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer backend.Close()
+	res, err := ReconcileBackend(context.Background(), e.dir, e.cfg, backend, nil)
+	if err != nil {
+		t.Fatalf("ReconcileBackend: %v", err)
+	}
+	if res.Reindexed != 1 {
+		t.Errorf("Reindexed = %d, want 1", res.Reindexed)
+	}
+	if got, _ := e.mem.Get("concept:beta"); got == nil {
+		t.Error("beta not indexed into FTS via ReconcileBackend")
+	}
+}
+
+// Review: ReconcileBackend must error (not panic) on a backend with nil
+// Trust/OutputIndex accessors.
+func TestReconcileBackendRejectsNilStores(t *testing.T) {
+	e := setupReconcile(t)
+	_, err := ReconcileBackend(context.Background(), e.dir, e.cfg, nilStoresBackend{backend: nil}, nil)
+	if err == nil {
+		t.Fatal("expected an error for nil Trust/OutputIndex, got nil")
+	}
+}
+
+type nilStoresBackend struct{ backend interface{ store.Backend } }
+
+func (n nilStoresBackend) Entries() store.EntryStore            { return nil }
+func (n nilStoresBackend) Chunks() store.ChunkStore             { return nil }
+func (n nilStoresBackend) Vectors() store.VectorStore           { return nil }
+func (n nilStoresBackend) Ontology() store.OntologyStore        { return nil }
+func (n nilStoresBackend) Communities() store.CommunityStore    { return nil }
+func (n nilStoresBackend) Trust() store.TrustStore              { return nil }
+func (n nilStoresBackend) CompileItems() store.CompileItemStore { return nil }
+func (n nilStoresBackend) OutputIndex() store.OutputIndexStore  { return nil }
+func (n nilStoresBackend) Learnings() store.LearningStore       { return nil }
+func (n nilStoresBackend) WriteTx(fn func(tx *sql.Tx) error) error {
+	return fn(nil)
+}
+func (n nilStoresBackend) BeginWrite() (*store.Tx, error) { return nil, errors.New("unsupported") }
+func (n nilStoresBackend) ReadDB() *sql.DB                { return nil }
+func (n nilStoresBackend) WriteDB() *sql.DB               { return nil }
+func (n nilStoresBackend) Health(context.Context) error   { return nil }
+func (n nilStoresBackend) SchemaReady() bool              { return true }
+func (n nilStoresBackend) Location() string               { return "nil" }
+func (n nilStoresBackend) Close() error                   { return nil }

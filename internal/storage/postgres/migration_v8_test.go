@@ -16,17 +16,14 @@ import (
 func TestMigrationV8Communities(t *testing.T) {
 	dsn := migrationTestDSN(t)
 	dbName := fmt.Sprintf("migv8_%d", time.Now().UnixNano())
-	boot, err := sql.Open("pgx", dsn)
+	boot, err := sql.Open("pgx", swapDB(dsn, "postgres"))
 	if err != nil {
 		t.Fatalf("bootstrap connect: %v", err)
 	}
-	if _, err := boot.Exec("CREATE DATABASE " + dbName + " TEMPLATE " + dsnDB(dsn)); err != nil {
-		boot.Close()
-		t.Fatalf("create test database: %v", err)
-	}
+	createClone(t, boot, dbName, dsnDB(dsn))
 	boot.Close()
 	t.Cleanup(func() {
-		c, err := sql.Open("pgx", dsn)
+		c, err := sql.Open("pgx", swapDB(dsn, "postgres"))
 		if err == nil {
 			c.Exec("DROP DATABASE " + dbName)
 			c.Close()

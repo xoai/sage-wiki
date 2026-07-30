@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Backend-neutral reconciler (P3-7).** The startup reconcile now honors
+  `storage.backend`: on a Postgres vault it heals the Postgres store
+  (previously it always opened the SQLite file, reconciling nothing real on
+  PG vaults). `wiki.ReconcileBackend` is the new primary entry; the legacy
+  `Reconcile` path is behavior-identical for SQLite (all existing call
+  sites unchanged). Completes the graph storage
+  backend seam — see `.sage/docs/design/graph-storage-backend.md` for the
+  cookbook 3-table mapping, traversal rationale, and the Neo4j follow-on.
+  Note: on Postgres, a contended writer open at startup stalls up to
+  `storage.lock_timeout` then skips reconcile with a warning (never blocks
+  startup).
+
 - **`make ci` now covers the translation-drift check.** The documented local
   gate claimed to mirror CI but omitted MAINT-05, so a README.md-only change
   could pass `make ci` and still fail CI after merge. New `make translations`

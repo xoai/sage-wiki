@@ -24,6 +24,25 @@ func migrationTestDSN(t *testing.T) string {
 	return dsn
 }
 
+
+// createClone retries CREATE DATABASE TEMPLATE through SQLSTATE 55006
+// ("source database is being accessed by other users"). go test runs PACKAGES
+// in parallel — two packages cloning the same template concurrently collide
+// (surfaced by P3-7's reconcile test adding a second cloning package). A
+// short backoff loop covers the window; anything else fails immediately.
+func createClone(t *testing.T, boot *sql.DB, dbName, template string) {
+	t.Helper()
+	for attempt := 0; attempt < 10; attempt++ {
+		if _, err := boot.Exec("CREATE DATABASE " + dbName + " TEMPLATE " + template); err == nil {
+			return
+		} else if !strings.Contains(err.Error(), "55006") {
+			t.Fatalf("create test database: %v", err)
+		}
+		time.Sleep(time.Duration(100*(attempt+1)) * time.Millisecond)
+	}
+	t.Fatal("create test database: template busy after 10 retries")
+}
+
 // swapDB replaces the database name in the DSN path, preserving any query.
 //
 // The query is split off FIRST. A unix-socket DSN carries the socket directory
@@ -39,7 +58,9 @@ func swapDB(dsn, dbName string) string {
 	if i := strings.LastIndex(path, "/"); i >= 0 {
 		return path[:i+1] + dbName + suffix
 	}
-	return dsn
+	// No path component (keyword-form DSN): append — an unswapped return
+	// would boot onto the template and reintroduce the 55006 livelock.
+	return dsn + "/" + dbName + suffix
 }
 
 func dsnDB(dsn string) string {
@@ -59,17 +80,14 @@ func dsnDB(dsn string) string {
 func TestMigrationV2QueueColumns(t *testing.T) {
 	dsn := migrationTestDSN(t)
 	dbName := fmt.Sprintf("migv2_%d", time.Now().UnixNano())
-	boot, err := sql.Open("pgx", dsn)
+	boot, err := sql.Open("pgx", swapDB(dsn, "postgres"))
 	if err != nil {
 		t.Fatalf("bootstrap connect: %v", err)
 	}
-	if _, err := boot.Exec("CREATE DATABASE " + dbName + " TEMPLATE " + dsnDB(dsn)); err != nil {
-		boot.Close()
-		t.Fatalf("create test database: %v", err)
-	}
+	createClone(t, boot, dbName, dsnDB(dsn))
 	boot.Close()
 	t.Cleanup(func() {
-		c, err := sql.Open("pgx", dsn)
+		c, err := sql.Open("pgx", swapDB(dsn, "postgres"))
 		if err == nil {
 			c.Exec("DROP DATABASE " + dbName)
 			c.Close()
