@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/api"
 	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
@@ -65,6 +66,11 @@ type WebServer struct {
 	// progress is the shared compile-progress hub (P2-3); nil when the
 	// server runs without the worker (compile progress SSE then 503s).
 	progress *compiler.Progress
+
+	// v1Handler is the public /v1 REST facade (P4-1), mounted by Handler()
+	// when set via SetV1Handler. It dispatches to the MCP tool handlers;
+	// the web server adds only the existing security middleware around it.
+	v1Handler http.Handler
 }
 
 // NewWebServer creates a web server sharing the project's stores.
@@ -104,6 +110,13 @@ func (s *WebServer) SetAuth(token string, allowedHosts []string) {
 	s.allowedHosts = allowedHosts
 }
 
+// SetV1Handler mounts the /v1 REST facade (P4-1). Called by the serve
+// command after constructing the MCP-backed api.Router; Handler() mounts
+// it inside the same security middleware as /api/*.
+func (s *WebServer) SetV1Handler(h http.Handler) {
+	s.v1Handler = h
+}
+
 // splitHosts parses a comma-separated host list, trimming blanks.
 func splitHosts(csv string) []string {
 	var out []string
@@ -131,6 +144,11 @@ func (s *WebServer) Handler() http.Handler {
 	mux.HandleFunc("/api/compile/progress", s.handleCompileProgress)
 	mux.HandleFunc("/api/provenance", s.handleProvenance)
 	mux.HandleFunc("/ws", s.handleWebSocket)
+
+	// Public REST facade (P4-1) — same middleware envelope as /api/*.
+	if s.v1Handler != nil {
+		mux.Handle("/v1/", s.v1Handler)
+	}
 
 	// Optional observability endpoint (P2-2). NOT build-tagged — ships in
 	// the default (no-webui) binary. MCP SSE deliberately does not register
@@ -388,7 +406,11 @@ func (s *WebServer) securityMiddleware(next http.Handler) http.Handler {
 		// DNS-rebinding defense: the Host must be loopback or explicitly allowed.
 		// Checked first so a rebound name reaches no handler at all.
 		if !s.hostAllowed(r.Host) {
-			http.Error(w, "host not allowed", http.StatusForbidden)
+			if strings.HasPrefix(r.URL.Path, "/v1/") {
+				api.WriteError(w, http.StatusForbidden, api.CodeForbidden, "host not allowed", nil)
+			} else {
+				http.Error(w, "host not allowed", http.StatusForbidden)
+			}
 			return
 		}
 
@@ -398,10 +420,15 @@ func (s *WebServer) securityMiddleware(next http.Handler) http.Handler {
 
 		// Auth gates /api/* and /ws when a token is configured; the static SPA
 		// shell stays unauthenticated (it holds no data and must load to prompt
-		// for / carry the token).
+		// for / carry the token). /v1/* answers with the facade's envelope;
+		// /api/* keeps its plain-text shape (byte-unchanged).
 		if s.token != "" && requiresAuth(r.URL.Path) && !s.tokenValid(r) {
 			w.Header().Set("WWW-Authenticate", "Bearer")
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			if strings.HasPrefix(r.URL.Path, "/v1/") {
+				api.WriteError(w, http.StatusUnauthorized, api.CodeUnauthenticated, "missing or invalid bearer token", nil)
+			} else {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+			}
 			return
 		}
 
@@ -422,8 +449,9 @@ func (s *WebServer) securityMiddleware(next http.Handler) http.Handler {
 
 // requiresAuth reports whether a path is gated by the bearer token.
 // /metrics is gated exactly like /api/* (P2-2: operational data).
+// /v1/* is the public REST facade (P4-1) — gated identically.
 func requiresAuth(path string) bool {
-	return strings.HasPrefix(path, "/api/") || path == "/ws" || path == "/metrics"
+	return strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/v1/") || path == "/ws" || path == "/metrics"
 }
 
 // hostAllowed reports whether the request Host is loopback or explicitly allowed

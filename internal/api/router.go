@@ -87,3 +87,11 @@ func (r *Router) RegisterRoutes(mux *http.ServeMux) {
 		mux.HandleFunc(rt.Method+" "+rt.Pattern, rt.Handler)
 	}
 }
+
+// Handler returns the facade as a self-contained http.Handler for
+// mounting as a subtree (WebServer mounts it at /v1/).
+func (r *Router) Handler() http.Handler {
+	mux := http.NewServeMux()
+	r.RegisterRoutes(mux)
+	return mux
+}

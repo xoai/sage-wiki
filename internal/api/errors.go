@@ -47,3 +47,9 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func writeError(w http.ResponseWriter, status int, code, message string, details map[string]any) {
 	writeJSON(w, status, errorEnvelope{Error: apiError{Code: code, Message: message, Details: details}})
 }
+
+// WriteError is the exported envelope writer, used by the web server's
+// security middleware so its 401/403 on /v1 paths share this envelope.
+func WriteError(w http.ResponseWriter, status int, code, message string, details map[string]any) {
+	writeError(w, status, code, message, details)
+}

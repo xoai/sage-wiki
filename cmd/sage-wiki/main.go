@@ -16,6 +16,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"strings"
 
+	"github.com/xoai/sage-wiki/internal/api"
 	"github.com/xoai/sage-wiki/internal/auth"
 	"github.com/xoai/sage-wiki/internal/cli"
 	"github.com/xoai/sage-wiki/internal/compiler"
@@ -611,13 +612,27 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 		webSrv.SetAuth(token, hosts)
 
+		// Public REST facade (P4-1): an MCP server sharing the serve-mode
+		// coordinator (compile serialization), mounted on the web mux inside
+		// the existing security middleware.
+		mcpSrv, err := mcppkg.NewServer(dir, deps.coord)
+		if err != nil {
+			return err
+		}
+		defer mcpSrv.Close()
+		apiCfg, err := config.Load(filepath.Join(dir, "config.yaml"))
+		if err != nil {
+			return fmt.Errorf("load config for /v1: %w", err)
+		}
+		webSrv.SetV1Handler(api.New(mcpSrv, apiCfg, dir).Handler())
+
 		// Refuse to expose beyond loopback without a token (invariant: loopback
 		// stays zero-config; anything wider must be authenticated).
 		if err := web.CheckBindAuth(bind, token); err != nil {
 			return err
 		}
 		if token != "" {
-			fmt.Fprintln(os.Stderr, "🔐 token auth enabled on /api/* and /ws.")
+			fmt.Fprintln(os.Stderr, "🔐 token auth enabled on /api/*, /v1/* and /ws.")
 		}
 		if !web.IsLoopbackBind(bind) && len(hosts) == 0 {
 			fmt.Fprintf(os.Stderr, "⚠️  Host allowlist is loopback-only — browsers reaching this by hostname/IP will be refused (403). Set --allowed-host <host> or SAGE_WIKI_ALLOWED_HOST.\n")
