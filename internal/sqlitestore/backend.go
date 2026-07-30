@@ -41,9 +41,6 @@ type backend struct {
 	db      *storage.DB
 	path    string
 	mode    store.Mode
-	// closeDB overrides Close's default (b.db.Close). Set by Wrap so the
-	// wrapped backend never closes a handle it does not own.
-	closeDB func() error
 	entries *memory.Store
 	chunks  *memory.ChunkStore
 	vec     *vectors.Store
@@ -85,17 +82,6 @@ func OpenPath(path string, mode store.Mode, o Options) (store.Backend, error) {
 // Unwrap returns the underlying *storage.DB — TRANSITIONAL bridge for the
 // direct-open sites not yet rewired to the Backend (plan T6); grep-forbidden
 // outside store packages after T9.
-// Wrap returns a ModeWriter Backend over the caller's EXISTING handle —
-// no reopen, no second writer, no re-lock (P3-7). Close is a no-op: the
-// caller retains ownership (a closing Wrap would double-close the handle).
-// It exists because Open/OpenPath/Unwrap cannot produce a Backend from a
-// live *storage.DB; wiki.Reconcile's sqlite wrapper is the first consumer.
-func Wrap(db *storage.DB, path string, o Options) store.Backend {
-	b := newBackend(db, path, store.ModeWriter, o)
-	b.closeDB = func() error { return nil }
-	return b
-}
-
 func Unwrap(b store.Backend) *storage.DB {
 	if sb, ok := b.(*backend); ok {
 		return sb.db
@@ -172,12 +158,7 @@ func (b *backend) SchemaReady() bool {
 
 func (b *backend) Location() string { return b.path }
 
-func (b *backend) Close() error {
-	if b.closeDB != nil {
-		return b.closeDB()
-	}
-	return b.db.Close()
-}
+func (b *backend) Close() error { return b.db.Close() }
 
 // learningStore adapts linter's learning persistence to store.LearningStore.
 type learningStore struct {

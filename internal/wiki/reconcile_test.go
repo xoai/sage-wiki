@@ -14,6 +14,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/sqlitestore"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -507,11 +508,14 @@ func TestReconcileBackendEquivalence(t *testing.T) {
 	m.AddConcept("beta", rel, []string{"raw/b.md"})
 	e.saveManifest(t, m)
 
-	backend := sqlitestore.Wrap(e.db, e.dir, sqlitestore.Options{
+	backend, err := sqlitestore.Open(e.dir, store.ModeWriter, sqlitestore.Options{
 		ValidRelations:   ontology.ValidRelationNames(ontology.MergedRelations(nil)),
 		ValidEntityTypes: ontology.ValidEntityTypeNames(ontology.MergedEntityTypes(nil)),
-		ANN:              false,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer backend.Close()
 	res, err := ReconcileBackend(context.Background(), e.dir, e.cfg, backend, nil)
 	if err != nil {
 		t.Fatalf("ReconcileBackend: %v", err)
