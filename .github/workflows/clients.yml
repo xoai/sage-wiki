@@ -1,0 +1,128 @@
+name: Clients
+
+# Client unit + contract tests and example smoke runs (P4-3, P4-4, P4-6).
+# Separate from ci.yml so a failing client experiment never blocks the Go
+# gate (named deviation from 05 §Files — one workflow per concern, matching
+# docker.yml / fuzz.yml / release.yml).
+
+on:
+  push:
+    branches: [main]
+    paths: ["clients/**", "examples/**", "scripts/p4-fixture-server.sh", "internal/**", "cmd/**", ".github/workflows/clients.yml"]
+  pull_request:
+    paths: ["clients/**", "examples/**", "scripts/p4-fixture-server.sh", "internal/**", "cmd/**", ".github/workflows/clients.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  python-unit:
+    name: Python unit (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e "clients/python[dev]"
+      - run: cd clients/python && python -m pytest -q -m "not contract"
+
+  python-contract:
+    name: Python contract (live server)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e "clients/python[dev]"
+      - name: Start fixture server
+        run: bash scripts/p4-fixture-server.sh | sed 's/^export //' >> "$GITHUB_ENV"
+      - run: cd clients/python && python -m pytest -q -m contract
+      - name: Stop fixture server
+        if: always()
+        run: bash scripts/p4-fixture-server.sh --stop
+
+  ts-unit:
+    name: TS unit (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["18", "20"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: cd clients/typescript && npm ci
+      - run: cd clients/typescript && npm run typecheck
+      - run: cd clients/typescript && npm test
+
+  ts-contract:
+    name: TS contract (live server)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: cd clients/typescript && npm ci
+      - run: cd clients/typescript && npx tsc -p tsconfig.test.json
+      - name: Start fixture server
+        run: bash scripts/p4-fixture-server.sh | sed 's/^export //' >> "$GITHUB_ENV"
+      - run: cd clients/typescript && npm run test:contract
+      - name: Stop fixture server
+        if: always()
+        run: bash scripts/p4-fixture-server.sh --stop
+
+  examples:
+    name: Examples smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          # Node 22: --experimental-strip-types (the example's start script)
+          # landed in 22.6. The client itself is tested on 18+20 in ts-unit.
+          node-version: "22"
+      - run: pip install -r examples/langgraph/requirements.txt
+      - run: cd clients/typescript && npm ci && npm run build
+      - run: cd examples/vercel-ai-sdk && npm ci
+      - name: Start fixture server
+        run: bash scripts/p4-fixture-server.sh | sed 's/^export //' >> "$GITHUB_ENV"
+      - name: LangGraph example
+        run: |
+          cd examples/langgraph
+          python main.py | tee /tmp/langgraph.out
+          python main.py recursion | tee /tmp/langgraph-recursion.out
+          grep -q "PASS: retrieved >= 1 result" /tmp/langgraph.out
+          grep -q "PASS: retrieved >= 1 result" /tmp/langgraph-recursion.out
+          grep -q "uncompiled_sources=1 > 0" /tmp/langgraph-recursion.out
+      - name: Vercel AI SDK example
+        run: |
+          cd examples/vercel-ai-sdk
+          npm start | tee /tmp/vercel.out
+          grep -q "PASS: retrieved >= 1 result" /tmp/vercel.out
+      - name: Stop fixture server
+        if: always()
+        run: bash scripts/p4-fixture-server.sh --stop
