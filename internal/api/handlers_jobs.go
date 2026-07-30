@@ -157,17 +157,34 @@ func (r *Router) runJob(req *http.Request, j *Job, kind JobKind, topic *string, 
 			unsubscribe()
 		}()
 		go func() {
+			set := func(ev compiler.ProgressEvent) {
+				r.jobs.mu.Lock()
+				j.Progress = ev
+				r.jobs.mu.Unlock()
+			}
 			for {
 				select {
 				case <-done:
-					return
+					// Drain events already buffered before shutdown — the
+					// runner emits its last events before runJob returns, and
+					// exiting without draining would lose them (CI flake on
+					// fast machines).
+					for {
+						select {
+						case ev, ok := <-events:
+							if !ok {
+								return
+							}
+							set(ev)
+						default:
+							return
+						}
+					}
 				case ev, ok := <-events:
 					if !ok {
 						return
 					}
-					r.jobs.mu.Lock()
-					j.Progress = ev
-					r.jobs.mu.Unlock()
+					set(ev)
 				}
 			}
 		}()
