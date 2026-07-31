@@ -45,10 +45,28 @@ type App struct {
 // behavior change disguised as a refactor. Call Embedder() at the point
 // the current code builds it.
 func Open(projectDir string) (*App, error) {
-	cfgPath := filepath.Join(projectDir, "config.yaml")
-	cfg, err := config.Load(cfgPath)
+	return OpenWithOptions(projectDir, filepath.Join(projectDir, "config.yaml"), store.ModeWriter)
+}
+
+// ConfigLoadError marks a config.Load failure at Open, so callers
+// (pkg/engine) can map exactly that failure onto their own sentinel
+// without string matching.
+type ConfigLoadError struct{ Err error }
+
+// Error implements error.
+func (e *ConfigLoadError) Error() string { return "load config: " + e.Err.Error() }
+
+// Unwrap exposes the underlying config error.
+func (e *ConfigLoadError) Unwrap() error { return e.Err }
+
+// OpenWithOptions is Open parameterized by config path and open mode
+// (pkg/engine needs both: WithConfigFile support, and ModeReader for
+// read-only workspaces). Mode semantics are store.OpenOptions': ModeReader
+// runs no migrations and fails writes with store.ErrReadOnly.
+func OpenWithOptions(projectDir, configPath string, mode store.Mode) (*App, error) {
+	cfg, err := config.Load(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("load config: %w", err)
+		return nil, &ConfigLoadError{Err: err}
 	}
 
 	// Routed through the storedial seam (P2-1 T5); under backend=sqlite the
@@ -58,7 +76,7 @@ func Open(projectDir string) (*App, error) {
 	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
 	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 	backend, err := storedial.Open(cfg.Storage, store.OpenOptions{
-		Mode:             store.ModeWriter,
+		Mode:             mode,
 		ProjectDir:       projectDir,
 		ValidRelations:   ontology.ValidRelationNames(mergedRels),
 		ValidEntityTypes: ontology.ValidEntityTypeNames(mergedTypes),
