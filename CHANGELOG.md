@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Documentation
+
+- **Docs pass for the wiki_query + restructure surface.** `wiki_query`
+  documented in the Agent Memory Layer guide (new "Free-form Q&A with
+  filing" section) and in all seven READMEs' MCP sections; the
+  team-setup diagram's tool counts corrected (7 read, 9 write,
+  3 compound = 19 — they were wrong before the tool existed). Root images
+  moved to `assets/` and translations to `docs/translations/` with the
+  MAINT-05 drift check updated to match.
+
 ### Added
 
 - **`wiki_query` MCP tool (#125) — the 19th tool.** Ask a free-form

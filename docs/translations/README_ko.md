@@ -236,8 +236,8 @@ Preact + Tailwind로 구축되어 `go:embed`로 임베딩됩니다 (~1.2 MB, gzi
 ```
 
 네트워크 클라이언트: `sage-wiki serve --transport sse --port 3333`. 서버는
-19개의 도구를 노출합니다 — 검색, 읽기, 그래프 쿼리, 캡처, 온디맨드
-컴파일 등. 에이전트별 설정과 캡처 워크플로우는
+19개의 도구를 노출합니다 — 검색, 읽기, 그래프 쿼리, 캡처, `wiki_query`
+(검토용 파일링이 포함된 질의응답), 온디맨드 컴파일 등. 에이전트별 설정과 캡처 워크플로우는
 [에이전트 메모리 레이어 가이드](../guides/agent-memory-layer.md)에 있습니다.
 
 **에이전트 스킬 파일** — `sage-wiki skill refresh --target <agent>`는

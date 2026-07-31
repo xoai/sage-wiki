@@ -218,7 +218,7 @@ sage-wiki serve --ui        # http://127.0.0.1:3333，需要 -tags webui 构建
 }
 ```
 
-网络客户端：`sage-wiki serve --transport sse --port 3333`。服务器暴露 19 个工具——搜索、读取、图查询、捕获、按需编译等；各 Agent 的配置方法与捕获工作流见 [Agent 记忆层指南](../guides/agent-memory-layer.md)。
+网络客户端：`sage-wiki serve --transport sse --port 3333`。服务器暴露 19 个工具——搜索、读取、图查询、捕获、`wiki_query`（问答并将结果存入待审区）、按需编译等；各 Agent 的配置方法与捕获工作流见 [Agent 记忆层指南](../guides/agent-memory-layer.md)。
 
 **Agent 技能文件** —— `sage-wiki skill refresh --target <agent>` 会向 Agent 的指令文件（CLAUDE.md、.cursorrules 等）写入一段行为规范，根据你的配置生成，教会它何时搜索、捕获什么、如何查询。支持的目标：`claude-code`、`cursor`、`windsurf`、`agents-md`（Antigravity）、`codex`、`gemini`、`generic`。
 

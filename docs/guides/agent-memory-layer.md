@@ -1,6 +1,6 @@
 # sage-wiki as a Memory Layer for AI Agents
 
-sage-wiki runs as an MCP server with 18 tools. But tools alone aren't enough — agents won't proactively use the wiki unless their context tells them *when* to check it, *what* to capture, and *how* to query effectively. This guide covers the full setup: connecting MCP, generating skill files, and establishing the read-capture-evolve loop that turns sage-wiki into compounding institutional memory.
+sage-wiki runs as an MCP server with 19 tools. But tools alone aren't enough — agents won't proactively use the wiki unless their context tells them *when* to check it, *what* to capture, and *how* to query effectively. This guide covers the full setup: connecting MCP, generating skill files, and establishing the read-capture-evolve loop that turns sage-wiki into compounding institutional memory.
 
 ## The Problem Skill Files Solve
 
@@ -305,6 +305,16 @@ For adding an existing file as a wiki source:
 After capturing knowledge, compile to process everything:
 
 > "Compile my wiki to process the new captures"
+
+### Free-form Q&A with filing: `wiki_query`
+
+Ask a question and get a synthesized, cited answer that is *filed for review* — the same pipeline as the `sage-wiki query` CLI command:
+
+> "What do we know about connection pooling? File the answer for review."
+
+The tool searches sources and compiled articles, synthesizes an answer with the LLM (one synthesis call per invocation), and writes it to `wiki/under_review/` by default — or `wiki/outputs/` when `trust.include_outputs: "true"`. The response carries the answer, the source paths used, and the filed path (`output_path`), plus `filing_error` if the write failed. Optional `top_k` (1–20, default 5) controls how many sources feed the synthesis.
+
+Use it when the answer itself is an artifact worth keeping — research summaries, onboarding briefs, design rationales — rather than an ephemeral chat reply. Filed answers are indexed, so later searches find them.
 
 ## The Read-Capture-Evolve Loop
 

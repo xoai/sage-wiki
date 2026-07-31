@@ -40,7 +40,7 @@ Concrete outcomes:
         v             v             v
 ┌──────────────────────────────────────────────────────────┐
 │                sage-wiki MCP Server                       │
-│  18 read tools + 8 write tools + 4 compound tools        │
+│  7 read tools + 9 write tools + 3 compound tools (19)    │
 │  wiki_search · wiki_capture · wiki_compile_topic         │
 │  wiki_learn · wiki_query · wiki_add_source               │
 └───────────────────────┬──────────────────────────────────┘

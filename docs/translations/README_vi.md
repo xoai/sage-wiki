@@ -236,8 +236,8 @@ Thêm vào `.mcp.json` (Claude Code; các agent khác trong [hướng dẫn Lớ
 ```
 
 Client mạng: `sage-wiki serve --transport sse --port 3333`. Máy chủ
-cung cấp 19 công cụ — tìm kiếm, đọc, truy vấn đồ thị, ghi nhận, biên dịch
-theo yêu cầu và nhiều hơn nữa; cách thiết lập cho từng agent và quy trình
+cung cấp 19 công cụ — tìm kiếm, đọc, truy vấn đồ thị, ghi nhận, `wiki_query`
+(trả lời câu hỏi kèm lưu bản để duyệt), biên dịch theo yêu cầu và nhiều hơn nữa; cách thiết lập cho từng agent và quy trình
 ghi nhận nằm trong [hướng dẫn Lớp bộ nhớ Agent](../guides/agent-memory-layer.md).
 
 **Tệp kỹ năng agent** — `sage-wiki skill refresh --target <agent>` ghi

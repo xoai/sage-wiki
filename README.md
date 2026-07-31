@@ -253,8 +253,9 @@ Add to `.mcp.json` (Claude Code; other agents in the [Agent Memory Layer guide](
 ```
 
 Network clients: `sage-wiki serve --transport sse --port 3333`. The server
-exposes 19 tools — search, read, graph query, capture, compile-on-demand
-and more; setup per agent and capture workflows live in the
+exposes 19 tools — search, read, graph query, capture, `wiki_query`
+(question answering with trust-reviewed filing), compile-on-demand and
+more; setup per agent and capture workflows live in the
 [Agent Memory Layer guide](docs/guides/agent-memory-layer.md).
 
 **HTTP API (`/v1`, experimental)** — any language can call the same tools

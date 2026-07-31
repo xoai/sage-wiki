@@ -239,8 +239,9 @@ Ajoutez à `.mcp.json` (Claude Code ; les autres agents dans le [guide de la cou
 ```
 
 Clients réseau : `sage-wiki serve --transport sse --port 3333`. Le serveur
-expose 19 outils — recherche, lecture, requête de graphe, capture, compilation
-à la demande et plus ; la configuration par agent et les workflows de capture
+expose 19 outils — recherche, lecture, requête de graphe, capture, `wiki_query`
+(réponses aux questions avec dépôt relu), compilation à la demande et plus ;
+la configuration par agent et les workflows de capture
 vivent dans le [guide de la couche mémoire agent](../guides/agent-memory-layer.md).
 
 **Fichiers de compétences agent** — `sage-wiki skill refresh --target <agent>`
