@@ -17,7 +17,7 @@ type toolEntry struct {
 	Description string
 	Args        []argEntry
 	REST        string
-	Kind        string // "read", "write", "async"
+	Kind        string // "read", "write", "async", "compound"
 }
 
 type argEntry struct {
@@ -137,9 +137,10 @@ func collectData(projectDir string) skillData {
 		"wiki_learn":          "POST /v1/learnings",
 		"wiki_commit":         "POST /v1/git/commit",
 		"wiki_capture":        "POST /v1/capture",
-		"wiki_compile":        "POST /v1/jobs/compile (async — 202 + job_id)",
-		"wiki_compile_topic":  "POST /v1/jobs/compile?topic=... (async — 202 + job_id)",
-		"wiki_lint":           "POST /v1/jobs/lint (async — 202 + job_id)",
+		"wiki_compile":         "POST /v1/jobs/compile (async — 202 + job_id)",
+		"wiki_compile_topic":   "POST /v1/jobs/compile?topic=... (async — 202 + job_id)",
+		"wiki_lint":            "POST /v1/jobs/lint (async — 202 + job_id)",
+		"wiki_query":           "—",
 	}
 
 	readTools := map[string]bool{
@@ -149,6 +150,12 @@ func collectData(projectDir string) skillData {
 	}
 	asyncTools := map[string]bool{
 		"wiki_compile": true, "wiki_compile_topic": true, "wiki_lint": true,
+	}
+	// compoundTools renders after asyncTools in the else-if chain — only
+	// tools that are neither read nor async belong here (currently just
+	// wiki_query, the Q&A-with-filing compound op).
+	compoundTools := map[string]bool{
+		"wiki_query": true,
 	}
 
 	sd := skillData{
@@ -192,6 +199,8 @@ func collectData(projectDir string) skillData {
 			kind = "read"
 		} else if asyncTools[name] {
 			kind = "async"
+		} else if compoundTools[name] {
+			kind = "compound"
 		}
 		rest := restMap[name]
 		if rest == "" {

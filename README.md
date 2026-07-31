@@ -9,7 +9,7 @@
 Grown from [Andrej Karpathy's idea](https://x.com/karpathy/status/2039805659525644595) of an LLM-compiled personal knowledge base, built with the [Sage Framework](https://github.com/xoai/sage). Some lessons learned along the way [here](https://x.com/xoai/status/2040936964799795503).
 
 - **Graph memory with citations.** Ask relational questions through `wiki_graph_query` — answers are grounded only in serialized graph edges; with the evidenced graph enabled, each citation carries its source document and confidence.
-- **Built for agents and humans.** 18 MCP tools plus generated skill files teach agents when to search, capture, and compile; humans get Obsidian-native markdown, a TUI, and a web UI over the same data.
+- **Built for agents and humans.** 19 MCP tools plus generated skill files teach agents when to search, capture, and compile; humans get Obsidian-native markdown, a TUI, and a web UI over the same data.
 - **Trust and provenance.** Query outputs quarantine until verified; every evidenced relation records which document asserted it.
 - **Your sources in, a wiki out.** The compile pipeline reads papers, notes, code, and email; summarizes; extracts concepts; and writes interconnected articles — the ingestion layer for everything above. Every new source enriches existing articles; the wiki compounds as it grows.
 - **Ask your wiki questions.** Hybrid chunk-level search with LLM query expansion, re-ranking, and graph-aware context assembly returns cited answers.
@@ -253,7 +253,7 @@ Add to `.mcp.json` (Claude Code; other agents in the [Agent Memory Layer guide](
 ```
 
 Network clients: `sage-wiki serve --transport sse --port 3333`. The server
-exposes 18 tools — search, read, graph query, capture, compile-on-demand
+exposes 19 tools — search, read, graph query, capture, compile-on-demand
 and more; setup per agent and capture workflows live in the
 [Agent Memory Layer guide](docs/guides/agent-memory-layer.md).
 
@@ -275,7 +275,7 @@ query, derived from your config. Targets: `claude-code`, `cursor`,
 ### Agent skills
 
 Install sage-wiki's reference skill so a coding assistant knows the full
-tool surface — all 18 MCP tools, the `/v1` REST equivalents, opt-in flags,
+tool surface — all 19 MCP tools, the `/v1` REST equivalents, opt-in flags,
 tiers, async compile semantics, and error codes — without reading this
 README:
 
@@ -521,7 +521,7 @@ python3 -m pytest eval/eval_test.py -q      # harness self-tests
 - **Ontology:** Typed entity-relation graph with BFS traversal and cycle detection
 - **Search:** Unified pipeline — document- and chunk-level FTS5 and vectors fused by weighted RRF with the ontology graph as a third channel, corpus-adaptive stopwording, title-proxy column weights, and a recency tie-breaker on documents with a known origin date. LLM query expansion and coverage-gated re-ranking are opt-in per call on the search surfaces and on by default for Q&A, which also gets 4-signal graph context expansion. Search responses signal uncompiled sources for compile-on-demand.
 - **Compiler:** Tiered pipeline (Tier 0: index, Tier 1: embed, Tier 2: code parse, Tier 3: full LLM compile) with adaptive backpressure, concurrent Pass 2 extraction, prompt caching, batch API (Anthropic + OpenAI + Gemini), cost tracking, compile-on-demand via MCP, quality scoring, and cascade awareness. Embedding includes retry with exponential backoff, optional rate limiting, and mean-pooling for long inputs. 10 built-in code parsers (Go via go/ast, 8 languages via regex, structured data key extraction).
-- **MCP:** 18 tools (7 read, 9 write, 2 compound) via stdio or SSE, including `wiki_graph_query` for provenance-cited multi-hop graph QA, `wiki_compile_topic` for on-demand compilation and `wiki_capture` for knowledge extraction
+- **MCP:** 19 tools (7 read, 9 write, 3 compound) via stdio or SSE, including `wiki_graph_query` for provenance-cited multi-hop graph QA, `wiki_compile_topic` for on-demand compilation and `wiki_capture` for knowledge extraction
 - **TUI:** bubbletea + glamour 4-tab terminal dashboard (browse, search, Q&A, compile) with tier distribution display
 - **Web UI:** Preact + Tailwind CSS embedded via `go:embed` with build tag (`-tags webui`)
 - **Scribe:** Extensible interface for ingesting knowledge from conversations. Session scribe processes Claude Code JSONL transcripts.

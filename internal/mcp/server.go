@@ -155,6 +155,7 @@ func (s *Server) CallTool(ctx context.Context, name string, req mcp.CallToolRequ
 		"wiki_compile_diff":   s.handleCompileDiff,
 		"wiki_compile":        s.handleCompile,
 		"wiki_lint":           s.handleLint,
+		"wiki_query":          s.handleQuery,
 		"wiki_capture":        s.handleCapture,
 		"wiki_compile_topic":  s.handleCompileTopic,
 		"wiki_provenance":     s.handleProvenance,

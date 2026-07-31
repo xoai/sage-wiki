@@ -12,7 +12,7 @@
 Née de [l'idée d'Andrej Karpathy](https://x.com/karpathy/status/2039805659525644595) d'une base de connaissances personnelle compilée par LLM, construite avec le [Sage Framework](https://github.com/xoai/sage). Quelques leçons tirées en chemin [ici](https://x.com/xoai/status/2040936964799795503).
 
 - **Mémoire graphe avec citations.** Posez des questions relationnelles via `wiki_graph_query` — les réponses ne s'ancrent que dans des arêtes de graphe sérialisées ; avec le graphe avec preuves activé, chaque citation porte son document source et sa confiance.
-- **Conçu pour les agents et les humains.** 18 outils MCP plus des fichiers de compétences générés enseignent aux agents quand chercher, capturer et compiler ; les humains disposent de markdown natif Obsidian, d'une TUI et d'une interface web sur les mêmes données.
+- **Conçu pour les agents et les humains.** 19 outils MCP plus des fichiers de compétences générés enseignent aux agents quand chercher, capturer et compiler ; les humains disposent de markdown natif Obsidian, d'une TUI et d'une interface web sur les mêmes données.
 - **Confiance et provenance.** Les sorties de requêtes restent en quarantaine jusqu'à vérification ; chaque relation avec preuves enregistre quel document l'a affirmée.
 - **Vos sources en entrée, un wiki en sortie.** Le pipeline de compilation lit articles scientifiques, notes, code et e-mails ; résume ; extrait les concepts ; et rédige des articles interconnectés — la couche d'ingestion de tout ce qui précède. Chaque nouvelle source enrichit les articles existants ; le wiki se bonifie à mesure qu'il grandit.
 - **Interrogez votre wiki.** La recherche hybride au niveau des fragments, avec expansion de requêtes par LLM, re-classement et assemblage de contexte conscient du graphe, renvoie des réponses avec citations.
@@ -239,7 +239,7 @@ Ajoutez à `.mcp.json` (Claude Code ; les autres agents dans le [guide de la cou
 ```
 
 Clients réseau : `sage-wiki serve --transport sse --port 3333`. Le serveur
-expose 18 outils — recherche, lecture, requête de graphe, capture, compilation
+expose 19 outils — recherche, lecture, requête de graphe, capture, compilation
 à la demande et plus ; la configuration par agent et les workflows de capture
 vivent dans le [guide de la couche mémoire agent](docs/guides/agent-memory-layer.md).
 
@@ -252,7 +252,7 @@ comment interroger, dérivée de votre config. Cibles : `claude-code`, `cursor`,
 ### Compétences agent
 
 Installez la compétence de référence de sage-wiki pour qu'un assistant de
-codage connaisse toute la surface d'outils — les 18 outils MCP, les
+codage connaisse toute la surface d'outils — les 19 outils MCP, les
 équivalents REST `/v1`, les drapeaux opt-in, les tiers, la sémantique de
 compilation asynchrone et les codes d'erreur — sans lire ce README :
 

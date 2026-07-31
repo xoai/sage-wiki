@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,6 +36,10 @@ type QueryResult struct {
 	ChunksUsed []string // chunk IDs used in context
 	Format     string   // markdown, terminal, marp
 	OutputPath string   // if auto-filed
+	// FilingError is set when synthesis succeeded but auto-filing failed —
+	// OutputPath is empty in that case, and callers must NOT treat an empty
+	// OutputPath as "nothing to file" (edge case 8 is the only benign one).
+	FilingError string
 }
 
 // QueryOpts allows callers to pass shared resources.
@@ -124,6 +129,19 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 		return nil, fmt.Errorf("query: LLM synthesis: %w", err)
 	}
 
+	// Empty-content guard (the compiler family's missing site): provider
+	// adapters can return empty Content with a 200 (e.g. reasoning-model
+	// truncation, anthropic.go). Filing that would write a hollow
+	// frontmatter-only answer to outputs/ or under_review/ — fail instead.
+	// EmptyContentDetails returns "" whenever Content != "" (client.go:74),
+	// so whitespace-only content needs the fixed fallback.
+	if strings.TrimSpace(resp.Content) == "" {
+		if hint := resp.EmptyContentDetails(); hint != "" {
+			return nil, fmt.Errorf("query: LLM synthesis: %s", hint)
+		}
+		return nil, errors.New("query: LLM synthesis: LLM returned empty/whitespace content")
+	}
+
 	result := &QueryResult{
 		Question:   question,
 		Answer:     resp.Content,
@@ -154,7 +172,10 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 	trustCfg := cfg.Trust
 	outputPath, err := autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), ChunkOverlap: cfg.Search.ChunkOverlapOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode(), TrustCfg: &trustCfg, Client: client, Model: model, ChunksUsed: chunkIDs})
 	if err != nil {
+		// Filing failures must not masquerade as "nothing to file" — the
+		// MCP tool serializes OutputPath as a contract (issue #125 review).
 		log.Warn("auto-filing failed", "error", err)
+		result.FilingError = err.Error()
 	} else {
 		result.OutputPath = outputPath
 	}
@@ -677,18 +698,45 @@ func autoFile(projectDir string, outputDir string, result *QueryResult,
 
 	timestamp := time.Now().Format("2006-01-02")
 	slug := slugify(result.Question)
+	// Unicode-only questions produce an empty slug — fall back like the
+	// trust path (hooks.go) so different questions don't share a filename.
+	if slug == "" {
+		slug = "output"
+	}
 	filename := fmt.Sprintf("%s-%s.md", timestamp, slug)
 	relPath := filepath.Join(outputDir, "outputs", filename)
 	absPath := filepath.Join(projectDir, relPath)
+	// Two DIFFERENT questions must never clobber each other: unicode-only
+	// questions slugify to "" (same filename), and same-slug questions share
+	// the day-granularity name. Dedup with a numeric suffix like the trust
+	// path does (hooks.go).
+	for i := 2; fileExists(absPath); i++ {
+		filename = fmt.Sprintf("%s-%s-%d.md", timestamp, slug, i)
+		relPath = filepath.Join(outputDir, "outputs", filename)
+		absPath = filepath.Join(projectDir, relPath)
+	}
+
+	// Escape frontmatter exactly like writeUnderReviewFile (trust/hooks.go)
+	// — a raw question with quotes or newlines corrupts/injects YAML.
+	escapedQ := strings.ReplaceAll(result.Question, `"`, `\"`)
+	escapedQ = strings.ReplaceAll(escapedQ, "\n", " ")
+	sourcesStr := "[]"
+	if len(result.Sources) > 0 {
+		quoted := make([]string, len(result.Sources))
+		for i, s := range result.Sources {
+			quoted[i] = fmt.Sprintf("%q", s)
+		}
+		sourcesStr = "[" + strings.Join(quoted, ", ") + "]"
+	}
 
 	frontmatter := fmt.Sprintf(`---
-question: "%s"
-sources: [%s]
+question: %q
+sources: %s
 created_at: %s
 format: %s
 ---
 
-`, result.Question, strings.Join(result.Sources, ", "), userNow, result.Format)
+`, escapedQ, sourcesStr, userNow, result.Format)
 
 	if err := os.WriteFile(absPath, []byte(frontmatter+result.Answer), 0644); err != nil {
 		return "", err
@@ -982,4 +1030,9 @@ func slugify(s string) string {
 		slug = slug[:50]
 	}
 	return strings.Trim(slug, "-")
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

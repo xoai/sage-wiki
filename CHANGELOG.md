@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`wiki_query` MCP tool (#125) — the 19th tool.** Ask a free-form
+  question over MCP: the tool runs the exact CLI `query` pipeline (search →
+  LLM synthesis → auto-file) and returns the answer, source paths, and the
+  filed path. Filing follows the CLI's trust semantics: `wiki/under_review/`
+  by default (trust output review), `wiki/outputs/` only when
+  `trust.include_outputs: "true"`. Args: `question` (required), `top_k`
+  (1–20, default 5). The server's vector chunk cache is invalidated after
+  each filing, filing failures surface as a `filing_error` field (never a
+  silent empty path), questions are YAML-escaped in filed frontmatter, and
+  same-day same-slug filings dedup instead of clobbering. Note for
+  downstream tooling: the registry now has 19 tools (7 read, 9 write,
+  3 compound by registration; generated skills render behavior kinds —
+  read/write/async/compound — from the live registry).
+
+### Fixed
+
+- **Query synthesis no longer files hollow answers.** An LLM 200 with
+  empty or whitespace-only content previously wrote a frontmatter-only
+  file to `outputs/` or `under_review/` (provider adapters can return
+  empty content without error — the same defect family the compiler guards
+  against). `query.Query` now errors before filing, with the actionable
+  EmptyContentDetails hint when available. Applies to both the CLI `query`
+  command and the new `wiki_query` tool.
+
 ### Documentation
 
 - **README + all six translations updated for the v0.2.6 surface.** New
