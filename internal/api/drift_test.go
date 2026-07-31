@@ -24,6 +24,7 @@ var driftExcludedTools = map[string]string{
 	"wiki_compile":       "P4-2: async job API (/v1/jobs/compile)",
 	"wiki_compile_topic": "P4-2: async job API (/v1/jobs/compile with topic)",
 	"wiki_lint":          "P4-2: async job API (/v1/jobs/lint)",
+	"wiki_query":         "issue #125: MCP-only for now — a /v1 route is a separate decision (would ripple to both published clients)",
 }
 
 // Routes whose REST-facing params are intentionally NOT a subset of the
@@ -177,8 +178,8 @@ func TestDrift_SpecRoutesToolsAgree(t *testing.T) {
 
 func TestDrift_Counts(t *testing.T) {
 	toolArgs := toolArgsByName(t)
-	if len(toolArgs) != 18 {
-		t.Fatalf("tool count = %d, want 18", len(toolArgs))
+	if len(toolArgs) != 19 {
+		t.Fatalf("tool count = %d, want 19", len(toolArgs))
 	}
 	routes := testRouterRoutes(t)
 	if len(routes) != 20 {

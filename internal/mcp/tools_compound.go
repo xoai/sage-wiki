@@ -2,12 +2,15 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/linter"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/query"
 )
 
 func (s *Server) registerCompoundTools() {
@@ -29,6 +32,65 @@ func (s *Server) registerCompoundTools() {
 		),
 		s.handleLint,
 	)
+
+	s.mcp.AddTool(
+		mcplib.NewTool("wiki_query",
+			mcplib.WithDescription("Ask a free-form question against the wiki: searches sources and compiled articles, synthesizes a cited answer with the LLM (spends LLM budget), and files the result to wiki/under_review/ by default (trust output review) or wiki/outputs/ only when trust include_outputs is 'true'. Returns the answer, source paths, and the filed path."),
+			mcplib.WithString("question", mcplib.Required(), mcplib.Description("Natural-language question")),
+			mcplib.WithNumber("top_k", mcplib.Description("Sources to synthesize from, 1-20 (default 5)")),
+		),
+		s.handleQuery,
+	)
+}
+
+// handleQuery answers a free-form question via query.Query — the exact CLI
+// `query` pipeline (search → LLM synthesis → auto-file per trust mode),
+// sharing the server's DB handle. Issue #125.
+func (s *Server) handleQuery(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	args := req.GetArguments()
+	question, _ := args["question"].(string)
+	if strings.TrimSpace(question) == "" {
+		return errorResult("question is required"), nil
+	}
+	topK := 5
+	if k, ok := args["top_k"].(float64); ok && k != 0 {
+		// k != k catches NaN on the in-process CallTool path (JSON can't
+		// carry NaN, but embedders via pkg/sagewiki can pass it).
+		if k != k || k < 1 || k > 20 {
+			return errorResult("top_k must be between 1 and 20"), nil
+		}
+		topK = int(k) // in-range fractionals truncate (5.7 → 5); out-of-range already errored
+	}
+
+	result, err := query.Query(s.projectDir, question, "markdown", topK, query.QueryOpts{DB: s.db})
+	if err != nil {
+		// query.Query already prefixes its errors ("query: create LLM
+		// client: …") — pass through verbatim to avoid a doubled prefix.
+		return errorResult(err.Error()), nil
+	}
+	// query.Query chunk-indexes the filed output using a FRESH vectors.Store
+	// and invalidates that instance's cache; the server's long-lived store
+	// must be invalidated too or subsequent searches serve stale chunks.
+	if result.OutputPath != "" {
+		s.vec.InvalidateChunkCache()
+	}
+
+	sources := result.Sources
+	if sources == nil {
+		sources = []string{} // strict-typed clients reject "sources": null
+	}
+	resp := map[string]any{
+		"answer":      result.Answer,
+		"sources":     sources,
+		"output_path": result.OutputPath,
+	}
+	// Filing failures must surface: success + output_path "" would be
+	// indistinguishable from the benign no-content short-circuit.
+	if result.FilingError != "" {
+		resp["filing_error"] = result.FilingError
+	}
+	data, _ := json.MarshalIndent(resp, "", "  ")
+	return textResult(string(data)), nil
 }
 
 func (s *Server) handleCompile(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {

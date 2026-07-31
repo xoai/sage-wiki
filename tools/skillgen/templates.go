@@ -9,7 +9,7 @@ generated: skillgen — do not hand-edit
 
 # sage-wiki
 
-Local-first knowledge graph that compiles documents into an interlinked, human-readable wiki with provenance. Exposes 18 MCP tools over stdio/SSE and a versioned REST API under ` + "`/v1/`" + `. Output is Obsidian-compatible markdown.
+Local-first knowledge graph that compiles documents into an interlinked, human-readable wiki with provenance. Exposes {{.ToolCount}} MCP tools over stdio/SSE and a versioned REST API under ` + "`/v1/`" + `. Output is Obsidian-compatible markdown.
 
 ## How to connect
 
@@ -27,7 +27,7 @@ Local-first knowledge graph that compiles documents into an interlinked, human-r
 
 **REST (` + "`/v1/`" + `):** When the server is running with ` + "`--ui`" + `, the REST facade is at ` + "`/v1/`" + `. Auth is Bearer-token (same as ` + "`SAGE_WIKI_TOKEN`" + `); loopback is zero-config. All errors use a fixed ` + "`{error: {code, message, details}}`" + ` envelope.
 
-## The 18 MCP Tools
+## The {{.ToolCount}} MCP Tools
 
 {{range .Tools}}
 ### ` + "`{{.Name}}`" + ` ({{.Kind}})

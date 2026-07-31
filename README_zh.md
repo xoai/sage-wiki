@@ -12,7 +12,7 @@
 从 [Andrej Karpathy 的想法](https://x.com/karpathy/status/2039805659525644595)——LLM 编译型个人知识库——生长而来，使用 [Sage Framework](https://github.com/xoai/sage) 构建。一路走来的一些经验总结见[这里](https://x.com/xoai/status/2040936964799795503)。
 
 - **带引用的图记忆。** 通过 `wiki_graph_query` 提出关系型问题——答案仅以序列化的图边为依据；启用带证据的图谱后，每条引用都携带其来源文档与置信度。
-- **为 Agent 与人类而建。** 18 个 MCP 工具加上生成的技能文件，教会 Agent 何时搜索、捕获与编译；人类则在同一份数据之上获得 Obsidian 原生的 markdown、TUI 和 Web UI。
+- **为 Agent 与人类而建。** 19 个 MCP 工具加上生成的技能文件，教会 Agent 何时搜索、捕获与编译；人类则在同一份数据之上获得 Obsidian 原生的 markdown、TUI 和 Web UI。
 - **信任与溯源。** 查询输出在通过验证前处于隔离状态；每条带证据的关系都记录了是哪个文档断言了它。
 - **输入源文件，输出 wiki。** 编译管线读取论文、笔记、代码和邮件；进行摘要、提取概念，并写出互相关联的文章——它是上述一切能力的摄取层。每个新源文件都会丰富已有文章；wiki 随着增长不断复利积累。
 - **向你的 wiki 提问。** chunk 级混合搜索配合 LLM 查询扩展、重排序与图感知的上下文组装，返回带引用的答案。
@@ -218,13 +218,13 @@ sage-wiki serve --ui        # http://127.0.0.1:3333，需要 -tags webui 构建
 }
 ```
 
-网络客户端：`sage-wiki serve --transport sse --port 3333`。服务器暴露 18 个工具——搜索、读取、图查询、捕获、按需编译等；各 Agent 的配置方法与捕获工作流见 [Agent 记忆层指南](docs/guides/agent-memory-layer.md)。
+网络客户端：`sage-wiki serve --transport sse --port 3333`。服务器暴露 19 个工具——搜索、读取、图查询、捕获、按需编译等；各 Agent 的配置方法与捕获工作流见 [Agent 记忆层指南](docs/guides/agent-memory-layer.md)。
 
 **Agent 技能文件** —— `sage-wiki skill refresh --target <agent>` 会向 Agent 的指令文件（CLAUDE.md、.cursorrules 等）写入一段行为规范，根据你的配置生成，教会它何时搜索、捕获什么、如何查询。支持的目标：`claude-code`、`cursor`、`windsurf`、`agents-md`（Antigravity）、`codex`、`gemini`、`generic`。
 
 ### Agent 技能
 
-安装 sage-wiki 的参考技能，让编程助手无需阅读本 README 即可了解完整的工具面——全部 18 个 MCP 工具、`/v1` REST 对应接口、可选开关、层级、异步编译语义和错误码：
+安装 sage-wiki 的参考技能，让编程助手无需阅读本 README 即可了解完整的工具面——全部 19 个 MCP 工具、`/v1` REST 对应接口、可选开关、层级、异步编译语义和错误码：
 
 ```bash
 # Claude Code

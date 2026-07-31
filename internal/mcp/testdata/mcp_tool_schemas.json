@@ -355,6 +355,32 @@
     },
     "name": "wiki_provenance"
   },
+  "wiki_query": {
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "description": "Ask a free-form question against the wiki: searches sources and compiled articles, synthesizes a cited answer with the LLM (spends LLM budget), and files the result to wiki/under_review/ by default (trust output review) or wiki/outputs/ only when trust include_outputs is 'true'. Returns the answer, source paths, and the filed path.",
+    "inputSchema": {
+      "properties": {
+        "question": {
+          "description": "Natural-language question",
+          "type": "string"
+        },
+        "top_k": {
+          "description": "Sources to synthesize from, 1-20 (default 5)",
+          "type": "number"
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "type": "object"
+    },
+    "name": "wiki_query"
+  },
   "wiki_read": {
     "annotations": {
       "readOnlyHint": false,

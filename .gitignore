@@ -33,3 +33,4 @@ dist-test/
 *.egg-info/
 .pytest_cache/
 examples/langgraph/__pycache__/
+skillgen

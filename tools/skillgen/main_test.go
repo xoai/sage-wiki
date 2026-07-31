@@ -85,11 +85,11 @@ func TestAsyncCompileDocumented(t *testing.T) {
 	}
 }
 
-// S-05: tool count matches the registry (18).
+// S-05: tool count matches the registry (19).
 func TestToolCount(t *testing.T) {
 	sd := testData(t)
-	if sd.ToolCount != 18 {
-		t.Errorf("ToolCount = %d, want 18", sd.ToolCount)
+	if sd.ToolCount != 19 {
+		t.Errorf("ToolCount = %d, want 19", sd.ToolCount)
 	}
 	if len(sd.Tools) != sd.ToolCount {
 		t.Errorf("len(Tools) = %d, ToolCount = %d — mismatch", len(sd.Tools), sd.ToolCount)
@@ -103,6 +103,15 @@ func TestEveryToolAppears(t *testing.T) {
 		if !strings.Contains(ref, "`"+te.Name+"`") {
 			t.Errorf("tool %s missing from generated reference skill", te.Name)
 		}
+	}
+}
+
+// wiki_query (19th tool, issue #125) renders as (compound) — it is neither
+// read nor async, and must not fall through to the (write) default.
+func TestWikiQueryRendersCompound(t *testing.T) {
+	ref, _ := render(t, testData(t))
+	if !strings.Contains(ref, "`wiki_query` (compound)") {
+		t.Error("wiki_query missing or not rendered as (compound)")
 	}
 }
 

@@ -12,7 +12,7 @@
 Phát triển từ [ý tưởng của Andrej Karpathy](https://x.com/karpathy/status/2039805659525644595) về một cơ sở tri thức cá nhân được biên dịch bởi LLM, xây dựng bằng [Sage Framework](https://github.com/xoai/sage). Một số bài học rút ra trên chặng đường [tại đây](https://x.com/xoai/status/2040936964799795503).
 
 - **Bộ nhớ đồ thị có trích dẫn.** Đặt câu hỏi quan hệ qua `wiki_graph_query` — câu trả lời chỉ dựa trên các cạnh đồ thị đã được tuần tự hóa; khi bật đồ thị có bằng chứng, mỗi trích dẫn kèm theo tài liệu nguồn và độ tin cậy của nó.
-- **Xây dựng cho cả agent và con người.** 18 công cụ MCP cùng các tệp kỹ năng được tạo tự động dạy agent khi nào cần tìm kiếm, ghi nhận, và biên dịch; con người có markdown tương thích Obsidian, một TUI, và một web UI trên cùng một dữ liệu.
+- **Xây dựng cho cả agent và con người.** 19 công cụ MCP cùng các tệp kỹ năng được tạo tự động dạy agent khi nào cần tìm kiếm, ghi nhận, và biên dịch; con người có markdown tương thích Obsidian, một TUI, và một web UI trên cùng một dữ liệu.
 - **Tin cậy và nguồn gốc.** Đầu ra truy vấn bị cách ly cho đến khi được xác minh; mỗi quan hệ có bằng chứng đều ghi lại tài liệu nào đã khẳng định nó.
 - **Đưa nguồn vào, nhận wiki ra.** Pipeline biên dịch đọc bài báo, ghi chú, mã nguồn, và email; tóm tắt; trích xuất khái niệm; và viết các bài viết liên kết với nhau — lớp tiếp nhận cho mọi thứ ở trên. Mỗi nguồn mới làm phong phú thêm các bài viết hiện có; wiki tích lũy giá trị khi phát triển.
 - **Đặt câu hỏi cho wiki của bạn.** Tìm kiếm lai cấp chunk với mở rộng truy vấn LLM, xếp hạng lại, và lắp ráp ngữ cảnh nhận biết đồ thị trả về câu trả lời có trích dẫn.
@@ -236,7 +236,7 @@ Thêm vào `.mcp.json` (Claude Code; các agent khác trong [hướng dẫn Lớ
 ```
 
 Client mạng: `sage-wiki serve --transport sse --port 3333`. Máy chủ
-cung cấp 18 công cụ — tìm kiếm, đọc, truy vấn đồ thị, ghi nhận, biên dịch
+cung cấp 19 công cụ — tìm kiếm, đọc, truy vấn đồ thị, ghi nhận, biên dịch
 theo yêu cầu và nhiều hơn nữa; cách thiết lập cho từng agent và quy trình
 ghi nhận nằm trong [hướng dẫn Lớp bộ nhớ Agent](docs/guides/agent-memory-layer.md).
 
@@ -249,7 +249,7 @@ truy vấn, được suy ra từ cấu hình của bạn. Các target: `claude-c
 ### Kỹ năng agent
 
 Cài đặt kỹ năng tham chiếu của sage-wiki để trợ lý lập trình biết toàn bộ
-bề mặt công cụ — cả 18 công cụ MCP, các tương đương REST `/v1`, cờ opt-in,
+bề mặt công cụ — cả 19 công cụ MCP, các tương đương REST `/v1`, cờ opt-in,
 các tier, ngữ nghĩa biên dịch bất đồng bộ và mã lỗi — mà không cần đọc
 README này:
 
