@@ -64,6 +64,10 @@ type CompileOpts struct {
 	// it (partial result + ErrBudgetExceeded). nil = no guard.
 	MaxCost *decimal.Decimal
 
+	// Recorder, when set, receives usage events instead of the default
+	// workspace file ledger (pkg/engine fan-out: file ledger + event sink).
+	Recorder llm.UsageRecorder
+
 	// Progress, when set, is the event hub the pipeline reports into (P2-3 —
 	// the TUI and the serve worker share one so subscribers see live events);
 	// nil creates a fresh stderr-only tracker.
@@ -161,7 +165,11 @@ func newTrackedClient(projectDir string, cfg *config.Config, opts *CompileOpts) 
 	// SPEC-05 usage ledger: one event per completion. Tier is 3 by
 	// construction — the full LLM pipeline only runs for tier-3 sources
 	// (runTiers claims tiers 0/1/3; LLM passes are tier-3-gated).
-	client.SetRecorder(llm.NewFileRecorder(projectDir))
+	recorder := opts.Recorder
+	if recorder == nil {
+		recorder = llm.NewFileRecorder(projectDir)
+	}
+	client.SetRecorder(recorder)
 	client.SetTier(3)
 	return client, tracker, nil
 }

@@ -157,6 +157,7 @@ func (w *Workspace) Compile(ctx context.Context, req CompileRequest) (*CompileRe
 		MaxDocs:  req.MaxDocs,
 		MaxCost:  req.MaxCost,
 		Prompts:  w.prompts,
+		Recorder: w.usageRecorder(),
 	})
 	if err != nil && !errors.Is(err, compiler.ErrBudgetExceeded) {
 		return mapCompileResult(res), err
