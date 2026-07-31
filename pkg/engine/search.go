@@ -10,6 +10,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/search"
 	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/pkg/provider"
 )
 
@@ -26,14 +27,25 @@ type SearchRequest struct {
 	Granularity string
 }
 
-// SearchResult is one hit.
+// SearchResult is one hit. The JSON tags match the CLI's DocResult wire
+// shape byte-for-byte so `search --format json` output is unchanged;
+// engine-only fields are excluded from JSON.
 type SearchResult struct {
-	DocID     string
-	ChunkID   string
-	Text      string
-	Heading   string
-	Score     float64
-	Rank      int
+	DocID       string   `json:"ID"`
+	Text        string   `json:"Content"`
+	Tags        []string `json:"Tags,omitempty"`
+	ArticlePath string   `json:"ArticlePath"`
+	BM25Rank    int      `json:"BM25Rank"`
+	VectorRank  int      `json:"VectorRank"`
+	GraphRank   int      `json:"GraphRank,omitempty"`
+	RRFScore    float64  `json:"RRFScore"`
+	Score       float64  `json:"FinalScore"`
+	SourceDate  int64    `json:"SourceDate,omitempty"`
+	AliasOf     string   `json:"AliasOf,omitempty"`
+
+	ChunkID string `json:"-"`
+	Heading string `json:"-"`
+	Rank    int    `json:"-"`
 }
 
 // SearchResults is the engine's search output.
@@ -43,6 +55,7 @@ type SearchResults struct {
 
 // Search runs the unified retrieval pipeline over the workspace.
 func (w *Workspace) Search(ctx context.Context, req SearchRequest) (*SearchResults, error) {
+	ctx = orBackground(ctx)
 	if err := w.checkOpen(); err != nil {
 		return nil, err
 	}
@@ -60,7 +73,16 @@ func (w *Workspace) Search(ctx context.Context, req SearchRequest) (*SearchResul
 		BM25Weight:   cfg.Search.HybridWeightBM25,
 		VectorWeight: cfg.Search.HybridWeightVector,
 		GraphWeight:  cfg.Search.HybridWeightGraph,
+		GraphRelationWeights: cfg.Search.GraphRelationWeights,
 	}
+	// Trust predicate, same construction as the CLI path (query/search
+	// adapters): mode from config, store over the workspace DB.
+	trustMode := cfg.Trust.IncludeOutputsMode()
+	var trustStore *trust.Store
+	if trustMode == "verified" {
+		trustStore = trust.NewStore(w.app.DB)
+	}
+	deps.IncludeDoc = trust.IncludePredicate(trustMode, trustStore)
 	if deps.Model == "" {
 		deps.Model = cfg.Models.Write
 	}
@@ -98,16 +120,22 @@ func (w *Workspace) Search(ctx context.Context, req SearchRequest) (*SearchResul
 	} else {
 		sreq.Granularity = search.Docs
 	}
+	sreq.RerankMinCoverage = cfg.Search.RerankMinCoverageOrDefault()
 
 	resp, err := search.Run(ctx, deps, sreq)
 	if err != nil {
 		return nil, fmt.Errorf("engine: search: %w", err)
 	}
-	out := &SearchResults{Results: make([]SearchResult, 0, len(resp.Results))}
-	for _, r := range resp.Results {
+	// Map through the adapters' DocResult shape so the public result —
+	// and its JSON form — matches the CLI's wire contract exactly.
+	docs := search.DocResults(resp.Results)
+	out := &SearchResults{Results: make([]SearchResult, 0, len(docs))}
+	for _, d := range docs {
 		out.Results = append(out.Results, SearchResult{
-			DocID: r.DocID, ChunkID: r.ChunkID, Text: r.ChunkText,
-			Heading: r.Heading, Score: r.FinalScore, Rank: r.Rank,
+			DocID: d.ID, Text: d.Content, Tags: d.Tags, ArticlePath: d.ArticlePath,
+			BM25Rank: d.BM25Rank, VectorRank: d.VectorRank, GraphRank: d.GraphRank,
+			RRFScore: d.RRFScore, Score: d.FinalScore, SourceDate: d.SourceDate,
+			AliasOf: d.AliasOf,
 		})
 	}
 	return out, nil

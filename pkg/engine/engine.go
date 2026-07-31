@@ -106,10 +106,20 @@ type Workspace struct {
 	closed bool
 }
 
+// orBackground normalizes a nil context (cobra's cmd.Context() is nil
+// outside Execute).
+func orBackground(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
 // Open validates the directory, checks the workspace format, acquires the
 // exclusive lock (unless WithReadOnly), and returns the handle. A second
 // read-write Open of the same dir fails fast with ErrLocked.
 func Open(ctx context.Context, dir string, optFns ...Option) (*Workspace, error) {
+	ctx = orBackground(ctx)
 	var opts options
 	for _, fn := range optFns {
 		fn(&opts)

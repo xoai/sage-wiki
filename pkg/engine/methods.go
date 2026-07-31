@@ -32,6 +32,7 @@ type Source struct {
 
 // Capture ingests one document and returns its id.
 func (w *Workspace) Capture(ctx context.Context, src Source) (DocID, error) {
+	ctx = orBackground(ctx)
 	if err := w.checkMutable(); err != nil {
 		return "", err
 	}
@@ -144,6 +145,7 @@ type CompileResult struct {
 
 // Compile runs the pipeline over the pending diff.
 func (w *Workspace) Compile(ctx context.Context, req CompileRequest) (*CompileResult, error) {
+	ctx = orBackground(ctx)
 	if err := w.checkMutable(); err != nil {
 		return nil, err
 	}
@@ -211,6 +213,7 @@ type WorkspaceStats struct {
 
 // Stats collects workspace statistics.
 func (w *Workspace) Stats(ctx context.Context) (WorkspaceStats, error) {
+	ctx = orBackground(ctx)
 	if err := w.checkOpen(); err != nil {
 		return WorkspaceStats{}, err
 	}
@@ -239,6 +242,7 @@ func (w *Workspace) Stats(ctx context.Context) (WorkspaceStats, error) {
 
 // Export writes a tar of the workspace directory to dst.
 func (w *Workspace) Export(ctx context.Context, dst io.Writer) error {
+	ctx = orBackground(ctx)
 	if err := w.checkOpen(); err != nil {
 		return err
 	}
