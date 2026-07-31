@@ -85,6 +85,7 @@ func captureSnapshot(t *testing.T, dir string, result *CompileResult) compileSna
 	if err != nil {
 		t.Fatalf("load manifest: %v", err)
 	}
+	mf.CreatedAt = "" // workspace creation timestamp (SPEC-01 format fields)
 	for path, src := range mf.Sources {
 		src.AddedAt = ""
 		src.CompiledAt = ""
