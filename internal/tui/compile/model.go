@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/shopspring/decimal"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/storedial"
@@ -370,9 +371,13 @@ func (m Model) doCompile() tea.Cmd {
 		result, err := compiler.Compile(m.projectDir, m.compileOpts)
 		var costLine string
 		if result != nil && result.CostReport != nil {
-			costLine = fmt.Sprintf("~$%.4f", result.CostReport.EstimatedCost)
-			if result.CostReport.CacheSavings > 0 {
-				costLine += fmt.Sprintf(" (saved $%.4f)", result.CostReport.CacheSavings)
+			if result.CostReport.Cost == nil {
+				costLine = "unknown (model not in price registry)"
+			} else {
+				costLine = fmt.Sprintf("~$%s", result.CostReport.Cost.StringFixed(4))
+				if result.CostReport.CacheSavings != nil && result.CostReport.CacheSavings.GreaterThan(decimal.Zero) {
+					costLine += fmt.Sprintf(" (saved $%s)", result.CostReport.CacheSavings.StringFixed(4))
+				}
 			}
 		}
 

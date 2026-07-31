@@ -1,18 +1,19 @@
 package llm
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
+	"sort"
 	"strings"
 	"sync"
 
-	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/shopspring/decimal"
+
 	"github.com/xoai/sage-wiki/internal/metrics"
 )
 
-// ModelPrice holds per-million-token pricing for a model. The json tags
-// are the price-table file format (PERF-04).
+// ModelPrice is the legacy PERF-04 workspace price-table file shape. New
+// code uses Price (pricing.go); this type exists only so legacy table files
+// keep loading.
 type ModelPrice struct {
 	Input       float64 `json:"input,omitempty"`        // $ per 1M input tokens
 	Output      float64 `json:"output,omitempty"`       // $ per 1M output tokens
@@ -21,143 +22,76 @@ type ModelPrice struct {
 	BatchOutput float64 `json:"batch_output,omitempty"` // $ per 1M batch output tokens
 }
 
-// Built-in approximate prices (may go stale — shown as estimates).
-var prices = map[string]map[string]ModelPrice{
-	"anthropic": {
-		"claude-sonnet-4-20250514":    {Input: 3.0, Output: 15.0, CachedInput: 0.3, BatchInput: 1.5, BatchOutput: 7.5},
-		"claude-haiku-4-5-20251001":   {Input: 0.8, Output: 4.0, CachedInput: 0.08, BatchInput: 0.4, BatchOutput: 2.0},
-		"claude-opus-4-6":             {Input: 15.0, Output: 75.0, CachedInput: 1.5, BatchInput: 7.5, BatchOutput: 37.5},
-	},
-	"openai": {
-		"gpt-4o":      {Input: 2.5, Output: 10.0, CachedInput: 1.25, BatchInput: 1.25, BatchOutput: 5.0},
-		"gpt-4o-mini": {Input: 0.15, Output: 0.60, CachedInput: 0.075, BatchInput: 0.075, BatchOutput: 0.3},
-		"o3-mini":     {Input: 1.10, Output: 4.40, CachedInput: 0.55, BatchInput: 0.55, BatchOutput: 2.2},
-	},
-	"gemini": {
-		"gemini-2.5-flash":         {Input: 0.15, Output: 0.60, CachedInput: 0.0375},
-		"gemini-2.5-pro":           {Input: 1.25, Output: 10.0, CachedInput: 0.3125},
-		"gemini-2.0-flash":         {Input: 0.10, Output: 0.40, CachedInput: 0.025},
-		"gemini-3-flash-preview":   {Input: 0.15, Output: 0.60, CachedInput: 0.0375},
-		"gemini-3.1-flash-lite":    {Input: 0.02, Output: 0.05, CachedInput: 0.005},
-	},
-}
-
 // CostEntry records token usage for a single LLM call.
 type CostEntry struct {
-	Pass         string // summarize, extract, write, query, lint
-	Model        string
-	Provider     string
-	InputTokens  int
-	OutputTokens int
-	CachedTokens int
-	BatchMode    bool
+	Pass             string // summarize, extract, write, query, lint
+	Model            string
+	Provider         string
+	InputTokens      int
+	OutputTokens     int
+	CachedTokens     int
+	CacheWriteTokens int
+	BatchMode        bool
 }
 
-// CostReport summarizes total cost for a compile.
+// CostReport summarizes total cost for a compile. Cost is nil when any
+// model's price is unknown — an unknown cost is never rendered as zero
+// (AGENTS.md rule 5); UnknownModels names the culprits and the token
+// totals remain exact.
 type CostReport struct {
 	TotalInputTokens  int
 	TotalOutputTokens int
 	TotalCachedTokens int
 	TotalTokens       int
-	EstimatedCost     float64
-	CacheSavings      float64
+	Cost              *decimal.Decimal
+	CacheSavings      *decimal.Decimal
 	PerPass           map[string]PassCost
+	Assumptions       []string // sorted, deduped
+	UnknownModels     []string // sorted, deduped — provider:model with nil cost
 }
 
-// PassCost holds cost info for a single compiler pass.
+// PassCost holds cost info for a single compiler pass. Cost is nil when
+// any call in the pass used a model whose price is unknown.
 type PassCost struct {
 	InputTokens  int
 	OutputTokens int
 	CachedTokens int
-	Cost         float64
+	Cost         *decimal.Decimal
 	Calls        int
 }
 
-// CostTracker accumulates token usage across a compile session.
+// CostTracker accumulates token usage across a compile session and prices
+// it against a Registry. It never falls back to another provider's table
+// and never invents a default price.
 type CostTracker struct {
 	mu       sync.Mutex
 	entries  []CostEntry
 	provider string
 	override float64 // user config override price per 1M input tokens
-	table    map[string]map[string]ModelPrice // merged built-ins + user table; nil = built-ins
-	overlay  map[string]map[string]ModelPrice // the raw user table (nil = none) — for prefix-collision precedence
+	registry *Registry
 }
 
-// priceTable returns the effective lookup map (merged or built-ins).
-func (ct *CostTracker) priceTable() map[string]map[string]ModelPrice {
-	if ct.table != nil {
-		return ct.table
-	}
-	return prices
-}
-
-// NewCostTracker creates a tracker for the given provider.
-func NewCostTracker(provider string, priceOverride float64) *CostTracker {
+// NewCostTracker creates a tracker for the given provider using the
+// builtin + user-file registry.
+func NewCostTracker(provider string, priceOverride float64) (*CostTracker, error) {
 	return NewCostTrackerWithTable(provider, priceOverride, "")
 }
 
-// NewCostTrackerWithTable builds a CostTracker whose price lookup starts
-// from the built-ins merged with a user price table (PERF-04): the file
-// wins per provider/model entry it names; built-ins cover the rest. A
-// missing/unreadable/malformed file warns and falls back to built-ins —
-// the table is optional, never a failure. Explicit priceOverride still
-// beats everything (see getPrice).
-func NewCostTrackerWithTable(provider string, priceOverride float64, tablePath string) *CostTracker {
-	table := prices
-	var overlay map[string]map[string]ModelPrice
-	if tablePath != "" {
-		overlay = loadPriceTable(tablePath)
-		table = mergePriceTables(prices, overlay)
-	}
-	return &CostTracker{
-		provider: provider,
-		override: priceOverride,
-		table:    table,
-		overlay:  overlay,
-	}
-}
-
-// loadPriceTable reads a JSON price table (same shape as the built-in
-// map). Errors degrade to nil (built-ins only) with a warning.
-func loadPriceTable(path string) map[string]map[string]ModelPrice {
-	raw, err := os.ReadFile(path)
+// NewCostTrackerWithTable creates a tracker whose registry also overlays
+// the workspace price table (legacy PERF-04 or registry shape). A malformed
+// registry file is a hard error.
+func NewCostTrackerWithTable(provider string, priceOverride float64, tablePath string) (*CostTracker, error) {
+	r, err := LoadRegistry(tablePath)
 	if err != nil {
-		log.Warn("price table unreadable — using built-in prices", "path", path, "error", err)
-		return nil
+		return nil, err
 	}
-	var table map[string]map[string]ModelPrice
-	if err := json.Unmarshal(raw, &table); err != nil {
-		log.Warn("price table malformed — using built-in prices", "path", path, "error", err)
-		return nil
-	}
-	return table
+	return &CostTracker{provider: provider, override: priceOverride, registry: r}, nil
 }
 
-// mergePriceTables returns built-ins with the user's entries overlaid per
-// provider/model. Nil overlay = built-ins as-is.
-func mergePriceTables(base, overlay map[string]map[string]ModelPrice) map[string]map[string]ModelPrice {
-	if len(overlay) == 0 {
-		return base
-	}
-	merged := make(map[string]map[string]ModelPrice, len(base))
-	for provider, models := range base {
-		cp := make(map[string]ModelPrice, len(models))
-		for m, p := range models {
-			cp[m] = p
-		}
-		merged[provider] = cp
-	}
-	for provider, models := range overlay {
-		dst, ok := merged[provider]
-		if !ok {
-			dst = make(map[string]ModelPrice, len(models))
-			merged[provider] = dst
-		}
-		for m, p := range models {
-			dst[m] = p
-		}
-	}
-	return merged
+// newCostTrackerWithRegistry builds a tracker from an explicit registry —
+// the test seam that keeps registry-loading failures out of unit tests.
+func newCostTrackerWithRegistry(provider string, priceOverride float64, r *Registry) *CostTracker {
+	return &CostTracker{provider: provider, override: priceOverride, registry: r}
 }
 
 // Track records a single LLM call's usage.
@@ -172,176 +106,248 @@ func (ct *CostTracker) Track(pass string, model string, usage Usage, batch bool)
 	ct.mu.Lock()
 	defer ct.mu.Unlock()
 	ct.entries = append(ct.entries, CostEntry{
-		Pass:         pass,
-		Model:        model,
-		Provider:     ct.provider,
-		InputTokens:  usage.InputTokens,
-		OutputTokens: usage.OutputTokens,
-		CachedTokens: usage.CachedTokens,
-		BatchMode:    batch,
+		Pass:             pass,
+		Model:            model,
+		Provider:         ct.provider,
+		InputTokens:      usage.InputTokens,
+		OutputTokens:     usage.OutputTokens,
+		CachedTokens:     usage.CachedTokens,
+		CacheWriteTokens: usage.CacheWriteTokens,
+		BatchMode:        batch,
 	})
 }
 
-// Report generates the cost summary.
+// priceFor resolves the price for a model: explicit override wins, then the
+// registry for THIS provider only. Unknown is (nil, false) — never a guess.
+func (ct *CostTracker) priceFor(model string) (*Price, bool) {
+	if ct.override > 0 {
+		return &Price{
+			InputPerMTok:       decimalPtr(decimal.NewFromFloat(ct.override)),
+			CachedInputPerMTok: decimalPtr(decimal.NewFromFloat(ct.override * 0.1)),
+			OutputPerMTok:      decimalPtr(decimal.NewFromFloat(ct.override * 3)),
+			Source:             PriceSourceUser,
+		}, true
+	}
+	return ct.registry.Lookup(ct.provider, model)
+}
+
+func decimalPtr(d decimal.Decimal) *decimal.Decimal { return &d }
+
+var million = decimal.NewFromInt(1_000_000)
+
+// calculateCost prices one entry. Returns (nil, nil) when the model is
+// unknown; otherwise the cost and any assumptions applied.
+func (ct *CostTracker) calculateCost(e CostEntry) (*decimal.Decimal, []string) {
+	price, ok := ct.priceFor(e.Model)
+	if !ok {
+		return nil, nil
+	}
+	var assumptions []string
+
+	uncached := e.InputTokens - e.CachedTokens
+	if uncached < 0 {
+		uncached = 0
+	}
+
+	if price.InputPerMTok == nil || price.OutputPerMTok == nil {
+		return nil, nil // a nil component makes the whole cost unknown
+	}
+
+	inputRate := price.InputPerMTok
+	outputRate := price.OutputPerMTok
+	if e.BatchMode {
+		if price.BatchInputPerMTok != nil && price.BatchOutputPerMTok != nil {
+			inputRate = price.BatchInputPerMTok
+			outputRate = price.BatchOutputPerMTok
+		} else {
+			assumptions = append(assumptions, "no batch rate for model; priced at standard rates")
+		}
+	}
+
+	cost := inputRate.Mul(decimal.NewFromInt(int64(uncached))).Div(million)
+	cost = cost.Add(outputRate.Mul(decimal.NewFromInt(int64(e.OutputTokens))).Div(million))
+
+	if e.CachedTokens > 0 {
+		if price.CachedInputPerMTok != nil {
+			cost = cost.Add(price.CachedInputPerMTok.Mul(decimal.NewFromInt(int64(e.CachedTokens))).Div(million))
+		} else {
+			cost = cost.Add(price.InputPerMTok.Mul(decimal.NewFromInt(int64(e.CachedTokens))).Div(million))
+			assumptions = append(assumptions, "cached tokens priced at standard input rate")
+		}
+	}
+	if e.CacheWriteTokens > 0 {
+		if price.CacheWritePerMTok != nil {
+			cost = cost.Add(price.CacheWritePerMTok.Mul(decimal.NewFromInt(int64(e.CacheWriteTokens))).Div(million))
+		} else {
+			cost = cost.Add(price.InputPerMTok.Mul(decimal.NewFromInt(int64(e.CacheWriteTokens))).Div(million))
+			assumptions = append(assumptions, "cache-write tokens priced at standard input rate")
+		}
+	}
+
+	return &cost, assumptions
+}
+
+// calculateSavings returns what caching saved on this entry, or nil when
+// the saving can't be known (unknown model, or cached tokens billed at the
+// standard rate — no discount to count).
+func (ct *CostTracker) calculateSavings(e CostEntry) *decimal.Decimal {
+	if e.CachedTokens == 0 {
+		z := decimal.Zero
+		return &z
+	}
+	price, ok := ct.priceFor(e.Model)
+	if !ok || price.InputPerMTok == nil || price.CachedInputPerMTok == nil {
+		return nil
+	}
+	full := price.InputPerMTok.Mul(decimal.NewFromInt(int64(e.CachedTokens))).Div(million)
+	discounted := price.CachedInputPerMTok.Mul(decimal.NewFromInt(int64(e.CachedTokens))).Div(million)
+	savings := full.Sub(discounted)
+	return &savings
+}
+
+// Report generates the cost summary. Any unknown model poisons the dollar
+// totals to nil (unknown is never a fabricated partial sum); token totals
+// stay exact.
 func (ct *CostTracker) Report() *CostReport {
 	ct.mu.Lock()
 	defer ct.mu.Unlock()
 
-	report := &CostReport{
-		PerPass: make(map[string]PassCost),
-	}
+	report := &CostReport{PerPass: make(map[string]PassCost)}
+	total := decimal.Zero
+	savings := decimal.Zero
+	unknownCost := false
+	unknownSavings := false
+	assumptionSet := map[string]bool{}
+	unknownSet := map[string]bool{}
+	passUnknown := map[string]bool{}
 
 	for _, e := range ct.entries {
 		report.TotalInputTokens += e.InputTokens
 		report.TotalOutputTokens += e.OutputTokens
 		report.TotalCachedTokens += e.CachedTokens
-		report.TotalTokens += e.InputTokens + e.OutputTokens
+		report.TotalTokens += e.InputTokens + e.OutputTokens + e.CacheWriteTokens
 
-		price := ct.getPrice(e.Model)
-		cost := ct.calculateCost(e, price)
-		savings := ct.calculateSavings(e, price)
+		cost, assumptions := ct.calculateCost(e)
+		for _, a := range assumptions {
+			assumptionSet[a] = true
+		}
 
-		report.EstimatedCost += cost
-		report.CacheSavings += savings
+		if cost == nil {
+			unknownCost = true
+			unknownSet[e.Provider+":"+e.Model] = true
+			passUnknown[e.Pass] = true
+		} else {
+			total = total.Add(*cost)
+		}
+
+		if s := ct.calculateSavings(e); s == nil {
+			unknownSavings = true
+		} else {
+			savings = savings.Add(*s)
+		}
 
 		pc := report.PerPass[e.Pass]
 		pc.InputTokens += e.InputTokens
 		pc.OutputTokens += e.OutputTokens
 		pc.CachedTokens += e.CachedTokens
-		pc.Cost += cost
+		if cost != nil {
+			if pc.Cost == nil {
+				pc.Cost = &decimal.Decimal{}
+			}
+			*pc.Cost = pc.Cost.Add(*cost)
+		}
 		pc.Calls++
 		report.PerPass[e.Pass] = pc
 	}
 
+	for pass := range passUnknown {
+		pc := report.PerPass[pass]
+		pc.Cost = nil
+		report.PerPass[pass] = pc
+	}
+	if !unknownCost {
+		report.Cost = &total
+	}
+	if !unknownSavings {
+		report.CacheSavings = &savings
+	}
+	report.Assumptions = sortedKeys(assumptionSet)
+	report.UnknownModels = sortedKeys(unknownSet)
 	return report
 }
 
-func (ct *CostTracker) getPrice(model string) ModelPrice {
-	if ct.override > 0 {
-		return ModelPrice{Input: ct.override, Output: ct.override * 3, CachedInput: ct.override * 0.1}
+func sortedKeys(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
 	}
-
-	providerPrices, ok := ct.priceTable()[ct.provider]
-	lookupProvider := ct.provider
-	if !ok {
-		// Try to match openai-compatible to openai prices
-		if ct.provider == "openai-compatible" || ct.provider == "qwen" {
-			providerPrices = ct.priceTable()["openai"]
-			lookupProvider = "openai"
-		}
-	}
-
-	if providerPrices != nil {
-		// Exact match
-		if p, ok := providerPrices[model]; ok {
-			return p
-		}
-		// Prefix match (for versioned models like claude-sonnet-4-20250514).
-		// Deterministic precedence on collision: user-table entries beat
-		// built-ins (Go map order is randomized; a table entry and a
-		// built-in can both prefix-match the same model).
-		var builtinHit *ModelPrice
-		var overlayHit *ModelPrice
-		var overlayName *string
-		for name, p := range providerPrices {
-			if strings.HasPrefix(model, name) || strings.HasPrefix(name, model) {
-				if ct.overlay != nil && ct.overlay[lookupProvider] != nil {
-					if _, isOverlay := ct.overlay[lookupProvider][name]; isOverlay {
-						// Overlay-vs-overlay collisions resolve
-						// deterministically: longest (most specific) name
-						// wins, lexical order breaks ties (map order is
-						// randomized).
-						if overlayHit == nil || len(name) > len(*overlayName) ||
-							(len(name) == len(*overlayName) && name < *overlayName) {
-							hit := p
-							overlayHit = &hit
-							nameCopy := name
-							overlayName = &nameCopy
-						}
-					}
-				}
-				if builtinHit == nil {
-					hit := p
-					builtinHit = &hit
-				}
-			}
-		}
-		if overlayHit != nil {
-			return *overlayHit
-		}
-		if builtinHit != nil {
-			return *builtinHit
-		}
-	}
-
-	log.Warn("unknown model pricing, using default estimate", "model", model, "provider", ct.provider)
-	return ModelPrice{Input: 0.50, Output: 2.0, CachedInput: 0.05}
-}
-
-func (ct *CostTracker) calculateCost(e CostEntry, price ModelPrice) float64 {
-	uncachedInput := e.InputTokens - e.CachedTokens
-	if uncachedInput < 0 {
-		uncachedInput = 0
-	}
-
-	inputCost := float64(uncachedInput) * price.Input / 1_000_000
-	cachedCost := float64(e.CachedTokens) * price.CachedInput / 1_000_000
-	outputCost := float64(e.OutputTokens) * price.Output / 1_000_000
-
-	if e.BatchMode && price.BatchInput > 0 {
-		inputCost = float64(uncachedInput) * price.BatchInput / 1_000_000
-		outputCost = float64(e.OutputTokens) * price.BatchOutput / 1_000_000
-	}
-
-	return inputCost + cachedCost + outputCost
-}
-
-func (ct *CostTracker) calculateSavings(e CostEntry, price ModelPrice) float64 {
-	if e.CachedTokens == 0 {
-		return 0
-	}
-	// Savings = what we would have paid at full price minus what we paid at cached price
-	fullCost := float64(e.CachedTokens) * price.Input / 1_000_000
-	cachedCost := float64(e.CachedTokens) * price.CachedInput / 1_000_000
-	return fullCost - cachedCost
+	sort.Strings(out)
+	return out
 }
 
 // EstimateFromBytes estimates cost for a given amount of text content.
-// tablePath is the optional price table (PERF-04; "" = built-ins) so
-// estimate-before-compile prices identically to the final report.
-func EstimateFromBytes(contentBytes int, provider string, model string, priceOverride float64, tablePath string) (inputTokens int, cost float64) {
+// tablePath is the optional workspace price table ("" = builtin + user
+// file). Cost is nil when the model's price is unknown — callers render
+// "unknown", never $0.
+func EstimateFromBytes(contentBytes int, provider string, model string, priceOverride float64, tablePath string) (inputTokens int, cost *decimal.Decimal, err error) {
 	inputTokens = contentBytes / 4 // ~4 chars per token heuristic
 
-	ct := NewCostTrackerWithTable(provider, priceOverride, tablePath)
-	price := ct.getPrice(model)
+	ct, err := NewCostTrackerWithTable(provider, priceOverride, tablePath)
+	if err != nil {
+		return inputTokens, nil, err
+	}
+	price, ok := ct.priceFor(model)
+	if !ok || price.InputPerMTok == nil || price.OutputPerMTok == nil {
+		return inputTokens, nil, nil
+	}
 
 	// Estimate: input + ~25% output overhead
 	outputTokens := inputTokens / 4
-	cost = float64(inputTokens)*price.Input/1_000_000 + float64(outputTokens)*price.Output/1_000_000
-	return inputTokens, cost
+	c := price.InputPerMTok.Mul(decimal.NewFromInt(int64(inputTokens))).Div(million)
+	c = c.Add(price.OutputPerMTok.Mul(decimal.NewFromInt(int64(outputTokens))).Div(million))
+	return inputTokens, &c, nil
 }
 
-// FormatReport returns a human-readable cost summary.
+// FormatReport returns a human-readable cost summary. Unknown cost renders
+// as "unknown (model not in price registry)" — never $0.0000.
 func FormatReport(r *CostReport) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("\n💰 Cost report (approximate)\n"))
+	b.WriteString("\n💰 Cost report (approximate)\n")
 	b.WriteString(fmt.Sprintf("   Tokens: %d input, %d output", r.TotalInputTokens, r.TotalOutputTokens))
 	if r.TotalCachedTokens > 0 {
 		b.WriteString(fmt.Sprintf(" (%d cached)", r.TotalCachedTokens))
 	}
 	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("   Cost:   ~$%.4f", r.EstimatedCost))
-	if r.CacheSavings > 0 {
-		b.WriteString(fmt.Sprintf(" (saved ~$%.4f from caching)", r.CacheSavings))
+	if r.Cost == nil {
+		b.WriteString(fmt.Sprintf("   Cost:   unknown (model not in price registry: %s)\n", strings.Join(r.UnknownModels, ", ")))
+	} else {
+		b.WriteString(fmt.Sprintf("   Cost:   ~$%s", r.Cost.StringFixed(4)))
+		if r.CacheSavings != nil && r.CacheSavings.GreaterThan(decimal.Zero) {
+			b.WriteString(fmt.Sprintf(" (saved ~$%s from caching)", r.CacheSavings.StringFixed(4)))
+		}
+		b.WriteString("\n")
 	}
-	b.WriteString("\n")
 
 	if len(r.PerPass) > 1 {
-		for pass, pc := range r.PerPass {
-			b.WriteString(fmt.Sprintf("   ├─ %s: %d calls, %d tokens, ~$%.4f\n",
-				pass, pc.Calls, pc.InputTokens+pc.OutputTokens, pc.Cost))
+		for _, pass := range sortedPassNames(r.PerPass) {
+			pc := r.PerPass[pass]
+			costStr := "unknown"
+			if pc.Cost != nil {
+				costStr = "~$" + pc.Cost.StringFixed(4)
+			}
+			b.WriteString(fmt.Sprintf("   ├─ %s: %d calls, %d tokens, %s\n",
+				pass, pc.Calls, pc.InputTokens+pc.OutputTokens, costStr))
 		}
 	}
 
 	return b.String()
+}
+
+func sortedPassNames(perPass map[string]PassCost) []string {
+	names := make([]string, 0, len(perPass))
+	for name := range perPass {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }

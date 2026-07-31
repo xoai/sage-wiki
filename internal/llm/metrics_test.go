@@ -22,7 +22,7 @@ func snapshotValue(key string) (any, bool) {
 
 func TestTrackRecordsTokenMetrics(t *testing.T) {
 	metrics.ResetForTest()
-	ct := NewCostTracker("anthropic", 0)
+	ct := mustCostTracker(t, "anthropic", 0)
 	ct.Track("summarize", "claude-test", Usage{InputTokens: 100, OutputTokens: 50, CachedTokens: 25}, false)
 
 	cases := map[string]int64{
@@ -44,7 +44,7 @@ func TestTrackRecordsTokenMetrics(t *testing.T) {
 
 func TestTrackAccumulatesAcrossCalls(t *testing.T) {
 	metrics.ResetForTest()
-	ct := NewCostTracker("openai", 0)
+	ct := mustCostTracker(t, "openai", 0)
 	ct.Track("write", "gpt-test", Usage{InputTokens: 10, OutputTokens: 5}, false)
 	ct.Track("write", "gpt-test", Usage{InputTokens: 20, OutputTokens: 15}, false)
 

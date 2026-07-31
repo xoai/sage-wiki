@@ -275,24 +275,27 @@ func TestClientBatchNotSupported(t *testing.T) {
 }
 
 func TestBatchCostTracking(t *testing.T) {
-	ct := NewCostTracker("anthropic", 0)
+	ct := mustCostTracker(t, "anthropic", 0)
 
 	// Batch mode should use batch pricing
 	ct.Track("summarize", "claude-sonnet-4-20250514", Usage{InputTokens: 1000, OutputTokens: 200}, true)
 
 	report := ct.Report()
-	if report.EstimatedCost <= 0 {
-		t.Error("expected positive cost")
+	if report.Cost == nil {
+		t.Fatal("expected known cost for claude-sonnet-4-20250514")
 	}
 
 	// Compare with non-batch — batch should be cheaper
-	ctNormal := NewCostTracker("anthropic", 0)
+	ctNormal := mustCostTracker(t, "anthropic", 0)
 	ctNormal.Track("summarize", "claude-sonnet-4-20250514", Usage{InputTokens: 1000, OutputTokens: 200}, false)
 
 	normalReport := ctNormal.Report()
-	if report.EstimatedCost >= normalReport.EstimatedCost {
-		t.Errorf("batch cost $%.6f should be less than normal $%.6f",
-			report.EstimatedCost, normalReport.EstimatedCost)
+	if normalReport.Cost == nil {
+		t.Fatal("expected known cost for claude-sonnet-4-20250514")
+	}
+	if !report.Cost.LessThan(*normalReport.Cost) {
+		t.Errorf("batch cost $%s should be less than normal $%s",
+			report.Cost.StringFixed(6), normalReport.Cost.StringFixed(6))
 	}
 }
 

@@ -142,7 +142,10 @@ func TestAnthropicParseResponse_CacheWriteTokens(t *testing.T) {
 	if resp.Usage.CachedTokens != 50 {
 		t.Errorf("CachedTokens = %d, want 50 (cache_read_input_tokens)", resp.Usage.CachedTokens)
 	}
-	if resp.Usage.InputTokens != 100 {
-		t.Errorf("InputTokens = %d, want 100", resp.Usage.InputTokens)
+	// InputTokens is normalized to total prompt tokens INCLUDING cached
+	// (anthropic's raw input_tokens excludes cache_read), matching the
+	// openai-style semantics the cost formula expects.
+	if resp.Usage.InputTokens != 150 {
+		t.Errorf("InputTokens = %d, want 150 (100 uncached + 50 cache_read)", resp.Usage.InputTokens)
 	}
 }

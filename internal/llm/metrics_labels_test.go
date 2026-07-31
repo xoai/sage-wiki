@@ -9,7 +9,7 @@ import (
 func TestHookLabelsWithinInventory(t *testing.T) {
 	// Populate via the Track hook, then validate every registered series.
 	metrics.ResetForTest()
-	NewCostTracker("anthropic", 0).Track("summarize", "m", Usage{InputTokens: 1, OutputTokens: 1, CachedTokens: 1}, false)
+	mustCostTracker(t, "anthropic", 0).Track("summarize", "m", Usage{InputTokens: 1, OutputTokens: 1, CachedTokens: 1}, false)
 	if err := metrics.ValidateLabels(); err != nil {
 		t.Fatal(err)
 	}
@@ -20,7 +20,7 @@ func TestHookLabelsWithinInventory(t *testing.T) {
 // failing — ValidateLabels only checks series that were actually registered.
 func TestTriplesPassLabelWithinInventory(t *testing.T) {
 	metrics.ResetForTest()
-	NewCostTracker("anthropic", 0).Track("triples", "m", Usage{InputTokens: 1, OutputTokens: 1}, false)
+	mustCostTracker(t, "anthropic", 0).Track("triples", "m", Usage{InputTokens: 1, OutputTokens: 1}, false)
 	if err := metrics.ValidateLabels(); err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestClientPassRoundTrips(t *testing.T) {
 // be in the inventory or the feature is invisible in cost reporting.
 func TestResolvePassLabelWithinInventory(t *testing.T) {
 	metrics.ResetForTest()
-	NewCostTracker("anthropic", 0).Track("resolve", "m", Usage{InputTokens: 1, OutputTokens: 1}, false)
+	mustCostTracker(t, "anthropic", 0).Track("resolve", "m", Usage{InputTokens: 1, OutputTokens: 1}, false)
 	if err := metrics.ValidateLabels(); err != nil {
 		t.Fatal(err)
 	}

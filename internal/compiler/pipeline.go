@@ -135,7 +135,11 @@ func newTrackedClient(cfg *config.Config, opts *CompileOpts) (*llm.Client, *llm.
 	}
 	tracker := opts.Tracker
 	if tracker == nil {
-		tracker = llm.NewCostTrackerWithTable(cfg.API.Provider, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
+		var err error
+		tracker, err = llm.NewCostTrackerWithTable(cfg.API.Provider, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
+		if err != nil {
+			return nil, nil, fmt.Errorf("compile: load price registry: %w", err)
+		}
 	}
 	client.SetTracker(tracker)
 	return client, tracker, nil

@@ -3,10 +3,21 @@ package llm
 import (
 	"strings"
 	"testing"
+
+	"github.com/shopspring/decimal"
 )
 
+func testRegistry(t *testing.T) *Registry {
+	t.Helper()
+	r, err := loadRegistryFrom("", t.TempDir()+"/absent.json")
+	if err != nil {
+		t.Fatalf("loadRegistryFrom: %v", err)
+	}
+	return r
+}
+
 func TestCostTrackerBasic(t *testing.T) {
-	ct := NewCostTracker("openai", 0)
+	ct := newCostTrackerWithRegistry("openai", 0, testRegistry(t))
 
 	ct.Track("summarize", "gpt-4o", Usage{InputTokens: 1000, OutputTokens: 200}, false)
 	ct.Track("summarize", "gpt-4o", Usage{InputTokens: 800, OutputTokens: 150}, false)
@@ -20,7 +31,7 @@ func TestCostTrackerBasic(t *testing.T) {
 	if report.TotalOutputTokens != 450 {
 		t.Errorf("expected 450 output tokens, got %d", report.TotalOutputTokens)
 	}
-	if report.EstimatedCost <= 0 {
+	if report.Cost == nil || !report.Cost.GreaterThan(decimal.Zero) {
 		t.Error("expected positive cost")
 	}
 	if len(report.PerPass) != 2 {
@@ -32,7 +43,7 @@ func TestCostTrackerBasic(t *testing.T) {
 }
 
 func TestCostTrackerCacheSavings(t *testing.T) {
-	ct := NewCostTracker("openai", 0)
+	ct := newCostTrackerWithRegistry("openai", 0, testRegistry(t))
 
 	ct.Track("summarize", "gpt-4o", Usage{InputTokens: 1000, OutputTokens: 200, CachedTokens: 800}, false)
 
@@ -41,57 +52,157 @@ func TestCostTrackerCacheSavings(t *testing.T) {
 	if report.TotalCachedTokens != 800 {
 		t.Errorf("expected 800 cached tokens, got %d", report.TotalCachedTokens)
 	}
-	if report.CacheSavings <= 0 {
+	if report.CacheSavings == nil || !report.CacheSavings.GreaterThan(decimal.Zero) {
 		t.Error("expected positive cache savings")
 	}
 }
 
-func TestCostTrackerUnknownModel(t *testing.T) {
-	ct := NewCostTracker("anthropic", 0)
-
-	// Should not panic, should use default pricing
-	ct.Track("summarize", "some-unknown-model-2026", Usage{InputTokens: 1000, OutputTokens: 200}, false)
-
+// TestCost_OpenAICompatible_UnknownModelNeverPricedAsOpenAI is the SPEC-05
+// regression test named for the bug (AC-A1): an openai-compatible endpoint
+// with a registry entry is priced from the registry; without one the cost
+// is nil — and NEITHER case ever returns an OpenAI price or the old
+// 0.50/2.0 default.
+func TestCost_OpenAICompatible_UnknownModelNeverPricedAsOpenAI(t *testing.T) {
+	// Case 1: registry entry present (builtin openai-compatible:deepseek-chat).
+	ct := newCostTrackerWithRegistry("openai-compatible", 0, testRegistry(t))
+	ct.Track("summarize", "deepseek-chat", Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000}, false)
 	report := ct.Report()
-	if report.EstimatedCost <= 0 {
-		t.Error("expected positive cost even for unknown model")
+	if report.Cost == nil {
+		t.Fatal("deepseek-chat has a builtin registry entry — cost must be known")
+	}
+	// deepseek-chat: $0.27/1M input + $1.10/1M output = $1.37 total.
+	want := decimal.NewFromFloat(0.27).Add(decimal.NewFromFloat(1.10))
+	if !report.Cost.Equal(want) {
+		t.Errorf("Cost = %s, want %s (registry deepseek-chat price)", report.Cost, want)
+	}
+	// Guard against the defect: OpenAI's gpt-4o price for the same usage
+	// would be 2.5 + 10.0 = 12.5; the old flat default would be 0.5 + 2.0 = 2.5.
+	if report.Cost.Equal(decimal.NewFromFloat(12.5)) {
+		t.Error("cost matches OpenAI gpt-4o pricing — the SPEC-05 defect is back")
+	}
+	if report.Cost.Equal(decimal.NewFromFloat(2.5)) {
+		t.Error("cost matches the old flat 0.50/2.0 default — fabricated price")
+	}
+
+	// Case 2: no registry entry → Cost nil, never a price.
+	ct2 := newCostTrackerWithRegistry("openai-compatible", 0, testRegistry(t))
+	ct2.Track("summarize", "deepseek-v4-flash", Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000}, false)
+	report2 := ct2.Report()
+	if report2.Cost != nil {
+		t.Errorf("unknown model must yield nil cost, got %s", report2.Cost)
+	}
+	if len(report2.UnknownModels) != 1 || report2.UnknownModels[0] != "openai-compatible:deepseek-v4-flash" {
+		t.Errorf("UnknownModels = %v, want [openai-compatible:deepseek-v4-flash]", report2.UnknownModels)
+	}
+	if report2.TotalInputTokens != 1_000_000 {
+		t.Error("token totals must stay exact even when cost is unknown")
+	}
+
+	// Case 3: ollama (never had even the aliasing shim) → nil as well.
+	ct3 := newCostTrackerWithRegistry("ollama", 0, testRegistry(t))
+	ct3.Track("summarize", "gpt-4o", Usage{InputTokens: 1000, OutputTokens: 100}, false)
+	if report3 := ct3.Report(); report3.Cost != nil {
+		t.Errorf("ollama:gpt-4o must never resolve to OpenAI's price, got %s", report3.Cost)
+	}
+}
+
+// TestCost_BlendedCacheSplit is AC-A2: a 70%-cached fixture at DeepSeek-like
+// prices computes the blended cost correctly to the cent.
+func TestCost_BlendedCacheSplit(t *testing.T) {
+	ct := newCostTrackerWithRegistry("openai-compatible", 0, testRegistry(t))
+	// 1M total input, 70% cached, 100k output — deepseek-chat prices
+	// ($0.27 input, $0.07 cached, $1.10 output per 1M).
+	ct.Track("summarize", "deepseek-chat", Usage{InputTokens: 1_000_000, CachedTokens: 700_000, OutputTokens: 100_000}, false)
+	report := ct.Report()
+	if report.Cost == nil {
+		t.Fatal("cost must be known for deepseek-chat")
+	}
+	// 300k * 0.27/1M + 700k * 0.07/1M + 100k * 1.10/1M = 0.081 + 0.049 + 0.11 = 0.24
+	want := decimal.NewFromFloat(0.24)
+	if !report.Cost.Equal(want) {
+		t.Errorf("blended cost = %s, want %s (exact to the cent)", report.Cost.StringFixed(4), want.StringFixed(4))
+	}
+}
+
+func TestCost_CacheWritePricedAtCacheWriteRate(t *testing.T) {
+	ct := newCostTrackerWithRegistry("anthropic", 0, testRegistry(t))
+	// claude-sonnet-4: input 3.0, cached 0.3, cache_write 3.75, output 15.0.
+	// 1M input with 500k cache-read + 200k cache-write + 100k output:
+	// 500k*3.0 + 500k*0.3 + 200k*3.75 + 100k*15.0 (per 1M) = 1.5+0.15+0.75+1.5 = 3.90
+	ct.Track("summarize", "claude-sonnet-4-20250514", Usage{InputTokens: 1_000_000, CachedTokens: 500_000, CacheWriteTokens: 200_000, OutputTokens: 100_000}, false)
+	report := ct.Report()
+	want := decimal.NewFromFloat(3.90)
+	if report.Cost == nil || !report.Cost.Equal(want) {
+		t.Errorf("Cost = %v, want %s", report.Cost, want)
+	}
+}
+
+func TestCost_BatchWithoutBatchRateAssumption(t *testing.T) {
+	ct := newCostTrackerWithRegistry("openai-compatible", 0, testRegistry(t))
+	// deepseek-chat has no batch rates → standard rates + assumption.
+	ct.Track("summarize", "deepseek-chat", Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000}, true)
+	report := ct.Report()
+	want := decimal.NewFromFloat(0.27).Add(decimal.NewFromFloat(1.10))
+	if report.Cost == nil || !report.Cost.Equal(want) {
+		t.Errorf("Cost = %v, want %s (standard rates)", report.Cost, want)
+	}
+	if len(report.Assumptions) != 1 || !strings.Contains(report.Assumptions[0], "no batch rate") {
+		t.Errorf("Assumptions = %v, want no-batch-rate note", report.Assumptions)
 	}
 }
 
 func TestCostTrackerOverride(t *testing.T) {
-	ct := NewCostTracker("openai", 1.0) // override: $1/1M input tokens
+	ct := newCostTrackerWithRegistry("openai", 1.0, testRegistry(t)) // override: $1/1M input tokens
 
 	ct.Track("summarize", "gpt-4o", Usage{InputTokens: 1_000_000, OutputTokens: 0}, false)
 
 	report := ct.Report()
-	// With override: $1/1M input = $1.00
-	if report.EstimatedCost < 0.99 || report.EstimatedCost > 1.01 {
-		t.Errorf("expected ~$1.00, got $%.4f", report.EstimatedCost)
+	if report.Cost == nil {
+		t.Fatal("override must price any model")
+	}
+	if diff := report.Cost.Sub(decimal.NewFromInt(1)).Abs(); diff.GreaterThan(decimal.NewFromFloat(0.0001)) {
+		t.Errorf("expected ~$1.00, got $%s", report.Cost.StringFixed(4))
 	}
 }
 
 func TestEstimateFromBytes(t *testing.T) {
-	tokens, cost := EstimateFromBytes(4000, "gemini", "gemini-2.5-flash", 0, "")
-
+	tokens, cost, err := EstimateFromBytes(4000, "gemini", "gemini-2.5-flash", 0, "")
+	if err != nil {
+		t.Fatalf("EstimateFromBytes: %v", err)
+	}
 	if tokens != 1000 {
 		t.Errorf("expected 1000 tokens, got %d", tokens)
 	}
-	if cost <= 0 {
+	if cost == nil || !cost.GreaterThan(decimal.Zero) {
 		t.Error("expected positive cost")
 	}
 }
 
+func TestEstimateFromBytes_UnknownModel(t *testing.T) {
+	_, cost, err := EstimateFromBytes(4000, "openai-compatible", "deepseek-v4-flash", 0, "")
+	if err != nil {
+		t.Fatalf("EstimateFromBytes: %v", err)
+	}
+	if cost != nil {
+		t.Errorf("unknown model estimate must be nil, got %s", cost)
+	}
+}
+
 func TestFormatReport(t *testing.T) {
+	cost := decimal.NewFromFloat(0.0125)
+	savings := decimal.NewFromFloat(0.0075)
+	passCost := decimal.NewFromFloat(0.0080)
+	passCost2 := decimal.NewFromFloat(0.0045)
 	report := &CostReport{
 		TotalInputTokens:  5000,
 		TotalOutputTokens: 1000,
 		TotalCachedTokens: 3000,
 		TotalTokens:       6000,
-		EstimatedCost:     0.0125,
-		CacheSavings:      0.0075,
+		Cost:              &cost,
+		CacheSavings:      &savings,
 		PerPass: map[string]PassCost{
-			"summarize": {Calls: 3, InputTokens: 3000, OutputTokens: 600, Cost: 0.0080},
-			"extract":   {Calls: 1, InputTokens: 2000, OutputTokens: 400, Cost: 0.0045},
+			"summarize": {Calls: 3, InputTokens: 3000, OutputTokens: 600, Cost: &passCost},
+			"extract":   {Calls: 1, InputTokens: 2000, OutputTokens: 400, Cost: &passCost2},
 		},
 	}
 
@@ -105,4 +216,27 @@ func TestFormatReport(t *testing.T) {
 	if !strings.Contains(output, "saved") {
 		t.Error("expected 'saved' in output")
 	}
+}
+
+func TestFormatReport_UnknownCost(t *testing.T) {
+	report := &CostReport{
+		TotalInputTokens:  5000,
+		TotalOutputTokens: 1000,
+		UnknownModels:     []string{"openai-compatible:deepseek-v4-flash"},
+		PerPass:           map[string]PassCost{"summarize": {Calls: 1}},
+	}
+	output := FormatReport(report)
+	if !strings.Contains(output, "unknown (model not in price registry") {
+		t.Errorf("unknown cost must render as unknown, got:\n%s", output)
+	}
+	if strings.Contains(output, "$0.0000") {
+		t.Error("unknown cost must NEVER render as $0.0000")
+	}
+}
+
+// mustCostTracker builds a tracker over the builtin registry only — hermetic,
+// never reads the real ~/.sage-wiki/prices.json.
+func mustCostTracker(t *testing.T, provider string, override float64) *CostTracker {
+	t.Helper()
+	return newCostTrackerWithRegistry(provider, override, testRegistry(t))
 }

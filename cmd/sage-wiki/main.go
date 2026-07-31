@@ -11,6 +11,7 @@ import (
 
 	"path/filepath"
 
+	"github.com/shopspring/decimal"
 	"github.com/spf13/cobra"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/metrics"
@@ -1069,9 +1070,16 @@ func maybePromptEstimate(dir string) error {
 		model = "gemini-2.5-flash"
 	}
 
-	_, cost := llm.EstimateFromBytes(totalBytes, cfg.API.Provider, model, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
+	_, cost, err := llm.EstimateFromBytes(totalBytes, cfg.API.Provider, model, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
+	if err != nil {
+		return fmt.Errorf("cost estimate: %w", err)
+	}
 
-	fmt.Printf("Estimated: ~$%.4f for %d sources. Proceed? [y/n] ", cost, totalSources)
+	if cost == nil {
+		fmt.Printf("Estimated: unknown (model %q not in price registry) for %d sources. Proceed? [y/n] ", model, totalSources)
+	} else {
+		fmt.Printf("Estimated: ~$%s for %d sources. Proceed? [y/n] ", cost.StringFixed(4), totalSources)
+	}
 	var answer string
 	fmt.Scanln(&answer)
 	if answer != "y" && answer != "Y" && answer != "yes" {
@@ -1119,15 +1127,22 @@ func runEstimate(dir string) error {
 		model = "gemini-2.5-flash"
 	}
 
-	tokens, cost := llm.EstimateFromBytes(totalBytes, cfg.API.Provider, model, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
+	tokens, cost, err := llm.EstimateFromBytes(totalBytes, cfg.API.Provider, model, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
+	if err != nil {
+		return fmt.Errorf("cost estimate: %w", err)
+	}
 
 	fmt.Printf("\n📊 Cost estimate for %d sources (%d new, %d modified)\n",
 		totalSources, len(diff.Added), len(diff.Modified))
 	fmt.Printf("   Model:    %s (%s)\n", model, cfg.API.Provider)
 	fmt.Printf("   Tokens:   ~%d input (estimated)\n", tokens)
-	fmt.Printf("   Cost:     ~$%.4f (standard mode)\n", cost)
-	fmt.Printf("   Batch:    ~$%.4f (50%% discount, if available)\n", cost*0.5)
-	fmt.Printf("   Cached:   ~$%.4f (with prompt caching)\n", cost*0.3)
+	if cost == nil {
+		fmt.Printf("   Cost:     unknown (model not in price registry)\n")
+	} else {
+		fmt.Printf("   Cost:     ~$%s (standard mode)\n", cost.StringFixed(4))
+		fmt.Printf("   Batch:    ~$%s (50%% discount, if available)\n", cost.Mul(decimal.NewFromFloat(0.5)).StringFixed(4))
+		fmt.Printf("   Cached:   ~$%s (with prompt caching)\n", cost.Mul(decimal.NewFromFloat(0.3)).StringFixed(4))
+	}
 	fmt.Println()
 	fmt.Println("   Note: estimates are approximate. Actual cost depends on")
 	fmt.Println("   content complexity, output length, and provider pricing.")

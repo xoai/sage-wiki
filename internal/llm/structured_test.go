@@ -43,7 +43,7 @@ func newStructuredClient(p Provider, server *httptest.Server) *Client {
 		provider: p,
 		client:   *server.Client(),
 		limiter:  newRateLimiter(0),
-		tracker:  NewCostTracker("stub", 0),
+		tracker:  newCostTrackerWithRegistry("stub", 0, &Registry{entries: map[string]Price{}, prefix: map[string][]string{}}),
 	}
 }
 
