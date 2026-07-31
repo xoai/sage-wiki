@@ -1129,14 +1129,11 @@ func runEstimate(dir string) error {
 		model = "gemini-2.5-flash"
 	}
 
-	tokens, cost, err := llm.EstimateFromBytes(totalBytes, cfg.API.Provider, model, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
-	if err != nil {
-		return fmt.Errorf("cost estimate: %w", err)
-	}
 	variants, err := llm.EstimateVariantsFromBytes(totalBytes, cfg.API.Provider, model, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
 	if err != nil {
 		return fmt.Errorf("cost estimate: %w", err)
 	}
+	tokens, cost := variants.InputTokens, variants.Standard
 
 	fmt.Printf("\n📊 Cost estimate for %d sources (%d new, %d modified)\n",
 		totalSources, len(diff.Added), len(diff.Modified))

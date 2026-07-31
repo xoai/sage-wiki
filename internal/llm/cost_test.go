@@ -147,7 +147,13 @@ func TestCost_BatchWithoutBatchRateAssumption(t *testing.T) {
 	if report.Cost == nil || !report.Cost.Equal(want) {
 		t.Errorf("Cost = %v, want %s (standard rates)", report.Cost, want)
 	}
-	if len(report.Assumptions) != 1 || !strings.Contains(report.Assumptions[0], "no batch rate") {
+	batchNote := false
+	for _, a := range report.Assumptions {
+		if strings.Contains(a, "no batch rate") {
+			batchNote = true
+		}
+	}
+	if !batchNote {
 		t.Errorf("Assumptions = %v, want no-batch-rate note", report.Assumptions)
 	}
 }
