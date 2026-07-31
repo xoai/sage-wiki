@@ -57,6 +57,9 @@ jobs:
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
+      # npm ci is mandatory: without it, tsc resolves to the runner's global
+      # compiler (wrong version → TS5011 rootDir error).
+      - run: cd clients/typescript && npm ci
       - run: cd clients/typescript && npm run build
       - run: cd clients/typescript && npm publish --provenance --access public
         env:

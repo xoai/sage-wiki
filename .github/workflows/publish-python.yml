@@ -59,6 +59,8 @@ jobs:
       - run: pip install build
       - run: cd clients/python && python -m build
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: clients/python/dist
 
   verify-published:
     needs: publish
