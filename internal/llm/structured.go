@@ -15,9 +15,17 @@ import (
 )
 
 // backoffDelayFn is the sleep-duration hook for every retry branch
-// (status, read-error, truncation). Package var so tests can swap in a
-// near-zero delay — tests must NOT use t.Parallel() (see issue114 tests).
+// (tests swap it for instant retries — deterministic and fast).
 var backoffDelayFn = backoffDelay
+
+// SetBackoffDelayForTest overrides the retry backoff hook package-wide and
+// returns a restore function. For tests only — production code must not
+// call this.
+func SetBackoffDelayForTest(fn func(attempt int) time.Duration) (restore func()) {
+	prev := backoffDelayFn
+	backoffDelayFn = fn
+	return func() { backoffDelayFn = prev }
+}
 
 // doWithRetry executes buildReq with the direct path's retry discipline —
 // THE single transport the client uses (P2-4 extraction): rate limiter,

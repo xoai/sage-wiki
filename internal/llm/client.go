@@ -137,6 +137,9 @@ func NewClient(providerName string, apiKey string, baseURL string, rateLimit int
 	if rateLimit == 0 {
 		rateLimit = defaultRateLimit(providerName)
 	}
+	if forceRateLimitForTest != nil {
+		rateLimit = *forceRateLimitForTest
+	}
 
 	var extra map[string]interface{}
 	if len(extraParams) > 0 && extraParams[0] != nil {
@@ -361,6 +364,21 @@ func newProvider(name string, apiKey string, baseURL string) (Provider, error) {
 //     despite cfg.Compiler.MaxParallel >= 8 (PER-116 / per-112-concurrency-fix).
 //   - Unknown providers keep the previous conservative 30 RPM default — do not
 //     surprise users with unbounded bursts against a new SaaS they wire up.
+
+// forceRateLimitForTest, when non-nil, overrides the rate limit of every
+// subsequently constructed Client. See SetRateLimitForTest.
+var forceRateLimitForTest *int
+
+// SetRateLimitForTest forces every subsequently constructed Client's rate
+// limiter to rpm (use -1 to disable), returning a restore function. For
+// tests only — production code must not call this.
+func SetRateLimitForTest(rpm int) (restore func()) {
+	prev := forceRateLimitForTest
+	v := rpm
+	forceRateLimitForTest = &v
+	return func() { forceRateLimitForTest = prev }
+}
+
 func defaultRateLimit(provider string) int {
 	switch provider {
 	case "anthropic":
