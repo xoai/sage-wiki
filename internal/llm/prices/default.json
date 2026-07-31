@@ -1,0 +1,18 @@
+{
+  "_comment": "Built-in price estimates for sage-wiki cost accounting. These are APPROXIMATE public list prices as of each entry's as_of date and WILL go stale — verify against your provider's current pricing and override via ~/.sage-wiki/prices.json or the workspace compiler.price_table. A model absent from this registry is billed as 'unknown', never estimated.",
+  "prices": {
+    "anthropic:claude-sonnet-4-20250514":  {"input": "3.0",   "cached_input": "0.3",    "cache_write_input": "3.75",  "output": "15.0",  "batch_input": "1.5",   "batch_output": "7.5",  "as_of": "2025-06-01"},
+    "anthropic:claude-haiku-4-5-20251001": {"input": "0.8",   "cached_input": "0.08",   "cache_write_input": "1.0",   "output": "4.0",   "batch_input": "0.4",   "batch_output": "2.0",  "as_of": "2025-10-01"},
+    "anthropic:claude-opus-4-6":           {"input": "15.0",  "cached_input": "1.5",    "cache_write_input": "18.75", "output": "75.0",  "batch_input": "7.5",   "batch_output": "37.5", "as_of": "2026-01-01"},
+    "openai:gpt-4o":                       {"input": "2.5",   "cached_input": "1.25",   "output": "10.0",  "batch_input": "1.25",  "batch_output": "5.0",  "as_of": "2025-06-01"},
+    "openai:gpt-4o-mini":                  {"input": "0.15",  "cached_input": "0.075",  "output": "0.60",  "batch_input": "0.075", "batch_output": "0.3",  "as_of": "2025-06-01"},
+    "openai:o3-mini":                      {"input": "1.10",  "cached_input": "0.55",   "output": "4.40",  "batch_input": "0.55",  "batch_output": "2.2",  "as_of": "2025-06-01"},
+    "openai-compatible:deepseek-chat":     {"input": "0.27",  "cached_input": "0.07",   "output": "1.10",  "as_of": "2025-09-01"},
+    "openai-compatible:deepseek-reasoner": {"input": "0.55",  "cached_input": "0.14",   "output": "2.19",  "as_of": "2025-09-01"},
+    "gemini:gemini-2.5-flash":             {"input": "0.15",  "cached_input": "0.0375", "output": "0.60",  "as_of": "2025-06-01"},
+    "gemini:gemini-2.5-pro":               {"input": "1.25",  "cached_input": "0.3125", "output": "10.0",  "as_of": "2025-06-01"},
+    "gemini:gemini-2.0-flash":             {"input": "0.10",  "cached_input": "0.025",  "output": "0.40",  "as_of": "2025-06-01"},
+    "gemini:gemini-3-flash-preview":       {"input": "0.15",  "cached_input": "0.0375", "output": "0.60",  "as_of": "2025-11-01"},
+    "gemini:gemini-3.1-flash-lite":        {"input": "0.02",  "cached_input": "0.005",  "output": "0.05",  "as_of": "2026-01-01"}
+  }
+}
