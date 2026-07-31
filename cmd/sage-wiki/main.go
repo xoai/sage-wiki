@@ -952,6 +952,17 @@ func runQuery(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
 	question := strings.Join(args, " ")
 
+	// SPEC-01: query auto-files its answer (a workspace mutation), so it
+	// takes the engine's single-writer lock and fails fast during an
+	// active compile (spec §B.1 8e). The Q&A pipeline itself has no
+	// engine surface (SPEC-01 exposes no Query method) — the Open is the
+	// lock, the pipeline is unchanged.
+	w, err := engine.Open(cmd.Context(), dir)
+	if err != nil {
+		return cli.CLIError(outputFormat, lockSentinel(err))
+	}
+	defer w.Close()
+
 	result, err := query.Query(dir, question, "terminal", 5)
 	if err != nil {
 		return err
@@ -962,6 +973,15 @@ func runQuery(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "\nFiled to: %s\n", result.OutputPath)
 	}
 	return nil
+}
+
+// lockSentinel maps the engine's lock failure onto the CLI surface
+// specified in spec §B.1 8e: exit 1 (cobra RunE) with this message text.
+func lockSentinel(err error) error {
+	if errors.Is(err, engine.ErrLocked) {
+		return fmt.Errorf("workspace is locked by another process (compile in progress?)")
+	}
+	return err
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {

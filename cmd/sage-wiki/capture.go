@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/xoai/sage-wiki/internal/cli"
 	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/pkg/engine"
 )
 
 var captureCmd = &cobra.Command{
@@ -58,6 +59,17 @@ func runCapture(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
+
+	// SPEC-01: the capture write is a workspace mutation — take the
+	// engine's single-writer lock so a capture during an active compile
+	// fails fast (spec §B.1 8e) instead of racing the manifest. The file
+	// format below is unchanged (parity); the engine's own
+	// Workspace.Capture serves API consumers with its own simpler shape.
+	w, err := engine.Open(cmd.Context(), dir, engine.WithConfigFile(resolveConfigPath(dir)))
+	if err != nil {
+		return cli.CLIError(outputFormat, lockSentinel(err))
+	}
+	defer w.Close()
 
 	// Write as raw capture file (same as MCP fallback)
 	capturesDir := filepath.Join(dir, "raw", "captures")
