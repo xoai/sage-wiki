@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"strings"
 
-		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/internal/metrics"
 )
 
 // StreamCallback is called for each token during streaming.

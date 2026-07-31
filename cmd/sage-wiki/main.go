@@ -222,7 +222,7 @@ func init() {
 	// Query flags
 	queryCmd.Flags().String("scope", "local", "Query scope: local, global, or all")
 
-	rootCmd.AddCommand(initCmd, compileCmd, reindexCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, scribeCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, sourceCmd, hubCmd, skillCmd, packCmd, versionCmd)
+	rootCmd.AddCommand(initCmd, compileCmd, reindexCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, scribeCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, sourceCmd, hubCmd, skillCmd, packCmd, costCmd, versionCmd)
 
 	// Enables `sage-wiki --version` in addition to the `version` subcommand.
 	rootCmd.Version = version
@@ -835,6 +835,10 @@ func runSearch(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return fmt.Errorf("--expand/--rerank need an LLM client: %w", err)
 			}
+			// SPEC-05 usage ledger: search-expansion spend is recorded.
+			c.SetRecorder(llm.NewFileRecorder(dir))
+			c.SetPass("expand")
+			c.SetPriceOverride(cfg.Compiler.TokenPriceOverride)
 			client = c
 		}
 		mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
@@ -1069,9 +1073,16 @@ func maybePromptEstimate(dir string) error {
 		model = "gemini-2.5-flash"
 	}
 
-	_, cost := llm.EstimateFromBytes(totalBytes, cfg.API.Provider, model, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
+	_, cost, err := llm.EstimateFromBytes(totalBytes, cfg.API.Provider, model, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
+	if err != nil {
+		return fmt.Errorf("cost estimate: %w", err)
+	}
 
-	fmt.Printf("Estimated: ~$%.4f for %d sources. Proceed? [y/n] ", cost, totalSources)
+	if cost == nil {
+		fmt.Printf("Estimated: unknown (model %q not in price registry) for %d sources. Proceed? [y/n] ", model, totalSources)
+	} else {
+		fmt.Printf("Estimated: ~$%s for %d sources. Proceed? [y/n] ", cost.StringFixed(4), totalSources)
+	}
 	var answer string
 	fmt.Scanln(&answer)
 	if answer != "y" && answer != "Y" && answer != "yes" {
@@ -1119,15 +1130,27 @@ func runEstimate(dir string) error {
 		model = "gemini-2.5-flash"
 	}
 
-	tokens, cost := llm.EstimateFromBytes(totalBytes, cfg.API.Provider, model, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
+	variants, err := llm.EstimateVariantsFromBytes(totalBytes, cfg.API.Provider, model, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
+	if err != nil {
+		return fmt.Errorf("cost estimate: %w", err)
+	}
+	tokens, cost := variants.InputTokens, variants.Standard
 
 	fmt.Printf("\n📊 Cost estimate for %d sources (%d new, %d modified)\n",
 		totalSources, len(diff.Added), len(diff.Modified))
 	fmt.Printf("   Model:    %s (%s)\n", model, cfg.API.Provider)
 	fmt.Printf("   Tokens:   ~%d input (estimated)\n", tokens)
-	fmt.Printf("   Cost:     ~$%.4f (standard mode)\n", cost)
-	fmt.Printf("   Batch:    ~$%.4f (50%% discount, if available)\n", cost*0.5)
-	fmt.Printf("   Cached:   ~$%.4f (with prompt caching)\n", cost*0.3)
+	if cost == nil {
+		fmt.Printf("   Cost:     unknown (model not in price registry)\n")
+	} else {
+		fmt.Printf("   Cost:     ~$%s (standard mode)\n", cost.StringFixed(4))
+		if variants.Batch != nil {
+			fmt.Printf("   Batch:    ~$%s (registry batch rates)\n", variants.Batch.StringFixed(4))
+		}
+		if variants.Cached != nil {
+			fmt.Printf("   Cached:   ~$%s (registry cached-input rate, best case)\n", variants.Cached.StringFixed(4))
+		}
+	}
 	fmt.Println()
 	fmt.Println("   Note: estimates are approximate. Actual cost depends on")
 	fmt.Println("   content complexity, output length, and provider pricing.")

@@ -128,16 +128,25 @@ func orBackground(ctx context.Context) context.Context {
 // newTrackedClient builds the LLM client and attaches the cost tracker.
 // Extracted so the early batch-resume path and the lazy standard path
 // construct them identically (P1-3).
-func newTrackedClient(cfg *config.Config, opts *CompileOpts) (*llm.Client, *llm.CostTracker, error) {
+func newTrackedClient(projectDir string, cfg *config.Config, opts *CompileOpts) (*llm.Client, *llm.CostTracker, error) {
 	client, err := auth.NewLLMClient(cfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("compile: create LLM client: %w", err)
 	}
 	tracker := opts.Tracker
 	if tracker == nil {
-		tracker = llm.NewCostTrackerWithTable(cfg.API.Provider, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
+		var err error
+		tracker, err = llm.NewCostTrackerWithTable(cfg.API.Provider, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
+		if err != nil {
+			return nil, nil, fmt.Errorf("compile: load price registry: %w", err)
+		}
 	}
 	client.SetTracker(tracker)
+	// SPEC-05 usage ledger: one event per completion. Tier is 3 by
+	// construction — the full LLM pipeline only runs for tier-3 sources
+	// (runTiers claims tiers 0/1/3; LLM passes are tier-3-gated).
+	client.SetRecorder(llm.NewFileRecorder(projectDir))
+	client.SetTier(3)
 	return client, tracker, nil
 }
 
@@ -252,7 +261,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 
 	// Create LLM client (lazy — skipped entirely when a batch resume above
 	// already returned).
-	run.client, run.tracker, err = newTrackedClient(run.cfg, &run.opts)
+	run.client, run.tracker, err = newTrackedClient(projectDir, run.cfg, &run.opts)
 	if err != nil {
 		return nil, err
 	}
@@ -430,7 +439,7 @@ func loadInputs(projectDir string, opts *CompileOpts, run *compileRun) (done boo
 				fmt.Fprintf(os.Stderr, "Batch %s pending resume (dry run — provider not polled, no summaries written).\n", bcp.Batch.BatchID)
 				return true, run.result, nil
 			}
-			client, tracker, err := newTrackedClient(run.cfg, opts)
+			client, tracker, err := newTrackedClient(projectDir, run.cfg, opts)
 			if err != nil {
 				return false, nil, err
 			}
@@ -1117,9 +1126,13 @@ func resumeBatch(
 			continue
 		}
 
-		// Track batch usage with batch pricing
+		// Track batch usage with batch pricing, and fire the usage event
+		// here — batch results arrive via polling, never through
+		// client.trackUsage (SPEC-05: Pass/Tier live at this site, not in
+		// batch.go).
 		if br.Response != nil && tracker != nil {
 			tracker.Track(bs.Pass, br.Response.Model, br.Response.Usage, true)
+			client.RecordBatchUsage(orBackground(opts.Ctx), bs.Pass, br.Response.Model, br.Response.Usage)
 		}
 
 		// Guard: an empty batch summary must fail the source (no validateSummary

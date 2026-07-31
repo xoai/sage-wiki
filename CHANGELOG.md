@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Cost accounting for openai-compatible providers (SPEC-05).** DeepSeek,
+  Qwen, vLLM, and other `openai-compatible`/`qwen` endpoints were priced
+  against the OpenAI table (DeepSeek over-reported ~50x); unmatched models
+  fell back to a flat guessed default. All pricing now flows through a
+  `provider:model` registry with no cross-provider fallback. **Cost numbers
+  produced before this fix by those providers are unreliable.**
+
+### Added
+
+- **Model price registry + `sage-wiki cost` commands (SPEC-05).** Prices
+  load from embedded defaults (per-entry `as_of` dates, marked as
+  estimates) → `~/.sage-wiki/prices.json` → workspace `compiler.price_table`
+  (legacy PERF-04 files keep working). Unknown model ⇒ `cost: unknown
+  (model not in price registry)` — never zero, never a guess. Cached and
+  cache-write tokens are priced at their own rates (DeepSeek's
+  `prompt_cache_hit/miss_tokens` and Anthropic's `cache_creation` are now
+  parsed). Every compile, batch, query, and search-expansion call appends
+  a usage event to `.sage/usage.jsonl`; `sage-wiki cost report [--since]`
+  aggregates it by model and pass/tier, `sage-wiki cost models` audits the
+  effective registry with sources.
+
 ### Documentation
 
 - **Folder-structure maps.** README gains a "Project layout" tree (what

@@ -158,7 +158,7 @@ func TestStructuredTrackUsagePinsCostParity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tracker := NewCostTracker("openai", 0)
+	tracker := mustCostTracker(t, "openai", 0)
 	client.SetTracker(tracker)
 	schema := JSONSchema{Name: "rerank", IsArray: true, Schema: map[string]any{
 		"type": "array", "minItems": 1,

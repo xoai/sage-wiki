@@ -13,7 +13,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/shopspring/decimal"
 	"github.com/xoai/sage-wiki/internal/compiler"
+	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/storedial"
 	"github.com/xoai/sage-wiki/internal/tui"
@@ -365,15 +367,28 @@ func (m Model) waitProgressEvent() tea.Cmd {
 	}
 }
 
+// formatCostLine renders the compile cost for the status bar: unknown cost
+// reads "unknown (model not in price registry)" — never $0.0000 (SPEC-05).
+func formatCostLine(r *llm.CostReport) string {
+	if r == nil {
+		return ""
+	}
+	if r.Cost == nil {
+		return "unknown (model not in price registry)"
+	}
+	line := fmt.Sprintf("~$%s", r.Cost.StringFixed(4))
+	if r.CacheSavings != nil && r.CacheSavings.GreaterThan(decimal.Zero) {
+		line += fmt.Sprintf(" (saved $%s)", r.CacheSavings.StringFixed(4))
+	}
+	return line
+}
+
 func (m Model) doCompile() tea.Cmd {
 	return func() tea.Msg {
 		result, err := compiler.Compile(m.projectDir, m.compileOpts)
 		var costLine string
-		if result != nil && result.CostReport != nil {
-			costLine = fmt.Sprintf("~$%.4f", result.CostReport.EstimatedCost)
-			if result.CostReport.CacheSavings > 0 {
-				costLine += fmt.Sprintf(" (saved $%.4f)", result.CostReport.CacheSavings)
-			}
+		if result != nil {
+			costLine = formatCostLine(result.CostReport)
 		}
 
 		// Query tier distribution from compile_items

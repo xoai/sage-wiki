@@ -218,7 +218,7 @@ func (c *Client) StructuredCompletion(ctx context.Context, messages []Message, s
 		log.Warn("structured: usage parse failed — tokens untracked", "error", rerr)
 	}
 	if resp != nil {
-		c.trackUsage(resp.Model, resp.Usage)
+		c.trackUsage(ctx, resp.Model, resp.Usage)
 	}
 
 	// On a validated success, reuse the payload captured inside the loop.

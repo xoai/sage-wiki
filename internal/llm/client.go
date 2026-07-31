@@ -40,9 +40,10 @@ type CallOpts struct {
 
 // Usage holds detailed token usage breakdown.
 type Usage struct {
-	InputTokens  int
-	OutputTokens int
-	CachedTokens int // tokens served from cache (reduced cost)
+	InputTokens      int
+	OutputTokens     int
+	CachedTokens     int // tokens served from cache (reduced cost)
+	CacheWriteTokens int // tokens written to cache (e.g. anthropic cache_creation; premium rate)
 }
 
 // Response holds the LLM response.
@@ -97,12 +98,16 @@ func (r *Response) EmptyContentDetails() string {
 
 // Client is a provider-agnostic LLM client.
 type Client struct {
-	provider Provider
-	limiter  *rateLimiter
-	client   http.Client
-	tracker  *CostTracker // optional cost tracking
-	pass     string       // current compiler pass name (for tracking)
-	cacheID  string       // active cache ID (empty = no caching)
+	provider     Provider
+	providerName string // the configured provider string (registry identity; provider.Name() is the wire adapter, not the config kind)
+	priceOverride float64 // compiler.token_price_per_million — keeps tracker-less ledger pricing consistent with tracked paths
+	limiter      *rateLimiter
+	client       http.Client
+	tracker      *CostTracker  // optional cost tracking
+	recorder     UsageRecorder // optional usage-event ledger
+	pass         string        // current compiler pass name (for tracking)
+	tier         int           // compile tier for usage events (TierNotCompileScoped when unset)
+	cacheID      string        // active cache ID (empty = no caching)
 }
 
 // sharedTransport is the HTTP transport reused by every llm.Client.
@@ -160,8 +165,10 @@ func NewClient(providerName string, apiKey string, baseURL string, rateLimit int
 	}
 
 	return &Client{
-		provider: p,
-		limiter:  newRateLimiter(rateLimit),
+		provider:     p,
+		providerName: providerName,
+		limiter:      newRateLimiter(rateLimit),
+		tier:         TierNotCompileScoped,
 		client: http.Client{
 			Transport: sharedTransport,
 			Timeout:   120 * time.Second,
@@ -241,7 +248,7 @@ func (c *Client) chatCompletionDirect(ctx context.Context, messages []Message, o
 		}
 		return nil, err
 	}
-	c.trackUsage(result.Model, result.Usage)
+	c.trackUsage(ctx, result.Model, result.Usage)
 	return result, nil
 }
 
@@ -279,6 +286,43 @@ func (c *Client) SetTracker(tracker *CostTracker) {
 	c.tracker = tracker
 }
 
+// SetRecorder attaches a usage-event recorder. Every completion fires one
+// UsageEvent (SPEC-05 ledger; SPEC-07 consumes the type).
+func (c *Client) SetRecorder(recorder UsageRecorder) {
+	c.recorder = recorder
+}
+
+// SetPriceOverride sets the token_price_per_million override used when
+// pricing usage events without an attached tracker (query/expansion paths),
+// so the ledger prices those events consistently with compile events.
+func (c *Client) SetPriceOverride(override float64) {
+	c.priceOverride = override
+}
+
+// SetTier sets the compile tier recorded on usage events.
+//
+// c.tier is unsynchronized and buildUsageEvent reads it from request
+// goroutines, so (exactly like SetPass) SetTier must be called OUTSIDE a
+// fan-out — before it starts and after it joins — never from within one.
+func (c *Client) SetTier(tier int) {
+	c.tier = tier
+}
+
+// RecordBatchUsage fires a usage event for a batch result. Batch usage does
+// not flow through trackUsage (results arrive via polling), so the pipeline
+// consumption site calls this with the pass it knows.
+func (c *Client) RecordBatchUsage(ctx context.Context, pass, model string, usage Usage) {
+	if c.recorder == nil {
+		return
+	}
+	ev := c.buildUsageEvent(model, usage)
+	ev.Pass = pass
+	if c.tracker != nil {
+		ev.Cost, ev.PriceSource, ev.Assumptions = c.tracker.PriceUsage(model, usage, true)
+	}
+	c.recorder.RecordUsage(ctx, ev)
+}
+
 // SetPass sets the current compiler pass name for cost tracking.
 //
 // c.pass is unsynchronized and trackUsage reads it from request goroutines, so
@@ -297,11 +341,43 @@ func (c *Client) Pass() string {
 	return c.pass
 }
 
-// trackUsage records token usage if a tracker is attached.
-func (c *Client) trackUsage(model string, usage Usage) {
+// trackUsage records token usage if a tracker is attached, and fires a
+// UsageEvent if a recorder is attached.
+func (c *Client) trackUsage(ctx context.Context, model string, usage Usage) {
 	if c.tracker != nil {
 		c.tracker.Track(c.pass, model, usage, false)
 	}
+	if c.recorder != nil {
+		c.recorder.RecordUsage(ctx, c.buildUsageEvent(model, usage))
+	}
+}
+
+// buildUsageEvent prices the call against the attached tracker when present,
+// else the shared builtin+user-file registry (tracker-less query/expansion
+// clients). Unknown price ⇒ Cost nil — never zero, never a guess.
+func (c *Client) buildUsageEvent(model string, usage Usage) UsageEvent {
+	ev := UsageEvent{
+		TS:               time.Now().UTC(),
+		Pass:             c.pass,
+		Provider:         c.providerName,
+		Model:            model,
+		Tier:             c.tier,
+		InputTokens:      usage.InputTokens,
+		CachedTokens:     usage.CachedTokens,
+		CacheWriteTokens: usage.CacheWriteTokens,
+		OutputTokens:     usage.OutputTokens,
+	}
+	if c.tracker != nil {
+		ev.Cost, ev.PriceSource, ev.Assumptions = c.tracker.PriceUsage(model, usage, false)
+		return ev
+	}
+	if r, err := sharedRegistry(); err == nil {
+		ct := newCostTrackerWithRegistry(c.providerName, c.priceOverride, r)
+		ev.Cost, ev.PriceSource, ev.Assumptions = ct.PriceUsage(model, usage, false)
+	} else {
+		ev.Assumptions = []string{"price registry unavailable: " + err.Error()}
+	}
+	return ev
 }
 
 // Provider defines the interface for LLM provider adapters.

@@ -142,8 +142,8 @@ func newMockCompletionServer() *mockCompletionServer {
 	return s
 }
 
-func (s *mockCompletionServer) URL() string   { return s.Server.URL }
-func (s *mockCompletionServer) Peak() int64   { return s.peak.Load() }
+func (s *mockCompletionServer) URL() string { return s.Server.URL }
+func (s *mockCompletionServer) Peak() int64 { return s.peak.Load() }
 func (s *mockCompletionServer) reset() {
 	s.inFlight.Store(0)
 	s.peak.Store(0)

@@ -288,9 +288,45 @@ serve:
 A source that keeps failing is dead-lettered after `max_attempts` failures;
 `sage-wiki compile --fresh` (or editing the source) re-queues it.
 
-## Price table override
+## Price registry
 
-Cost estimates use built-in per-model prices
-(which may go stale). Point `compiler.price_table` at a JSON file (same
-shape as the built-in map) to override them per provider/model; built-ins
-remain the fallback.
+Cost accounting prices every LLM call through a **registry keyed by
+`provider:model`** — never by endpoint kind, so `openai-compatible`,
+`qwen`, and `ollama` models are priced by their own entries or not at
+all. A model with no registry entry reports `cost: unknown (model not in
+price registry)` — never zero, never a guessed default. (Cost numbers
+produced before v0.3.0 by `openai-compatible`/`qwen` providers were
+mispriced against the OpenAI table and are unreliable.)
+
+Load order (later wins):
+
+1. Embedded defaults (`internal/llm/prices/default.json`) — approximate
+   public list prices with per-entry `as_of` dates. **They are estimates;
+   verify and override.**
+2. User file `~/.sage-wiki/prices.json` — registry shape
+   (`{"prices": {"provider:model": {"input": "0.27", "cached_input": "0.07", "output": "1.10", "as_of": "2026-01-01"}}}`,
+   decimal strings, empty field = unknown component).
+3. Workspace `compiler.price_table` — accepts the registry shape AND the
+   legacy PERF-04 shape (`{"provider": {"model": {"input": 0.27, ...}}}`,
+   float fields).
+
+A malformed price file is a hard error; a missing file is skipped.
+`compiler.token_price_per_million` still beats everything when set.
+**Partial entries:** a price entry that sets only some fields leaves the
+others *unknown* — the model reports `cost: unknown` rather than charging
+zero for the missing components (pre-v0.3.0 partial legacy entries
+silently priced missing fields at $0).
+
+Auditing and reporting:
+
+```bash
+sage-wiki cost models               # effective registry with as_of + source
+sage-wiki cost report               # spend by model and pass/tier
+sage-wiki cost report --since 720h  # or RFC3339 / YYYY-MM-DD
+```
+
+Every compile, batch, query, and search-expansion call appends a usage
+event to `.sage/usage.jsonl` (best-effort: an append failure is logged
+and dropped, never fails the call). `cost report` aggregates that ledger;
+cached/cache-write token splits are priced at their own rates when the
+registry carries them.

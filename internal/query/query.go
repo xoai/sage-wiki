@@ -104,6 +104,10 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 	if err != nil {
 		return nil, fmt.Errorf("query: create LLM client: %w", err)
 	}
+	// SPEC-05 usage ledger: query synthesis spend is recorded too.
+	client.SetRecorder(llm.NewFileRecorder(projectDir))
+	client.SetPass("query")
+	client.SetPriceOverride(cfg.Compiler.TokenPriceOverride)
 
 	model := cfg.Models.Query
 	if model == "" {
@@ -232,6 +236,12 @@ func buildQueryContext(reqCtx context.Context, projectDir string, question strin
 		var client *llm.Client
 		if cfg.Search.QueryExpansionEnabled() || rerankEnabled {
 			client, _ = auth.NewLLMClient(cfg)
+			if client != nil {
+				// SPEC-05 usage ledger: search-expansion spend is recorded.
+				client.SetRecorder(llm.NewFileRecorder(projectDir))
+				client.SetPass("expand")
+				client.SetPriceOverride(cfg.Compiler.TokenPriceOverride)
+			}
 		}
 
 		model := cfg.Models.Query
@@ -629,6 +639,12 @@ func SaveAnswer(projectDir string, question string, answer string, sources []str
 	saveModel := cfg.Models.Query
 	if cfg.Trust.IncludeOutputsMode() != "true" {
 		saveClient, _ = auth.NewLLMClient(cfg)
+		if saveClient != nil {
+			// SPEC-05 usage ledger: auto-file summarization spend is recorded.
+			saveClient.SetRecorder(llm.NewFileRecorder(projectDir))
+			saveClient.SetPass("query")
+			saveClient.SetPriceOverride(cfg.Compiler.TokenPriceOverride)
+		}
 	}
 	saveTrustCfg := cfg.Trust
 	return autoFile(projectDir, cfg.Output, result, memStore, vecStore, ontStore, embedder, cfg.Compiler.UserNow(), autoFileOpts{ChunkStore: chunkStore, DB: db, ChunkSize: cfg.Search.ChunkSizeOrDefault(), ChunkOverlap: cfg.Search.ChunkOverlapOrDefault(), TrustMode: cfg.Trust.IncludeOutputsMode(), TrustCfg: &saveTrustCfg, Client: saveClient, Model: saveModel})
@@ -878,6 +894,10 @@ func StreamQuery(ctx context.Context, projectDir string, question string, topK i
 	if err != nil {
 		return nil, fmt.Errorf("query: create LLM client: %w", err)
 	}
+	// SPEC-05 usage ledger: streaming query synthesis spend is recorded too.
+	client.SetRecorder(llm.NewFileRecorder(projectDir))
+	client.SetPass("query")
+	client.SetPriceOverride(cfg.Compiler.TokenPriceOverride)
 
 	model := cfg.Models.Query
 	if model == "" {

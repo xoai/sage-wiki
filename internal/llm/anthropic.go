@@ -263,13 +263,18 @@ func (p *anthropicProvider) ParseResponse(body []byte) (*Response, error) {
 	return &Response{
 		Content:      text,
 		Model:        result.Model,
-		TokensUsed:   result.Usage.InputTokens + result.Usage.OutputTokens,
+		TokensUsed:   result.Usage.InputTokens + result.Usage.CacheReadInputTokens + result.Usage.CacheCreationInputTokens + result.Usage.OutputTokens,
 		FinishReason: normalizeAnthropicStop(result.StopReason),
 		Reasoning:    reasoning,
 		Usage: Usage{
-			InputTokens:  result.Usage.InputTokens,
-			OutputTokens: result.Usage.OutputTokens,
-			CachedTokens: result.Usage.CacheReadInputTokens,
+			// Normalized to openai-style semantics: InputTokens is the TOTAL
+			// prompt-side token count including cache-read tokens (anthropic's
+			// raw input_tokens excludes them). cache_creation stays separate
+			// in CacheWriteTokens — it is billed at its own premium rate.
+			InputTokens:      result.Usage.InputTokens + result.Usage.CacheReadInputTokens,
+			OutputTokens:     result.Usage.OutputTokens,
+			CachedTokens:     result.Usage.CacheReadInputTokens,
+			CacheWriteTokens: result.Usage.CacheCreationInputTokens,
 		},
 	}, nil
 }

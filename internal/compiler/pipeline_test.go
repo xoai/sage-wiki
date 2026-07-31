@@ -909,3 +909,83 @@ func TestStripLLMFrontmatter(t *testing.T) {
 		})
 	}
 }
+
+// TestCompile_UnknownModelCostIsNil proves the SPEC-05 contract end-to-end:
+// a compile whose provider:model has no registry entry produces a CostReport
+// with nil Cost (never zero, never a guessed price) while token totals stay
+// exact.
+func TestCompile_UnknownModelCostIsNil(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+
+		messages, _ := body["messages"].([]any)
+		lastMsg := ""
+		if len(messages) > 0 {
+			if m, ok := messages[len(messages)-1].(map[string]any); ok {
+				lastMsg, _ = m["content"].(string)
+			}
+		}
+
+		var content string
+		if strings.Contains(lastMsg, "concept extraction system") {
+			content = `[{"name": "test-concept", "aliases": [], "sources": ["raw/article1.md"], "type": "concept"}]`
+		} else if strings.Contains(lastMsg, "wiki author writing a comprehensive article") {
+			content = "---\nconcept: test-concept\n---\n\n# Test Concept\n\nA test concept."
+		} else {
+			content = "## Key claims\n\nThis document discusses the main concepts and findings related to the test subject matter.\n\n## Concepts\n\ntest-concept: A fundamental concept extracted from the source material."
+		}
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]string{"content": content}},
+			},
+			"model": "deepseek-v4-flash",
+			"usage": map[string]int{"prompt_tokens": 80, "completion_tokens": 20, "total_tokens": 100},
+		})
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	wiki.InitGreenfield(dir, "test", "deepseek-v4-flash")
+
+	cfgContent := `
+version: 1
+project: test
+sources:
+  - path: raw
+    type: auto
+    watch: true
+output: wiki
+api:
+  provider: openai-compatible
+  api_key: sk-test
+  base_url: ` + server.URL + `
+models:
+  summarize: deepseek-v4-flash
+compiler:
+  max_parallel: 2
+  auto_commit: false
+  summary_max_tokens: 500
+  default_tier: 3
+`
+	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfgContent), 0644)
+	os.WriteFile(filepath.Join(dir, "raw", "article1.md"), []byte("# Self-Attention\n\nSelf-attention computes contextual representations."), 0644)
+
+	result, err := Compile(dir, CompileOpts{})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if result.CostReport == nil {
+		t.Fatal("CostReport must exist after LLM calls")
+	}
+	if result.CostReport.Cost != nil {
+		t.Errorf("unknown model must yield nil Cost, got %s", result.CostReport.Cost)
+	}
+	if len(result.CostReport.UnknownModels) == 0 {
+		t.Error("UnknownModels must name the unpriced model")
+	}
+	if result.CostReport.TotalInputTokens == 0 {
+		t.Error("token totals must stay exact even when cost is unknown")
+	}
+}
