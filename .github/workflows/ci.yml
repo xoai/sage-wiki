@@ -80,7 +80,7 @@ jobs:
           case "${{ matrix.shard }}" in
             compiler) PKGS="./internal/compiler" ;;
             core)     PKGS="./internal/api ./internal/mcp ./internal/llm ./internal/extract/..." ;;
-            rest)     PKGS=$(go list ./... | grep -v -E "internal/(compiler|api|mcp|llm|extract)") ;;
+            rest)     PKGS=$(go list ./... | grep -v -E "internal/(compiler|api|mcp|llm|extract)" | tr '\n' ' ') ;;
           esac
           echo "packages=$PKGS" >> "$GITHUB_OUTPUT"
 
