@@ -1,0 +1,14 @@
+{
+  "name": "sagewiki-vercel-ai-sdk-example",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "npm run build --prefix ../../clients/typescript && node --experimental-strip-types main.ts"
+  },
+  "dependencies": {
+    "sagewiki": "file:../../clients/typescript",
+    "ai": "4.3.16",
+    "zod": "3.25.76"
+  }
+}

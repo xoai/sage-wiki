@@ -1,0 +1,2 @@
+-e ../../clients/python
+langgraph==0.2.60

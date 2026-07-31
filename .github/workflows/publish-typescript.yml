@@ -1,0 +1,80 @@
+name: Publish TypeScript client
+
+# Publishes clients/typescript to npm with provenance (requires NPM_TOKEN
+# secret with publish rights, or npm trusted publishing). Manual dispatch is
+# the primary path; a ts-v* tag also triggers. Publishing is irreversible —
+# this workflow is user-gated by design.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type the version from clients/typescript/package.json to confirm"
+        required: true
+  push:
+    tags: ["ts-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version matches tag / confirmation
+        run: |
+          VERSION=$(node -p "require('./clients/typescript/package.json').version")
+          echo "package version: $VERSION"
+          if [[ "$GITHUB_REF" == refs/tags/ts-v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/ts-v}"
+            [[ "$TAG" == "$VERSION" ]] || { echo "::error::tag ts-v$TAG != package $VERSION"; exit 1; }
+          else
+            [[ "${{ inputs.confirm }}" == "$VERSION" ]] || { echo "::error::confirmation '${{ inputs.confirm }}' != package $VERSION"; exit 1; }
+          fi
+
+  test:
+    needs: check-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: cd clients/typescript && npm ci
+      - run: cd clients/typescript && npm run typecheck
+      - run: cd clients/typescript && npm test
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+      - run: cd clients/typescript && npm run build
+      - run: cd clients/typescript && npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  verify-published:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Pin-resolution check (06 §P4-6 required test)
+        run: |
+          VERSION=$(node -p "require('./clients/typescript/package.json').version")
+          sleep 30  # registry propagation
+          mkdir /tmp/pincheck && cd /tmp/pincheck
+          npm init -y >/dev/null
+          npm install "sagewiki@$VERSION"
+          node --input-type=module -e "import { VERSION } from 'sagewiki'; if (VERSION !== '$VERSION') process.exit(1); console.log('registry pin resolves:', VERSION)"

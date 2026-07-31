@@ -1,0 +1,76 @@
+name: Publish Python client
+
+# Publishes clients/python to PyPI via Trusted Publisher (no stored token —
+# configure the publisher on PyPI once: repo xoai/sage-wiki, workflow
+# publish-python.yml). Manual dispatch is the primary path; a py-v* tag also
+# triggers. Publishing is irreversible — this workflow is user-gated by
+# design (workflow_dispatch requires a human click).
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type the version from clients/python/pyproject.toml to confirm"
+        required: true
+  push:
+    tags: ["py-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version matches tag / confirmation
+        run: |
+          VERSION=$(grep -m1 '^version' clients/python/pyproject.toml | cut -d'"' -f2)
+          echo "package version: $VERSION"
+          if [[ "$GITHUB_REF" == refs/tags/py-v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/py-v}"
+            [[ "$TAG" == "$VERSION" ]] || { echo "::error::tag py-v$TAG != package $VERSION"; exit 1; }
+          else
+            [[ "${{ inputs.confirm }}" == "$VERSION" ]] || { echo "::error::confirmation '${{ inputs.confirm }}' != package $VERSION"; exit 1; }
+          fi
+
+  test:
+    needs: check-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e "clients/python[dev]"
+      - run: cd clients/python && python -m pytest -q -m "not contract"
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - run: cd clients/python && python -m build
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  verify-published:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Pin-resolution check (06 §P4-6 required test)
+        run: |
+          VERSION=$(grep -m1 '^version' clients/python/pyproject.toml | cut -d'"' -f2)
+          sleep 30  # PyPI index propagation
+          pip install "sagewiki==$VERSION"
+          python -c "import sagewiki; assert sagewiki.__version__ == '$VERSION'; print('registry pin resolves:', sagewiki.__version__)"

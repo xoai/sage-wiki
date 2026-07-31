@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sagewiki"
+version = "0.1.0"
+description = "Typed client for sage-wiki's /v1 REST API (pre-1.0 — pin a version)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+dependencies = ["httpx>=0.27"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+sagewiki = ["py.typed"]
+
+[tool.pytest.ini_options]
+markers = [
+    "contract: tests against a live sage-wiki server (needs SAGE_WIKI_URL)",
+]
+asyncio_mode = "auto"

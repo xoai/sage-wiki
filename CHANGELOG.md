@@ -2,6 +2,54 @@
 
 ## [Unreleased]
 
+## 0.2.6 — 2026-07-31
+
+### Added
+
+- **Python client `sagewiki` (`clients/python/`, P4-3).** Typed sync
+  (`SageWiki`) and async (`AsyncSageWiki`) clients over the `/v1` REST API —
+  one shared request-building implementation, `httpx` as the only
+  dependency, stdlib dataclass models, `py.typed` shipped. One method per
+  route; the full error-code vocabulary maps to exception classes (branch
+  on code, never message); `compile`/`lint` return a `Job` whose
+  `wait(timeout)` requires an explicit timeout (raises `JobTimeout`,
+  `JobFailed`; returns on `cancelled`); `Conflict.active_job_id` exposes
+  the 409 details; idempotency keys forwarded verbatim and required before
+  any write is retried. Contract-tested against a live server in CI
+  (`scripts/p4-fixture-server.sh` — a keyless fixture seeded through the
+  write API). Pre-1.0 — pin a version.
+- **TypeScript client `sagewiki` (`clients/typescript/`, P4-4).** Typed,
+  zero-runtime-dependency client over `/v1` using global `fetch` — runs on
+  Node ≥18, Deno, Bun, and edge runtimes (no Node built-ins in the main
+  entry, statically asserted). Dual ESM + CJS output with types.
+  Compile-submit bodies are discriminated unions: mixing `topic` with
+  compile flags is a compile-time error. Same error taxonomy as the Python
+  client (`instanceof` and `switch (e.code)` both work), `AbortSignal` on
+  every method including job waits, `waitUntilDone({ timeoutMs })` with a
+  required timeout. Contract-tested against a live server in CI.
+- **Framework examples (`examples/`, P4-6).** Two CI-exercised, keyless
+  examples: `examples/langgraph/` — retrieval + capture nodes showing the
+  `uncompiled_sources > 0` → topic-compile-and-wait pattern (stubbed LLM);
+  `examples/vercel-ai-sdk/` — `search`, `graphQuery`, `provenance` as AI
+  SDK tools, with the edge-deployability note. Both run headlessly in CI
+  against the fixture server and assert a non-empty result. Exactly two, by
+  design.
+- **Publish workflows.** `publish-python.yml` (PyPI Trusted Publisher) and
+  `publish-typescript.yml` (npm with provenance), manual-dispatch or
+  `py-v*`/`ts-v*` tag triggered, version-match checked, with a post-publish
+  pin-resolution verification step. Publishing itself remains maintainer-run.
+
+### Fixed
+
+- **Jobs submitted via `/v1/jobs/*` were cancelled the instant their `202`
+  was sent.** The job goroutine derived its context from the HTTP request,
+  which net/http cancels when the handler returns — so every job died as
+  soon as submission completed (invisible to httptest, which never
+  reproduces request lifecycle cancellation; caught by the Python client's
+  live contract test). Job contexts now derive from `context.Background()`
+  with the existing 2-hour cap, pinned by a regression test that drives a
+  real server and client.
+
 ### Added
 
 - **Async job API for compile and lint (`/v1/jobs/*`, P4-2).** Long-running
