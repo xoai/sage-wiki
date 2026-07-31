@@ -26,8 +26,8 @@ defaults:
     shell: bash
 
 jobs:
-  go:
-    name: Go ${{ matrix.os }}
+  build:
+    name: Build+vet ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -52,17 +52,47 @@ jobs:
       - name: Vet
         run: CGO_ENABLED=0 go vet ./...
 
-      # Race detector needs cgo; ubuntu/macos ship a C compiler.
+  # Tests are sharded three ways per OS so the slowest shard (~compiler,
+  # ~6 min) bounds wall time instead of the whole suite (~14 min serial).
+  go-test:
+    name: Test ${{ matrix.shard }} ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        shard: [compiler, core, rest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      # Race detector needs cgo; ubuntu/macos ship a C compiler. Windows
+      # runs without -race (no guaranteed C compiler) — ubuntu+macos race
+      # coverage satisfies the acceptance bar.
+      - name: Resolve shard packages
+        id: pkgs
+        shell: bash
+        run: |
+          case "${{ matrix.shard }}" in
+            compiler) PKGS="./internal/compiler" ;;
+            core)     PKGS="./internal/api ./internal/mcp ./internal/llm ./internal/extract/..." ;;
+            rest)     PKGS=$(go list ./... | grep -v -E "internal/(compiler|api|mcp|llm|extract)") ;;
+          esac
+          echo "packages=$PKGS" >> "$GITHUB_OUTPUT"
+
       - name: Test (race)
         if: runner.os != 'Windows'
-        run: CGO_ENABLED=1 go test -race ./...
+        shell: bash
+        run: CGO_ENABLED=1 go test -race -timeout 15m ${{ steps.pkgs.outputs.packages }}
 
-      # Windows hosted runners have no guaranteed C compiler on PATH, so run the
-      # suite without the race detector there. -race coverage on linux+macos
-      # satisfies the acceptance bar; Windows still gets full build+vet+test.
       - name: Test
         if: runner.os == 'Windows'
-        run: CGO_ENABLED=0 go test ./...
+        shell: bash
+        run: CGO_ENABLED=0 go test -timeout 15m ${{ steps.pkgs.outputs.packages }}
 
   skill-drift:
     name: Agent skill drift
