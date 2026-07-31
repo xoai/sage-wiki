@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -239,4 +240,134 @@ func TestFormatReport_UnknownCost(t *testing.T) {
 func mustCostTracker(t *testing.T, provider string, override float64) *CostTracker {
 	t.Helper()
 	return newCostTrackerWithRegistry(provider, override, testRegistry(t))
+}
+
+// TestCost_NoCacheSplitReportedAssumption pins the spec §A.2.2 assumption:
+// when a provider response carries no cache split, the report says so.
+func TestCost_NoCacheSplitReportedAssumption(t *testing.T) {
+	ct := mustCostTracker(t, "openai", 0)
+	ct.Track("summarize", "gpt-4o", Usage{InputTokens: 1000, OutputTokens: 100}, false)
+	report := ct.Report()
+	found := false
+	for _, a := range report.Assumptions {
+		if a == "no cache split reported" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Assumptions = %v, want 'no cache split reported'", report.Assumptions)
+	}
+}
+
+// TestCost_UserOverridePrecedence is AC-A3's verbatim test: builtin <
+// user file < workspace table < token_price_per_million.
+func TestCost_UserOverridePrecedence(t *testing.T) {
+	dir := t.TempDir()
+	userPath := dir + "/user.json"
+	wsPath := dir + "/ws.json"
+	if err := os.WriteFile(userPath, []byte(`{"prices": {"openai:gpt-4o": {"input": "9.9", "output": "9.9", "as_of": "2026-01-01"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wsPath, []byte(`{"openai": {"gpt-4o": {"input": 7.7, "output": 7.7}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Workspace beats user beats builtin.
+	r, err := loadRegistryFrom(wsPath, userPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := newCostTrackerWithRegistry("openai", 0, r).priceFor("gpt-4o")
+	if p.InputPerMTok.String() != "7.7" || p.Source != PriceSourceUser {
+		t.Errorf("workspace should win: %+v", p)
+	}
+	// User beats builtin when workspace silent.
+	r2, _ := loadRegistryFrom("", userPath)
+	p2, _ := newCostTrackerWithRegistry("openai", 0, r2).priceFor("gpt-4o")
+	if p2.InputPerMTok.String() != "9.9" {
+		t.Errorf("user should beat builtin: %+v", p2)
+	}
+	// token_price_per_million beats everything.
+	p3, _ := newCostTrackerWithRegistry("openai", 3.0, r).priceFor("gpt-4o")
+	if p3.InputPerMTok.String() != "3" {
+		t.Errorf("explicit override should win: %+v", p3)
+	}
+}
+
+func TestEstimateFromBytes_Hermetic(t *testing.T) {
+	r := testRegistry(t)
+	_, cost, err := estimateFromBytesWithRegistry(4000, "gemini", "gemini-2.5-flash", 0, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cost == nil || !cost.GreaterThan(decimal.Zero) {
+		t.Error("expected positive cost")
+	}
+	_, unknown, err := estimateFromBytesWithRegistry(4000, "openai-compatible", "deepseek-v4-flash", 0, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unknown != nil {
+		t.Errorf("unknown model estimate must be nil, got %s", unknown)
+	}
+}
+
+func TestEstimateVariants_RegistryRates(t *testing.T) {
+	r := testRegistry(t)
+	ct := newCostTrackerWithRegistry("openai", 0, r)
+	price, ok := ct.priceFor("gpt-4o")
+	if !ok {
+		t.Fatal("gpt-4o priced")
+	}
+	if price.BatchInputPerMTok == nil || price.CachedInputPerMTok == nil {
+		t.Fatal("gpt-4o must carry batch + cached rates for this test")
+	}
+	// Variants computed from registry rates, not multipliers: batch uses
+	// 1.25/5.0 (half of 2.5/10.0 for gpt-4o), cached uses 1.25 input.
+	// 1M bytes → 250k input tokens, 62.5k output.
+	// standard = 250000*2.5/1M + 62500*10/1M = 0.625 + 0.625 = 1.25
+	// batch    = 250000*1.25/1M + 62500*5/1M = 0.3125 + 0.3125 = 0.625
+	// cached   = 250000*1.25/1M + 62500*10/1M = 0.3125 + 0.625 = 0.9375
+	// (via the public function against a real table file to cover wiring)
+	dir := t.TempDir()
+	ws := dir + "/ws.json"
+	if err := os.WriteFile(ws, []byte(`{"prices": {}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	est, err := EstimateVariantsFromBytes(1_000_000, "openai", "gpt-4o", 0, ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if est.Standard == nil || !est.Standard.Equal(decimal.NewFromFloat(1.25)) {
+		t.Errorf("Standard = %v, want 1.25", est.Standard)
+	}
+	if est.Batch == nil || !est.Batch.Equal(decimal.NewFromFloat(0.625)) {
+		t.Errorf("Batch = %v, want 0.625", est.Batch)
+	}
+	if est.Cached == nil || !est.Cached.Equal(decimal.NewFromFloat(0.9375)) {
+		t.Errorf("Cached = %v, want 0.9375", est.Cached)
+	}
+}
+
+// TestEstimateVariants_NoRatesOmitted: a model without batch/cached rates
+// yields nil variants (the CLI omits those lines — no invented multipliers).
+func TestEstimateVariants_NoRatesOmitted(t *testing.T) {
+	dir := t.TempDir()
+	ws := dir + "/ws.json"
+	if err := os.WriteFile(ws, []byte(`{"prices": {}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	est, err := EstimateVariantsFromBytes(1_000_000, "openai-compatible", "deepseek-chat", 0, ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if est.Standard == nil {
+		t.Fatal("deepseek-chat standard estimate must exist")
+	}
+	if est.Batch != nil {
+		t.Errorf("no batch rates in registry → Batch must be nil, got %v", est.Batch)
+	}
+	if est.Cached == nil {
+		t.Error("deepseek-chat HAS a cached rate — Cached must be set")
+	}
 }

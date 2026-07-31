@@ -292,6 +292,10 @@ func (c *Client) SetRecorder(recorder UsageRecorder) {
 }
 
 // SetTier sets the compile tier recorded on usage events.
+//
+// c.tier is unsynchronized and buildUsageEvent reads it from request
+// goroutines, so (exactly like SetPass) SetTier must be called OUTSIDE a
+// fan-out — before it starts and after it joins — never from within one.
 func (c *Client) SetTier(tier int) {
 	c.tier = tier
 }

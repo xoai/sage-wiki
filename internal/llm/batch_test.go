@@ -544,3 +544,30 @@ func TestNonBatchProvider_DoesNotSatisfyBatchInterface(t *testing.T) {
 		t.Error("nonBatchProvider must NOT satisfy BatchProvider — issue #83 regression")
 	}
 }
+
+// TestAnthropicBatchCacheFields proves the batch result parser normalizes
+// cache fields exactly like the sync path (F-037): cache_read folds into
+// InputTokens + CachedTokens, cache_creation lands in CacheWriteTokens.
+func TestAnthropicBatchCacheFields(t *testing.T) {
+	line := `{"custom_id":"req-1","result":{"type":"succeeded","message":{"model":"claude-sonnet-4-20250514","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":100,"output_tokens":20,"cache_creation_input_tokens":30,"cache_read_input_tokens":50}},"error":{}}}` + "\n"
+	results, err := parseAnthropicBatchResults(strings.NewReader(line))
+	if err != nil {
+		t.Fatalf("ParseBatchResults: %v", err)
+	}
+	if len(results) != 1 || results[0].Response == nil {
+		t.Fatalf("expected 1 succeeded result, got %+v", results)
+	}
+	u := results[0].Response.Usage
+	if u.InputTokens != 150 {
+		t.Errorf("InputTokens = %d, want 150 (100 + 50 cache_read)", u.InputTokens)
+	}
+	if u.CachedTokens != 50 {
+		t.Errorf("CachedTokens = %d, want 50", u.CachedTokens)
+	}
+	if u.CacheWriteTokens != 30 {
+		t.Errorf("CacheWriteTokens = %d, want 30", u.CacheWriteTokens)
+	}
+	if results[0].Response.TokensUsed != 200 {
+		t.Errorf("TokensUsed = %d, want 200", results[0].Response.TokensUsed)
+	}
+}

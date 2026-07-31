@@ -388,7 +388,7 @@ func (s *Server) handleCapture(ctx context.Context, req mcplib.CallToolRequest) 
 	}
 
 	// Try LLM extraction
-	items, err := extractKnowledgeItems(s.cfg, content, captureCtx, tagsStr)
+	items, err := extractKnowledgeItems(s.cfg, s.projectDir, content, captureCtx, tagsStr)
 	if err != nil {
 		// Fallback: store raw content as single file
 		log.Warn("capture: LLM extraction failed, storing raw", "error", err)
@@ -481,7 +481,7 @@ type capturedItem struct {
 	Content string `json:"content"`
 }
 
-func extractKnowledgeItems(cfg *config.Config, content, captureCtx, tags string) ([]capturedItem, error) {
+func extractKnowledgeItems(cfg *config.Config, projectDir string, content, captureCtx, tags string) ([]capturedItem, error) {
 	if cfg.API.Provider == "" {
 		return nil, fmt.Errorf("LLM not configured (no api.provider)")
 	}
@@ -493,6 +493,9 @@ func extractKnowledgeItems(cfg *config.Config, content, captureCtx, tags string)
 	if err != nil {
 		return nil, fmt.Errorf("create LLM client: %w", err)
 	}
+	// SPEC-05 usage ledger: capture-extraction spend is recorded.
+	client.SetRecorder(llm.NewFileRecorder(projectDir))
+	client.SetPass("extract")
 
 	prompt, err := prompts.Render("capture_knowledge", prompts.CaptureData{
 		Context: captureCtx,
@@ -716,6 +719,9 @@ func (s *Server) CompileTopic(ctx context.Context, topic string, maxSources int)
 	if err != nil {
 		return nil, fmt.Errorf("create LLM client: %v", err)
 	}
+	// SPEC-05 usage ledger: compile-on-demand spend is recorded.
+	client.SetRecorder(llm.NewFileRecorder(s.projectDir))
+	client.SetTier(3)
 
 	result, err := compiler.CompileTopic(ctx, compiler.OnDemandOpts{
 		Topic:       topic,

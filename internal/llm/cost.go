@@ -167,6 +167,9 @@ func (ct *CostTracker) calculateCost(e CostEntry) (*decimal.Decimal, []string) {
 	cost := inputRate.Mul(decimal.NewFromInt(int64(uncached))).Div(million)
 	cost = cost.Add(outputRate.Mul(decimal.NewFromInt(int64(e.OutputTokens))).Div(million))
 
+	if e.CachedTokens == 0 && e.CacheWriteTokens == 0 {
+		assumptions = append(assumptions, "no cache split reported")
+	}
 	if e.CachedTokens > 0 {
 		if price.CachedInputPerMTok != nil {
 			cost = cost.Add(price.CachedInputPerMTok.Mul(decimal.NewFromInt(int64(e.CachedTokens))).Div(million))
@@ -311,12 +314,18 @@ func sortedKeys(set map[string]bool) []string {
 // file). Cost is nil when the model's price is unknown — callers render
 // "unknown", never $0.
 func EstimateFromBytes(contentBytes int, provider string, model string, priceOverride float64, tablePath string) (inputTokens int, cost *decimal.Decimal, err error) {
-	inputTokens = contentBytes / 4 // ~4 chars per token heuristic
-
 	ct, err := NewCostTrackerWithTable(provider, priceOverride, tablePath)
 	if err != nil {
-		return inputTokens, nil, err
+		return 0, nil, err
 	}
+	return estimateFromBytesWithRegistry(contentBytes, provider, model, priceOverride, ct.registry)
+}
+
+// estimateFromBytesWithRegistry is the hermetic test seam — same math with
+// an explicit registry (no filesystem reads).
+func estimateFromBytesWithRegistry(contentBytes int, provider, model string, priceOverride float64, r *Registry) (int, *decimal.Decimal, error) {
+	inputTokens := contentBytes / 4 // ~4 chars per token heuristic
+	ct := newCostTrackerWithRegistry(provider, priceOverride, r)
 	price, ok := ct.priceFor(model)
 	if !ok || price.InputPerMTok == nil || price.OutputPerMTok == nil {
 		return inputTokens, nil, nil
@@ -327,6 +336,48 @@ func EstimateFromBytes(contentBytes int, provider string, model string, priceOve
 	c := price.InputPerMTok.Mul(decimal.NewFromInt(int64(inputTokens))).Div(million)
 	c = c.Add(price.OutputPerMTok.Mul(decimal.NewFromInt(int64(outputTokens))).Div(million))
 	return inputTokens, &c, nil
+}
+
+// CostEstimates is the standard/batch/cached estimate triplet for
+// `compile --estimate`. Batch and Cached are nil when the registry lacks
+// the corresponding rates for the model — callers omit the line rather
+// than invent a multiplier.
+type CostEstimates struct {
+	InputTokens int
+	Standard    *decimal.Decimal
+	Batch       *decimal.Decimal
+	Cached      *decimal.Decimal
+}
+
+// EstimateVariantsFromBytes computes the estimate triplet from actual
+// registry rates (never hard-coded discounts).
+func EstimateVariantsFromBytes(contentBytes int, provider string, model string, priceOverride float64, tablePath string) (CostEstimates, error) {
+	var out CostEstimates
+	ct, err := NewCostTrackerWithTable(provider, priceOverride, tablePath)
+	if err != nil {
+		return out, err
+	}
+	out.InputTokens = contentBytes / 4
+	price, ok := ct.priceFor(model)
+	if !ok || price.InputPerMTok == nil || price.OutputPerMTok == nil {
+		return out, nil // unknown model: all variants nil
+	}
+	outputTokens := out.InputTokens / 4
+	in := decimal.NewFromInt(int64(out.InputTokens))
+	outTokens := decimal.NewFromInt(int64(outputTokens))
+
+	standard := price.InputPerMTok.Mul(in).Div(million).Add(price.OutputPerMTok.Mul(outTokens).Div(million))
+	out.Standard = &standard
+
+	if price.BatchInputPerMTok != nil && price.BatchOutputPerMTok != nil {
+		batch := price.BatchInputPerMTok.Mul(in).Div(million).Add(price.BatchOutputPerMTok.Mul(outTokens).Div(million))
+		out.Batch = &batch
+	}
+	if price.CachedInputPerMTok != nil {
+		cached := price.CachedInputPerMTok.Mul(in).Div(million).Add(price.OutputPerMTok.Mul(outTokens).Div(million))
+		out.Cached = &cached
+	}
+	return out, nil
 }
 
 // FormatReport returns a human-readable cost summary. Unknown cost renders

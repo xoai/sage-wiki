@@ -300,8 +300,10 @@ func parseAnthropicBatchResults(r io.Reader) ([]BatchResult, error) {
 					} `json:"content"`
 					Model string `json:"model"`
 					Usage struct {
-						InputTokens  int `json:"input_tokens"`
-						OutputTokens int `json:"output_tokens"`
+						InputTokens              int `json:"input_tokens"`
+						OutputTokens             int `json:"output_tokens"`
+						CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+						CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 					} `json:"usage"`
 				} `json:"message"`
 				Error struct {
@@ -327,13 +329,18 @@ func parseAnthropicBatchResults(r io.Reader) ([]BatchResult, error) {
 					text += c.Text
 				}
 			}
+			u := entry.Result.Message.Usage
 			br.Response = &Response{
 				Content:    stripThinkTags(text),
 				Model:      entry.Result.Message.Model,
-				TokensUsed: entry.Result.Message.Usage.InputTokens + entry.Result.Message.Usage.OutputTokens,
+				TokensUsed: u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens + u.OutputTokens,
 				Usage: Usage{
-					InputTokens:  entry.Result.Message.Usage.InputTokens,
-					OutputTokens: entry.Result.Message.Usage.OutputTokens,
+					// Same normalization as anthropic.go ParseResponse:
+					// InputTokens includes cache-read; cache-write separate.
+					InputTokens:      u.InputTokens + u.CacheReadInputTokens,
+					OutputTokens:     u.OutputTokens,
+					CachedTokens:     u.CacheReadInputTokens,
+					CacheWriteTokens: u.CacheCreationInputTokens,
 				},
 			}
 		} else {

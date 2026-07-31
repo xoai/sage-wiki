@@ -268,16 +268,18 @@ func (r *Registry) rebuildPrefix() {
 }
 
 // Lookup resolves provider:model exactly, then by longest prefix within the
-// same provider (versioned models like gpt-4o-2024-08-06 → gpt-4o). It
-// never resolves across providers: unknown under the given provider is
-// unknown, full stop.
+// same provider where the KEY is a prefix of the model (versioned models
+// like gpt-4o-2024-08-06 → gpt-4o). The reverse direction (model shorter
+// than the key) never matches: a bare "gpt" must not inherit gpt-4o-mini's
+// price. It never resolves across providers: unknown under the given
+// provider is unknown, full stop.
 func (r *Registry) Lookup(provider, model string) (*Price, bool) {
 	if p, ok := r.entries[provider+":"+model]; ok {
 		return &p, true
 	}
 	best := ""
 	for _, name := range r.prefix[provider] {
-		if (strings.HasPrefix(model, name) || strings.HasPrefix(name, model)) && len(name) > len(best) {
+		if strings.HasPrefix(model, name) && len(name) > len(best) {
 			best = name
 		}
 	}

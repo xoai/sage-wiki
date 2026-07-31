@@ -95,7 +95,9 @@ func (f *FileRecorder) RecordUsage(_ context.Context, ev UsageEvent) {
 }
 
 // ReadUsageLog parses a usage ledger. A missing file yields zero events and
-// no error; a malformed line is an error naming the line number.
+// no error. Malformed lines (a crash mid-append can truncate the final
+// line) are skipped with a stderr warning naming the line number — a
+// corrupt ledger degrades, it never bricks cost report.
 func ReadUsageLog(path string) ([]UsageEvent, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -113,7 +115,8 @@ func ReadUsageLog(path string) ([]UsageEvent, error) {
 		}
 		var ev UsageEvent
 		if err := json.Unmarshal(l, &ev); err != nil {
-			return nil, fmt.Errorf("usage log line %d malformed: %w", line, err)
+			log.Warn("usage ledger: skipping malformed line", "path", path, "line", line, "error", err)
+			continue
 		}
 		events = append(events, ev)
 	}

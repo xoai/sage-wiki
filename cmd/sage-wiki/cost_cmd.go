@@ -104,13 +104,21 @@ func parseSince(s string) (time.Time, error) {
 
 // costBucket accumulates one aggregation bucket. Any unknown-cost event
 // poisons the dollar total (unknown is never summed into a fabricated
-// partial); token totals stay exact.
+// partial); token totals stay exact. Mixed price sources render as "mixed"
+// rather than silently attributing all spend to the first event's source.
 type costBucket struct {
 	cost    decimal.Decimal
 	unknown bool
+	sources map[string]bool
 }
 
 func (b *costBucket) add(ev llm.UsageEvent) {
+	if b.sources == nil {
+		b.sources = map[string]bool{}
+	}
+	if ev.PriceSource != "" {
+		b.sources[ev.PriceSource] = true
+	}
 	if ev.Cost == nil {
 		b.unknown = true
 		return
@@ -124,6 +132,18 @@ func (b *costBucket) total() *decimal.Decimal {
 	}
 	c := b.cost
 	return &c
+}
+
+func (b *costBucket) source() string {
+	if len(b.sources) == 1 {
+		for s := range b.sources {
+			return s
+		}
+	}
+	if len(b.sources) > 1 {
+		return "mixed"
+	}
+	return ""
 }
 
 // aggregateUsage buckets events by provider:model and by pass/tier.
@@ -142,13 +162,13 @@ func aggregateUsage(events []llm.UsageEvent, since time.Time) (byModel, byPass [
 		mk := ev.Provider + ":" + ev.Model
 		mb, ok := modelBuckets[mk]
 		if !ok {
-			mb = &bucket{row: costRow{Provider: ev.Provider, Model: ev.Model, PriceSource: ev.PriceSource}}
+			mb = &bucket{row: costRow{Provider: ev.Provider, Model: ev.Model}}
 			modelBuckets[mk] = mb
 		}
 		pk := fmt.Sprintf("%s/%d", ev.Pass, ev.Tier)
 		pb, ok := passBuckets[pk]
 		if !ok {
-			pb = &bucket{row: costRow{Pass: ev.Pass, Tier: ev.Tier, PriceSource: ev.PriceSource}}
+			pb = &bucket{row: costRow{Pass: ev.Pass, Tier: ev.Tier}}
 			passBuckets[pk] = pb
 		}
 		for _, b := range []*bucket{mb, pb} {
@@ -165,6 +185,7 @@ func aggregateUsage(events []llm.UsageEvent, since time.Time) (byModel, byPass [
 		for _, b := range m {
 			r := b.row
 			r.Cost = b.agg.total()
+			r.PriceSource = b.agg.source()
 			rows = append(rows, r)
 		}
 		sort.Slice(rows, func(i, j int) bool { return less(rows[i], rows[j]) })
@@ -263,10 +284,14 @@ func writeRows(b *strings.Builder, rows []costRow, name func(costRow) string) {
 func runCostModels(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
 
-	// The workspace price table path comes from config; without a readable
-	// config the registry is builtin + user file only.
+	// The workspace price table path comes from config; a config that fails
+	// to load means the workspace overlay is NOT applied — say so loudly
+	// rather than present a silently incomplete audit view.
 	tablePath := ""
-	if cfg, err := config.Load(resolveConfigPath(dir)); err == nil {
+	cfg, cfgErr := config.Load(resolveConfigPath(dir))
+	if cfgErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: config load failed (%v) — workspace price_table NOT applied to this listing\n", cfgErr)
+	} else {
 		tablePath = cfg.Compiler.PriceTable
 	}
 	registry, err := llm.LoadRegistry(tablePath)

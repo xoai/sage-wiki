@@ -190,3 +190,16 @@ func writeFile(t *testing.T, path, content string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+// TestRegistryLookup_ModelPrefixOfKeyNeverMatches pins F-034: a model ID
+// that is merely a prefix of a registry key must resolve unknown, not
+// inherit that key's price.
+func TestRegistryLookup_ModelPrefixOfKeyNeverMatches(t *testing.T) {
+	r := mustLoadBuiltin(t)
+	if _, ok := r.Lookup("openai", "gpt"); ok {
+		t.Error("'gpt' must not inherit gpt-4o-mini's price")
+	}
+	if _, ok := r.Lookup("gemini", "gemini-2.5"); ok {
+		t.Error("'gemini-2.5' must not inherit gemini-2.5-flash's price")
+	}
+}

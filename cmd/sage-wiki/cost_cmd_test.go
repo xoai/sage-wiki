@@ -101,3 +101,51 @@ func TestCostModels_ShowsUserSource(t *testing.T) {
 		t.Errorf("entry row missing key/price:\n%s", got)
 	}
 }
+
+// TestCostReport_GoldenFromFixture is AC-A6's full pipeline pin: fixture
+// usage.jsonl → ReadUsageLog → aggregate → render (also pins the wire
+// schema per spec §A.2.4).
+func TestCostReport_GoldenFromFixture(t *testing.T) {
+	events, err := llm.ReadUsageLog("testdata/usage.jsonl")
+	if err != nil {
+		t.Fatalf("ReadUsageLog: %v", err)
+	}
+	if len(events) != 4 {
+		t.Fatalf("expected 4 fixture events, got %d", len(events))
+	}
+	byModel, byPass := aggregateUsage(events, time.Time{})
+	got := formatCostReportText(byModel, byPass, time.Time{}, len(events))
+	want := `💰 Cost report (from recorded usage)
+
+   By model:
+     openai:gpt-4o                                 3 calls       3500 in /      1100 out    ~$0.0198
+     openai-compatible:deepseek-v4-flash           1 calls        100 in /        20 out     unknown
+
+   By pass/tier:
+     query (tier -)                                1 calls        100 in /        20 out     unknown
+     summarize (tier 3)                            2 calls       1500 in /       300 out    ~$0.0068
+     write (tier 3)                                1 calls       2000 in /       800 out    ~$0.0130
+`
+	if got != want {
+		t.Errorf("fixture golden mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+// TestCostReport_MixedPriceSource: a bucket whose events have distinct
+// price sources renders "mixed" (F-043) instead of misattributing spend.
+func TestCostReport_MixedPriceSource(t *testing.T) {
+	e1 := costEvent("summarize", "openai", "gpt-4o", 3, 1000, 200, dec(0.0045))
+	e2 := costEvent("summarize", "openai", "gpt-4o", 3, 500, 100, dec(0.00225))
+	e2.PriceSource = "user"
+	byModel, _ := aggregateUsage([]llm.UsageEvent{e1, e2}, time.Time{})
+	if len(byModel) != 1 {
+		t.Fatalf("expected 1 bucket, got %d", len(byModel))
+	}
+	if byModel[0].PriceSource != "mixed" {
+		t.Errorf("PriceSource = %q, want mixed", byModel[0].PriceSource)
+	}
+	byPass, _ := aggregateUsage([]llm.UsageEvent{e1}, time.Time{})
+	if byPass[0].PriceSource != "builtin" {
+		t.Errorf("single-source bucket = %q, want builtin", byPass[0].PriceSource)
+	}
+}

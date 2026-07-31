@@ -1,0 +1,4 @@
+{"ts":"2026-07-30T12:00:00Z","pass":"summarize","provider":"openai","model":"gpt-4o","tier":3,"input_tokens":1000,"cached_tokens":0,"cache_write_tokens":0,"output_tokens":200,"cost":0.0045,"price_source":"builtin"}
+{"ts":"2026-07-30T12:01:00Z","pass":"summarize","provider":"openai","model":"gpt-4o","tier":3,"input_tokens":500,"cached_tokens":0,"cache_write_tokens":0,"output_tokens":100,"cost":0.00225,"price_source":"builtin"}
+{"ts":"2026-07-30T12:02:00Z","pass":"write","provider":"openai","model":"gpt-4o","tier":3,"input_tokens":2000,"cached_tokens":0,"cache_write_tokens":0,"output_tokens":800,"cost":0.013,"price_source":"builtin"}
+{"ts":"2026-07-30T12:03:00Z","pass":"query","provider":"openai-compatible","model":"deepseek-v4-flash","tier":-1,"input_tokens":100,"cached_tokens":0,"cache_write_tokens":0,"output_tokens":20,"cost":null,"price_source":""}

@@ -11,7 +11,6 @@ import (
 
 	"path/filepath"
 
-	"github.com/shopspring/decimal"
 	"github.com/spf13/cobra"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/metrics"
@@ -836,6 +835,9 @@ func runSearch(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return fmt.Errorf("--expand/--rerank need an LLM client: %w", err)
 			}
+			// SPEC-05 usage ledger: search-expansion spend is recorded.
+			c.SetRecorder(llm.NewFileRecorder(dir))
+			c.SetPass("expand")
 			client = c
 		}
 		mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
@@ -1131,6 +1133,10 @@ func runEstimate(dir string) error {
 	if err != nil {
 		return fmt.Errorf("cost estimate: %w", err)
 	}
+	variants, err := llm.EstimateVariantsFromBytes(totalBytes, cfg.API.Provider, model, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
+	if err != nil {
+		return fmt.Errorf("cost estimate: %w", err)
+	}
 
 	fmt.Printf("\n📊 Cost estimate for %d sources (%d new, %d modified)\n",
 		totalSources, len(diff.Added), len(diff.Modified))
@@ -1140,8 +1146,12 @@ func runEstimate(dir string) error {
 		fmt.Printf("   Cost:     unknown (model not in price registry)\n")
 	} else {
 		fmt.Printf("   Cost:     ~$%s (standard mode)\n", cost.StringFixed(4))
-		fmt.Printf("   Batch:    ~$%s (50%% discount, if available)\n", cost.Mul(decimal.NewFromFloat(0.5)).StringFixed(4))
-		fmt.Printf("   Cached:   ~$%s (with prompt caching)\n", cost.Mul(decimal.NewFromFloat(0.3)).StringFixed(4))
+		if variants.Batch != nil {
+			fmt.Printf("   Batch:    ~$%s (registry batch rates)\n", variants.Batch.StringFixed(4))
+		}
+		if variants.Cached != nil {
+			fmt.Printf("   Cached:   ~$%s (registry cached-input rate, best case)\n", variants.Cached.StringFixed(4))
+		}
 	}
 	fmt.Println()
 	fmt.Println("   Note: estimates are approximate. Actual cost depends on")
