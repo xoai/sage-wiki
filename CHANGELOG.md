@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Public engine API (SPEC-01).** `pkg/engine` is the supported embedding
+  surface: `Open`/`Init` → `*Workspace` with `Capture`, `Compile`
+  (per-run tier/model/MaxDocs/MaxCost overrides), `Search`, `Graph`
+  (typed queries incl. `AsOf`), `Export`, `Stats`, `Close`. Exclusive
+  workspace lock (flock + lockfile fallback; second read-write `Open`
+  fails fast with `ErrLocked`; `WithReadOnly` for lock-free reads).
+  Workspace manifests now carry `format_version`/`engine_version`/
+  `created_at`; v0.2.x workspaces (no `format_version`) open read-only
+  until adopted with `WithUpgrade`. Companion packages: `pkg/provider`
+  (+ deterministic offline `providerfake`), `pkg/events` (usage events via
+  `WithEventSink`), `pkg/mirror` (SPEC-03 seam). No `internal/` type
+  appears in exported signatures (lint test), and
+  [`examples/embed`](examples/embed/main.go) runs offline in CI. The
+  `compile`, `search`, `capture`, and `query` CLI commands route through
+  `pkg/engine` — during an active compile, `capture`/`query` now fail
+  fast with "workspace is locked by another process" (the single-writer
+  invariant; previously they raced lock-free).
+
 ### Fixed
 
 - **Cost accounting for openai-compatible providers (SPEC-05).** DeepSeek,

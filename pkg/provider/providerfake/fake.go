@@ -115,4 +115,3 @@ func (f *Fake) SortedCalls() []provider.CompleteRequest {
 	copy(out, f.Calls)
 	return out
 }
-

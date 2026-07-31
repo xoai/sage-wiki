@@ -16,11 +16,11 @@ import (
 
 // SearchRequest mirrors the unified retrieval request.
 type SearchRequest struct {
-	Query   string
-	Limit   int
-	Channels []string // "bm25" | "vector" | "graph"; nil = all available
-	Expand  bool
-	Rerank  bool
+	Query      string
+	Limit      int
+	Channels   []string // "bm25" | "vector" | "graph"; nil = all available
+	Expand     bool
+	Rerank     bool
 	Tags       []string // soft boost
 	FilterTags []string // hard AND filter
 	// Granularity: "docs" (default) or "chunks".
@@ -64,15 +64,15 @@ func (w *Workspace) Search(ctx context.Context, req SearchRequest) (*SearchResul
 
 	cfg := w.app.Config
 	deps := search.Deps{
-		Mem:          w.app.Mem,
-		Chunks:       w.app.Backend.Chunks(),
-		Vec:          w.app.Vec,
-		Embedder:     w.searchEmbedder(),
-		Ont:          w.app.Ont,
-		Model:        cfg.Models.Query,
-		BM25Weight:   cfg.Search.HybridWeightBM25,
-		VectorWeight: cfg.Search.HybridWeightVector,
-		GraphWeight:  cfg.Search.HybridWeightGraph,
+		Mem:                  w.app.Mem,
+		Chunks:               w.app.Backend.Chunks(),
+		Vec:                  w.app.Vec,
+		Embedder:             w.searchEmbedder(),
+		Ont:                  w.app.Ont,
+		Model:                cfg.Models.Query,
+		BM25Weight:           cfg.Search.HybridWeightBM25,
+		VectorWeight:         cfg.Search.HybridWeightVector,
+		GraphWeight:          cfg.Search.HybridWeightGraph,
 		GraphRelationWeights: cfg.Search.GraphRelationWeights,
 	}
 	// Trust predicate, same construction as the CLI path (query/search

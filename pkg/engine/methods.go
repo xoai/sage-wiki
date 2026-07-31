@@ -134,13 +134,13 @@ type CompileRequest struct {
 // portion intentionally evolves to the SPEC-01 Money shape: cost +
 // assumptions + unknown_models replace cost_report).
 type CompileResult struct {
-	Added, Modified, Removed              int
-	Summarized, ConceptsExtracted         int
-	ArticlesWritten, Errors, EmbedErrors  int
+	Added, Modified, Removed                int
+	Summarized, ConceptsExtracted           int
+	ArticlesWritten, Errors, EmbedErrors    int
 	TierIndexed, TierEmbedded, TierCompiled int
-	Cost                                  *decimal.Decimal `json:"cost"`
-	Assumptions                           []string          `json:"assumptions,omitempty"`
-	UnknownModels                         []string          `json:"unknown_models,omitempty"`
+	Cost                                    *decimal.Decimal `json:"cost"`
+	Assumptions                             []string         `json:"assumptions,omitempty"`
+	UnknownModels                           []string         `json:"unknown_models,omitempty"`
 }
 
 // Compile runs the pipeline over the pending diff.
