@@ -118,18 +118,28 @@ type CompileRequest struct {
 	// it. nil = no guard. Exceeding returns a partial CompileResult with
 	// ErrBudgetExceeded.
 	MaxCost *decimal.Decimal
+
+	// Run-mode flags (map onto the compiler's options).
+	DryRun  bool
+	Fresh   bool // ignore checkpoint
+	Batch   bool // batch API
+	NoCache bool // disable prompt caching
+	Prune   bool // delete orphaned articles
 }
 
 // CompileResult mirrors the compiler's result with the SPEC-05 cost shape:
-// Cost is nil when unknown — never a fabricated zero.
+// Cost is nil when unknown — never a fabricated zero. Field names match
+// compiler.CompileResult so JSON output stays shape-compatible (the cost
+// portion intentionally evolves to the SPEC-01 Money shape: cost +
+// assumptions + unknown_models replace cost_report).
 type CompileResult struct {
-	Added, Modified, Removed           int
-	Summarized, Concepts, Articles     int
-	Errors, EmbedErrors                int
+	Added, Modified, Removed              int
+	Summarized, ConceptsExtracted         int
+	ArticlesWritten, Errors, EmbedErrors  int
 	TierIndexed, TierEmbedded, TierCompiled int
-	Cost                               *decimal.Decimal
-	Assumptions                        []string
-	UnknownModels                      []string
+	Cost                                  *decimal.Decimal `json:"cost"`
+	Assumptions                           []string          `json:"assumptions,omitempty"`
+	UnknownModels                         []string          `json:"unknown_models,omitempty"`
 }
 
 // Compile runs the pipeline over the pending diff.
@@ -152,6 +162,11 @@ func (w *Workspace) Compile(ctx context.Context, req CompileRequest) (*CompileRe
 	}
 	res, err := compiler.Compile(w.dir, compiler.CompileOpts{
 		Ctx:      ctx,
+		DryRun:   req.DryRun,
+		Fresh:    req.Fresh,
+		Batch:    req.Batch,
+		NoCache:  req.NoCache,
+		Prune:    req.Prune,
 		Tier:     tierOverride,
 		Model:    req.Model,
 		MaxDocs:  req.MaxDocs,
@@ -174,8 +189,8 @@ func mapCompileResult(res *compiler.CompileResult) *CompileResult {
 	}
 	out := &CompileResult{
 		Added: res.Added, Modified: res.Modified, Removed: res.Removed,
-		Summarized: res.Summarized, Concepts: res.ConceptsExtracted,
-		Articles: res.ArticlesWritten, Errors: res.Errors, EmbedErrors: res.EmbedErrors,
+		Summarized: res.Summarized, ConceptsExtracted: res.ConceptsExtracted,
+		ArticlesWritten: res.ArticlesWritten, Errors: res.Errors, EmbedErrors: res.EmbedErrors,
 		TierIndexed: res.TierIndexed, TierEmbedded: res.TierEmbedded, TierCompiled: res.TierCompiled,
 	}
 	if res.CostReport != nil {

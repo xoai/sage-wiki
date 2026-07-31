@@ -42,6 +42,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/vectors"
 	"github.com/xoai/sage-wiki/internal/web"
 	"github.com/xoai/sage-wiki/internal/wiki"
+	"github.com/xoai/sage-wiki/pkg/engine"
 )
 
 var (
@@ -542,6 +543,10 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		reconcileStartup(ctx, dir)
 	}
 
+	// SPEC-01 carve-outs on internal wiring: --re-embed, --re-extract, and
+	// watch mode (above) have no engine surface; reconcileStartup,
+	// maybePromptEstimate, the SIGINT handler, and metrics.LogSnapshot stay
+	// in this shim (CLI/process concerns, not engine behavior).
 	if watch {
 		fmt.Println("Watching for changes... (Ctrl+C to stop)")
 		return compiler.Watch(dir, 2, compiler.CompileOpts{
@@ -557,26 +562,23 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// P2-1 T9a-2: inject the Backend so compile honors storage.backend.
-	// Error text matches Compile's own config-load failure byte-for-byte.
-	cfg, err := config.Load(resolveConfigPath(dir))
+	// Routed through pkg/engine (SPEC-01): the workspace lock, format
+	// adoption, and store wiring are the engine's; storage.backend is
+	// honored via the engine's storedial open (same options as before).
+	w, err := engine.Open(ctx, dir)
 	if err != nil {
-		return fmt.Errorf("compile: load config: %w", err)
+		return cli.CLIError(outputFormat, err)
 	}
-	backend, err := storedial.Open(cfg.Storage, store.OpenOptions{Mode: store.ModeWriter, ProjectDir: dir, TemporalEnabled: cfg.Ontology.Temporal.Enabled})
-	if err != nil {
-		return fmt.Errorf("compile: open db: %w", err)
-	}
-	defer backend.Close()
+	defer w.Close()
 
-	result, err := compiler.Compile(dir, compiler.CompileOpts{
-		Ctx:     ctx,
-		DryRun:  dryRun,
-		Fresh:   fresh,
-		Batch:   batch,
+	result, err := w.Compile(ctx, engine.CompileRequest{
+		Selector: "pending",
+		Tier:     engine.TierUseConfig,
+		DryRun:   dryRun,
+		Fresh:    fresh,
+		Batch:    batch,
 		NoCache: noCache,
 		Prune:   prune,
-		Backend: backend,
 	})
 	if err != nil {
 		return err
