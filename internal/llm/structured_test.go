@@ -104,4 +104,3 @@ func TestStructuredCompletionValidationErrorNoFallback(t *testing.T) {
 		t.Fatal("expected validation error (minItems), got nil — and it must NOT fall back")
 	}
 }
-

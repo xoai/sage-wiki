@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -76,6 +77,12 @@ type jsonPriceDoc struct {
 	Comment string                    `json:"_comment"`
 	Prices  map[string]jsonPriceEntry `json:"prices"`
 }
+
+// sharedRegistry lazily loads the builtin + user-file registry once per
+// process, for tracker-less clients (query/expansion) firing usage events.
+var sharedRegistry = sync.OnceValues(func() (*Registry, error) {
+	return LoadRegistry("")
+})
 
 // LoadRegistry builds the effective registry: embedded defaults, then the
 // user file (~/.sage-wiki/prices.json), then the workspace price table

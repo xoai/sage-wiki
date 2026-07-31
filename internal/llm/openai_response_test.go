@@ -103,7 +103,7 @@ func TestEmptyContentDetails(t *testing.T) {
 	tests := []struct {
 		name        string
 		resp        *Response
-		wantEmpty   bool   // true if details should be ""
+		wantEmpty   bool     // true if details should be ""
 		wantContain []string // substrings expected in details
 	}{
 		{

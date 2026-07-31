@@ -6,8 +6,8 @@ import (
 	"io"
 	"net/http"
 
-		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/internal/metrics"
 )
 
 func readBody(resp *http.Response) ([]byte, error) {
@@ -90,7 +90,7 @@ func (c *Client) ChatCompletionCachedCtx(ctx context.Context, cacheID string, me
 			}
 			return nil, err
 		}
-		c.trackUsage(result.Model, result.Usage)
+		c.trackUsage(ctx, result.Model, result.Usage)
 		return result, nil
 	}
 

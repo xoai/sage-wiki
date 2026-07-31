@@ -1,12 +1,12 @@
 package llm
 
 import (
-	"time"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // #124: a truncated 200 body on retrieve is transient — retry until it succeeds.

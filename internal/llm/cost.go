@@ -205,6 +205,27 @@ func (ct *CostTracker) calculateSavings(e CostEntry) *decimal.Decimal {
 	return &savings
 }
 
+// PriceUsage prices a single call without recording it: cost (nil when
+// unknown), the price source, and any assumptions applied. Used by the
+// usage-event ledger; Report uses the same math via calculateCost.
+func (ct *CostTracker) PriceUsage(model string, usage Usage, batch bool) (*decimal.Decimal, string, []string) {
+	entry := CostEntry{
+		Model:            model,
+		Provider:         ct.provider,
+		InputTokens:      usage.InputTokens,
+		OutputTokens:     usage.OutputTokens,
+		CachedTokens:     usage.CachedTokens,
+		CacheWriteTokens: usage.CacheWriteTokens,
+		BatchMode:        batch,
+	}
+	cost, assumptions := ct.calculateCost(entry)
+	source := ""
+	if p, ok := ct.priceFor(model); ok {
+		source = p.Source
+	}
+	return cost, source, assumptions
+}
+
 // Report generates the cost summary. Any unknown model poisons the dollar
 // totals to nil (unknown is never a fabricated partial sum); token totals
 // stay exact.

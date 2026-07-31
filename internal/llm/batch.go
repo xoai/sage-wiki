@@ -390,9 +390,9 @@ func (p *openaiProvider) SubmitBatch(requests []BatchRequest) (string, error) {
 
 	// Step 3: Create batch
 	payload := map[string]any{
-		"input_file_id":      fileID,
-		"endpoint":           "/v1/chat/completions",
-		"completion_window":  "24h",
+		"input_file_id":     fileID,
+		"endpoint":          "/v1/chat/completions",
+		"completion_window": "24h",
 	}
 
 	req, err := http.NewRequest("POST", p.baseURL+"/batches", jsonBody(payload))

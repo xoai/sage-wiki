@@ -68,7 +68,7 @@ func newGeminiProvider(apiKey string, baseURL string) *geminiProvider {
 	}
 }
 
-func (p *geminiProvider) Name() string        { return "gemini" }
+func (p *geminiProvider) Name() string         { return "gemini" }
 func (p *geminiProvider) SupportsVision() bool { return true }
 
 func (p *geminiProvider) formatBody(messages []Message, opts CallOpts) (map[string]any, string) {
@@ -304,9 +304,9 @@ func (p *geminiProvider) ParseResponse(body []byte) (*Response, error) {
 			Status  string `json:"status"`
 		} `json:"error"`
 		UsageMetadata struct {
-			PromptTokenCount     int `json:"promptTokenCount"`
-			CandidatesTokenCount int `json:"candidatesTokenCount"`
-			TotalTokenCount      int `json:"totalTokenCount"`
+			PromptTokenCount        int `json:"promptTokenCount"`
+			CandidatesTokenCount    int `json:"candidatesTokenCount"`
+			TotalTokenCount         int `json:"totalTokenCount"`
 			CachedContentTokenCount int `json:"cachedContentTokenCount"`
 		} `json:"usageMetadata"`
 		ModelVersion string `json:"modelVersion"`

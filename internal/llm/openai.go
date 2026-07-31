@@ -21,7 +21,7 @@ func newOpenAIProvider(apiKey string, baseURL string) *openaiProvider {
 	return &openaiProvider{apiKey: apiKey, baseURL: baseURL}
 }
 
-func (p *openaiProvider) Name() string        { return "openai" }
+func (p *openaiProvider) Name() string         { return "openai" }
 func (p *openaiProvider) SupportsVision() bool { return true }
 
 // setExtraParams satisfies extraParamsSetter.
