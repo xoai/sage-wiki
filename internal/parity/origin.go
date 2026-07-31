@@ -1,0 +1,195 @@
+package parity
+
+import (
+	"encoding/json"
+	"hash/fnv"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+)
+
+// NewOriginServer is the scripted LLM origin (SPEC-09 §2.3): a canned
+// OpenAI-compatible server producing deterministic, content-classified
+// responses for the record flow. Deterministic per (class, source): the
+// same corpus always yields the same fixtures.
+func NewOriginServer() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(originHandler))
+}
+
+func originHandler(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case strings.HasSuffix(r.URL.Path, "/embeddings"):
+		handleOriginEmbeddings(w, r)
+	case strings.HasSuffix(r.URL.Path, "/chat/completions"):
+		handleOriginChat(w, r)
+	case strings.HasSuffix(r.URL.Path, "/models"):
+		w.Write([]byte(`{"data":[{"id":"gpt-4o-mini","object":"model"}]}`))
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+type originChatReq struct {
+	Model    string `json:"model"`
+	Messages []struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	} `json:"messages"`
+}
+
+func handleOriginChat(w http.ResponseWriter, r *http.Request) {
+	var req originChatReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	last := ""
+	for _, m := range req.Messages {
+		if m.Role == "user" {
+			last = m.Content
+		}
+	}
+	content := originClassify(last)
+	usage := map[string]int{
+		"prompt_tokens":     len(last) / 4,
+		"completion_tokens": len(content) / 4,
+		"total_tokens":      (len(last) + len(content)) / 4,
+	}
+	writeJSON(w, map[string]any{
+		"choices": []map[string]any{{"message": map[string]string{"content": content}, "finish_reason": "stop"}},
+		"model":   req.Model,
+		"usage":   usage,
+	})
+}
+
+// originClassify produces the deterministic per-class reply. The classes
+// mirror the compiler's prompts (summarize / concept extraction / article
+// writing / query synthesis); each reply embeds a stable marker of the
+// input so golden content is corpus-derived, not constant.
+func originClassify(userMsg string) string {
+	marker := markerOf(userMsg)
+	switch {
+	case strings.Contains(userMsg, "concept extraction system"):
+		return `[{"name": "` + marker + `", "aliases": [], "sources": ["` + sourceOf(userMsg) + `"], "type": "concept"}]`
+	case strings.Contains(userMsg, "wiki author writing a comprehensive article"):
+		return "---\nconcept: " + marker + "\n---\n\n# " + titleCase(marker) + "\n\n" +
+			titleCase(marker) + " is a documented concept in this workspace. It relates to its source material directly.\n\n## See also\n\n- Related concepts appear across the corpus."
+	case strings.Contains(userMsg, "You are a knowledge base Q&A assistant"):
+		return "Based on the wiki, " + marker + " is covered in the compiled articles. See [[" + marker + "]]."
+	default:
+		// Summarize: ≥100 chars to pass quality validation.
+		return "## Key claims\n\n" + titleCase(marker) + " is the central subject of this source document, which lays out its definition, mechanics, and practical implications in detail.\n\n## Concepts\n\n" + marker + ": The central concept developed by this document."
+	}
+}
+
+// markerOf extracts a stable slug from the prompt: the first ### Source:
+// path if present, else the first heading-ish token.
+func markerOf(s string) string {
+	if i := strings.Index(s, "### Source: "); i != -1 {
+		rest := s[i+len("### Source: "):]
+		if j := strings.Index(rest, "\n"); j != -1 {
+			rest = rest[:j]
+		}
+		return slugify(rest)
+	}
+	if i := strings.Index(s, "Source: "); i != -1 {
+		rest := s[i+len("Source: "):]
+		if j := strings.Index(rest, "\n"); j != -1 {
+			rest = rest[:j]
+		}
+		return slugify(rest)
+	}
+	fields := strings.Fields(s)
+	if len(fields) > 0 {
+		return slugify(fields[0])
+	}
+	return "doc"
+}
+
+// sourceOf extracts the raw source path for concept JSON.
+func sourceOf(s string) string {
+	if i := strings.Index(s, "### Source: "); i != -1 {
+		rest := s[i+len("### Source: "):]
+		if j := strings.Index(rest, "\n"); j != -1 {
+			return strings.TrimSpace(rest[:j])
+		}
+	}
+	return "raw/unknown.md"
+}
+
+func slugify(s string) string {
+	s = strings.TrimSpace(strings.ToLower(s))
+	s = strings.TrimSuffix(s, ".md")
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else if r == ' ' || r == '-' || r == '_' || r == '/' {
+			b.WriteRune('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "doc"
+	}
+	if len(out) > 40 {
+		out = out[:40]
+	}
+	return out
+}
+
+func titleCase(s string) string {
+	parts := strings.Split(s, "-")
+	for i, p := range parts {
+		if len(p) > 0 {
+			parts[i] = strings.ToUpper(p[:1]) + p[1:]
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+type originEmbedReq struct {
+	Model string `json:"model"`
+	Input any    `json:"input"` // string or []string
+}
+
+func handleOriginEmbeddings(w http.ResponseWriter, r *http.Request) {
+	var req originEmbedReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var texts []string
+	switch v := req.Input.(type) {
+	case string:
+		texts = []string{v}
+	case []any:
+		for _, t := range v {
+			if s, ok := t.(string); ok {
+				texts = append(texts, s)
+			}
+		}
+	}
+	data := make([]map[string]any, len(texts))
+	for i, text := range texts {
+		data[i] = map[string]any{"object": "embedding", "index": i, "embedding": fnvVec(text, 8)}
+	}
+	writeJSON(w, map[string]any{"object": "list", "data": data, "model": req.Model})
+}
+
+// fnvVec is the deterministic content-hash embedding (providerfake scheme).
+func fnvVec(text string, dims int) []float32 {
+	vec := make([]float32, dims)
+	for d := 0; d < dims; d++ {
+		h := fnv.New32a()
+		h.Write([]byte(text))
+		h.Write([]byte{byte(d)})
+		vec[d] = float32(h.Sum32()%1000) / 1000.0
+	}
+	return vec
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v)
+}
