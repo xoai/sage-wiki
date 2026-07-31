@@ -113,6 +113,7 @@ models:
 compiler:
   auto_commit: false
   default_tier: 3
+  mode: standard
 %s`, replayURL, goldenConfig)
 	if err := os.WriteFile(filepath.Join(wsDir, "config.yaml"), []byte(configBody), 0o644); err != nil {
 		return err

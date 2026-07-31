@@ -89,6 +89,10 @@ type Deps struct {
 	// semantics (query's output-trust rules; M5 adapters likewise) —
 	// the facade preserves, never reinterprets, them (spec §2.1).
 	IncludeDoc func(docID string) bool
+
+	// Now, when non-zero, replaces time.Now() for the recency bonus
+	// (SPEC-09: byte-exact search goldens). Zero = wall clock.
+	Now time.Time
 }
 
 // Response is the unified search output.
@@ -259,14 +263,18 @@ func Run(ctx context.Context, deps Deps, req Request) (Response, error) {
 		if dates, err := deps.Mem.GetSourceDates(ids); err != nil {
 			log.Warn("source dates unavailable; recency skipped", "error", err)
 		} else if len(dates) > 0 {
-			now := time.Now().Unix()
+			now := time.Now()
+			if !deps.Now.IsZero() {
+				now = deps.Now
+			}
+			nowUnix := now.Unix()
 			for i := range results {
 				ts, ok := dates[results[i].DocID]
 				if !ok {
 					continue
 				}
 				results[i].SourceDate = ts
-				ageDays := float64(now-ts) / 86400.0
+				ageDays := float64(nowUnix-ts) / 86400.0
 				if ageDays < 0 {
 					ageDays = 0
 				}

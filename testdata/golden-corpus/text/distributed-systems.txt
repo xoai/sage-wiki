@@ -1,0 +1,5 @@
+Consensus protocols trade availability for consistency under
+partition. Raft elects a leader with randomized timeouts; Paxos
+generalizes to multi-decree consensus at higher implementation
+cost. Practical systems layer membership changes carefully because
+joint consensus doubles the quorum intersection requirement.
