@@ -2,6 +2,11 @@
   "name": "sagewiki",
   "version": "0.1.0",
   "description": "Typed zero-dependency client for sage-wiki's /v1 REST API (pre-1.0 — pin a version)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xoai/sage-wiki",
+    "directory": "clients/typescript"
+  },
   "type": "module",
   "sideEffects": false,
   "engines": {
