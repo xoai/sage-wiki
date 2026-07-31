@@ -8,6 +8,16 @@ import (
 	"time"
 )
 
+// CurrentFormatVersion is the workspace format written today. The field is
+// NEW (SPEC-01): the pre-existing `version` field has been 2 since the
+// initial commit, so it cannot discriminate v0.2.x workspaces — an ABSENT
+// format_version is what marks them.
+const CurrentFormatVersion = 1
+
+// EngineVersion is stamped into new manifests (set by the CLI at startup,
+// same pattern as mcp.Version); "dev" otherwise.
+var EngineVersion = "dev"
+
 // Manifest tracks sources, concepts, and their relationships.
 type Manifest struct {
 	Version  int                 `json:"version"`
@@ -15,6 +25,21 @@ type Manifest struct {
 	Concepts map[string]Concept  `json:"concepts"`
 	EmbedModel string            `json:"embed_model,omitempty"`
 	EmbedDim   int               `json:"embed_dim,omitempty"`
+
+	// FormatVersion is the workspace format discriminator (SPEC-01). Zero
+	// (absent on disk) = v0.2.x workspace: opens read-only until adopted
+	// via an explicit upgrade consent.
+	FormatVersion int `json:"format_version,omitempty"`
+	// Engine is the engine version that last wrote the manifest.
+	Engine string `json:"engine_version,omitempty"`
+	// CreatedAt is the workspace creation time (RFC3339), set at init.
+	CreatedAt string `json:"created_at,omitempty"`
+}
+
+// IsPreFormat reports whether the manifest predates format versioning —
+// a v0.2.x workspace in SPEC-01 terms.
+func (m *Manifest) IsPreFormat() bool {
+	return m.FormatVersion == 0
 }
 
 // Source represents a tracked source file.
@@ -43,12 +68,15 @@ type Concept struct {
 	LastCompiled string   `json:"last_compiled"`
 }
 
-// New creates an empty manifest.
+// New creates an empty manifest stamped with the current workspace format.
 func New() *Manifest {
 	return &Manifest{
-		Version:  2,
-		Sources:  make(map[string]Source),
-		Concepts: make(map[string]Concept),
+		Version:       2,
+		Sources:       make(map[string]Source),
+		Concepts:      make(map[string]Concept),
+		FormatVersion: CurrentFormatVersion,
+		Engine:        EngineVersion,
+		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
 	}
 }
 

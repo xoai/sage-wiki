@@ -230,6 +230,9 @@ func init() {
 	// Report the real build version to MCP clients on initialize, instead of
 	// the constant the server package defaults to.
 	mcppkg.Version = version
+
+	// Stamp new workspace manifests with the real build version (SPEC-01).
+	manifest.EngineVersion = version
 }
 
 func runVersion(cmd *cobra.Command, args []string) error {

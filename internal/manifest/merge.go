@@ -12,11 +12,14 @@ import (
 // MergeSave (D3) — the base must not drift as the owner mutates its working copy.
 func (m *Manifest) Clone() *Manifest {
 	c := &Manifest{
-		Version:    m.Version,
-		EmbedModel: m.EmbedModel,
-		EmbedDim:   m.EmbedDim,
-		Sources:    make(map[string]Source, len(m.Sources)),
-		Concepts:   make(map[string]Concept, len(m.Concepts)),
+		Version:       m.Version,
+		EmbedModel:    m.EmbedModel,
+		EmbedDim:      m.EmbedDim,
+		FormatVersion: m.FormatVersion,
+		Engine:        m.Engine,
+		CreatedAt:     m.CreatedAt,
+		Sources:       make(map[string]Source, len(m.Sources)),
+		Concepts:      make(map[string]Concept, len(m.Concepts)),
 	}
 	for k, s := range m.Sources {
 		if s.ConceptsProduced != nil {
