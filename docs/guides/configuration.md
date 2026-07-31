@@ -312,6 +312,10 @@ Load order (later wins):
 
 A malformed price file is a hard error; a missing file is skipped.
 `compiler.token_price_per_million` still beats everything when set.
+**Partial entries:** a price entry that sets only some fields leaves the
+others *unknown* — the model reports `cost: unknown` rather than charging
+zero for the missing components (pre-v0.3.0 partial legacy entries
+silently priced missing fields at $0).
 
 Auditing and reporting:
 

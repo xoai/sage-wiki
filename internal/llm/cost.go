@@ -352,15 +352,22 @@ type CostEstimates struct {
 // EstimateVariantsFromBytes computes the estimate triplet from actual
 // registry rates (never hard-coded discounts).
 func EstimateVariantsFromBytes(contentBytes int, provider string, model string, priceOverride float64, tablePath string) (CostEstimates, error) {
-	var out CostEstimates
 	ct, err := NewCostTrackerWithTable(provider, priceOverride, tablePath)
 	if err != nil {
-		return out, err
+		return CostEstimates{}, err
 	}
+	return estimateVariantsWithRegistry(contentBytes, provider, model, priceOverride, ct.registry), nil
+}
+
+// estimateVariantsWithRegistry is the hermetic test seam for
+// EstimateVariantsFromBytes.
+func estimateVariantsWithRegistry(contentBytes int, provider, model string, priceOverride float64, r *Registry) CostEstimates {
+	var out CostEstimates
 	out.InputTokens = contentBytes / 4
+	ct := newCostTrackerWithRegistry(provider, priceOverride, r)
 	price, ok := ct.priceFor(model)
 	if !ok || price.InputPerMTok == nil || price.OutputPerMTok == nil {
-		return out, nil // unknown model: all variants nil
+		return out // unknown model: all variants nil
 	}
 	outputTokens := out.InputTokens / 4
 	in := decimal.NewFromInt(int64(out.InputTokens))
@@ -377,7 +384,7 @@ func EstimateVariantsFromBytes(contentBytes int, provider string, model string, 
 		cached := price.CachedInputPerMTok.Mul(in).Div(million).Add(price.OutputPerMTok.Mul(outTokens).Div(million))
 		out.Cached = &cached
 	}
-	return out, nil
+	return out
 }
 
 // FormatReport returns a human-readable cost summary. Unknown cost renders

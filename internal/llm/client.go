@@ -100,6 +100,7 @@ func (r *Response) EmptyContentDetails() string {
 type Client struct {
 	provider     Provider
 	providerName string // the configured provider string (registry identity; provider.Name() is the wire adapter, not the config kind)
+	priceOverride float64 // compiler.token_price_per_million — keeps tracker-less ledger pricing consistent with tracked paths
 	limiter      *rateLimiter
 	client       http.Client
 	tracker      *CostTracker  // optional cost tracking
@@ -291,6 +292,13 @@ func (c *Client) SetRecorder(recorder UsageRecorder) {
 	c.recorder = recorder
 }
 
+// SetPriceOverride sets the token_price_per_million override used when
+// pricing usage events without an attached tracker (query/expansion paths),
+// so the ledger prices those events consistently with compile events.
+func (c *Client) SetPriceOverride(override float64) {
+	c.priceOverride = override
+}
+
 // SetTier sets the compile tier recorded on usage events.
 //
 // c.tier is unsynchronized and buildUsageEvent reads it from request
@@ -364,7 +372,7 @@ func (c *Client) buildUsageEvent(model string, usage Usage) UsageEvent {
 		return ev
 	}
 	if r, err := sharedRegistry(); err == nil {
-		ct := newCostTrackerWithRegistry(c.providerName, 0, r)
+		ct := newCostTrackerWithRegistry(c.providerName, c.priceOverride, r)
 		ev.Cost, ev.PriceSource, ev.Assumptions = ct.PriceUsage(model, usage, false)
 	} else {
 		ev.Assumptions = []string{"price registry unavailable: " + err.Error()}

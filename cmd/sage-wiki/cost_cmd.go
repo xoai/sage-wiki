@@ -302,12 +302,15 @@ func runCostModels(cmd *cobra.Command, args []string) error {
 
 	if outputFormat == "json" {
 		type modelEntry struct {
-			Key    string `json:"key"`
-			Source string `json:"source"`
-			AsOf   string `json:"as_of,omitempty"`
-			Input  string `json:"input_per_mtok,omitempty"`
-			Cached string `json:"cached_input_per_mtok,omitempty"`
-			Output string `json:"output_per_mtok,omitempty"`
+			Key        string `json:"key"`
+			Source     string `json:"source"`
+			AsOf       string `json:"as_of,omitempty"`
+			Input      string `json:"input_per_mtok,omitempty"`
+			Cached     string `json:"cached_input_per_mtok,omitempty"`
+			CacheWrite string `json:"cache_write_input_per_mtok,omitempty"`
+			Output     string `json:"output_per_mtok,omitempty"`
+			BatchIn    string `json:"batch_input_per_mtok,omitempty"`
+			BatchOut   string `json:"batch_output_per_mtok,omitempty"`
 		}
 		out := make([]modelEntry, 0, len(entries))
 		for _, e := range entries {
@@ -323,6 +326,15 @@ func runCostModels(cmd *cobra.Command, args []string) error {
 			}
 			if e.Price.OutputPerMTok != nil {
 				me.Output = e.Price.OutputPerMTok.String()
+			}
+			if e.Price.CacheWritePerMTok != nil {
+				me.CacheWrite = e.Price.CacheWritePerMTok.String()
+			}
+			if e.Price.BatchInputPerMTok != nil {
+				me.BatchIn = e.Price.BatchInputPerMTok.String()
+			}
+			if e.Price.BatchOutputPerMTok != nil {
+				me.BatchOut = e.Price.BatchOutputPerMTok.String()
 			}
 			out = append(out, me)
 		}
@@ -345,9 +357,11 @@ func formatModelsText(entries []llm.RegistryEntry) string {
 		if !e.Price.AsOf.IsZero() {
 			asOf = e.Price.AsOf.Format("2006-01-02")
 		}
-		fmt.Fprintf(&b, "  %-42s in=%-8s cached=%-8s out=%-8s as_of=%s source=%s\n",
+		fmt.Fprintf(&b, "  %-42s in=%-8s cached=%-8s cache_write=%-8s out=%-8s batch_in=%-8s batch_out=%-8s as_of=%s source=%s\n",
 			e.Key, decOrDash(e.Price.InputPerMTok), decOrDash(e.Price.CachedInputPerMTok),
-			decOrDash(e.Price.OutputPerMTok), asOf, e.Price.Source)
+			decOrDash(e.Price.CacheWritePerMTok), decOrDash(e.Price.OutputPerMTok),
+			decOrDash(e.Price.BatchInputPerMTok), decOrDash(e.Price.BatchOutputPerMTok),
+			asOf, e.Price.Source)
 	}
 	return b.String()
 }

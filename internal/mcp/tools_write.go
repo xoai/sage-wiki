@@ -496,6 +496,7 @@ func extractKnowledgeItems(cfg *config.Config, projectDir string, content, captu
 	// SPEC-05 usage ledger: capture-extraction spend is recorded.
 	client.SetRecorder(llm.NewFileRecorder(projectDir))
 	client.SetPass("extract")
+	client.SetPriceOverride(cfg.Compiler.TokenPriceOverride)
 
 	prompt, err := prompts.Render("capture_knowledge", prompts.CaptureData{
 		Context: captureCtx,
@@ -722,6 +723,7 @@ func (s *Server) CompileTopic(ctx context.Context, topic string, maxSources int)
 	// SPEC-05 usage ledger: compile-on-demand spend is recorded.
 	client.SetRecorder(llm.NewFileRecorder(s.projectDir))
 	client.SetTier(3)
+	client.SetPriceOverride(cfg.Compiler.TokenPriceOverride)
 
 	result, err := compiler.CompileTopic(ctx, compiler.OnDemandOpts{
 		Topic:       topic,

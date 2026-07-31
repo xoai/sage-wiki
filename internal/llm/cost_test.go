@@ -173,9 +173,9 @@ func TestCostTrackerOverride(t *testing.T) {
 }
 
 func TestEstimateFromBytes(t *testing.T) {
-	tokens, cost, err := EstimateFromBytes(4000, "gemini", "gemini-2.5-flash", 0, "")
+	tokens, cost, err := estimateFromBytesWithRegistry(4000, "gemini", "gemini-2.5-flash", 0, testRegistry(t))
 	if err != nil {
-		t.Fatalf("EstimateFromBytes: %v", err)
+		t.Fatalf("estimateFromBytesWithRegistry: %v", err)
 	}
 	if tokens != 1000 {
 		t.Errorf("expected 1000 tokens, got %d", tokens)
@@ -186,9 +186,9 @@ func TestEstimateFromBytes(t *testing.T) {
 }
 
 func TestEstimateFromBytes_UnknownModel(t *testing.T) {
-	_, cost, err := EstimateFromBytes(4000, "openai-compatible", "deepseek-v4-flash", 0, "")
+	_, cost, err := estimateFromBytesWithRegistry(4000, "openai-compatible", "deepseek-v4-flash", 0, testRegistry(t))
 	if err != nil {
-		t.Fatalf("EstimateFromBytes: %v", err)
+		t.Fatalf("estimateFromBytesWithRegistry: %v", err)
 	}
 	if cost != nil {
 		t.Errorf("unknown model estimate must be nil, got %s", cost)
@@ -238,6 +238,21 @@ func TestFormatReport_UnknownCost(t *testing.T) {
 	}
 	if strings.Contains(output, "$0.0000") {
 		t.Error("unknown cost must NEVER render as $0.0000")
+	}
+}
+
+// TestLoadPriceTable_PartialLegacyEntryIsUnknown documents the deliberate
+// behavior change for partial legacy PERF-04 entries: an entry that sets
+// only some fields yields nil for the rest (old behavior: zero fields
+// silently priced those components FREE — a fabricated number). The model
+// now reports unknown cost rather than a partial price.
+func TestLoadPriceTable_PartialLegacyEntryIsUnknown(t *testing.T) {
+	path := writeTable(t, `{"openai": {"gpt-4o": {"input": 9.99}}}`)
+	ct := trackerFromTable(t, "openai", 0, path)
+	ct.Track("summarize", "gpt-4o", Usage{InputTokens: 1000, OutputTokens: 100}, false)
+	report := ct.Report()
+	if report.Cost != nil {
+		t.Errorf("partial legacy entry (no output price) must yield unknown cost, got %s", report.Cost)
 	}
 }
 
@@ -334,16 +349,7 @@ func TestEstimateVariants_RegistryRates(t *testing.T) {
 	// standard = 250000*2.5/1M + 62500*10/1M = 0.625 + 0.625 = 1.25
 	// batch    = 250000*1.25/1M + 62500*5/1M = 0.3125 + 0.3125 = 0.625
 	// cached   = 250000*1.25/1M + 62500*10/1M = 0.3125 + 0.625 = 0.9375
-	// (via the public function against a real table file to cover wiring)
-	dir := t.TempDir()
-	ws := dir + "/ws.json"
-	if err := os.WriteFile(ws, []byte(`{"prices": {}}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	est, err := EstimateVariantsFromBytes(1_000_000, "openai", "gpt-4o", 0, ws)
-	if err != nil {
-		t.Fatal(err)
-	}
+	est := estimateVariantsWithRegistry(1_000_000, "openai", "gpt-4o", 0, testRegistry(t))
 	if est.Standard == nil || !est.Standard.Equal(decimal.NewFromFloat(1.25)) {
 		t.Errorf("Standard = %v, want 1.25", est.Standard)
 	}
@@ -358,15 +364,7 @@ func TestEstimateVariants_RegistryRates(t *testing.T) {
 // TestEstimateVariants_NoRatesOmitted: a model without batch/cached rates
 // yields nil variants (the CLI omits those lines — no invented multipliers).
 func TestEstimateVariants_NoRatesOmitted(t *testing.T) {
-	dir := t.TempDir()
-	ws := dir + "/ws.json"
-	if err := os.WriteFile(ws, []byte(`{"prices": {}}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	est, err := EstimateVariantsFromBytes(1_000_000, "openai-compatible", "deepseek-chat", 0, ws)
-	if err != nil {
-		t.Fatal(err)
-	}
+	est := estimateVariantsWithRegistry(1_000_000, "openai-compatible", "deepseek-chat", 0, testRegistry(t))
 	if est.Standard == nil {
 		t.Fatal("deepseek-chat standard estimate must exist")
 	}

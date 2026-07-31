@@ -301,6 +301,7 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 			// SPEC-05 usage ledger: search-expansion spend is recorded.
 			c.SetRecorder(llm.NewFileRecorder(s.projectDir))
 			c.SetPass("expand")
+			c.SetPriceOverride(s.cfg.Compiler.TokenPriceOverride)
 			client = c
 		}
 		var chunkStore store.ChunkStore

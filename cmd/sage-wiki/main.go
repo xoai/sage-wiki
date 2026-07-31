@@ -838,6 +838,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 			// SPEC-05 usage ledger: search-expansion spend is recorded.
 			c.SetRecorder(llm.NewFileRecorder(dir))
 			c.SetPass("expand")
+			c.SetPriceOverride(cfg.Compiler.TokenPriceOverride)
 			client = c
 		}
 		mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
