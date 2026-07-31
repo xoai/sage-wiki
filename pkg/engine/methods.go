@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/shopspring/decimal"
 
@@ -28,6 +27,12 @@ type Source struct {
 	URL    string    // downloaded as markdown
 	Reader io.Reader // raw content, filed under raw/captures/
 	Type   string    // optional label for Reader captures
+	// Origin, Tags, and Context are the capture frontmatter (Reader only):
+	// the single capture-file format shared by the CLI and API callers
+	// (pack rule 2 — one implementation per behavior).
+	Origin  string // default "capture"; the CLI passes "cli-capture"
+	Tags    string // comma-separated, recorded as a YAML list
+	Context string // free-text capture context
 }
 
 // Capture ingests one document and returns its id.
@@ -78,19 +83,6 @@ func (w *Workspace) Capture(ctx context.Context, src Source) (DocID, error) {
 		if err := os.MkdirAll(capturesDir, 0o755); err != nil {
 			return "", fmt.Errorf("engine: create captures dir: %w", err)
 		}
-		base := fmt.Sprintf("capture-%d", time.Now().Unix())
-		if src.Type != "" {
-			base = fmt.Sprintf("capture-%s-%d", src.Type, time.Now().Unix())
-		}
-		// Same collision avoidance as the CLI capture path: two captures in
-		// one wall-clock second must never overwrite each other.
-		dst := filepath.Join(capturesDir, base+".md")
-		for i := 1; ; i++ {
-			if _, err := os.Stat(dst); os.IsNotExist(err) {
-				break
-			}
-			dst = filepath.Join(capturesDir, fmt.Sprintf("%s-%d.md", base, i))
-		}
 		data, err := io.ReadAll(io.LimitReader(src.Reader, maxCaptureBytes+1))
 		if err != nil {
 			return "", fmt.Errorf("engine: read capture: %w", err)
@@ -98,7 +90,35 @@ func (w *Workspace) Capture(ctx context.Context, src Source) (DocID, error) {
 		if int64(len(data)) > maxCaptureBytes {
 			return "", fmt.Errorf("%w: capture exceeds %d bytes", ErrDocTooLarge, maxCaptureBytes)
 		}
-		if err := os.WriteFile(dst, data, 0o644); err != nil {
+
+		// The ONE capture-file format (pack rule 2): date-slug name with
+		// -N dedup, frontmatter carrying origin/timestamp/tags/context.
+		now := w.app.Config.Compiler.UserNow()
+		origin := src.Origin
+		if origin == "" {
+			origin = "capture"
+		}
+		fm := fmt.Sprintf("---\nsource: %s\ncaptured_at: %s\n", origin, now)
+		if src.Tags != "" {
+			fm += fmt.Sprintf("tags: [%s]\n", src.Tags)
+		}
+		if src.Context != "" {
+			fm += fmt.Sprintf("context: %q\n", src.Context)
+		}
+		fm += "---\n\n"
+
+		slug := "capture-" + now[:10]
+		if src.Type != "" {
+			slug = "capture-" + src.Type + "-" + now[:10]
+		}
+		dst := filepath.Join(capturesDir, slug+".md")
+		for i := 1; ; i++ {
+			if _, err := os.Stat(dst); os.IsNotExist(err) {
+				break
+			}
+			dst = filepath.Join(capturesDir, fmt.Sprintf("%s-%d.md", slug, i))
+		}
+		if err := os.WriteFile(dst, []byte(fm+string(data)+"\n"), 0o644); err != nil {
 			return "", fmt.Errorf("engine: write capture: %w", err)
 		}
 		return DocID(dst), nil

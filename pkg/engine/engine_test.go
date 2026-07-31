@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -26,28 +25,32 @@ func initWorkspace(t *testing.T) string {
 	return dir
 }
 
-// stripFormatFields rewrites .manifest.json without the format fields,
-// simulating a v0.2.x workspace.
-func stripFormatFields(t *testing.T, dir string) {
+// copyFixture copies a testdata fixture directory to dst.
+func copyFixture(t *testing.T, src, dst string) {
 	t.Helper()
-	path := filepath.Join(dir, ".manifest.json")
-	raw, err := os.ReadFile(path)
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0o644)
+	})
 	if err != nil {
-		t.Fatal(err)
-	}
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatal(err)
-	}
-	delete(m, "format_version")
-	delete(m, "engine_version")
-	delete(m, "created_at")
-	out, err := json.Marshal(m)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
-		t.Fatal(err)
+		t.Fatalf("copy fixture: %v", err)
 	}
 }
 
@@ -105,9 +108,11 @@ func TestOpenReadOnlyCoexistsWithWriter(t *testing.T) {
 
 // TestPreFormatReadOnlyAndUpgrade is AC-B6: a v0.2.x workspace opens
 // read-only; mutators return ErrIncompatibleVersion; WithUpgrade adopts.
+// Uses the committed v0.2.x fixture (testdata/v02x — config + stripped
+// manifest + real DB), not a synthesized one (Gate 8 S3).
 func TestPreFormatReadOnlyAndUpgrade(t *testing.T) {
-	dir := initWorkspace(t)
-	stripFormatFields(t, dir)
+	dir := filepath.Join(t.TempDir(), "ws")
+	copyFixture(t, "testdata/v02x", dir)
 
 	m, err := manifest.Load(filepath.Join(dir, ".manifest.json"))
 	if err != nil {

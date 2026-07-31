@@ -10,6 +10,8 @@ import (
 	"github.com/xoai/sage-wiki/internal/search"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/trust"
+	"sync"
+
 	"github.com/xoai/sage-wiki/pkg/provider"
 )
 
@@ -153,8 +155,10 @@ func (w *Workspace) searchEmbedder(ctx context.Context) embed.Embedder {
 // providerEmbedder adapts a pkg/provider.Provider to the internal
 // embed.Embedder interface (one text per call).
 type providerEmbedder struct {
-	p   provider.Provider
-	ctx context.Context
+	p        provider.Provider
+	ctx      context.Context
+	dimsOnce sync.Once
+	dims     int
 }
 
 // Embed implements embed.Embedder.
@@ -169,13 +173,16 @@ func (a *providerEmbedder) Embed(text string) ([]float32, error) {
 	return vecs[0], nil
 }
 
-// Dimensions implements embed.Embedder by probing one embedding.
+// Dimensions implements embed.Embedder by probing one embedding (cached —
+// a probe per call is a paid round-trip on a remote provider).
 func (a *providerEmbedder) Dimensions() int {
-	vec, err := a.Embed("dimension probe")
-	if err != nil || len(vec) == 0 {
-		return 0
-	}
-	return len(vec)
+	a.dimsOnce.Do(func() {
+		vec, err := a.Embed("dimension probe")
+		if err == nil {
+			a.dims = len(vec)
+		}
+	})
+	return a.dims
 }
 
 // Name implements embed.Embedder.
@@ -227,6 +234,12 @@ func (g *graphAPI) Entities(ctx context.Context, f GraphFilter) ([]Entity, error
 	if err := g.w.checkOpen(); err != nil {
 		return nil, err
 	}
+	// Entities carry no validity windows (only relations do, P3-6) — a
+	// point-in-time entity query is undefined. Loud error, never a silent
+	// current-snapshot answer (Gate 8 M1).
+	if !g.asOf.IsZero() {
+		return nil, fmt.Errorf("engine: AsOf is not supported for Entities (entities have no validity windows) — use AsOf for Relations and Neighbors")
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -264,9 +277,29 @@ func (g *graphAPI) Relations(ctx context.Context, f GraphFilter) ([]Relation, er
 	}
 	out := make([]Relation, 0, len(rels))
 	for _, r := range rels {
+		if !g.asOf.IsZero() && !liveAt(r, g.asOf) {
+			continue
+		}
 		out = append(out, mapRelation(r))
 	}
 	return out, nil
+}
+
+// liveAt reports whether a relation's validity window covers t. Edges with
+// no window are always valid; unparseable stamps are treated as open (the
+// store's own reads make the same assumption).
+func liveAt(r store.Relation, t time.Time) bool {
+	if r.ValidFrom != "" {
+		if vf, err := time.Parse(time.RFC3339, r.ValidFrom); err == nil && t.Before(vf) {
+			return false
+		}
+	}
+	if r.ValidTo != "" {
+		if vt, err := time.Parse(time.RFC3339, r.ValidTo); err == nil && !t.Before(vt) {
+			return false
+		}
+	}
+	return true
 }
 
 func (g *graphAPI) Neighbors(ctx context.Context, entityID string, depth int) ([]Entity, error) {

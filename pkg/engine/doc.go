@@ -8,7 +8,7 @@
 //	if err != nil { ... }
 //	defer w.Close()
 //	id, _ := w.Capture(ctx, engine.Source{Path: "doc.md"})
-//	res, _ := w.Compile(ctx, engine.CompileRequest{Selector: "pending", Tier: 3})
+//	res, _ := w.Compile(ctx, engine.CompileRequest{Selector: "pending", Tier: engine.TierUseConfig})
 //	hits, _ := w.Search(ctx, engine.SearchRequest{Query: "attention", Limit: 5})
 //
 // See examples/embed for a complete offline program.

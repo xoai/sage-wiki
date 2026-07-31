@@ -86,13 +86,19 @@ compiler:
 	}
 	defer wB.Close()
 
+	// Interleave compile AND search concurrently (AC-B5: compile+search).
 	var wg sync.WaitGroup
-	errs := make(chan error, 2)
+	errs := make(chan error, 4)
 	for _, w := range []*Workspace{wA, wB} {
-		wg.Add(1)
+		wg.Add(2)
 		go func(w *Workspace) {
 			defer wg.Done()
 			_, err := w.Compile(context.Background(), CompileRequest{Selector: "pending", Tier: 3})
+			errs <- err
+		}(w)
+		go func(w *Workspace) {
+			defer wg.Done()
+			_, err := w.Search(context.Background(), SearchRequest{Query: "content", Limit: 3})
 			errs <- err
 		}(w)
 	}
@@ -100,7 +106,7 @@ compiler:
 	close(errs)
 	for err := range errs {
 		if err != nil {
-			t.Fatalf("concurrent compile: %v", err)
+			t.Fatalf("concurrent compile+search: %v", err)
 		}
 	}
 

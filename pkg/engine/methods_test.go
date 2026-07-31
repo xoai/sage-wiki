@@ -204,12 +204,15 @@ func TestCaptureReaderDedup(t *testing.T) {
 		t.Fatalf("same-second captures collided: %q", id1)
 	}
 	data, err := os.ReadFile(string(id1))
-	if err != nil || string(data) != "first" {
+	if err != nil || !strings.Contains(string(data), "first") {
 		t.Errorf("first capture lost/corrupt: %q %v", data, err)
 	}
 	data2, _ := os.ReadFile(string(id2))
-	if string(data2) != "second" {
+	if !strings.Contains(string(data2), "second") {
 		t.Errorf("second capture content = %q", data2)
+	}
+	if !strings.Contains(string(data), "source: capture\n") {
+		t.Errorf("capture must carry the unified frontmatter, got:\n%s", data)
 	}
 }
 

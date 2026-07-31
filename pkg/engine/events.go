@@ -23,8 +23,8 @@ func (f *usageFanOut) RecordUsage(ctx context.Context, ev llm.UsageEvent) {
 }
 
 // bridgeUsageEvent maps the internal usage ledger event onto the public
-// events envelope. Cost converts to float64 dollars (nil stays nil —
-// unknown is never a fabricated zero).
+// events envelope. Cost stays decimal end to end (nil when unknown —
+// never a fabricated zero).
 func bridgeUsageEvent(dir string, ev llm.UsageEvent) events.Event {
 	out := events.Event{
 		Kind:             events.KindUsage,
