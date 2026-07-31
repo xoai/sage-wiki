@@ -30,7 +30,7 @@ _外側の境界上のドットはナレッジベース内のすべてのドキ�
 
 ## ナレッジグラフとグラフメモリ
 
-![sage-wiki グラフエンジン](sage-wiki-graph-engine.png)
+![sage-wiki グラフエンジン](assets/sage-wiki-graph-engine.png)
 
 ベクトル検索はクエリに*似た*文章を取り出します。グラフはさらに **物事がどう関係しているか** を保持するため、2〜3 ホップ必要な問いも、単一チャンクに連鎖全体が含まれていることを期待せず、走査で答えられます。sage-wiki はこのグラフをコンパイル成果物として構築します — 別途同期が必要な第二のデータベースではありません。
 
@@ -88,7 +88,7 @@ go build -tags webui -o sage-wiki ./cmd/sage-wiki/
 
 ## クイックスタート
 
-![コンパイラパイプライン](sage-wiki-compiler-pipeline.png)
+![コンパイラパイプライン](assets/sage-wiki-compiler-pipeline.png)
 
 ### グリーンフィールド（新規プロジェクト）
 
@@ -219,7 +219,7 @@ Preact + Tailwindで構築され、`go:embed`で埋め込まれます（約1.2 M
 
 ## MCP統合
 
-![MCP統合](sage-wiki-interfaces.png)
+![MCP統合](assets/sage-wiki-interfaces.png)
 
 `.mcp.json`に追加します（Claude Codeの場合。他のエージェントは[エージェントメモリレイヤーガイド](docs/guides/agent-memory-layer.md)を参照）：
 

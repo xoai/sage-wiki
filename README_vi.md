@@ -30,7 +30,7 @@ _Các điểm trên đường biên ngoài đại diện cho tóm tắt của t�
 
 ## Đồ thị tri thức & bộ nhớ đồ thị
 
-![engine đồ thị sage-wiki](sage-wiki-graph-engine.png)
+![engine đồ thị sage-wiki](assets/sage-wiki-graph-engine.png)
 
 Tìm kiếm vector trả về những đoạn *trông giống* câu hỏi. Đồ thị còn lưu **các sự vật liên hệ với nhau ra sao**, nên một câu hỏi cần hai ba bước suy luận được trả lời bằng cách duyệt đồ thị, thay vì hy vọng một đoạn văn chứa trọn chuỗi lập luận. sage-wiki dựng đồ thị đó như một sản phẩm của quá trình biên dịch — không phải một cơ sở dữ liệu thứ hai phải đồng bộ.
 
@@ -88,7 +88,7 @@ go build -tags webui -o sage-wiki ./cmd/sage-wiki/
 
 ## Bắt đầu nhanh
 
-![Pipeline trình biên dịch](sage-wiki-compiler-pipeline.png)
+![Pipeline trình biên dịch](assets/sage-wiki-compiler-pipeline.png)
 
 ### Dự án mới (greenfield)
 
@@ -220,7 +220,7 @@ Xây dựng với Preact + Tailwind, nhúng qua `go:embed` (~1.2 MB, ~420 KB khi
 
 ## Tích hợp MCP
 
-![Tích hợp MCP](sage-wiki-interfaces.png)
+![Tích hợp MCP](assets/sage-wiki-interfaces.png)
 
 Thêm vào `.mcp.json` (Claude Code; các agent khác trong [hướng dẫn Lớp bộ nhớ Agent](docs/guides/agent-memory-layer.md)):
 

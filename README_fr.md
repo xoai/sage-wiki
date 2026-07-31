@@ -30,7 +30,7 @@ _Les points sur la bordure extérieure représentent les résumés de tous les d
 
 ## Graphe de connaissances & mémoire de graphe
 
-![moteur de graphe sage-wiki](sage-wiki-graph-engine.png)
+![moteur de graphe sage-wiki](assets/sage-wiki-graph-engine.png)
 
 La recherche vectorielle retrouve des passages qui *ressemblent* à la requête. Un graphe enregistre en plus **comment les choses sont reliées** : une question qui demande deux ou trois sauts se résout par traversée, au lieu d'espérer qu'un seul fragment contienne toute la chaîne. sage-wiki construit ce graphe comme une sortie de compilation — pas une seconde base à synchroniser.
 
@@ -88,7 +88,7 @@ go build -tags webui -o sage-wiki ./cmd/sage-wiki/
 
 ## Démarrage rapide
 
-![Pipeline du compilateur](sage-wiki-compiler-pipeline.png)
+![Pipeline du compilateur](assets/sage-wiki-compiler-pipeline.png)
 
 ### Nouveau projet (greenfield)
 
@@ -223,7 +223,7 @@ Construite avec Preact + Tailwind, intégrée via `go:embed` (~1.2 MB, ~420 KB c
 
 ## Intégration MCP
 
-![Intégration MCP](sage-wiki-interfaces.png)
+![Intégration MCP](assets/sage-wiki-interfaces.png)
 
 Ajoutez à `.mcp.json` (Claude Code ; les autres agents dans le [guide de la couche mémoire agent](docs/guides/agent-memory-layer.md)) :
 

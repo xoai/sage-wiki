@@ -27,7 +27,7 @@ _Dots on the outer boundary represent summaries of all documents in the knowledg
 
 ## Knowledge graph & graph memory
 
-![sage-wiki graph engine](sage-wiki-graph-engine.png)
+![sage-wiki graph engine](assets/sage-wiki-graph-engine.png)
 
 Vector search retrieves passages that *look like* the query. A graph also
 records **how things relate**, so a question needing two or three hops is
@@ -105,7 +105,7 @@ go build -tags webui -o sage-wiki ./cmd/sage-wiki/
 
 ## Quickstart
 
-![Compiler Pipeline](sage-wiki-compiler-pipeline.png)
+![Compiler Pipeline](assets/sage-wiki-compiler-pipeline.png)
 
 ### Greenfield (new project)
 
@@ -237,7 +237,7 @@ Built with Preact + Tailwind, embedded via `go:embed` (~1.2 MB, ~420 KB gzipped)
 
 ## MCP Integration
 
-![MCP Integration](sage-wiki-interfaces.png)
+![MCP Integration](assets/sage-wiki-interfaces.png)
 
 Add to `.mcp.json` (Claude Code; other agents in the [Agent Memory Layer guide](docs/guides/agent-memory-layer.md)):
 
@@ -515,7 +515,7 @@ python3 -m pytest eval/eval_test.py -q      # harness self-tests
 
 ## Architecture
 
-![Sage-Wiki Architecture](sage-wiki-architecture.png)
+![Sage-Wiki Architecture](assets/sage-wiki-architecture.png)
 
 - **Storage:** SQLite with FTS5 (BM25 search) + BLOB vectors (cosine similarity) + compile_items table for per-source tier/state tracking
 - **Ontology:** Typed entity-relation graph with BFS traversal and cycle detection

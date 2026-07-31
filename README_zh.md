@@ -30,7 +30,7 @@ _外圈边界上的点代表知识库中所有文档的摘要，内圈的点代�
 
 ## 知识图谱与图记忆
 
-![sage-wiki 图引擎](sage-wiki-graph-engine.png)
+![sage-wiki 图引擎](assets/sage-wiki-graph-engine.png)
 
 向量检索返回与查询*看起来相似*的片段。图还记录 **事物之间如何关联**，因此需要两三跳才能回答的问题可以靠遍历得出，而不必指望某个片段恰好包含完整链条。sage-wiki 把这张图作为编译产物构建 —— 而不是另一套需要同步的数据库。
 
@@ -88,7 +88,7 @@ go build -tags webui -o sage-wiki ./cmd/sage-wiki/
 
 ## 快速开始
 
-![编译器管线](sage-wiki-compiler-pipeline.png)
+![编译器管线](assets/sage-wiki-compiler-pipeline.png)
 
 ### 全新项目（Greenfield）
 
@@ -203,7 +203,7 @@ sage-wiki serve --ui        # http://127.0.0.1:3333，需要 -tags webui 构建
 
 ## MCP 集成
 
-![MCP 集成](sage-wiki-interfaces.png)
+![MCP 集成](assets/sage-wiki-interfaces.png)
 
 添加到 `.mcp.json`（Claude Code；其他 Agent 见 [Agent 记忆层指南](docs/guides/agent-memory-layer.md)）：
 

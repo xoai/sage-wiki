@@ -30,7 +30,7 @@ _외곽 경계의 점들은 지식 베이스에 있는 모든 문서의 요약�
 
 ## 지식 그래프와 그래프 메모리
 
-![sage-wiki 그래프 엔진](sage-wiki-graph-engine.png)
+![sage-wiki 그래프 엔진](assets/sage-wiki-graph-engine.png)
 
 벡터 검색은 질의와 *비슷해 보이는* 구절을 찾아옵니다. 그래프는 여기에 더해 **사물이 어떻게 연결되는지**를 저장하므로, 두세 단계를 거쳐야 하는 질문도 하나의 청크가 전체 사슬을 담고 있기를 기대하는 대신 순회로 답할 수 있습니다. sage-wiki는 이 그래프를 컴파일 산출물로 만듭니다 — 따로 동기화해야 하는 두 번째 데이터베이스가 아닙니다.
 
@@ -88,7 +88,7 @@ go build -tags webui -o sage-wiki ./cmd/sage-wiki/
 
 ## 빠른 시작
 
-![컴파일러 파이프라인](sage-wiki-compiler-pipeline.png)
+![컴파일러 파이프라인](assets/sage-wiki-compiler-pipeline.png)
 
 ### 새 프로젝트 (Greenfield)
 
@@ -220,7 +220,7 @@ Preact + Tailwind로 구축되어 `go:embed`로 임베딩됩니다 (~1.2 MB, gzi
 
 ## MCP 통합
 
-![MCP 통합](sage-wiki-interfaces.png)
+![MCP 통합](assets/sage-wiki-interfaces.png)
 
 `.mcp.json`에 추가하세요 (Claude Code 기준; 다른 에이전트는 [에이전트 메모리 레이어 가이드](docs/guides/agent-memory-layer.md) 참조):
 
