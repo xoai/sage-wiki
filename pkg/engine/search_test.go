@@ -99,3 +99,41 @@ func TestGraphAPI(t *testing.T) {
 func time2026() time.Time {
 	return time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 }
+
+// TestGraphAPIAsOfSemantics pins Gate 8 M1: AsOf().Entities errors loudly;
+// AsOf().Relations drops out-of-window edges.
+func TestGraphAPIAsOfSemantics(t *testing.T) {
+	dir := initWorkspace(t)
+	w, err := Open(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+
+	ont := w.app.Ont
+	ont.AddEntity(store.Entity{ID: "e-a", Type: "concept", Name: "Alpha", CreatedAt: "2026-01-01T00:00:00Z"})
+	ont.AddEntity(store.Entity{ID: "e-b", Type: "concept", Name: "Beta", CreatedAt: "2026-01-01T00:00:00Z"})
+	ont.AddRelation(store.Relation{ID: "r1", SourceID: "e-a", TargetID: "e-b", Relation: ontology.RelCites, CreatedAt: "2026-01-02T00:00:00Z", ValidFrom: "2026-03-01T00:00:00Z"})
+
+	past := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)  // before ValidFrom
+	later := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC) // inside the window
+
+	if _, err := w.Graph().AsOf(past).Entities(context.Background(), GraphFilter{}); err == nil {
+		t.Error("AsOf().Entities must error loudly, not return current data")
+	}
+
+	rels, err := w.Graph().AsOf(past).Relations(context.Background(), GraphFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rels) != 0 {
+		t.Errorf("edge not yet valid at %v must be filtered, got %d", past, len(rels))
+	}
+	rels, err = w.Graph().AsOf(later).Relations(context.Background(), GraphFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rels) != 1 {
+		t.Errorf("edge valid at %v must be returned, got %d", later, len(rels))
+	}
+}

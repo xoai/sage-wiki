@@ -5,10 +5,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/xoai/sage-wiki/internal/cli"
-	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/pkg/engine"
 )
 
@@ -56,10 +56,8 @@ func runCapture(cmd *cobra.Command, args []string) error {
 		return cli.CLIError(outputFormat, fmt.Errorf("content too large (%d bytes, max 100KB)", len(content)))
 	}
 
-	cfg, err := config.Load(resolveConfigPath(dir))
-	if err != nil {
-		return cli.CLIError(outputFormat, err)
-	}
+	// Config is loaded by the engine open below (WithConfigFile); the shim
+	// needs no config of its own since engine.Capture owns the format.
 
 	// SPEC-01: the capture write is a workspace mutation — take the
 	// engine's single-writer lock so a capture during an active compile
@@ -81,33 +79,18 @@ func runCapture(cmd *cobra.Command, args []string) error {
 		return cli.CLIError(outputFormat, fmt.Errorf("workspace predates format versioning (v0.2.x) — re-run with --upgrade to adopt it (one-way)"))
 	}
 
-	// Write as raw capture file (same as MCP fallback)
-	capturesDir := filepath.Join(dir, "raw", "captures")
-	os.MkdirAll(capturesDir, 0755)
-
-	slug := fmt.Sprintf("capture-%s", cfg.Compiler.UserNow()[:10])
-	relPath := filepath.Join("raw", "captures", slug+".md")
-	absPath := filepath.Join(dir, relPath)
-	for i := 1; ; i++ {
-		if _, err := os.Stat(absPath); os.IsNotExist(err) {
-			break
-		}
-		relPath = filepath.Join("raw", "captures", fmt.Sprintf("%s-%d.md", slug, i))
-		absPath = filepath.Join(dir, relPath)
-	}
-
-	fm := fmt.Sprintf("---\nsource: cli-capture\ncaptured_at: %s\n", cfg.Compiler.UserNow())
-	if tagsStr != "" {
-		fm += fmt.Sprintf("tags: [%s]\n", tagsStr)
-	}
-	if captureCtx != "" {
-		fm += fmt.Sprintf("context: %q\n", captureCtx)
-	}
-	fm += "---\n\n"
-
-	if err := os.WriteFile(absPath, []byte(fm+content+"\n"), 0644); err != nil {
+	// SPEC-01: one capture implementation (pack rule 2) — engine.Capture
+	// owns the file format; the shim passes the CLI's metadata through.
+	id, err := w.Capture(cmd.Context(), engine.Source{
+		Reader:  strings.NewReader(content),
+		Context: captureCtx,
+		Tags:    tagsStr,
+		Origin:  "cli-capture",
+	})
+	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
+	relPath, _ := filepath.Rel(dir, string(id))
 
 	msg := fmt.Sprintf("Captured to %s. Run `sage-wiki compile` to process.", relPath)
 	if outputFormat == "json" {

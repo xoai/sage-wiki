@@ -16,8 +16,9 @@ import (
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
 
-// DocID identifies a captured source. Today it is the source's path inside
-// the workspace (there is no separate doc-id concept; SPEC-01 B.1 8d).
+// DocID identifies a captured source: the source's path RELATIVE to the
+// workspace root (there is no separate doc-id concept; SPEC-01 B.1 8d).
+// All three capture modes return the same shape.
 type DocID string
 
 // Source is one document to capture. Exactly one of Path, URL, or Reader
@@ -121,7 +122,11 @@ func (w *Workspace) Capture(ctx context.Context, src Source) (DocID, error) {
 		if err := os.WriteFile(dst, []byte(fm+string(data)+"\n"), 0o644); err != nil {
 			return "", fmt.Errorf("engine: write capture: %w", err)
 		}
-		return DocID(dst), nil
+		rel, err := filepath.Rel(w.dir, dst)
+		if err != nil {
+			return "", fmt.Errorf("engine: relativize capture path: %w", err)
+		}
+		return DocID(rel), nil
 	}
 }
 

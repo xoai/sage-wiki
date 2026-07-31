@@ -56,7 +56,7 @@ func TestCaptureReaderAndPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Capture reader: %v", err)
 	}
-	if _, err := os.Stat(string(id)); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, string(id))); err != nil {
 		t.Errorf("captured file missing: %v", err)
 	}
 
@@ -203,11 +203,11 @@ func TestCaptureReaderDedup(t *testing.T) {
 	if id1 == id2 {
 		t.Fatalf("same-second captures collided: %q", id1)
 	}
-	data, err := os.ReadFile(string(id1))
+	data, err := os.ReadFile(filepath.Join(dir, string(id1)))
 	if err != nil || !strings.Contains(string(data), "first") {
 		t.Errorf("first capture lost/corrupt: %q %v", data, err)
 	}
-	data2, _ := os.ReadFile(string(id2))
+	data2, _ := os.ReadFile(filepath.Join(dir, string(id2)))
 	if !strings.Contains(string(data2), "second") {
 		t.Errorf("second capture content = %q", data2)
 	}
