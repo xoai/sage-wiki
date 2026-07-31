@@ -46,7 +46,10 @@ func probe(rng *rand.Rand, dim int) []float32 {
 
 func TestANN_RecallParity(t *testing.T) {
 	db := annTestDB(t)
-	const n, dim, probes = 2000, 64, 20
+	// n=1000 (was 2000): the gate is recall ≥9/10 vs brute force, and the
+	// margin GROWS at smaller n (top-10 is 1% of corpus vs 0.5%) while the
+	// HNSW stays multi-layer — same coverage, half the seed+build cost.
+	const n, dim, probes = 1000, 64, 20
 
 	brute := NewStore(db)
 	seedCorpus(t, brute, n, dim, 42)

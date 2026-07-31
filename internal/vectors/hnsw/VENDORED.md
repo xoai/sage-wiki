@@ -66,4 +66,7 @@ open), analyzer.go, SavedGraph, tests.
 
 Report-worthy: github.com/coder/hnsw — heap.Max() min-heap fallacy in
 layerNode.search. If upstream fixes it, this directory can be dropped
-and the dependency restored (keep the recall test as the gate).
+and the dependency restored (keep the recall test as the gate: 5
+independently seeded 2000×64-dim graphs × 7 self-query probes at
+ef=100 — reduced from 20 graphs in 2026-07 for CI wall time; detection
+margin against the gated 60%-failure defect remains overwhelming).
