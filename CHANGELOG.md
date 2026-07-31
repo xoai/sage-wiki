@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Documentation
+
+- **README + all six translations updated for the v0.2.6 surface.** New
+  "Client SDKs" section (Python + TypeScript with quickstart snippets) and
+  "Examples" subsection (LangGraph, Vercel AI SDK) in all seven READMEs;
+  the Guides table now links the HTTP API guide.
+
 ## 0.2.6 — 2026-07-31
 
 ### Added

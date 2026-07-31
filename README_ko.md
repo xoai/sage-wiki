@@ -58,6 +58,7 @@ sage-wiki provenance "service mesh"    # 이 개념을 만든 출처
 | 가이드 | 설명 |
 |-------|-------------|
 | [에이전트 메모리 레이어](docs/guides/agent-memory-layer.md) | MCP 설정, 스킬 파일, 캡처 워크플로우, 읽기-캡처-진화 루프 |
+| [HTTP API](docs/guides/http-api.md) | /v1 REST 표면: 인증, 에러 모델, 멱등성, 비동기 작업 |
 | [그래프 메모리](docs/guides/graph-memory.md) | 근거가 있는 관계, 트리플 추출, 엔티티 해소, 그래프 QA |
 | [설정](docs/guides/configuration.md) | 전체 주석이 달린 config.yaml, 멀티 프로바이더 설정, serve 워커 |
 | [팀 설정](docs/guides/team-setup.md) | Git 동기화, 공유 서버, 허브 연합 배포 패턴 |
@@ -272,6 +273,51 @@ Pre-1.0 — 버전을 고정하세요.
 **지식 캡처** — 에이전트는 `wiki_capture` / `wiki_learn`을 통해
 인사이트를 다시 저장하여 읽기-캡처-진화 루프를 완성합니다. 워크플로우와 팁:
 [에이전트 메모리 레이어](docs/guides/agent-memory-layer.md).
+
+## 클라이언트 SDK
+
+`/v1` REST API용 타입 클라이언트 (Pre-1.0 — 버전을 고정하세요):
+
+**Python** — `pip install sagewiki` (≥3.9, `httpx`만 사용):
+
+```python
+from sagewiki import SageWiki
+
+c = SageWiki()  # 환경 변수 SAGE_WIKI_URL / SAGE_WIKI_TOKEN
+for r in c.search("attention", limit=5).results:
+    print(r.final_score, r.content[:80])
+job = c.compile(topic="attention")
+job.wait(timeout=600)  # 명시적 타임아웃 필수
+```
+
+**TypeScript** — `npm install sagewiki` (런타임 의존성 제로, 전역
+`fetch`; Node ≥18, Deno, Bun, 엣지 런타임):
+
+```ts
+import { SageWikiClient } from "sagewiki";
+
+const c = new SageWikiClient();
+const results = await c.search("attention", { limit: 5 });
+const job = await c.compile({ topic: "attention" });
+await job.waitUntilDone({ timeoutMs: 600_000 });
+```
+
+두 클라이언트 모두 `/v1` 표면 전체를 다룹니다: 검색, 출처, 그래프 쿼리,
+컴파일된 wiki, 캡처/쓰기, 비동기 compile/lint 작업과 코드 기반 에러 분류.
+문서: [Python](clients/python/README.md) · [TypeScript](clients/typescript/README.md) ·
+[HTTP API 가이드](docs/guides/http-api.md). Go 프로그램은 HTTP를 완전히
+생략할 수 있습니다 — [Go 프로그램에 임베딩](#go-프로그램에-임베딩) 참조.
+
+### 예제
+
+실제 서버를 대상으로 CI에서 검증되는 복사 가능한 프레임워크 통합:
+
+- [`examples/langgraph/`](examples/langgraph/) — 메모리 기반 LangGraph
+  노드 (Python 클라이언트): `uncompiled_sources` → 토픽 컴파일 패턴의
+  검색과 캡처.
+- [`examples/vercel-ai-sdk/`](examples/vercel-ai-sdk/) — `search`,
+  `graphQuery`, `provenance`를 Vercel AI SDK 도구로 제공 (TypeScript
+  클라이언트). 엣지 배포 가능.
 
 ### Go 프로그램에 임베딩
 

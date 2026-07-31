@@ -58,6 +58,7 @@ Les arêtes sont bi-temporelles : contredire un fait invalide l'ancienne arête 
 | Guide | Description |
 |-------|-------------|
 | [Couche mémoire agent](docs/guides/agent-memory-layer.md) | Configuration MCP, fichiers de compétences, workflows de capture, boucle lire-capturer-évoluer |
+| [API HTTP](docs/guides/http-api.md) | La surface REST /v1 : auth, modèle d'erreur, idempotence, jobs asynchrones |
 | [Mémoire graphe](docs/guides/graph-memory.md) | Relations avec preuves, extraction de triplets, résolution d'entités, Q&R sur graphe |
 | [Configuration](docs/guides/configuration.md) | Le config.yaml complet annoté, configuration multi-fournisseurs, worker de serve |
 | [Configuration d'équipe](docs/guides/team-setup.md) | Modèles de déploiement git synchronisé, serveur partagé et fédération hub |
@@ -278,6 +279,52 @@ peuvent pas devenir obsolètes quand les outils changent. Pre-1.0 —
 **Capture de connaissances** — les agents stockent leurs découvertes en retour
 via `wiki_capture` / `wiki_learn`, fermant la boucle lire-capturer-évoluer.
 Workflows et astuces : [Couche mémoire agent](docs/guides/agent-memory-layer.md).
+
+## SDK clients
+
+Clients typés pour l'API REST `/v1` (pre-1.0 — épinglez une version) :
+
+**Python** — `pip install sagewiki` (≥3.9, `httpx` uniquement) :
+
+```python
+from sagewiki import SageWiki
+
+c = SageWiki()  # SAGE_WIKI_URL / SAGE_WIKI_TOKEN depuis l'env
+for r in c.search("attention", limit=5).results:
+    print(r.final_score, r.content[:80])
+job = c.compile(topic="attention")
+job.wait(timeout=600)  # timeout explicite requis
+```
+
+**TypeScript** — `npm install sagewiki` (zéro dépendance runtime, `fetch`
+global ; Node ≥18, Deno, Bun, runtimes edge) :
+
+```ts
+import { SageWikiClient } from "sagewiki";
+
+const c = new SageWikiClient();
+const results = await c.search("attention", { limit: 5 });
+const job = await c.compile({ topic: "attention" });
+await job.waitUntilDone({ timeoutMs: 600_000 });
+```
+
+Les deux clients couvrent toute la surface `/v1` : recherche, provenance,
+requêtes de graphe, wiki compilé, captures/écritures et jobs compile/lint
+asynchrones avec une taxonomie d'erreurs pilotée par code. Docs :
+[Python](clients/python/README.md) · [TypeScript](clients/typescript/README.md) ·
+[guide API HTTP](docs/guides/http-api.md). Les programmes Go peuvent éviter
+HTTP entièrement — voir [Intégration dans un programme Go](#intégration-dans-un-programme-go).
+
+### Exemples
+
+Intégrations copiables, exercées en CI contre un serveur réel :
+
+- [`examples/langgraph/`](examples/langgraph/) — nœuds LangGraph adossés à
+  la mémoire (client Python) : récupération avec le pattern
+  `uncompiled_sources` → compile par sujet, plus capture.
+- [`examples/vercel-ai-sdk/`](examples/vercel-ai-sdk/) — `search`,
+  `graphQuery`, `provenance` comme outils Vercel AI SDK (client TypeScript) ;
+  déployable en edge.
 
 ### Intégration dans un programme Go
 

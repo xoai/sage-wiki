@@ -58,6 +58,7 @@ sage-wiki provenance "service mesh"    # 哪些来源产生了这个概念
 | 指南 | 说明 |
 |-------|-------------|
 | [Agent 记忆层](docs/guides/agent-memory-layer.md) | MCP 配置、技能文件、捕获工作流、读取-捕获-演进循环 |
+| [HTTP API](docs/guides/http-api.md) | /v1 REST 接口：认证、错误模型、幂等性、异步任务 |
 | [图记忆](docs/guides/graph-memory.md) | 带证据的关系、三元组抽取、实体消解、图问答 |
 | [配置](docs/guides/configuration.md) | 逐行注释的完整 config.yaml、多提供商配置、serve 工作器 |
 | [团队配置](docs/guides/team-setup.md) | Git 同步、共享服务器与 hub 联邦三种部署模式 |
@@ -241,6 +242,50 @@ npx skills add https://github.com/xoai/sage-wiki --skill sage-wiki-integrate
 两个技能都从实时 MCP 注册表生成（`go run ./tools/skillgen/`），并在 CI 中进行漂移检查——工具变更时不会过时。Pre-1.0 —— 请锁定版本。
 
 **知识捕获** —— Agent 通过 `wiki_capture` / `wiki_learn` 将洞见存回 wiki，闭合"读取-捕获-演进"循环。工作流与技巧：[Agent 记忆层](docs/guides/agent-memory-layer.md)。
+
+## 客户端 SDK
+
+`/v1` REST API 的类型化客户端（Pre-1.0 —— 请锁定版本）：
+
+**Python** —— `pip install sagewiki`（≥3.9，仅依赖 `httpx`）：
+
+```python
+from sagewiki import SageWiki
+
+c = SageWiki()  # 从环境变量读取 SAGE_WIKI_URL / SAGE_WIKI_TOKEN
+for r in c.search("attention", limit=5).results:
+    print(r.final_score, r.content[:80])
+job = c.compile(topic="attention")
+job.wait(timeout=600)  # 必须显式指定超时
+```
+
+**TypeScript** —— `npm install sagewiki`（零运行时依赖，全局
+`fetch`；Node ≥18、Deno、Bun、边缘运行时）：
+
+```ts
+import { SageWikiClient } from "sagewiki";
+
+const c = new SageWikiClient();
+const results = await c.search("attention", { limit: 5 });
+const job = await c.compile({ topic: "attention" });
+await job.waitUntilDone({ timeoutMs: 600_000 });
+```
+
+两个客户端都覆盖完整的 `/v1` 接口：搜索、溯源、图查询、编译后的 wiki、
+捕获/写入，以及异步 compile/lint 任务和基于错误码的错误分类。文档：
+[Python](clients/python/README.md) · [TypeScript](clients/typescript/README.md) ·
+[HTTP API 指南](docs/guides/http-api.md)。Go 程序可以完全绕过 HTTP ——
+参见[在 Go 程序中嵌入](#在-go-程序中嵌入)。
+
+### 示例
+
+可直接复制的框架集成，在 CI 中针对真实服务器运行验证：
+
+- [`examples/langgraph/`](examples/langgraph/) —— 带记忆的 LangGraph
+  节点（Python 客户端）：`uncompiled_sources` → 主题编译模式的检索与捕获。
+- [`examples/vercel-ai-sdk/`](examples/vercel-ai-sdk/) —— 以 Vercel AI
+  SDK 工具形式提供 `search`、`graphQuery`、`provenance`（TypeScript
+  客户端）；可部署到边缘。
 
 ### 在 Go 程序中嵌入
 

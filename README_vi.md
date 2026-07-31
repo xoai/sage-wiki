@@ -58,6 +58,7 @@ Các cạnh mang tính lưỡng thời gian (bi-temporal): khi một sự thật
 | Hướng dẫn | Mô tả |
 |-------|-------------|
 | [Lớp bộ nhớ Agent](docs/guides/agent-memory-layer.md) | Cấu hình MCP, tệp kỹ năng, quy trình ghi nhận, vòng lặp đọc-ghi nhận-tiến hóa |
+| [HTTP API](docs/guides/http-api.md) | Bề mặt REST /v1: xác thực, mô hình lỗi, idempotency, job bất đồng bộ |
 | [Bộ nhớ đồ thị](docs/guides/graph-memory.md) | Quan hệ có bằng chứng, trích xuất bộ ba, phân giải thực thể, hỏi đáp đồ thị |
 | [Cấu hình](docs/guides/configuration.md) | config.yaml đầy đủ có chú giải, cấu hình đa nhà cung cấp, worker của serve |
 | [Thiết lập nhóm](docs/guides/team-setup.md) | Các mẫu triển khai đồng bộ git, máy chủ dùng chung, và liên kết hub |
@@ -274,6 +275,52 @@ thay đổi. Pre-1.0 — hãy ghim một phiên bản.
 **Ghi nhận tri thức** — agent lưu lại các phát hiện qua `wiki_capture` /
 `wiki_learn`, khép kín vòng lặp đọc-ghi nhận-tiến hóa. Quy trình và mẹo:
 [Lớp bộ nhớ Agent](docs/guides/agent-memory-layer.md).
+
+## Client SDK
+
+Client có kiểu cho REST API `/v1` (pre-1.0 — hãy ghim một phiên bản):
+
+**Python** — `pip install sagewiki` (≥3.9, chỉ `httpx`):
+
+```python
+from sagewiki import SageWiki
+
+c = SageWiki()  # SAGE_WIKI_URL / SAGE_WIKI_TOKEN từ env
+for r in c.search("attention", limit=5).results:
+    print(r.final_score, r.content[:80])
+job = c.compile(topic="attention")
+job.wait(timeout=600)  # bắt buộc timeout tường minh
+```
+
+**TypeScript** — `npm install sagewiki` (không phụ thuộc runtime, `fetch`
+toàn cục; Node ≥18, Deno, Bun, edge runtime):
+
+```ts
+import { SageWikiClient } from "sagewiki";
+
+const c = new SageWikiClient();
+const results = await c.search("attention", { limit: 5 });
+const job = await c.compile({ topic: "attention" });
+await job.waitUntilDone({ timeoutMs: 600_000 });
+```
+
+Cả hai client bao phủ toàn bộ bề mặt `/v1`: tìm kiếm, provenance, truy vấn
+đồ thị, wiki đã biên dịch, capture/ghi, và các job compile/lint bất đồng bộ
+với phân loại lỗi theo mã. Tài liệu: [Python](clients/python/README.md) ·
+[TypeScript](clients/typescript/README.md) ·
+[hướng dẫn HTTP API](docs/guides/http-api.md). Chương trình Go có thể bỏ qua
+HTTP hoàn toàn — xem [Nhúng vào chương trình Go](#nhúng-vào-chương-trình-go).
+
+### Ví dụ
+
+Các tích hợp framework có thể sao chép, được chạy trong CI với server thật:
+
+- [`examples/langgraph/`](examples/langgraph/) — các node LangGraph có bộ
+  nhớ (client Python): truy xuất với pattern `uncompiled_sources` →
+  compile theo chủ đề, cùng capture.
+- [`examples/vercel-ai-sdk/`](examples/vercel-ai-sdk/) — `search`,
+  `graphQuery`, `provenance` dưới dạng tool Vercel AI SDK (client
+  TypeScript); triển khai được trên edge.
 
 ### Nhúng vào chương trình Go
 

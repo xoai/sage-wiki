@@ -75,6 +75,7 @@ and mechanics: [graph memory](docs/guides/graph-memory.md).
 | Guide | Description |
 |-------|-------------|
 | [Agent Memory Layer](docs/guides/agent-memory-layer.md) | MCP setup, skill files, capture workflows, read-capture-evolve loop |
+| [HTTP API](docs/guides/http-api.md) | The /v1 REST surface: auth, error model, idempotency, async jobs |
 | [Graph Memory](docs/guides/graph-memory.md) | Evidenced relations, triple extraction, entity resolution, graph QA |
 | [Configuration](docs/guides/configuration.md) | The full annotated config.yaml, multi-provider setup, serve worker |
 | [Team Setup](docs/guides/team-setup.md) | Git-synced, shared server, and hub federation deployment patterns |
@@ -300,6 +301,52 @@ when tools change. Pre-1.0 — pin a version.
 **Knowledge capture** — agents store insights back via `wiki_capture` /
 `wiki_learn`, closing the read-capture-evolve loop. Workflows and tips:
 [Agent Memory Layer](docs/guides/agent-memory-layer.md).
+
+## Client SDKs
+
+Typed clients over the `/v1` REST API (pre-1.0 — pin a version):
+
+**Python** — `pip install sagewiki` (≥3.9, `httpx` only):
+
+```python
+from sagewiki import SageWiki
+
+c = SageWiki()  # SAGE_WIKI_URL / SAGE_WIKI_TOKEN from env
+for r in c.search("attention", limit=5).results:
+    print(r.final_score, r.content[:80])
+job = c.compile(topic="attention")
+job.wait(timeout=600)  # explicit timeout required
+```
+
+**TypeScript** — `npm install sagewiki` (zero runtime dependencies, global
+`fetch`; Node ≥18, Deno, Bun, edge runtimes):
+
+```ts
+import { SageWikiClient } from "sagewiki";
+
+const c = new SageWikiClient();
+const results = await c.search("attention", { limit: 5 });
+const job = await c.compile({ topic: "attention" });
+await job.waitUntilDone({ timeoutMs: 600_000 });
+```
+
+Both clients cover the full `/v1` surface: search, provenance, graph
+queries, the compiled wiki, captures/writes, and async compile/lint jobs
+with a code-driven error taxonomy. Docs:
+[Python](clients/python/README.md) · [TypeScript](clients/typescript/README.md) ·
+[HTTP API guide](docs/guides/http-api.md). Go programs can skip HTTP
+entirely — see [Embedding in a Go program](#embedding-in-a-go-program).
+
+### Examples
+
+Copy-paste framework integrations, exercised in CI against a live server:
+
+- [`examples/langgraph/`](examples/langgraph/) — memory-backed LangGraph
+  nodes (Python client): retrieval with the `uncompiled_sources` →
+  topic-compile pattern, plus capture.
+- [`examples/vercel-ai-sdk/`](examples/vercel-ai-sdk/) — `search`,
+  `graphQuery`, `provenance` as Vercel AI SDK tools (TypeScript client);
+  edge-deployable.
 
 ### Embedding in a Go program
 

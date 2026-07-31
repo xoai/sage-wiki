@@ -58,6 +58,7 @@ sage-wiki provenance "service mesh"    # какие источники поро�
 | Руководство | Описание |
 |-------|-------------|
 | [Слой памяти агента](docs/guides/agent-memory-layer.md) | Настройка MCP, файлы навыков, рабочие процессы захвата, цикл «чтение–захват–эволюция» |
+| [HTTP API](docs/guides/http-api.md) | REST-поверхность /v1: аутентификация, модель ошибок, идемпотентность, асинхронные задания |
 | [Графовая память](docs/guides/graph-memory.md) | Отношения с доказательствами, извлечение триплетов, разрешение сущностей, графовый Q&A |
 | [Конфигурация](docs/guides/configuration.md) | Полный аннотированный config.yaml, мультипровайдерная настройка, воркер serve |
 | [Командная настройка](docs/guides/team-setup.md) | Схемы развёртывания: синхронизация через git, общий сервер, федерация хабов |
@@ -277,6 +278,52 @@ Pre-1.0 — зафиксируйте версию.
 **Захват знаний** — агенты сохраняют выводы обратно через `wiki_capture` /
 `wiki_learn`, замыкая цикл «чтение–захват–эволюция». Рабочие процессы и советы:
 [Слой памяти агента](docs/guides/agent-memory-layer.md).
+
+## Клиентские SDK
+
+Типизированные клиенты для REST API `/v1` (pre-1.0 — зафиксируйте версию):
+
+**Python** — `pip install sagewiki` (≥3.9, только `httpx`):
+
+```python
+from sagewiki import SageWiki
+
+c = SageWiki()  # SAGE_WIKI_URL / SAGE_WIKI_TOKEN из окружения
+for r in c.search("attention", limit=5).results:
+    print(r.final_score, r.content[:80])
+job = c.compile(topic="attention")
+job.wait(timeout=600)  # явный таймаут обязателен
+```
+
+**TypeScript** — `npm install sagewiki` (ноль runtime-зависимостей,
+глобальный `fetch`; Node ≥18, Deno, Bun, edge-рантаймы):
+
+```ts
+import { SageWikiClient } from "sagewiki";
+
+const c = new SageWikiClient();
+const results = await c.search("attention", { limit: 5 });
+const job = await c.compile({ topic: "attention" });
+await job.waitUntilDone({ timeoutMs: 600_000 });
+```
+
+Оба клиента покрывают всю поверхность `/v1`: поиск, происхождение
+(provenance), графовые запросы, скомпилированную wiki, захват/запись и
+асинхронные задания compile/lint с кодовой таксономией ошибок. Документация:
+[Python](clients/python/README.md) · [TypeScript](clients/typescript/README.md) ·
+[руководство по HTTP API](docs/guides/http-api.md). Go-программы могут
+вообще обойтись без HTTP — см. [Встраивание в Go-программу](#встраивание-в-go-программу).
+
+### Примеры
+
+Готовые к копированию интеграции, проверяемые в CI против живого сервера:
+
+- [`examples/langgraph/`](examples/langgraph/) — узлы LangGraph с памятью
+  (Python-клиент): выборка с паттерном `uncompiled_sources` → тематическая
+  компиляция, плюс захват.
+- [`examples/vercel-ai-sdk/`](examples/vercel-ai-sdk/) — `search`,
+  `graphQuery`, `provenance` как инструменты Vercel AI SDK
+  (TypeScript-клиент); развёртывается на edge.
 
 ### Встраивание в Go-программу
 

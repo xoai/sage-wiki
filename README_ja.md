@@ -58,6 +58,7 @@ sage-wiki provenance "service mesh"    # この概念を生んだソース
 | ガイド | 説明 |
 |-------|------|
 | [エージェントメモリレイヤー](docs/guides/agent-memory-layer.md) | MCP設定、スキルファイル、キャプチャワークフロー、読み取り・キャプチャ・進化ループ |
+| [HTTP API](docs/guides/http-api.md) | /v1 REST サーフェス：認証、エラーモデル、冪等性、非同期ジョブ |
 | [グラフメモリ](docs/guides/graph-memory.md) | 根拠付きリレーション、トリプル抽出、エンティティ解決、グラフQA |
 | [設定](docs/guides/configuration.md) | 完全な注釈付きconfig.yaml、マルチプロバイダーセットアップ、serveワーカー |
 | [チームセットアップ](docs/guides/team-setup.md) | Git同期、共有サーバー、ハブフェデレーションのデプロイパターン |
@@ -273,6 +274,52 @@ Pre-1.0 — バージョンを固定してください。
 **知識キャプチャ** — エージェントは`wiki_capture` / `wiki_learn`を介して
 インサイトを書き戻し、読み取り・キャプチャ・進化のループを閉じます。
 ワークフローとヒント：[エージェントメモリレイヤー](docs/guides/agent-memory-layer.md)。
+
+## クライアントSDK
+
+`/v1` REST APIの型付きクライアント（Pre-1.0 — バージョンを固定してください）：
+
+**Python** — `pip install sagewiki`（≥3.9、`httpx`のみ）：
+
+```python
+from sagewiki import SageWiki
+
+c = SageWiki()  # 環境変数 SAGE_WIKI_URL / SAGE_WIKI_TOKEN
+for r in c.search("attention", limit=5).results:
+    print(r.final_score, r.content[:80])
+job = c.compile(topic="attention")
+job.wait(timeout=600)  # 明示的なタイムアウトが必須
+```
+
+**TypeScript** — `npm install sagewiki`（ランタイム依存ゼロ、グローバル
+`fetch`。Node ≥18、Deno、Bun、エッジランタイム）：
+
+```ts
+import { SageWikiClient } from "sagewiki";
+
+const c = new SageWikiClient();
+const results = await c.search("attention", { limit: 5 });
+const job = await c.compile({ topic: "attention" });
+await job.waitUntilDone({ timeoutMs: 600_000 });
+```
+
+両クライアントとも`/v1`サーフェス全体をカバー：検索、プロベナンス、
+グラフクエリ、コンパイル済みwiki、キャプチャ/書き込み、非同期
+compile/lintジョブとコード駆動のエラー分類。ドキュメント：
+[Python](clients/python/README.md) · [TypeScript](clients/typescript/README.md) ·
+[HTTP APIガイド](docs/guides/http-api.md)。GoプログラムはHTTPを完全に
+省略できます — [Goプログラムへの埋め込み](#goプログラムへの埋め込み)を参照。
+
+### 使用例
+
+実サーバーに対してCIで検証される、コピー可能なフレームワーク統合：
+
+- [`examples/langgraph/`](examples/langgraph/) — メモリバックドのLangGraph
+  ノード（Pythonクライアント）：`uncompiled_sources` → トピックコンパイルの
+  パターンによる取得とキャプチャ。
+- [`examples/vercel-ai-sdk/`](examples/vercel-ai-sdk/) — `search`、
+  `graphQuery`、`provenance`をVercel AI SDKツールとして提供
+  （TypeScriptクライアント）。エッジにデプロイ可能。
 
 ### Goプログラムへの埋め込み
 
