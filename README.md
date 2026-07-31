@@ -446,7 +446,17 @@ sage-wiki compile               # poll status, retrieve when done
 ```
 
 `compile --estimate` previews cost; `compiler.mode: auto` batches
-automatically past a threshold. Details: [Configuration](docs/guides/configuration.md).
+automatically past a threshold. Prices come from a `provider:model`
+registry (embedded estimates → `~/.sage-wiki/prices.json` →
+`compiler.price_table`); models with no entry report **unknown**, never a
+guessed number. Audit and review spend:
+
+```bash
+sage-wiki cost models     # which price produced a number, and its source
+sage-wiki cost report     # recorded spend by model and pass/tier
+```
+
+Details: [Configuration](docs/guides/configuration.md).
 
 ### Scaling to large vaults
 
