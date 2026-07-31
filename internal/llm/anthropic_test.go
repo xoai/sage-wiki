@@ -115,3 +115,34 @@ func TestExtraParamsReachProviders(t *testing.T) {
 		}
 	}
 }
+
+// TestAnthropicParseResponse_CacheWriteTokens verifies cache creation tokens
+// land in Usage.CacheWriteTokens instead of being discarded, and cache read
+// tokens remain CachedTokens. SPEC-05.
+func TestAnthropicParseResponse_CacheWriteTokens(t *testing.T) {
+	body := []byte(`{
+		"content": [{"type": "text", "text": "ok"}],
+		"stop_reason": "end_turn",
+		"model": "claude-sonnet-4-5",
+		"usage": {
+			"input_tokens": 100,
+			"output_tokens": 20,
+			"cache_creation_input_tokens": 30,
+			"cache_read_input_tokens": 50
+		}
+	}`)
+	p := &anthropicProvider{}
+	resp, err := p.ParseResponse(body)
+	if err != nil {
+		t.Fatalf("ParseResponse: %v", err)
+	}
+	if resp.Usage.CacheWriteTokens != 30 {
+		t.Errorf("CacheWriteTokens = %d, want 30 (cache_creation_input_tokens)", resp.Usage.CacheWriteTokens)
+	}
+	if resp.Usage.CachedTokens != 50 {
+		t.Errorf("CachedTokens = %d, want 50 (cache_read_input_tokens)", resp.Usage.CachedTokens)
+	}
+	if resp.Usage.InputTokens != 100 {
+		t.Errorf("InputTokens = %d, want 100", resp.Usage.InputTokens)
+	}
+}

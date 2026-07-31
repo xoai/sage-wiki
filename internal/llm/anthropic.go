@@ -267,9 +267,10 @@ func (p *anthropicProvider) ParseResponse(body []byte) (*Response, error) {
 		FinishReason: normalizeAnthropicStop(result.StopReason),
 		Reasoning:    reasoning,
 		Usage: Usage{
-			InputTokens:  result.Usage.InputTokens,
-			OutputTokens: result.Usage.OutputTokens,
-			CachedTokens: result.Usage.CacheReadInputTokens,
+			InputTokens:      result.Usage.InputTokens,
+			OutputTokens:     result.Usage.OutputTokens,
+			CachedTokens:     result.Usage.CacheReadInputTokens,
+			CacheWriteTokens: result.Usage.CacheCreationInputTokens,
 		},
 	}, nil
 }

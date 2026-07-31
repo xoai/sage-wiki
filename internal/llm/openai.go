@@ -140,7 +140,11 @@ func (p *openaiProvider) ParseResponse(body []byte) (*Response, error) {
 			PromptTokens     int `json:"prompt_tokens"`
 			CompletionTokens int `json:"completion_tokens"`
 			TotalTokens      int `json:"total_tokens"`
-			PromptTokensDetails struct {
+			// DeepSeek's native OpenAI-compatible API reports its prefix-cache
+			// split with these two fields instead of prompt_tokens_details.
+			PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens"`
+			PromptCacheMissTokens int `json:"prompt_cache_miss_tokens"`
+			PromptTokensDetails   struct {
 				CachedTokens int `json:"cached_tokens"`
 			} `json:"prompt_tokens_details"`
 		} `json:"usage"`
@@ -159,6 +163,11 @@ func (p *openaiProvider) ParseResponse(body []byte) (*Response, error) {
 		reasoning = result.Choices[0].Message.ReasoningContent
 	}
 
+	cachedTokens := result.Usage.PromptTokensDetails.CachedTokens
+	if result.Usage.PromptCacheHitTokens > 0 {
+		cachedTokens = result.Usage.PromptCacheHitTokens
+	}
+
 	return &Response{
 		Content:      result.Choices[0].Message.Content,
 		Model:        result.Model,
@@ -168,7 +177,7 @@ func (p *openaiProvider) ParseResponse(body []byte) (*Response, error) {
 		Usage: Usage{
 			InputTokens:  result.Usage.PromptTokens,
 			OutputTokens: result.Usage.CompletionTokens,
-			CachedTokens: result.Usage.PromptTokensDetails.CachedTokens,
+			CachedTokens: cachedTokens,
 		},
 	}, nil
 }

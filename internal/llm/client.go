@@ -40,9 +40,10 @@ type CallOpts struct {
 
 // Usage holds detailed token usage breakdown.
 type Usage struct {
-	InputTokens  int
-	OutputTokens int
-	CachedTokens int // tokens served from cache (reduced cost)
+	InputTokens      int
+	OutputTokens     int
+	CachedTokens     int // tokens served from cache (reduced cost)
+	CacheWriteTokens int // tokens written to cache (e.g. anthropic cache_creation; premium rate)
 }
 
 // Response holds the LLM response.

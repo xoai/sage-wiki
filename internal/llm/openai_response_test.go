@@ -166,3 +166,58 @@ func TestEmptyContentDetails(t *testing.T) {
 		})
 	}
 }
+
+// TestOpenAIParseResponse_DeepSeekCacheSplit verifies DeepSeek's native
+// cache fields (prompt_cache_hit_tokens / prompt_cache_miss_tokens) are
+// parsed into the Usage split: Cached=hit, Input=hit+miss. SPEC-05.
+func TestOpenAIParseResponse_DeepSeekCacheSplit(t *testing.T) {
+	body := []byte(`{
+		"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+		"model": "deepseek-chat",
+		"usage": {
+			"prompt_tokens": 100,
+			"completion_tokens": 20,
+			"total_tokens": 120,
+			"prompt_cache_hit_tokens": 70,
+			"prompt_cache_miss_tokens": 30
+		}
+	}`)
+	p := newOpenAIProvider("k", "https://x/v1")
+	resp, err := p.ParseResponse(body)
+	if err != nil {
+		t.Fatalf("ParseResponse: %v", err)
+	}
+	if resp.Usage.CachedTokens != 70 {
+		t.Errorf("CachedTokens = %d, want 70 (prompt_cache_hit_tokens)", resp.Usage.CachedTokens)
+	}
+	if resp.Usage.InputTokens != 100 {
+		t.Errorf("InputTokens = %d, want 100 (hit+miss)", resp.Usage.InputTokens)
+	}
+}
+
+// TestOpenAIParseResponse_CachedTokensFallback verifies the standard
+// prompt_tokens_details.cached_tokens path still works when DeepSeek-native
+// fields are absent. SPEC-05.
+func TestOpenAIParseResponse_CachedTokensFallback(t *testing.T) {
+	body := []byte(`{
+		"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+		"model": "gpt-4o",
+		"usage": {
+			"prompt_tokens": 100,
+			"completion_tokens": 20,
+			"total_tokens": 120,
+			"prompt_tokens_details": {"cached_tokens": 40}
+		}
+	}`)
+	p := newOpenAIProvider("k", "https://x/v1")
+	resp, err := p.ParseResponse(body)
+	if err != nil {
+		t.Fatalf("ParseResponse: %v", err)
+	}
+	if resp.Usage.CachedTokens != 40 {
+		t.Errorf("CachedTokens = %d, want 40", resp.Usage.CachedTokens)
+	}
+	if resp.Usage.InputTokens != 100 {
+		t.Errorf("InputTokens = %d, want 100", resp.Usage.InputTokens)
+	}
+}
