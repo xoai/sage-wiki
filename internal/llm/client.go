@@ -296,6 +296,21 @@ func (c *Client) SetTier(tier int) {
 	c.tier = tier
 }
 
+// RecordBatchUsage fires a usage event for a batch result. Batch usage does
+// not flow through trackUsage (results arrive via polling), so the pipeline
+// consumption site calls this with the pass it knows.
+func (c *Client) RecordBatchUsage(ctx context.Context, pass, model string, usage Usage) {
+	if c.recorder == nil {
+		return
+	}
+	ev := c.buildUsageEvent(model, usage)
+	ev.Pass = pass
+	if c.tracker != nil {
+		ev.Cost, ev.PriceSource, ev.Assumptions = c.tracker.PriceUsage(model, usage, true)
+	}
+	c.recorder.RecordUsage(ctx, ev)
+}
+
 // SetPass sets the current compiler pass name for cost tracking.
 //
 // c.pass is unsynchronized and trackUsage reads it from request goroutines, so
