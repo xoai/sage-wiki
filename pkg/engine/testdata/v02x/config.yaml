@@ -1,0 +1,89 @@
+# sage-wiki configuration
+# Docs: https://github.com/xoai/sage-wiki
+
+version: 1
+project: ws
+description: "sage-wiki project: ws"
+
+sources:
+  - path: raw
+    type: auto          # auto-detect from file extension
+    watch: true
+
+output: wiki
+
+# LLM provider configuration
+# Supported: anthropic, openai, gemini, ollama, openai-compatible, qwen
+# For OpenRouter or other OpenAI-compatible providers, set:
+#   provider: openai-compatible
+#   base_url: https://openrouter.ai/api/v1
+# For Alibaba Cloud DashScope Qwen, set:
+#   provider: qwen
+#   api_key: ${DASHSCOPE_API_KEY}
+api:
+  provider: gemini
+  api_key: ${GEMINI_API_KEY}
+  # base_url:           # custom endpoint (OpenRouter, Azure, local proxy, etc.)
+  # rate_limit: 60      # requests per minute (default: auto per provider)
+
+# Model selection per task
+# Use faster/cheaper models for high-volume tasks, quality models for writing
+models:
+  summarize: 
+  extract: 
+  write: 
+  lint: 
+  query: 
+
+# Embedding configuration (optional — auto-detected from api provider)
+# Override to use a different provider/model for embeddings
+embed:
+  provider: auto        # auto, openai, gemini, ollama, voyage, mistral
+  # model:              # override model (e.g., text-embedding-3-small)
+  # api_key:            # separate API key for embeddings
+  # base_url:           # separate endpoint for embeddings
+
+compiler:
+  max_parallel: 4
+  debounce_seconds: 2
+  summary_max_tokens: 4000
+  article_max_tokens: 4000
+  auto_commit: true
+  auto_lint: true
+  # timezone: Asia/Shanghai   # IANA timezone for user-facing timestamps (default: UTC)
+  # article_fields:           # custom frontmatter fields extracted from LLM response
+  #   - language
+  #   - domain
+
+search:
+  hybrid_weight_bm25: 0.7
+  hybrid_weight_vector: 0.3
+  default_limit: 10
+
+serve:
+  transport: stdio      # stdio or sse
+  port: 3333            # SSE mode only
+
+# Ontology types (optional)
+# Extend built-in types with additional synonyms or add custom types.
+#
+# Built-in relation types: implements, extends, optimizes, contradicts, cites,
+#                          prerequisite_of, trades_off, derived_from
+# Built-in entity types: concept, technique, source, claim, artifact
+#
+# ontology:
+#   relation_types:
+#     - name: implements
+#       synonyms: ["thực hiện", "triển khai"]   # add Vietnamese synonyms
+#     - name: regulates
+#       synonyms: ["regulates", "regulated by", "调控", "调节"]
+#   entity_types:
+#     - name: conversation
+#       description: "A dialogue or discussion"
+#     - name: decision
+#       description: "A recorded decision with rationale"
+#   triples:                      # LLM triple extraction (opt-in, costs 1 call/doc)
+#     enabled: true
+#     model: ""                   # default: models.extract, then models.summarize
+#     max_entities_per_doc: 40
+#     max_relations_per_doc: 60

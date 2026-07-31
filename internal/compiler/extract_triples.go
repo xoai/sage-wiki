@@ -114,6 +114,7 @@ func ExtractTriples(
 	model string,
 	validTypes, validPredicates []string,
 	client *llm.Client,
+	pr *prompts.Registry,
 ) (ExtractedGraph, error) {
 	var graph ExtractedGraph
 
@@ -125,7 +126,7 @@ func ExtractTriples(
 	// payload — path included, since a filename may legally contain the opening
 	// tag on Linux — because Render does not neutralize.
 	body := prompts.NeutralizeTags(fmt.Sprintf("### Source: %s\n%s", summary.SourcePath, summary.Summary))
-	prompt, err := prompts.Render("extract_triples", prompts.TriplesData{
+	prompt, err := renderPrompt(pr, "extract_triples", prompts.TriplesData{
 		ValidTypes:      strings.Join(validTypes, ", "),
 		ValidPredicates: strings.Join(validPredicates, ", "),
 		Summary:         body,
@@ -615,6 +616,7 @@ func ExtractTriplesPass(
 	projectDir string,
 	mf *manifest.Manifest,
 	trustStore store.TrustStore,
+	pr *prompts.Registry,
 ) (touched []string, supersessions []FunctionalSupersession) {
 	if cfg == nil || !cfg.Ontology.Triples.Enabled || ont == nil || client == nil || len(summaries) == 0 {
 		return nil, nil
@@ -722,7 +724,7 @@ func ExtractTriplesPass(
 			doc := s
 			doc.Summary = body
 
-			graph, err := ExtractTriples(ctx, doc, tcfg, model, validTypes, validPredicates, client)
+			graph, err := ExtractTriples(ctx, doc, tcfg, model, validTypes, validPredicates, client, pr)
 			if err != nil {
 				// Every early exit either records a failure or fills its slot.
 				// A cancel mid-flight surfaces as an error here; classify it as

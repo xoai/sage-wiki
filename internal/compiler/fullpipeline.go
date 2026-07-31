@@ -14,6 +14,9 @@ import (
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/shopspring/decimal"
+
+	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/sourcedate"
 	"github.com/xoai/sage-wiki/internal/store"
 )
@@ -73,6 +76,16 @@ type FullPipelineOpts struct {
 	OntStore     store.OntologyStore
 	TrustStore   store.TrustStore // optional — edge conflicts skipped when nil (P3-6)
 	Embedder     embed.Embedder
+
+	// Prompts is the per-workspace template registry (SPEC-01); nil = the
+	// prompts package default (CLI behavior).
+	Prompts *prompts.Registry
+
+	// MaxCost + Tracker implement the budget guard (pkg/engine
+	// CompileRequest.MaxCost): between passes, if accumulated cost exceeds
+	// MaxCost the run stops with BudgetExhausted set. nil = no guard.
+	MaxCost *decimal.Decimal
+	Tracker *llm.CostTracker
 	Backpressure *BackpressureController
 	ItemStore    store.CompileItemStore // optional — for per-article quality scoring
 	CacheEnabled bool
@@ -92,11 +105,24 @@ type FullPipelineResult struct {
 	// must not mark SucceededSources extracted/written unless this is true, or an
 	// interrupted/failed run leaves them un-resumable. P1-1 / C1.
 	Pass23Completed bool
+	// BudgetExhausted is true when the run stopped early at MaxCost.
+	BudgetExhausted bool
 }
 
 // runFullPipeline executes Pass 1 (summarize) → Pass 2 (extract) → Pass 3 (write)
 // on the given sources. This is the existing LLM compilation pipeline, extracted
 // from Compile() for reuse by both the tiered orchestrator and compile-on-demand.
+// budgetExceeded reports whether accumulated tracked cost passed MaxCost.
+// Unknown cost (nil) never trips the guard — an unknown spend cannot be
+// compared to a budget (SPEC-05: unknown is not zero).
+func budgetExceeded(tracker *llm.CostTracker, max *decimal.Decimal) bool {
+	if max == nil || tracker == nil {
+		return false
+	}
+	rep := tracker.Report()
+	return rep.Cost != nil && rep.Cost.GreaterThan(*max)
+}
+
 func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineResult {
 	result := &FullPipelineResult{}
 	cfg := opts.Config
@@ -141,6 +167,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	warnSummaryNameCollisions(sourceInfoPaths(sources), sourceRoots, summaryNaming)
 
 	summaries := Summarize(SummarizeOpts{
+		Prompts:      opts.Prompts,
 		Ctx:           opts.Ctx,
 		ProjectDir:    opts.ProjectDir,
 		OutputDir:     cfg.Output,
@@ -215,6 +242,13 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 
 	client.TeardownCache(sumCacheID)
 
+	// Budget guard: stop between passes when MaxCost is exceeded.
+	if budgetExceeded(opts.Tracker, opts.MaxCost) {
+		log.Info("MaxCost guard: stopping after summarize pass")
+		result.BudgetExhausted = true
+		return result
+	}
+
 	// Pass 2: Concept extraction
 	successfulSummaries := filterSuccessful(summaries)
 	if len(successfulSummaries) == 0 {
@@ -232,12 +266,20 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		extCacheID, _ = client.SetupCache("You are an expert knowledge organizer. Extract structured concepts from source summaries.", extractModel)
 	}
 	progress.StartPhase("Pass 2: Extract concepts", len(successfulSummaries))
-	concepts, err := ExtractConcepts(opts.Ctx, successfulSummaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel)
+	concepts, err := ExtractConcepts(opts.Ctx, successfulSummaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel, opts.Prompts)
 	if err != nil {
 		progress.ItemError("concept extraction", err)
 		result.Errors++
 		progress.EndPhase()
 		client.TeardownCache(extCacheID)
+		return result
+	}
+
+	// Budget guard: stop between passes when MaxCost is exceeded.
+	if budgetExceeded(opts.Tracker, opts.MaxCost) {
+		log.Info("MaxCost guard: stopping after extract pass")
+		progress.EndPhase()
+		result.BudgetExhausted = true
 		return result
 	}
 
@@ -310,7 +352,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	// zero-concept early return below — otherwise triples would silently never
 	// persist on an incremental compile where every concept dedup-merged, which
 	// is the ordinary case. Never fails the compile; see ExtractTriplesPass.
-	touched, supersessions := ExtractTriplesPass(opts.Ctx, writeOntStore, successfulSummaries, concepts, cfg, client, false, opts.ProjectDir, mf, opts.TrustStore)
+	touched, supersessions := ExtractTriplesPass(opts.Ctx, writeOntStore, successfulSummaries, concepts, cfg, client, false, opts.ProjectDir, mf, opts.TrustStore, opts.Prompts)
 
 	// Pass 4: entity resolution (P3-3, opt-in). Deferred rather than called
 	// inline because it must run AFTER Pass 3 — WriteArticles is what creates
@@ -321,7 +363,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	// adds a third. The closure reads `touched` at return time, so Pass 3's
 	// contribution is included.
 	defer func() {
-		ResolveEntitiesPass(opts.Ctx, writeOntStore, touched, cfg, client, opts.Embedder)
+		ResolveEntitiesPass(opts.Ctx, writeOntStore, touched, cfg, client, opts.Embedder, opts.Prompts)
 		// Second supersession trigger (P3-6): links applied above may have
 		// created alias forms the write-time trigger could not see.
 		runSupersessionSweep(writeOntStore, supersessions)
@@ -361,6 +403,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	relPatterns := ontology.RelationPatterns(merged)
 	progress.StartPhase("Pass 3: Write articles", len(concepts))
 	articles := WriteArticles(ArticleWriteOpts{
+		Prompts:            opts.Prompts,
 		Ctx:                opts.Ctx,
 		ProjectDir:         opts.ProjectDir,
 		OutputDir:          cfg.Output,

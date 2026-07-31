@@ -108,6 +108,7 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 	client.SetRecorder(llm.NewFileRecorder(projectDir))
 	client.SetPass("query")
 	client.SetPriceOverride(cfg.Compiler.TokenPriceOverride)
+	client.SetPriceTable(cfg.Compiler.PriceTable)
 
 	model := cfg.Models.Query
 	if model == "" {
@@ -241,6 +242,7 @@ func buildQueryContext(reqCtx context.Context, projectDir string, question strin
 				client.SetRecorder(llm.NewFileRecorder(projectDir))
 				client.SetPass("expand")
 				client.SetPriceOverride(cfg.Compiler.TokenPriceOverride)
+				client.SetPriceTable(cfg.Compiler.PriceTable)
 			}
 		}
 
@@ -644,6 +646,7 @@ func SaveAnswer(projectDir string, question string, answer string, sources []str
 			saveClient.SetRecorder(llm.NewFileRecorder(projectDir))
 			saveClient.SetPass("query")
 			saveClient.SetPriceOverride(cfg.Compiler.TokenPriceOverride)
+			saveClient.SetPriceTable(cfg.Compiler.PriceTable)
 		}
 	}
 	saveTrustCfg := cfg.Trust
@@ -898,6 +901,7 @@ func StreamQuery(ctx context.Context, projectDir string, question string, topK i
 	client.SetRecorder(llm.NewFileRecorder(projectDir))
 	client.SetPass("query")
 	client.SetPriceOverride(cfg.Compiler.TokenPriceOverride)
+	client.SetPriceTable(cfg.Compiler.PriceTable)
 
 	model := cfg.Models.Query
 	if model == "" {

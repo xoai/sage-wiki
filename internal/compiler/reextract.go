@@ -21,16 +21,38 @@ import (
 
 // ReExtract re-runs Pass 2 (concept extraction) and Pass 3 (article writing)
 // using existing summaries from wiki/summaries/. Skips Pass 0 and Pass 1.
-func ReExtract(projectDir string) (*CompileResult, error) {
+// ReExtractOption customizes a ReExtract run.
+type ReExtractOption func(*reExtractOpts)
+
+type reExtractOpts struct {
+	prompts *prompts.Registry
+}
+
+// WithPrompts runs the re-extract against a per-workspace template
+// registry (SPEC-01) instead of the process-global prompts default.
+func WithPrompts(r *prompts.Registry) ReExtractOption {
+	return func(o *reExtractOpts) { o.prompts = r }
+}
+
+func ReExtract(projectDir string, options ...ReExtractOption) (*CompileResult, error) {
 	result := &CompileResult{}
+	var ro reExtractOpts
+	for _, opt := range options {
+		opt(&ro)
+	}
 
 	cfg, err := config.Load(filepath.Join(projectDir, "config.yaml"))
 	if err != nil {
 		return nil, fmt.Errorf("re-extract: load config: %w", err)
 	}
 
-	// Load user prompt overrides if prompts/ directory exists
-	if err := prompts.LoadFromDir(filepath.Join(projectDir, "prompts")); err != nil {
+	// Load user prompt overrides if prompts/ directory exists — into the
+	// supplied registry, else the process-global default.
+	if ro.prompts != nil {
+		if err := ro.prompts.LoadFromDir(filepath.Join(projectDir, "prompts")); err != nil {
+			log.Warn("failed to load custom prompts", "error", err)
+		}
+	} else if err := prompts.LoadFromDir(filepath.Join(projectDir, "prompts")); err != nil {
 		log.Warn("failed to load custom prompts", "error", err)
 	}
 
@@ -104,7 +126,7 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	log.Info("Pass 2: extracting concepts", "from_summaries", len(summaries))
 	// ReExtract has no cancellation context of its own; --re-extract cancellation
 	// is a follow-up. Use a background context so the LLM calls still function.
-	concepts, err := ExtractConcepts(context.Background(), summaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel)
+	concepts, err := ExtractConcepts(context.Background(), summaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel, ro.prompts)
 	if err != nil {
 		return nil, fmt.Errorf("re-extract: concept extraction: %w", err)
 	}
@@ -121,7 +143,7 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	// is true here: this path loads summary FILES from disk, so Summary holds
 	// the frontmatter and SourcePath is the summary's filename, not the source
 	// document.
-	touched, supersessions := ExtractTriplesPass(context.Background(), ontStore, summaries, concepts, cfg, client, true, projectDir, mf, trust.NewStore(db))
+	touched, supersessions := ExtractTriplesPass(context.Background(), ontStore, summaries, concepts, cfg, client, true, projectDir, mf, trust.NewStore(db), ro.prompts)
 
 	// Pass 3: Write articles
 	if len(concepts) > 0 {
@@ -137,6 +159,7 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 		relPatterns := ontology.RelationPatterns(mergedRels)
 		log.Info("Pass 3: writing articles", "concepts", len(concepts))
 		articles := WriteArticles(ArticleWriteOpts{
+		Prompts:            ro.prompts,
 			ProjectDir:         projectDir,
 			OutputDir:          cfg.Output,
 			Client:             client,
@@ -176,7 +199,7 @@ func ReExtract(projectDir string) (*CompileResult, error) {
 	// return between here and Pass 3, so one call covers both branches.
 	// ReExtract has no cancellation context of its own, matching the calls
 	// above.
-	ResolveEntitiesPass(context.Background(), ontStore, touched, cfg, client, embedder)
+	ResolveEntitiesPass(context.Background(), ontStore, touched, cfg, client, embedder, ro.prompts)
 	// Second supersession trigger (P3-6): same pre-resolution hazard as the
 	// full pipeline — without it this path has no self-heal until a full
 	// compile.

@@ -432,6 +432,30 @@ layout can change in any release. Pin a version.
 - **Search tuning** — chunking, expansion, re-ranking, graph expansion,
   and opt-in ANN: [Search Quality](docs/guides/search-quality.md).
 
+### Embedding (Go API)
+
+sage-wiki can be embedded as a Go module — the same engine the CLI runs
+on, workspace-scoped and offline-capable:
+
+```go
+w, err := engine.Open(ctx, dir)          // one Workspace per directory
+defer w.Close()
+id, _ := w.Capture(ctx, engine.Source{Path: "doc.md"})
+res, _ := w.Compile(ctx, engine.CompileRequest{Selector: "pending", Tier: 3})
+hits, _ := w.Search(ctx, engine.SearchRequest{Query: "attention", Limit: 5})
+```
+
+`pkg/engine` is the only supported surface (facade over `internal/`):
+exclusive workspace lock (read-write `Open` fails fast with `ErrLocked`;
+`WithReadOnly` for lock-free reads), v0.2.x workspaces open read-only
+until adopted via `WithUpgrade`, and no `internal/` type leaks into
+exported signatures (lint-tested). Companion packages: `pkg/provider`
+(LLM/embedding abstraction + `providerfake` for offline tests),
+`pkg/events`, `pkg/mirror`. A full offline example lives in
+[`examples/embed`](examples/embed/main.go) and runs in CI. The `compile`,
+`search`, `capture`, and `query` commands themselves route through
+`pkg/engine`. API stability note: pre-1.0, pin a version.
+
 ### Cost
 
 sage-wiki tracks token usage and estimates cost for every compile.

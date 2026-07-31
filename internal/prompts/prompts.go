@@ -14,7 +14,6 @@ import (
 var templateFS embed.FS
 
 var defaultTemplates *template.Template
-var activeTemplates *template.Template
 
 func init() {
 	var err error
@@ -22,14 +21,32 @@ func init() {
 	if err != nil {
 		panic(fmt.Sprintf("prompts: failed to parse embedded templates: %v", err))
 	}
-	activeTemplates = defaultTemplates
+	defaultRegistry = NewRegistry()
 }
 
-// LoadFromDir loads user prompt templates from a directory.
-// Templates in the directory override embedded defaults by filename.
-// Files should be named like: summarize-article.md, write-article.md, etc.
-// Falls back to embedded defaults for any template not found in the directory.
-func LoadFromDir(dir string) error {
+// Registry is an independent template set: embedded defaults plus any user
+// overrides loaded from a directory. Per-workspace prompt overrides are a
+// Registry per workspace (SPEC-01) — two workspaces never share render
+// state. Build with NewRegistry.
+type Registry struct {
+	templates *template.Template
+}
+
+// NewRegistry returns a Registry holding the embedded default templates.
+func NewRegistry() *Registry {
+	return &Registry{templates: defaultTemplates}
+}
+
+// defaultRegistry backs the package-level API (CLI back-compat). The
+// package functions delegate to it; engine code paths use their own
+// per-Workspace Registry instead. Assigned in init — a package-level var
+// initializer would run BEFORE defaultTemplates is parsed.
+var defaultRegistry *Registry
+
+// LoadFromDir merges user prompt templates from a directory into the
+// registry. Templates in the directory override embedded defaults by
+// filename. Falls back to embedded defaults for any template not found.
+func (r *Registry) LoadFromDir(dir string) error {
 	if dir == "" {
 		return nil
 	}
@@ -81,10 +98,31 @@ func LoadFromDir(dir string) error {
 	}
 
 	if loaded > 0 {
-		activeTemplates = merged
+		r.templates = merged
 	}
 
 	return nil
+}
+
+// Render renders a named template with the given data from this registry.
+// Language gating matches the package-level Render.
+func (r *Registry) Render(name string, data any, language string) (string, error) {
+	return renderFrom(r.templates, name, data, language)
+}
+
+// Available returns the names of all templates in the registry.
+func (r *Registry) Available() []string {
+	var names []string
+	for _, t := range r.templates.Templates() {
+		names = append(names, t.Name())
+	}
+	return names
+}
+
+// LoadFromDir loads user prompt templates into the DEFAULT registry
+// (back-compat for CLI paths). Engine code uses a per-Workspace Registry.
+func LoadFromDir(dir string) error {
+	return defaultRegistry.LoadFromDir(dir)
 }
 
 // isJSONTemplate returns true if the rendered template content requires
@@ -97,13 +135,16 @@ func isJSONTemplate(rendered string) bool {
 		strings.Contains(lower, "return only a json")
 }
 
-// Render renders a named template with the given data.
-// Uses user overrides if loaded, otherwise embedded defaults.
+// Render renders a named template from the DEFAULT registry (back-compat).
 // If language is non-empty, appends a language instruction
 // (except for JSON-output templates, detected by convention).
 func Render(name string, data any, language string) (string, error) {
+	return renderFrom(defaultRegistry.templates, name, data, language)
+}
+
+func renderFrom(templates *template.Template, name string, data any, language string) (string, error) {
 	var buf bytes.Buffer
-	if err := activeTemplates.ExecuteTemplate(&buf, name+".txt", data); err != nil {
+	if err := templates.ExecuteTemplate(&buf, name+".txt", data); err != nil {
 		return "", fmt.Errorf("prompts.Render(%s): %w", name, err)
 	}
 	result := buf.String()
@@ -267,16 +308,12 @@ type CaptureData struct {
 	Tags    string
 }
 
-// Available returns the names of all loaded templates.
+// Available returns the names of all templates in the DEFAULT registry.
 func Available() []string {
-	var names []string
-	for _, t := range activeTemplates.Templates() {
-		names = append(names, t.Name())
-	}
-	return names
+	return defaultRegistry.Available()
 }
 
-// Reset restores embedded defaults and clears all state (useful for testing).
+// Reset restores the DEFAULT registry to embedded defaults (useful for testing).
 func Reset() {
-	activeTemplates = defaultTemplates
+	defaultRegistry = NewRegistry()
 }

@@ -56,6 +56,7 @@ func ExtractConcepts(
 	batchSize int,
 	maxTokens int,
 	concurrency int,
+	pr *prompts.Registry,
 ) ([]ExtractedConcept, error) {
 	defer metrics.ObserveDuration(metrics.HistogramNamed("compile_pass_duration_seconds", metrics.CompileBuckets(), "pass", "extract"), time.Now())
 	if ctx == nil {
@@ -156,7 +157,7 @@ func ExtractConcepts(
 				summaryTexts = append(summaryTexts, prompts.NeutralizeTags(fmt.Sprintf("### Source: %s\n%s", s.SourcePath, summary)))
 			}
 
-			prompt, err := prompts.Render("extract_concepts", prompts.ExtractData{
+			prompt, err := renderPrompt(pr, "extract_concepts", prompts.ExtractData{
 				ExistingConcepts: dedupSnapshot,
 				Summaries:        strings.Join(summaryTexts, "\n\n---\n\n"),
 			}, "")

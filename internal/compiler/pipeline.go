@@ -5,12 +5,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/shopspring/decimal"
 
 	"github.com/xoai/sage-wiki/internal/auth"
 	"github.com/xoai/sage-wiki/internal/config"
@@ -47,6 +50,23 @@ type CompileOpts struct {
 	NoCache bool             // disable prompt caching
 	Prune   bool             // delete orphaned articles when sources removed
 	Tracker *llm.CostTracker // optional cost tracker
+
+	// Prompts, when set, is the per-workspace template registry (SPEC-01) —
+	// overrides load into it instead of the process-global prompts default,
+	// so two workspaces never share render state. nil = package default.
+	Prompts *prompts.Registry
+
+	// Per-run overrides (pkg/engine CompileRequest); unset = config.
+	Tier    *int // nil = use config; 0..3 overrides default_tier
+	Model   string
+	MaxDocs int
+	// MaxCost stops the run between passes once accumulated cost exceeds
+	// it (partial result + ErrBudgetExceeded). nil = no guard.
+	MaxCost *decimal.Decimal
+
+	// Recorder, when set, receives usage events instead of the default
+	// workspace file ledger (pkg/engine fan-out: file ledger + event sink).
+	Recorder llm.UsageRecorder
 
 	// Progress, when set, is the event hub the pipeline reports into (P2-3 —
 	// the TUI and the serve worker share one so subscribers see live events);
@@ -145,7 +165,11 @@ func newTrackedClient(projectDir string, cfg *config.Config, opts *CompileOpts) 
 	// SPEC-05 usage ledger: one event per completion. Tier is 3 by
 	// construction — the full LLM pipeline only runs for tier-3 sources
 	// (runTiers claims tiers 0/1/3; LLM passes are tier-3-gated).
-	client.SetRecorder(llm.NewFileRecorder(projectDir))
+	recorder := opts.Recorder
+	if recorder == nil {
+		recorder = llm.NewFileRecorder(projectDir)
+	}
+	client.SetRecorder(recorder)
 	client.SetTier(3)
 	return client, tracker, nil
 }
@@ -163,6 +187,19 @@ const (
 // compileRun carries the shared state of a single Compile execution across
 // its decomposed steps (P1-8). Field set enumerated in the P1-8 spec D3;
 // statements were MOVED here verbatim from the former ~450-line Compile().
+// ErrBudgetExceeded is returned (with a partial CompileResult) when a run
+// stops at CompileOpts.MaxCost between passes.
+var ErrBudgetExceeded = errors.New("compiler: stopped at MaxCost")
+
+// renderPrompt renders through the per-workspace registry when set, else
+// the prompts package default (CLI back-compat).
+func renderPrompt(pr *prompts.Registry, name string, data any, language string) (string, error) {
+	if pr == nil {
+		return prompts.Render(name, data, language)
+	}
+	return pr.Render(name, data, language)
+}
+
 type compileRun struct {
 	cfg                *config.Config
 	opts               CompileOpts
@@ -188,6 +225,7 @@ type compileRun struct {
 	exOpts             []extract.ExtractOpts
 	toProcess          []SourceInfo
 	pipelineIncomplete bool
+	budgetExhausted    bool
 	compileID          string
 }
 
@@ -288,6 +326,9 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 
 	// Step 4: runTiers — tiers 0/1/3 orchestration, promotions/demotions.
 	runTiers(projectDir, run)
+	if run.budgetExhausted {
+		return run.result, ErrBudgetExceeded
+	}
 
 	// Pass 4: Image extraction (placeholder)
 	ExtractImages(projectDir, run.cfg.Output, run.toProcess)
@@ -377,9 +418,26 @@ func loadInputs(projectDir string, opts *CompileOpts, run *compileRun) (done boo
 	}
 	run.cfg = cfg
 
-	// Load user prompt overrides if prompts/ directory exists
+	// Per-run overrides (pkg/engine CompileRequest) — applied to the loaded
+	// config copy, never written back.
+	if opts.Tier != nil {
+		cfg.Compiler.DefaultTier = *opts.Tier
+	}
+	if opts.Model != "" {
+		cfg.Models.Summarize = opts.Model
+		cfg.Models.Extract = opts.Model
+		cfg.Models.Write = opts.Model
+	}
+
+	// Load user prompt overrides if prompts/ directory exists — into the
+	// per-workspace registry when one was supplied (SPEC-01), else the
+	// process-global default (CLI behavior unchanged).
 	promptsDir := filepath.Join(projectDir, "prompts")
-	if err := prompts.LoadFromDir(promptsDir); err != nil {
+	if opts.Prompts != nil {
+		if err := opts.Prompts.LoadFromDir(promptsDir); err != nil {
+			log.Warn("failed to load custom prompts", "error", err)
+		}
+	} else if err := prompts.LoadFromDir(promptsDir); err != nil {
 		log.Warn("failed to load custom prompts", "error", err)
 	}
 
@@ -491,7 +549,7 @@ func resolveMode(projectDir string, run *compileRun) (done bool, result *Compile
 		if !run.client.SupportsBatch() {
 			return false, nil, fmt.Errorf("compile: provider %s does not support batch API", cfg.API.Provider)
 		}
-		res, rerr := submitBatch(projectDir, run.client, cfg, run.mf, run.diff, run.tracker)
+		res, rerr := submitBatch(projectDir, run.client, cfg, run.mf, run.diff, run.tracker, run.opts.Prompts)
 		return true, res, rerr
 	}
 	return false, nil, nil
@@ -703,6 +761,12 @@ func runTiers(projectDir string, run *compileRun) {
 			run.toProcess = append(run.toProcess, s)
 		}
 	}
+	// MaxDocs guard (pkg/engine CompileRequest): deterministic truncation —
+	// toProcess is in diff order, so the first N are taken.
+	if opts.MaxDocs > 0 && len(run.toProcess) > opts.MaxDocs {
+		log.Info("MaxDocs guard: truncating compile set", "total", len(run.toProcess), "max", opts.MaxDocs)
+		run.toProcess = run.toProcess[:opts.MaxDocs]
+	}
 
 	// pipelineIncomplete is set when a tiered pipeline run does not complete Pass
 	// 2/3 (cancelled or a total-extraction failure). Such a run persists NO new
@@ -736,6 +800,8 @@ func runTiers(projectDir string, run *compileRun) {
 				TrustStore:   run.trustStore,
 				Embedder:     run.embedder,
 				Backpressure: run.bp,
+				MaxCost:      opts.MaxCost,
+				Tracker:      run.tracker,
 				ItemStore:    run.itemStore,
 				CacheEnabled: cacheEnabled,
 				Progress:     run.progress,
@@ -755,6 +821,9 @@ func runTiers(projectDir string, run *compileRun) {
 		// rollback (RemoveSource on just the sources) left the run's concepts
 		// orphaned, since RemoveSource deletes Sources only. P1-1 / C1.
 		run.pipelineIncomplete = !pipelineResult.Pass23Completed
+		if pipelineResult.BudgetExhausted {
+			run.budgetExhausted = true
+		}
 		succeeded := make(map[string]bool)
 		for _, p := range pipelineResult.SucceededSources {
 			succeeded[p] = true
@@ -839,6 +908,7 @@ func submitBatch(
 	mf *manifest.Manifest,
 	diff *DiffResult,
 	tracker *llm.CostTracker,
+	pr *prompts.Registry,
 ) (*CompileResult, error) {
 	result := &CompileResult{
 		Added:    len(diff.Added),
@@ -899,11 +969,11 @@ func submitBatch(
 		}
 
 		templateName := "summarize_" + content.Type
-		if _, err := prompts.Render(templateName, prompts.SummarizeData{}, ""); err != nil {
+		if _, err := renderPrompt(pr, templateName, prompts.SummarizeData{}, ""); err != nil {
 			templateName = "summarize_article"
 		}
 
-		prompt, err := prompts.Render(templateName, prompts.SummarizeData{
+		prompt, err := renderPrompt(pr, templateName, prompts.SummarizeData{
 			SourcePath: src.Path,
 			SourceType: content.Type,
 			MaxTokens:  maxTokens,
@@ -1226,7 +1296,7 @@ func resumeBatch(
 		client.SetPass("extract")
 		extCacheID, _ := client.SetupCache("You are an expert knowledge organizer. Extract structured concepts from source summaries.", model)
 		progress.StartPhase("Pass 2: Extract concepts", len(successfulSummaries))
-		concepts, err := ExtractConcepts(opts.Ctx, successfulSummaries, mf.Concepts, client, model, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel)
+		concepts, err := ExtractConcepts(opts.Ctx, successfulSummaries, mf.Concepts, client, model, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel, opts.Prompts)
 		if err != nil {
 			progress.ItemError("concept extraction", err)
 			result.Errors++
@@ -1265,6 +1335,7 @@ func resumeBatch(
 				relPatterns := ontology.RelationPatterns(merged)
 				progress.StartPhase("Pass 3: Write articles", len(concepts))
 				articles := WriteArticles(ArticleWriteOpts{
+					Prompts:            opts.Prompts,
 					Ctx:                opts.Ctx,
 					ProjectDir:         projectDir,
 					OutputDir:          cfg.Output,

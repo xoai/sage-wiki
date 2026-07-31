@@ -52,6 +52,10 @@ jobs:
       - name: Vet
         run: CGO_ENABLED=0 go vet ./...
 
+      # SPEC-01 AC-B2: the embedding example must run offline (fake provider).
+      - name: Embed example runs offline
+        run: CGO_ENABLED=0 go run ./examples/embed
+
   # Tests are sharded three ways per OS so the slowest shard (~compiler,
   # ~6 min) bounds wall time instead of the whole suite (~14 min serial).
   go-test:

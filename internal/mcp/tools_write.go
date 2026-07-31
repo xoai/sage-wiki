@@ -15,6 +15,7 @@ import (
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/xoai/sage-wiki/internal/auth"
+	"github.com/xoai/sage-wiki/internal/capturefmt"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/fsutil"
@@ -439,14 +440,10 @@ func (s *Server) handleCapture(ctx context.Context, req mcplib.CallToolRequest) 
 			continue
 		}
 
-		frontmatter := fmt.Sprintf("---\nsource: mcp-capture\ncaptured_at: %s\n", s.cfg.Compiler.UserNow())
-		if tagsStr != "" {
-			frontmatter += fmt.Sprintf("tags: [%s]\n", tagsStr)
+		frontmatter, err := capturefmt.Frontmatter("mcp-capture", s.cfg.Compiler.UserNow(), tagsStr, captureCtx)
+		if err != nil {
+			return errorResult(fmt.Sprintf("capture: %v", err)), nil
 		}
-		if captureCtx != "" {
-			frontmatter += fmt.Sprintf("context: %q\n", captureCtx)
-		}
-		frontmatter += "---\n\n"
 
 		fileContent := frontmatter + "# " + item.Title + "\n\n" + item.Content + "\n"
 		if err := os.WriteFile(absPath, []byte(fileContent), 0644); err != nil {
@@ -497,8 +494,16 @@ func extractKnowledgeItems(cfg *config.Config, projectDir string, content, captu
 	client.SetRecorder(llm.NewFileRecorder(projectDir))
 	client.SetPass("extract")
 	client.SetPriceOverride(cfg.Compiler.TokenPriceOverride)
+	client.SetPriceTable(cfg.Compiler.PriceTable)
 
-	prompt, err := prompts.Render("capture_knowledge", prompts.CaptureData{
+	// Per-workspace template registry (SPEC-01): the MCP server is bound to
+	// one projectDir, so its prompt overrides must not depend on whatever
+	// the process-global default last loaded.
+	registry := prompts.NewRegistry()
+	if err := registry.LoadFromDir(filepath.Join(projectDir, "prompts")); err != nil {
+		return nil, fmt.Errorf("load prompt overrides: %w", err)
+	}
+	prompt, err := registry.Render("capture_knowledge", prompts.CaptureData{
 		Context: captureCtx,
 		Tags:    tags,
 	}, cfg.Language)
@@ -553,14 +558,10 @@ func writeRawCapture(projectDir, content, captureCtx, tags, userNow string) (str
 		return "", fmt.Errorf("path traversal blocked: %s", relPath)
 	}
 
-	frontmatter := fmt.Sprintf("---\nsource: mcp-capture\ncaptured_at: %s\nraw: true\n", userNow)
-	if tags != "" {
-		frontmatter += fmt.Sprintf("tags: [%s]\n", tags)
+	frontmatter, err := capturefmt.Frontmatter("mcp-capture", userNow, tags, captureCtx, "raw: true")
+	if err != nil {
+		return "", fmt.Errorf("capture: %w", err)
 	}
-	if captureCtx != "" {
-		frontmatter += fmt.Sprintf("context: %q\n", captureCtx)
-	}
-	frontmatter += "---\n\n"
 
 	if err := os.WriteFile(absPath, []byte(frontmatter+content+"\n"), 0644); err != nil {
 		return "", err
@@ -724,6 +725,7 @@ func (s *Server) CompileTopic(ctx context.Context, topic string, maxSources int)
 	client.SetRecorder(llm.NewFileRecorder(s.projectDir))
 	client.SetTier(3)
 	client.SetPriceOverride(cfg.Compiler.TokenPriceOverride)
+	client.SetPriceTable(cfg.Compiler.PriceTable)
 
 	result, err := compiler.CompileTopic(ctx, compiler.OnDemandOpts{
 		Topic:       topic,

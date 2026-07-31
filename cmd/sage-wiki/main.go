@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -33,7 +34,6 @@ import (
 	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/query"
 	"github.com/xoai/sage-wiki/internal/scribe"
-	"github.com/xoai/sage-wiki/internal/search"
 	"github.com/xoai/sage-wiki/internal/skill"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/storedial"
@@ -42,6 +42,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/vectors"
 	"github.com/xoai/sage-wiki/internal/web"
 	"github.com/xoai/sage-wiki/internal/wiki"
+	"github.com/xoai/sage-wiki/pkg/engine"
 )
 
 var (
@@ -185,6 +186,7 @@ func init() {
 	initCmd.Flags().String("pack", "", "Install a contribution pack during init")
 
 	// Compile flags
+	compileCmd.Flags().Bool("upgrade", false, "Adopt a pre-format (v0.2.x) workspace (one-way) and compile")
 	compileCmd.Flags().Bool("watch", false, "Watch for changes and recompile")
 	compileCmd.Flags().Bool("dry-run", false, "Show what would change without writing")
 	compileCmd.Flags().Bool("fresh", false, "Clear checkpoint state (batch + legacy) and recompile from scratch")
@@ -221,6 +223,8 @@ func init() {
 
 	// Query flags
 	queryCmd.Flags().String("scope", "local", "Query scope: local, global, or all")
+	queryCmd.Flags().Bool("upgrade", false, "Adopt a pre-format (v0.2.x) workspace (one-way)")
+	ingestCmd.Flags().Bool("upgrade", false, "Adopt a pre-format (v0.2.x) workspace (one-way)")
 
 	rootCmd.AddCommand(initCmd, compileCmd, reindexCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, scribeCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, sourceCmd, hubCmd, skillCmd, packCmd, costCmd, versionCmd)
 
@@ -230,6 +234,9 @@ func init() {
 	// Report the real build version to MCP clients on initialize, instead of
 	// the constant the server package defaults to.
 	mcppkg.Version = version
+
+	// Stamp new workspace manifests with the real build version (SPEC-01).
+	manifest.EngineVersion = version
 }
 
 func runVersion(cmd *cobra.Command, args []string) error {
@@ -539,6 +546,10 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		reconcileStartup(ctx, dir)
 	}
 
+	// SPEC-01 carve-outs on internal wiring: --re-embed, --re-extract, and
+	// watch mode (above) have no engine surface; reconcileStartup,
+	// maybePromptEstimate, the SIGINT handler, and metrics.LogSnapshot stay
+	// in this shim (CLI/process concerns, not engine behavior).
 	if watch {
 		fmt.Println("Watching for changes... (Ctrl+C to stop)")
 		return compiler.Watch(dir, 2, compiler.CompileOpts{
@@ -554,26 +565,33 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// P2-1 T9a-2: inject the Backend so compile honors storage.backend.
-	// Error text matches Compile's own config-load failure byte-for-byte.
-	cfg, err := config.Load(resolveConfigPath(dir))
-	if err != nil {
-		return fmt.Errorf("compile: load config: %w", err)
+	// Routed through pkg/engine (SPEC-01): the workspace lock, format
+	// adoption, and store wiring are the engine's; storage.backend is
+	// honored via the engine's storedial open (same options as before).
+	upgrade, _ := cmd.Flags().GetBool("upgrade")
+	var openOpts []engine.Option
+	if upgrade {
+		openOpts = append(openOpts, engine.WithUpgrade())
 	}
-	backend, err := storedial.Open(cfg.Storage, store.OpenOptions{Mode: store.ModeWriter, ProjectDir: dir, TemporalEnabled: cfg.Ontology.Temporal.Enabled})
+	w, err := engine.Open(ctx, dir, openOpts...)
 	if err != nil {
-		return fmt.Errorf("compile: open db: %w", err)
+		return cli.CLIError(outputFormat, err)
 	}
-	defer backend.Close()
+	defer w.Close()
+	// Dry-run mutates nothing, so it may run against a pre-format workspace
+	// without the one-way adoption (B-04).
+	if w.RequiresUpgrade() && !dryRun {
+		return cli.CLIError(outputFormat, fmt.Errorf("workspace predates format versioning (v0.2.x) — re-run with --upgrade to adopt it (one-way); reads still work"))
+	}
 
-	result, err := compiler.Compile(dir, compiler.CompileOpts{
-		Ctx:     ctx,
-		DryRun:  dryRun,
-		Fresh:   fresh,
-		Batch:   batch,
-		NoCache: noCache,
-		Prune:   prune,
-		Backend: backend,
+	result, err := w.Compile(ctx, engine.CompileRequest{
+		Selector: "pending",
+		Tier:     engine.TierUseConfig,
+		DryRun:   dryRun,
+		Fresh:    fresh,
+		Batch:    batch,
+		NoCache:  noCache,
+		Prune:    prune,
 	})
 	if err != nil {
 		return err
@@ -808,86 +826,58 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	// Unified pipeline (ADR-036, M5) unless config pins legacy or the
 	// config failed to load (legacy is the only path without a config).
+	// SPEC-01: the unified path is routed through pkg/engine — a read-only
+	// Open (search is lock-free today; spec §B.2.2). The db above stays
+	// open for the legacy/degrade branch; the engine opens its own handles.
 	if cfgErr == nil && cfg.Search.PipelineOrDefault() == "unified" {
 		channelsFlag, _ := cmd.Flags().GetString("channels")
 		expand, _ := cmd.Flags().GetBool("expand")
 		rerank, _ := cmd.Flags().GetBool("rerank")
-		var channels []search.Channel
+		var channels []string
 		if channelsFlag != "" {
-			// Trim like the MCP adapter's splitTags — `--channels "bm25, vector"`
-			// must not be a hard error on one surface and fine on the other.
 			raw := strings.Split(channelsFlag, ",")
-			names := make([]string, 0, len(raw))
 			for _, c := range raw {
 				if c = strings.TrimSpace(c); c != "" {
-					names = append(names, c)
+					channels = append(channels, c)
 				}
 			}
-			parsed, unknown := search.ParseChannels(names)
-			if len(unknown) > 0 {
-				return fmt.Errorf("unknown channels: %v (valid: bm25, vector, graph)", unknown)
+		}
+
+		// P1-8 degrade, engine flavor (F-018/F-026): ONLY a config-load
+		// failure with no explicit --config falls back to the legacy path.
+		w, err := engine.Open(cmd.Context(), dir, engine.WithReadOnly(), engine.WithConfigFile(resolveConfigPath(dir)))
+		if err != nil {
+			if searchFallsBackToLegacy(err, configPath) {
+				fmt.Fprintf(os.Stderr, "warning: config load failed (%v): default fusion weights, ANN off, BM25-only\n", err)
+				goto legacy
 			}
-			channels = parsed
+			return err
 		}
-		var client *llm.Client
-		if expand || rerank {
-			c, err := auth.NewLLMClient(cfg)
-			if err != nil {
-				return fmt.Errorf("--expand/--rerank need an LLM client: %w", err)
-			}
-			// SPEC-05 usage ledger: search-expansion spend is recorded.
-			c.SetRecorder(llm.NewFileRecorder(dir))
-			c.SetPass("expand")
-			c.SetPriceOverride(cfg.Compiler.TokenPriceOverride)
-			client = c
-		}
-		mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
-		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
-		trustMode := cfg.Trust.IncludeOutputsMode()
-		var trustStore *trust.Store
-		if trustMode == "verified" {
-			trustStore = trust.NewStore(db)
-		}
-		resp, err := search.Run(cmd.Context(), search.Deps{
-			Mem:          memStore,
-			Chunks:       memory.NewChunkStore(db),
-			Vec:          vecStore,
-			Embedder:     embedder,
-			Client:       client,
-			Model:        cfg.Models.Query,
-			BM25Weight:   cfg.Search.HybridWeightBM25,
-			VectorWeight: cfg.Search.HybridWeightVector,
-			Ont: ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes),
-				ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault())),
-			GraphWeight:          cfg.Search.HybridWeightGraph,
-			GraphRelationWeights: cfg.Search.GraphRelationWeights,
-			IncludeDoc:           trust.IncludePredicate(trustMode, trustStore),
-		}, search.Request{
-			Query:             queryStr,
-			Limit:             limit,
-			Channels:          channels,
-			Expand:            expand,
-			Rerank:            rerank,
-			FilterTags:        tags,
-			Tags:              boostTags,
-			Granularity:       search.Docs,
-			RerankMinCoverage: cfg.Search.RerankMinCoverageOrDefault(),
+		defer w.Close()
+
+		res, err := w.Search(cmd.Context(), engine.SearchRequest{
+			Query:      queryStr,
+			Limit:      limit,
+			Channels:   channels,
+			Expand:     expand,
+			Rerank:     rerank,
+			FilterTags: tags,
+			Tags:       boostTags,
 		})
 		if err != nil {
 			return err
 		}
-		docs := search.DocResults(resp.Results)
 		if outputFormat == "json" {
-			fmt.Println(cli.FormatJSON(true, docs, ""))
+			fmt.Println(cli.FormatJSON(true, res.Results, ""))
 			return nil
 		}
-		if len(docs) == 0 {
+		if len(res.Results) == 0 {
 			fmt.Println("No results found.")
 			return nil
 		}
-		for i, r := range docs {
-			fmt.Printf("%d. [%.4f] %s\n", i+1, r.FinalScore, r.ArticlePath)
-			content := r.Content
+		for i, r := range res.Results {
+			fmt.Printf("%d. [%.4f] %s\n", i+1, r.Score, r.ArticlePath)
+			content := r.Text
 			if len(content) > 120 {
 				content = content[:120] + "..."
 			}
@@ -899,6 +889,8 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		}
 		return nil
 	}
+
+legacy:
 
 	// Legacy doc-level path (config pin or config-load degrade).
 	searcher := hybrid.NewSearcher(memStore, vecStore)
@@ -973,6 +965,25 @@ func runQuery(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
 	question := strings.Join(args, " ")
 
+	// SPEC-01: query auto-files its answer (a workspace mutation), so it
+	// takes the engine's single-writer lock and fails fast during an
+	// active compile (spec §B.1 8e). The Q&A pipeline itself has no
+	// engine surface (SPEC-01 exposes no Query method) — the Open is the
+	// lock, the pipeline is unchanged.
+	upgrade, _ := cmd.Flags().GetBool("upgrade")
+	var openOpts []engine.Option
+	if upgrade {
+		openOpts = append(openOpts, engine.WithUpgrade())
+	}
+	w, err := engine.Open(cmd.Context(), dir, openOpts...)
+	if err != nil {
+		return cli.CLIError(outputFormat, lockSentinel(err))
+	}
+	defer w.Close()
+	if w.RequiresUpgrade() {
+		return cli.CLIError(outputFormat, fmt.Errorf("workspace predates format versioning (v0.2.x) — re-run with --upgrade to adopt it (one-way)"))
+	}
+
 	result, err := query.Query(dir, question, "terminal", 5)
 	if err != nil {
 		return err
@@ -983,6 +994,23 @@ func runQuery(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "\nFiled to: %s\n", result.OutputPath)
 	}
 	return nil
+}
+
+// searchFallsBackToLegacy is the P1-8 degrade decision, extracted for
+// testing: ONLY an engine config-load failure with NO explicit --config
+// drops search to the legacy BM25 path; every other Open error (including
+// an explicit --config failure) propagates.
+func searchFallsBackToLegacy(err error, explicitConfig string) bool {
+	return errors.Is(err, engine.ErrConfigLoad) && explicitConfig == ""
+}
+
+// lockSentinel maps the engine's lock failure onto the CLI surface
+// specified in spec §B.1 8e: exit 1 (cobra RunE) with this message text.
+func lockSentinel(err error) error {
+	if errors.Is(err, engine.ErrLocked) {
+		return fmt.Errorf("workspace is locked by another process (compile in progress?)")
+	}
+	return err
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
@@ -1003,8 +1031,23 @@ func runIngest(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
 	target := args[0]
 
+	// SPEC-01: ingest registers the source in the manifest (a mutation) —
+	// take the engine's single-writer lock like capture/query (F-048).
+	upgrade, _ := cmd.Flags().GetBool("upgrade")
+	var openOpts []engine.Option
+	if upgrade {
+		openOpts = append(openOpts, engine.WithUpgrade())
+	}
+	w, err := engine.Open(cmd.Context(), dir, openOpts...)
+	if err != nil {
+		return cli.CLIError(outputFormat, lockSentinel(err))
+	}
+	defer w.Close()
+	if w.RequiresUpgrade() {
+		return cli.CLIError(outputFormat, fmt.Errorf("workspace predates format versioning (v0.2.x) — re-run with --upgrade to adopt it (one-way)"))
+	}
+
 	var result *wiki.IngestResult
-	var err error
 
 	if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
 		result, err = wiki.IngestURL(dir, target)

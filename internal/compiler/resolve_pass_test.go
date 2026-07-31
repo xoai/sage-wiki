@@ -40,9 +40,9 @@ func resolveServer(t *testing.T, payload string) (*httptest.Server, *atomic.Int6
 		}
 		mu.Unlock()
 		json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{"message": map[string]string{"content": payload}}},
-			"model":   "m",
-			"usage":   map[string]int{"total_tokens": 10},
+			"choices":	[]map[string]any{{"message": map[string]string{"content": payload}}},
+			"model":	"m",
+			"usage":	map[string]int{"total_tokens": 10},
 		})
 	}))
 	t.Cleanup(srv.Close)
@@ -71,8 +71,8 @@ func resolveCfg(threshold float64) *config.Config {
 func addEnt(t *testing.T, s *ontology.Store, id, name, def, article string) {
 	t.Helper()
 	if err := s.AddEntity(ontology.Entity{
-		ID: id, Type: ontology.TypeConcept, Name: name,
-		Definition: def, ArticlePath: article,
+		ID:	id, Type: ontology.TypeConcept, Name: name,
+		Definition:	def, ArticlePath: article,
 	}); err != nil {
 		t.Fatalf("AddEntity %s: %v", id, err)
 	}
@@ -103,7 +103,7 @@ func TestResolvePassDisabledMakesNoCall(t *testing.T) {
 	addEnt(t, ont, "Buzz Aldrin", "Buzz Aldrin", "Apollo 11 pilot", "")
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"Buzz Aldrin"}, &config.Config{}, triplesClient(t, srv.URL), nil)
+		[]string{"Buzz Aldrin"}, &config.Config{}, triplesClient(t, srv.URL), nil, nil)
 
 	if got := calls.Load(); got != 0 {
 		t.Errorf("LLM calls = %d, want 0 when resolution is disabled", got)
@@ -118,7 +118,7 @@ func TestResolvePassDisabledMakesNoCall(t *testing.T) {
 func TestResolvePassNilConfigDoesNotPanic(t *testing.T) {
 	srv, calls, _ := resolveServer(t, twoMemberCluster)
 	ont := passStore(t)
-	ResolveEntitiesPass(context.Background(), ont, []string{"a"}, nil, triplesClient(t, srv.URL), nil)
+	ResolveEntitiesPass(context.Background(), ont, []string{"a"}, nil, triplesClient(t, srv.URL), nil, nil)
 	if got := calls.Load(); got != 0 {
 		t.Errorf("LLM calls = %d, want 0", got)
 	}
@@ -134,7 +134,7 @@ func TestResolvePassCancelledContextMakesNoCall(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	ResolveEntitiesPass(ctx, ont, []string{"Buzz Aldrin"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+	ResolveEntitiesPass(ctx, ont, []string{"Buzz Aldrin"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	if got := calls.Load(); got != 0 {
 		t.Errorf("LLM calls = %d, want 0 on a cancelled context", got)
@@ -150,13 +150,13 @@ func TestResolvePassLinksVariants(t *testing.T) {
 	addEnt(t, ont, "Buzz Aldrin", "Buzz Aldrin", "Apollo 11 lunar module pilot", "")
 	addEnt(t, ont, "apollo-11", "Apollo 11", "", "")
 	if err := ont.AddRelation(ontology.Relation{
-		ID: "r1", SourceID: "Buzz Aldrin", TargetID: "apollo-11",
-		Relation: ontology.RelExtends, Confidence: 0.8}); err != nil {
+		ID:	"r1", SourceID: "Buzz Aldrin", TargetID: "apollo-11",
+		Relation:	ontology.RelExtends, Confidence: 0.8}); err != nil {
 		t.Fatal(err)
 	}
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"Buzz Aldrin"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		[]string{"Buzz Aldrin"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("LLM calls = %d, want 1", got)
@@ -201,7 +201,7 @@ func TestResolvePassBroaderGoesToReview(t *testing.T) {
 	addEnt(t, ont, "project-gemini", "Project Gemini", "a spaceflight programme", "wiki/pg.md")
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"gemini-12"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		[]string{"gemini-12"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	if applied, _ := ont.ListAliases(store.AliasApplied); len(applied) != 0 {
 		t.Errorf("applied = %d, want 0 — broader must not auto-link", len(applied))
@@ -223,7 +223,7 @@ func TestResolvePassRequiresDescription(t *testing.T) {
 	addEnt(t, ont, "aldrin-b", "Buzz Aldrin", "", "")
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"aldrin-b"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		[]string{"aldrin-b"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	if applied, _ := ont.ListAliases(store.AliasApplied); len(applied) != 0 {
 		t.Errorf("applied = %d, want 0 — no description on either side", len(applied))
@@ -244,7 +244,7 @@ func TestResolvePassDistinctEntitiesProduceNothing(t *testing.T) {
 	addEnt(t, ont, "armstrong-musician", "Louis Armstrong", "a trumpeter", "")
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"armstrong-musician"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		[]string{"armstrong-musician"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	for _, st := range []store.AliasStatus{store.AliasApplied, store.AliasPending} {
 		if rows, _ := ont.ListAliases(st); len(rows) != 0 {
@@ -266,7 +266,7 @@ func TestResolvePassUnplacedLabelUntouched(t *testing.T) {
 	addEnt(t, ont, "aldrin-c", "Aldrin Jr", "someone else entirely", "")
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"aldrin-b", "aldrin-c"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		[]string{"aldrin-b", "aldrin-c"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	// aldrin-c may appear in a block, but the model placed only E1/E2 in each
 	// response, so it must never acquire an alias row.
@@ -293,21 +293,21 @@ func TestResolvePassSweepCopiesNewEdgesWithoutLLM(t *testing.T) {
 	addEnt(t, ont, "alias", "Alias", "the alias", "")
 	addEnt(t, ont, "target", "Target", "", "")
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias: "alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
-		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias:	"alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
+		Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// An edge appears on the alias AFTER the link was applied.
 	if err := ont.AddRelation(ontology.Relation{
-		ID: "late", SourceID: "alias", TargetID: "target",
-		Relation: ontology.RelExtends, Confidence: 0.5}); err != nil {
+		ID:	"late", SourceID: "alias", TargetID: "target",
+		Relation:	ontology.RelExtends, Confidence: 0.5}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Arbitration DISABLED — the sweep must still run.
 	ResolveEntitiesPass(context.Background(), ont, nil, &config.Config{},
-		triplesClient(t, srv.URL), nil)
+		triplesClient(t, srv.URL), nil, nil)
 
 	if got := calls.Load(); got != 0 {
 		t.Errorf("LLM calls = %d, want 0 — the sweep is free", got)
@@ -325,14 +325,14 @@ func TestResolvePassSweepSurvivesPrunedCanonical(t *testing.T) {
 	ont := passStore(t)
 	addEnt(t, ont, "alias", "Alias", "", "")
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias: "alias", CanonicalID: "gone", EntityType: ontology.TypeConcept,
-		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias:	"alias", CanonicalID: "gone", EntityType: ontology.TypeConcept,
+		Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	ResolveEntitiesPass(context.Background(), ont, nil, &config.Config{},
-		triplesClient(t, srv.URL), nil)
+		triplesClient(t, srv.URL), nil, nil)
 
 	rows, _ := ont.ListAliases(store.AliasApplied)
 	if len(rows) != 1 {
@@ -352,15 +352,15 @@ func TestResolvePassRejectedPairNotRelinked(t *testing.T) {
 	addEnt(t, ont, "armstrong-a", "Neil Armstrong", "an astronaut", "wiki/a.md")
 	addEnt(t, ont, "armstrong-b", "Louis Armstrong", "a trumpeter", "")
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias: "armstrong-b", CanonicalID: "armstrong-a", EntityType: ontology.TypeConcept,
-		Status: store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
-		DecidedBy: "user",
+		Alias:	"armstrong-b", CanonicalID: "armstrong-a", EntityType: ontology.TypeConcept,
+		Status:	store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		DecidedBy:	"user",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"armstrong-b"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		[]string{"armstrong-b"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	if applied, _ := ont.ListAliases(store.AliasApplied); len(applied) != 0 {
 		t.Errorf("applied = %d, want 0 — the pair was rejected", len(applied))
@@ -401,19 +401,19 @@ func TestResolvePassCrossRunActiveAliasNotReproposed(t *testing.T) {
 	addEnt(t, ont, "seed", "Buzz Aldrin", "an astronaut", "wiki/seed.md")
 	addEnt(t, ont, "tgt", "Apollo", "", "")
 	if err := ont.AddRelation(ontology.Relation{
-		ID: "r", SourceID: "seed", TargetID: "tgt",
-		Relation: ontology.RelExtends, Confidence: 0.7}); err != nil {
+		ID:	"r", SourceID: "seed", TargetID: "tgt",
+		Relation:	ontology.RelExtends, Confidence: 0.7}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias: "moved", CanonicalID: "canon-1", EntityType: ontology.TypeConcept,
-		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias:	"moved", CanonicalID: "canon-1", EntityType: ontology.TypeConcept,
+		Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"seed"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		[]string{"seed"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	// "moved" keeps exactly one active row, still pointing at canon-1. Without
 	// the guard this attempts a SECOND active row (moved -> seed), which is a
@@ -453,7 +453,7 @@ func TestResolvePassRestoresCostAttribution(t *testing.T) {
 	client := triplesClient(t, srv.URL)
 	client.SetPass("write")
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"b"}, resolveCfg(0.85), client, nil)
+		[]string{"b"}, resolveCfg(0.85), client, nil, nil)
 
 	if got := client.Pass(); got != "write" {
 		t.Errorf("client pass = %q after the run, want the prior value restored", got)
@@ -478,7 +478,7 @@ func TestResolvePassSeesPass3Entities(t *testing.T) {
 	// plus successful article concept names from Pass 3.
 	ResolveEntitiesPass(context.Background(), ont,
 		[]string{"Self Attention", "self-attention"},
-		resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	if got := calls.Load(); got == 0 {
 		t.Fatal("no arbitration call — the Pass-3 entity was not in the pool")
@@ -518,29 +518,29 @@ func TestResolvePassRejectionSurvivesChainResolution(t *testing.T) {
 	addEnt(t, ont, "c-row", "Buzz Aldrin", "an astronaut", "")
 	addEnt(t, ont, "edge-target", "Apollo", "", "")
 	if err := ont.AddRelation(ontology.Relation{
-		ID: "r", SourceID: "a-row", TargetID: "edge-target",
-		Relation: ontology.RelExtends, Confidence: 0.7}); err != nil {
+		ID:	"r", SourceID: "a-row", TargetID: "edge-target",
+		Relation:	ontology.RelExtends, Confidence: 0.7}); err != nil {
 		t.Fatal(err)
 	}
 
 	// b-row is itself an alias of c-row.
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias: "b-row", CanonicalID: "c-row", EntityType: ontology.TypeConcept,
-		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias:	"b-row", CanonicalID: "c-row", EntityType: ontology.TypeConcept,
+		Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// The user rejected a-row <-> c-row specifically.
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias: "a-row", CanonicalID: "c-row", EntityType: ontology.TypeConcept,
-		Status: store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
-		DecidedBy: "user",
+		Alias:	"a-row", CanonicalID: "c-row", EntityType: ontology.TypeConcept,
+		Status:	store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		DecidedBy:	"user",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"a-row"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		[]string{"a-row"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	// c-row must NOT have acquired the rejected entity's edge.
 	got, err := ont.GetRelations("c-row", ontology.Outbound, "")
@@ -565,20 +565,20 @@ func TestLinkAliasFailsWhenAuditWriteSuppressed(t *testing.T) {
 	addEnt(t, ont, "canon", "Canon", "", "")
 	addEnt(t, ont, "tgt", "Target", "", "")
 	if err := ont.AddRelation(ontology.Relation{
-		ID: "r", SourceID: "alias", TargetID: "tgt",
-		Relation: ontology.RelExtends, Confidence: 0.7}); err != nil {
+		ID:	"r", SourceID: "alias", TargetID: "tgt",
+		Relation:	ontology.RelExtends, Confidence: 0.7}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias: "alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
-		Status: store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias:	"alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
+		Status:	store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	_, err := ont.LinkAlias(store.EntityAlias{
-		Alias: "alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
-		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias:	"alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
+		Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	})
 	if err == nil {
 		t.Fatal("LinkAlias over a rejected row returned nil; the audit write was suppressed")
@@ -593,9 +593,9 @@ func TestLinkAliasFailsWhenAuditWriteSuppressed(t *testing.T) {
 // --- GATE-3: coverage the reviewer found missing ---
 
 type stubEmbedder struct {
-	calls int
-	fail  bool
-	vec   map[string][]float32
+	calls	int
+	fail	bool
+	vec	map[string][]float32
 }
 
 func (s *stubEmbedder) Embed(text string) ([]float32, error) {
@@ -610,8 +610,8 @@ func (s *stubEmbedder) Embed(text string) ([]float32, error) {
 	}
 	return []float32{0, 0, 1}, nil
 }
-func (s *stubEmbedder) Dimensions() int { return 3 }
-func (s *stubEmbedder) Name() string    { return "stub" }
+func (s *stubEmbedder) Dimensions() int	{ return 3 }
+func (s *stubEmbedder) Name() string	{ return "stub" }
 
 // An embedding outage must not cost the vault its resolution: lexical blocking
 // stands on its own.
@@ -626,7 +626,7 @@ func TestResolvePassEmbeddingFailureFallsBackToLexical(t *testing.T) {
 	emb := &stubEmbedder{fail: true}
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"aldrin-b"}, cfg, triplesClient(t, srv.URL), emb)
+		[]string{"aldrin-b"}, cfg, triplesClient(t, srv.URL), emb, nil)
 
 	if emb.calls == 0 {
 		t.Error("the embedder was never called despite use_embeddings")
@@ -655,7 +655,7 @@ func TestResolvePassEmbedCapIsGlobal(t *testing.T) {
 	emb := &stubEmbedder{}
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"e0"}, cfg, triplesClient(t, srv.URL), emb)
+		[]string{"e0"}, cfg, triplesClient(t, srv.URL), emb, nil)
 
 	if emb.calls > 5 {
 		t.Errorf("embed calls = %d, want <= the global cap of 5", emb.calls)
@@ -675,7 +675,7 @@ func TestResolvePassEmbedLoopChecksContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	ResolveEntitiesPass(ctx, ont, []string{"e0"}, cfg, triplesClient(t, srv.URL), emb)
+	ResolveEntitiesPass(ctx, ont, []string{"e0"}, cfg, triplesClient(t, srv.URL), emb, nil)
 
 	if emb.calls != 0 {
 		t.Errorf("embed calls = %d on a cancelled context, want 0", emb.calls)
@@ -689,14 +689,14 @@ func TestResolvePassSourceTypeExcluded(t *testing.T) {
 	ont := passStore(t)
 	for _, id := range []string{"raw/2024/notes.md", "raw/2025/notes.md"} {
 		if err := ont.AddEntity(ontology.Entity{
-			ID: id, Type: ontology.TypeSource, Name: "notes.md",
+			ID:	id, Type: ontology.TypeSource, Name: "notes.md",
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"raw/2025/notes.md"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		[]string{"raw/2025/notes.md"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	if calls.Load() != 0 {
 		t.Errorf("LLM calls = %d, want 0 — source entities are never resolved", calls.Load())
@@ -727,7 +727,7 @@ func TestResolvePassIncrementalLeavesUntouchedRowsAlone(t *testing.T) {
 
 	// Only aldrin-c is touched.
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"aldrin-c"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		[]string{"aldrin-c"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	// Whatever was linked, only the TOUCHED entity may have acquired an alias
 	// row, and no untouched entity row may have changed.
@@ -757,15 +757,15 @@ func TestResolvePassLinksAgainstEntityFromAnEarlierCompile(t *testing.T) {
 	addEnt(t, ont, "Self Attention", "Self Attention", "an attention mechanism", "")
 	addEnt(t, ont, "tgt", "Transformers", "", "")
 	if err := ont.AddRelation(ontology.Relation{
-		ID: "old", SourceID: "Self Attention", TargetID: "tgt",
-		Relation: ontology.RelExtends, Confidence: 0.6}); err != nil {
+		ID:	"old", SourceID: "Self Attention", TargetID: "tgt",
+		Relation:	ontology.RelExtends, Confidence: 0.6}); err != nil {
 		t.Fatal(err)
 	}
 	// Written by THIS compile.
 	addEnt(t, ont, "self-attention", "Self Attention", "", "wiki/concepts/self-attention.md")
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"self-attention"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		[]string{"self-attention"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	applied, _ := ont.ListAliases(store.AliasApplied)
 	pending, _ := ont.ListAliases(store.AliasPending)
@@ -793,15 +793,15 @@ func TestResolvePassRejectedPairNotCoAbsorbedAcrossBlocks(t *testing.T) {
 	addEnt(t, ont, "b-row", "Buzz Aldrin", "a jazz musician", "")
 	addEnt(t, ont, "c-canon", "Buzz Aldrin", "an astronaut", "wiki/c.md")
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias: "a-row", CanonicalID: "b-row", EntityType: ontology.TypeConcept,
-		Status: store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
-		DecidedBy: "user",
+		Alias:	"a-row", CanonicalID: "b-row", EntityType: ontology.TypeConcept,
+		Status:	store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		DecidedBy:	"user",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"a-row", "b-row"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		[]string{"a-row", "b-row"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	applied, _ := ont.ListAliases(store.AliasApplied)
 	intoC := 0
@@ -827,30 +827,30 @@ func TestResolvePassRejectedPairNotCoAbsorbedThroughAChain(t *testing.T) {
 	}
 	// z-row wins the election.
 	if err := ont.UpdateEntity(ontology.Entity{
-		ID: "z-row", Name: "Buzz Aldrin", Definition: "an astronaut",
-		ArticlePath: "wiki/z.md"}); err != nil {
+		ID:	"z-row", Name: "Buzz Aldrin", Definition: "an astronaut",
+		ArticlePath:	"wiki/z.md"}); err != nil {
 		t.Fatal(err)
 	}
 	// x -> y -> z, applied, never rewritten to the terminal.
 	for _, p := range [][2]string{{"x-row", "y-row"}, {"y-row", "z-row"}} {
 		if err := ont.PutAlias(store.EntityAlias{
-			Alias: p[0], CanonicalID: p[1], EntityType: ontology.TypeConcept,
-			Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+			Alias:	p[0], CanonicalID: p[1], EntityType: ontology.TypeConcept,
+			Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// The user separated a-row from x-row, which now sits under z-row.
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias: "a-row", CanonicalID: "x-row", EntityType: ontology.TypeConcept,
-		Status: store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
-		DecidedBy: "user",
+		Alias:	"a-row", CanonicalID: "x-row", EntityType: ontology.TypeConcept,
+		Status:	store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		DecidedBy:	"user",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"a-row"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		[]string{"a-row"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	applied, _ := ont.ListAliases(store.AliasApplied)
 	for _, a := range applied {
@@ -875,7 +875,7 @@ func TestResolvePassDoesNotDecideAboutTwoUntouchedEntities(t *testing.T) {
 	addEnt(t, ont, "aldrin-u2", "Buzz Aldrin", "an astronaut", "")
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"aldrin-t"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		[]string{"aldrin-t"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	for _, st := range []store.AliasStatus{store.AliasApplied, store.AliasPending} {
 		rows, _ := ont.ListAliases(st)
@@ -903,14 +903,14 @@ func TestResolvePassUnloadableTargetGoesToReview(t *testing.T) {
 	addEnt(t, ont, "b-row", "Buzz Aldrin", "", "wiki/b.md")
 	// b-row points at a canonical that no longer exists (pruned).
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias: "b-row", CanonicalID: "c-gone", EntityType: ontology.TypeConcept,
-		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias:	"b-row", CanonicalID: "c-gone", EntityType: ontology.TypeConcept,
+		Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"a-row"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		[]string{"a-row"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	applied, _ := ont.ListAliases(store.AliasApplied)
 	pending, _ := ont.ListAliases(store.AliasPending)
@@ -951,22 +951,22 @@ func TestResolvePassDoesNotAutoApplyAPairAwaitingReview(t *testing.T) {
 
 	// Run 1 already queued the pair for a human.
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias: "a-row", CanonicalID: "b-row", EntityType: ontology.TypeConcept,
-		Status: store.AliasPending, Confidence: 0.95, Source: "llm",
-		CreatedAt: "2026-07-26T00:00:00Z",
+		Alias:	"a-row", CanonicalID: "b-row", EntityType: ontology.TypeConcept,
+		Status:	store.AliasPending, Confidence: 0.95, Source: "llm",
+		CreatedAt:	"2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// Run 2: a-row acquires an article, so it now wins electCanonical.
 	if err := ont.AddEntity(ontology.Entity{
-		ID: "a-row", Type: ontology.TypeConcept, Name: "Buzz Aldrin",
-		ArticlePath: "wiki/a.md"}); err != nil {
+		ID:	"a-row", Type: ontology.TypeConcept, Name: "Buzz Aldrin",
+		ArticlePath:	"wiki/a.md"}); err != nil {
 		t.Fatal(err)
 	}
 
 	// b-row is the seed: it has no active row, so resolvableSeeds keeps it.
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"b-row"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		[]string{"b-row"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	applied, _ := ont.ListAliases(store.AliasApplied)
 	for _, r := range applied {
@@ -987,28 +987,28 @@ func TestResolveSweepHonoursRejections(t *testing.T) {
 	addEnt(t, ont, "canon", "Canon", "", "")
 	addEnt(t, ont, "tgt", "Target", "", "")
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias: "alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
-		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias:	"alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
+		Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// The user then rejects the pair in the other direction.
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias: "canon", CanonicalID: "alias", EntityType: ontology.TypeConcept,
-		Status: store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
-		DecidedBy: "user",
+		Alias:	"canon", CanonicalID: "alias", EntityType: ontology.TypeConcept,
+		Status:	store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		DecidedBy:	"user",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// A new edge lands on the alias afterwards.
 	if err := ont.AddRelation(ontology.Relation{
-		ID: "late", SourceID: "alias", TargetID: "tgt",
-		Relation: ontology.RelExtends, Confidence: 0.5}); err != nil {
+		ID:	"late", SourceID: "alias", TargetID: "tgt",
+		Relation:	ontology.RelExtends, Confidence: 0.5}); err != nil {
 		t.Fatal(err)
 	}
 
 	ResolveEntitiesPass(context.Background(), ont, nil, &config.Config{},
-		triplesClient(t, srv.URL), nil)
+		triplesClient(t, srv.URL), nil, nil)
 
 	canon, _ := ont.GetRelations("canon", ontology.Outbound, "")
 	if len(canon) != 0 {
@@ -1034,14 +1034,14 @@ func TestResolvePassDoesNotCreateACycle(t *testing.T) {
 	addEnt(t, ont, "x-canon", "Buzz Aldrin", "an astronaut", "")
 	addEnt(t, ont, "y-alias", "Buzz Aldrin", "an astronaut", "wiki/y.md")
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias: "y-alias", CanonicalID: "x-canon", EntityType: ontology.TypeConcept,
-		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias:	"y-alias", CanonicalID: "x-canon", EntityType: ontology.TypeConcept,
+		Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"x-canon"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		[]string{"x-canon"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	applied, _ := ont.ListAliases(store.AliasApplied)
 	for _, r := range applied {
@@ -1065,22 +1065,22 @@ func TestResolvePassPendingPairNotConsummatedTransitively(t *testing.T) {
 	addEnt(t, ont, "T", "Buzz Aldrin", "an astronaut", "")
 	addEnt(t, ont, "edge-tgt", "Apollo", "", "")
 	if err := ont.AddRelation(ontology.Relation{
-		ID: "r", SourceID: "B", TargetID: "edge-tgt",
-		Relation: ontology.RelExtends, Confidence: 0.7}); err != nil {
+		ID:	"r", SourceID: "B", TargetID: "edge-tgt",
+		Relation:	ontology.RelExtends, Confidence: 0.7}); err != nil {
 		t.Fatal(err)
 	}
 	// B is already absorbed into T.
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias: "B", CanonicalID: "T", EntityType: ontology.TypeConcept,
-		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias:	"B", CanonicalID: "T", EntityType: ontology.TypeConcept,
+		Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// A <-> B is awaiting a human.
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias: "A", CanonicalID: "B", EntityType: ontology.TypeConcept,
-		Status: store.AliasPending, Confidence: 0.9, Source: "llm",
-		CreatedAt: "2026-07-26T00:00:00Z",
+		Alias:	"A", CanonicalID: "B", EntityType: ontology.TypeConcept,
+		Status:	store.AliasPending, Confidence: 0.9, Source: "llm",
+		CreatedAt:	"2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1088,7 +1088,7 @@ func TestResolvePassPendingPairNotConsummatedTransitively(t *testing.T) {
 	// Seed T: cluster {T, A}. The direct pair (T, A) is not the pending pair,
 	// but B sits in T's component, so linking T -> A merges A with B.
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"T"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		[]string{"T"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	applied, _ := ont.ListAliases(store.AliasApplied)
 	for _, r := range applied {
@@ -1114,7 +1114,7 @@ func TestResolvePassPendingWrittenThisRunIsHonoured(t *testing.T) {
 	addEnt(t, ont, "b-row", "Buzz Aldrin", "", "wiki/b.md")
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"a-row", "b-row"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		[]string{"a-row", "b-row"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	pending, _ := ont.ListAliases(store.AliasPending)
 	applied, _ := ont.ListAliases(store.AliasApplied)
@@ -1155,7 +1155,7 @@ func TestResolvePassDoesNotLeakThroughAWithinRunChain(t *testing.T) {
 	addEnt(t, ont, "z", "Bravo Delta", "", "")
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"a", "z"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		[]string{"a", "z"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	for _, st := range []store.AliasStatus{store.AliasApplied, store.AliasPending} {
 		rows, _ := ont.ListAliases(st)
@@ -1187,8 +1187,8 @@ func TestResolvePassDoesNotLeakThroughAWithinRunChain(t *testing.T) {
 // For an applied link that repeats on every compile, forever.
 func TestResolvePassDoesNotArbitrateAlreadyDecidedPairs(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		status store.AliasStatus
+		name	string
+		status	store.AliasStatus
 	}{
 		{"applied", store.AliasApplied},
 		{"pending", store.AliasPending},
@@ -1199,15 +1199,15 @@ func TestResolvePassDoesNotArbitrateAlreadyDecidedPairs(t *testing.T) {
 			addEnt(t, ont, "seed", "Buzz Aldrin", "an astronaut", "wiki/s.md")
 			addEnt(t, ont, "alias-row", "Buzz Aldrin", "an astronaut", "")
 			if err := ont.PutAlias(store.EntityAlias{
-				Alias: "alias-row", CanonicalID: "seed", EntityType: ontology.TypeConcept,
-				Status: tc.status, Confidence: 0.9, Source: "llm",
-				CreatedAt: "2026-07-26T00:00:00Z",
+				Alias:	"alias-row", CanonicalID: "seed", EntityType: ontology.TypeConcept,
+				Status:	tc.status, Confidence: 0.9, Source: "llm",
+				CreatedAt:	"2026-07-26T00:00:00Z",
 			}); err != nil {
 				t.Fatal(err)
 			}
 
 			ResolveEntitiesPass(context.Background(), ont,
-				[]string{"seed"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+				[]string{"seed"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 			if got := calls.Load(); got != 0 {
 				t.Errorf("%d paid arbitration call(s) for a pair already %s — the only "+
@@ -1225,14 +1225,14 @@ func TestSweepAliasesNormalisesNilArguments(t *testing.T) {
 	addEnt(t, ont, "canon", "Canon", "", "")
 	addEnt(t, ont, "tgt", "Target", "", "")
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias: "alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
-		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias:	"alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
+		Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ont.AddRelation(ontology.Relation{
-		ID: "e", SourceID: "alias", TargetID: "tgt",
-		Relation: ontology.RelExtends, Confidence: 0.5}); err != nil {
+		ID:	"e", SourceID: "alias", TargetID: "tgt",
+		Relation:	ontology.RelExtends, Confidence: 0.5}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1266,8 +1266,8 @@ func TestResolvePassAutoAppliesByDefault(t *testing.T) {
 	addEnt(t, ont, "Buzz Aldrin", "Buzz Aldrin", "Apollo 11 lunar module pilot", "")
 	addEnt(t, ont, "apollo-11", "Apollo 11", "", "")
 	if err := ont.AddRelation(ontology.Relation{
-		ID: "r1", SourceID: "Buzz Aldrin", TargetID: "apollo-11",
-		Relation: ontology.RelExtends, Confidence: 0.8}); err != nil {
+		ID:	"r1", SourceID: "Buzz Aldrin", TargetID: "apollo-11",
+		Relation:	ontology.RelExtends, Confidence: 0.8}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1278,7 +1278,7 @@ func TestResolvePassAutoAppliesByDefault(t *testing.T) {
 	cfg.Models.Extract = "m"
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"Buzz Aldrin"}, cfg, triplesClient(t, srv.URL), nil)
+		[]string{"Buzz Aldrin"}, cfg, triplesClient(t, srv.URL), nil, nil)
 
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("LLM calls = %d, want 1", got)
@@ -1373,9 +1373,9 @@ func captureWarns(t *testing.T) func() string {
 func seedPending(t *testing.T, ont store.OntologyStore, alias, canonical string) {
 	t.Helper()
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias: alias, CanonicalID: canonical, EntityType: "concept",
-		Status: store.AliasPending, Source: "llm",
-		CreatedAt: "2026-07-01T00:00:00Z",
+		Alias:	alias, CanonicalID: canonical, EntityType: "concept",
+		Status:	store.AliasPending, Source: "llm",
+		CreatedAt:	"2026-07-01T00:00:00Z",
 	}); err != nil {
 		t.Fatalf("seed pending alias: %v", err)
 	}
@@ -1385,7 +1385,7 @@ func seedPending(t *testing.T, ont store.OntologyStore, alias, canonical string)
 // still works, so the test isolates the backlog query's error path.
 type errPendingStore struct {
 	store.OntologyStore
-	err error
+	err	error
 }
 
 func (e errPendingStore) ListAliases(s store.AliasStatus) ([]store.EntityAlias, error) {
@@ -1416,7 +1416,7 @@ func TestResolvePassWarnsWhenProposalsPend(t *testing.T) {
 	ont := passStore(t)
 	seedPending(t, ont, "Old Alias", "old-canonical")
 
-	ResolveEntitiesPass(context.Background(), ont, nil, resolveCfg(0.85), nil, nil)
+	ResolveEntitiesPass(context.Background(), ont, nil, resolveCfg(0.85), nil, nil, nil)
 
 	got := out()
 	if !strings.Contains(got, "--review") {
@@ -1444,7 +1444,7 @@ func TestResolvePassSilentWhenNothingPends(t *testing.T) {
 	addEnt(t, ont, "Buzz Aldrin", "Buzz Aldrin", "Apollo 11 lunar module pilot", "")
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"Buzz Aldrin"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil)
+		[]string{"Buzz Aldrin"}, resolveCfg(0.85), triplesClient(t, srv.URL), nil, nil)
 
 	if got := out(); strings.Contains(got, "--review") {
 		t.Errorf("no proposals pend, so nothing should ask for review:\n%s", got)
@@ -1460,7 +1460,7 @@ func TestResolvePassWarnsWhenResolveDisabled(t *testing.T) {
 	seedPending(t, ont, "Old Alias", "old-canonical")
 
 	ResolveEntitiesPass(context.Background(), ont,
-		[]string{"Buzz Aldrin"}, &config.Config{}, nil, nil)
+		[]string{"Buzz Aldrin"}, &config.Config{}, nil, nil, nil)
 
 	if got := out(); !strings.Contains(got, "--review") {
 		t.Errorf("disabling resolve must not silence a standing backlog:\n%s", got)
@@ -1477,7 +1477,7 @@ func TestResolvePassWarnsWhenNothingTouched(t *testing.T) {
 	ont := passStore(t)
 	seedPending(t, ont, "Old Alias", "old-canonical")
 
-	ResolveEntitiesPass(context.Background(), ont, nil, resolveCfg(0.85), nil, nil)
+	ResolveEntitiesPass(context.Background(), ont, nil, resolveCfg(0.85), nil, nil, nil)
 
 	if got := out(); !strings.Contains(got, "--review") {
 		t.Errorf("an empty touched set must not silence a standing backlog:\n%s", got)
@@ -1491,7 +1491,7 @@ func TestResolvePassWarnsWhenBacklogQueryFails(t *testing.T) {
 	out := captureWarns(t)
 	ont := errPendingStore{OntologyStore: passStore(t), err: errors.New("boom")}
 
-	ResolveEntitiesPass(context.Background(), ont, nil, resolveCfg(0.85), nil, nil)
+	ResolveEntitiesPass(context.Background(), ont, nil, resolveCfg(0.85), nil, nil, nil)
 
 	got := out()
 	if !strings.Contains(got, "boom") {
@@ -1514,7 +1514,7 @@ func TestResolvePassWarnsWhenSweepPanics(t *testing.T) {
 				t.Error("fixture did not panic — the test would be vacuous")
 			}
 		}()
-		ResolveEntitiesPass(context.Background(), ont, nil, resolveCfg(0.85), nil, nil)
+		ResolveEntitiesPass(context.Background(), ont, nil, resolveCfg(0.85), nil, nil, nil)
 	}()
 
 	if got := out(); !strings.Contains(got, "--review") {
