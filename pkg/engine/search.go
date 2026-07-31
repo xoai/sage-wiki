@@ -10,7 +10,6 @@ import (
 	"github.com/xoai/sage-wiki/internal/search"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/trust"
-	"sync"
 
 	"github.com/xoai/sage-wiki/pkg/provider"
 )
@@ -98,6 +97,7 @@ func (w *Workspace) Search(ctx context.Context, req SearchRequest) (*SearchResul
 		client.SetRecorder(w.usageRecorder())
 		client.SetPass("expand")
 		client.SetPriceOverride(cfg.Compiler.TokenPriceOverride)
+		client.SetPriceTable(cfg.Compiler.PriceTable)
 		deps.Client = client
 	}
 
@@ -147,7 +147,7 @@ func (w *Workspace) Search(ctx context.Context, req SearchRequest) (*SearchResul
 // search cancellation into the provider (F-057).
 func (w *Workspace) searchEmbedder(ctx context.Context) embed.Embedder {
 	if w.opts.provider != nil {
-		return &providerEmbedder{p: w.opts.provider, ctx: ctx}
+		return &providerEmbedder{p: w.opts.provider, ctx: ctx, w: w}
 	}
 	return w.app.Embedder()
 }
@@ -155,10 +155,9 @@ func (w *Workspace) searchEmbedder(ctx context.Context) embed.Embedder {
 // providerEmbedder adapts a pkg/provider.Provider to the internal
 // embed.Embedder interface (one text per call).
 type providerEmbedder struct {
-	p        provider.Provider
-	ctx      context.Context
-	dimsOnce sync.Once
-	dims     int
+	p   provider.Provider
+	ctx context.Context
+	w   *Workspace // hosts the dimension-probe cache across searches
 }
 
 // Embed implements embed.Embedder.
@@ -173,16 +172,17 @@ func (a *providerEmbedder) Embed(text string) ([]float32, error) {
 	return vecs[0], nil
 }
 
-// Dimensions implements embed.Embedder by probing one embedding (cached —
-// a probe per call is a paid round-trip on a remote provider).
+// Dimensions implements embed.Embedder by probing one embedding. The probe
+// is cached on the Workspace — once per workspace, not once per Search call
+// (a probe per call is a paid round-trip on a remote provider).
 func (a *providerEmbedder) Dimensions() int {
-	a.dimsOnce.Do(func() {
+	a.w.dimsOnce.Do(func() {
 		vec, err := a.Embed("dimension probe")
 		if err == nil {
-			a.dims = len(vec)
+			a.w.dims = len(vec)
 		}
 	})
-	return a.dims
+	return a.w.dims
 }
 
 // Name implements embed.Embedder.

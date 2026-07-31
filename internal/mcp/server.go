@@ -302,6 +302,7 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 			c.SetRecorder(llm.NewFileRecorder(s.projectDir))
 			c.SetPass("expand")
 			c.SetPriceOverride(s.cfg.Compiler.TokenPriceOverride)
+			c.SetPriceTable(s.cfg.Compiler.PriceTable)
 			client = c
 		}
 		var chunkStore store.ChunkStore

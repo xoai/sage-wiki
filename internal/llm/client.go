@@ -98,16 +98,20 @@ func (r *Response) EmptyContentDetails() string {
 
 // Client is a provider-agnostic LLM client.
 type Client struct {
-	provider     Provider
-	providerName string // the configured provider string (registry identity; provider.Name() is the wire adapter, not the config kind)
+	provider      Provider
+	providerName  string  // the configured provider string (registry identity; provider.Name() is the wire adapter, not the config kind)
 	priceOverride float64 // compiler.token_price_per_million — keeps tracker-less ledger pricing consistent with tracked paths
-	limiter      *rateLimiter
-	client       http.Client
-	tracker      *CostTracker  // optional cost tracking
-	recorder     UsageRecorder // optional usage-event ledger
-	pass         string        // current compiler pass name (for tracking)
-	tier         int           // compile tier for usage events (TierNotCompileScoped when unset)
-	cacheID      string        // active cache ID (empty = no caching)
+	priceTable    string  // compiler.price_table — the workspace overlay on tracker-less paths
+	registryOnce  sync.Once
+	registry      *Registry
+	registryErr   error
+	limiter       *rateLimiter
+	client        http.Client
+	tracker       *CostTracker  // optional cost tracking
+	recorder      UsageRecorder // optional usage-event ledger
+	pass          string        // current compiler pass name (for tracking)
+	tier          int           // compile tier for usage events (TierNotCompileScoped when unset)
+	cacheID       string        // active cache ID (empty = no caching)
 }
 
 // sharedTransport is the HTTP transport reused by every llm.Client.
@@ -299,6 +303,23 @@ func (c *Client) SetPriceOverride(override float64) {
 	c.priceOverride = override
 }
 
+// SetPriceTable points the client at the workspace price table
+// (compiler.price_table) for tracker-less pricing — the same load order
+// the compile tracker uses (builtin → user file → workspace table).
+func (c *Client) SetPriceTable(path string) {
+	c.priceTable = path
+}
+
+// pricingRegistry loads the registry once per CLIENT (not per process) —
+// a long-lived host embedding many workspaces must not leak one
+// workspace's prices into another's usage events.
+func (c *Client) pricingRegistry() (*Registry, error) {
+	c.registryOnce.Do(func() {
+		c.registry, c.registryErr = LoadRegistry(c.priceTable)
+	})
+	return c.registry, c.registryErr
+}
+
 // SetTier sets the compile tier recorded on usage events.
 //
 // c.tier is unsynchronized and buildUsageEvent reads it from request
@@ -371,7 +392,7 @@ func (c *Client) buildUsageEvent(model string, usage Usage) UsageEvent {
 		ev.Cost, ev.PriceSource, ev.Assumptions = c.tracker.PriceUsage(model, usage, false)
 		return ev
 	}
-	if r, err := sharedRegistry(); err == nil {
+	if r, err := c.pricingRegistry(); err == nil {
 		ct := newCostTrackerWithRegistry(c.providerName, c.priceOverride, r)
 		ev.Cost, ev.PriceSource, ev.Assumptions = ct.PriceUsage(model, usage, false)
 	} else {

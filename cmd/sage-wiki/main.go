@@ -847,7 +847,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		// failure with no explicit --config falls back to the legacy path.
 		w, err := engine.Open(cmd.Context(), dir, engine.WithReadOnly(), engine.WithConfigFile(resolveConfigPath(dir)))
 		if err != nil {
-			if errors.Is(err, engine.ErrConfigLoad) && configPath == "" {
+			if searchFallsBackToLegacy(err, configPath) {
 				fmt.Fprintf(os.Stderr, "warning: config load failed (%v): default fusion weights, ANN off, BM25-only\n", err)
 				goto legacy
 			}
@@ -994,6 +994,14 @@ func runQuery(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "\nFiled to: %s\n", result.OutputPath)
 	}
 	return nil
+}
+
+// searchFallsBackToLegacy is the P1-8 degrade decision, extracted for
+// testing: ONLY an engine config-load failure with NO explicit --config
+// drops search to the legacy BM25 path; every other Open error (including
+// an explicit --config failure) propagates.
+func searchFallsBackToLegacy(err error, explicitConfig string) bool {
+	return errors.Is(err, engine.ErrConfigLoad) && explicitConfig == ""
 }
 
 // lockSentinel maps the engine's lock failure onto the CLI surface

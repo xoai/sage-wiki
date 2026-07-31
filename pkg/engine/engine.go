@@ -108,6 +108,9 @@ type Workspace struct {
 
 	mu     sync.RWMutex
 	closed bool
+
+	dimsOnce sync.Once // provider-embedding dimension probe cache
+	dims     int
 }
 
 // orBackground normalizes a nil context (cobra's cmd.Context() is nil
@@ -127,6 +130,9 @@ func Open(ctx context.Context, dir string, optFns ...Option) (*Workspace, error)
 	var opts options
 	for _, fn := range optFns {
 		fn(&opts)
+	}
+	if opts.upgrade && opts.readOnly {
+		return nil, fmt.Errorf("engine: WithUpgrade requires a read-write open (drop WithReadOnly) — adoption is a mutation")
 	}
 
 	abs, err := filepath.Abs(dir)

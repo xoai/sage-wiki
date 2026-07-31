@@ -53,8 +53,9 @@ func run() error {
 	}
 	fmt.Println("captured:", id)
 
-	// Compile at Tier 1 (index + embed — no LLM pass required; the fake
-	// provider serves the search side below).
+	// Compile at Tier 1 (index only offline — embedding needs a configured
+	// provider, so this run indexes + searches via BM25; the fake provider
+	// serves the engine's search side below).
 	res, err := w.Compile(ctx, engine.CompileRequest{Selector: "pending", Tier: 1})
 	if err != nil {
 		return fmt.Errorf("compile: %w", err)

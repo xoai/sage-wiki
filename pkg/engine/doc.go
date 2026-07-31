@@ -42,8 +42,12 @@
 // # Process-global state (documented adaptation)
 //
 // Per SPEC-01's interleaving guarantee, per-workspace BEHAVIOR is isolated
-// on the Workspace (prompt overrides, storage, provider). Two pieces of
+// on the Workspace (prompt overrides, storage, provider, price registry —
+// the registry is cached per CLIENT, never per process). Two pieces of
 // process-global TELEMETRY remain by design: the in-process metrics
 // registry and the slog logger — they aggregate across Workspaces in one
-// process, which is what an embedder running many workspaces wants.
+// process, which is what an embedder running many workspaces wants. The
+// usage ledger encodes decimal costs with a type-scoped marshaler, NOT
+// the shopspring library global, so importing the engine does not change
+// JSON encoding anywhere else in the host process.
 package engine

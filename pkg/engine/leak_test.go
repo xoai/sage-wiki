@@ -2,10 +2,10 @@ package engine
 
 import (
 	"go/ast"
+	"go/build"
 	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/build"
 	"go/types"
 	"strings"
 	"testing"

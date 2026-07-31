@@ -12,6 +12,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/xoai/sage-wiki/internal/capturefmt"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
@@ -93,20 +94,16 @@ func (w *Workspace) Capture(ctx context.Context, src Source) (DocID, error) {
 		}
 
 		// The ONE capture-file format (pack rule 2): date-slug name with
-		// -N dedup, frontmatter carrying origin/timestamp/tags/context.
+		// -N dedup, frontmatter from the shared capturefmt builder.
 		now := w.app.Config.Compiler.UserNow()
 		origin := src.Origin
 		if origin == "" {
 			origin = "capture"
 		}
-		fm := fmt.Sprintf("---\nsource: %s\ncaptured_at: %s\n", origin, now)
-		if src.Tags != "" {
-			fm += fmt.Sprintf("tags: [%s]\n", src.Tags)
+		fm, err := capturefmt.Frontmatter(origin, now, src.Tags, src.Context)
+		if err != nil {
+			return "", fmt.Errorf("engine: %w", err)
 		}
-		if src.Context != "" {
-			fm += fmt.Sprintf("context: %q\n", src.Context)
-		}
-		fm += "---\n\n"
 
 		slug := "capture-" + now[:10]
 		if src.Type != "" {

@@ -134,3 +134,20 @@ func TestCompile_PreFormatRequiresUpgradeFlag(t *testing.T) {
 		t.Error("adoption must stamp format_version")
 	}
 }
+
+// TestSearchFallsBackToLegacy pins the P1-8 degrade decision seam (review
+// issue 5): only ErrConfigLoad with no explicit --config falls back.
+func TestSearchFallsBackToLegacy(t *testing.T) {
+	if !searchFallsBackToLegacy(engine.ErrConfigLoad, "") {
+		t.Error("config-load failure without --config must fall back")
+	}
+	if searchFallsBackToLegacy(engine.ErrConfigLoad, "/tmp/explicit.yaml") {
+		t.Error("explicit --config failure must NOT fall back (hard error)")
+	}
+	if searchFallsBackToLegacy(engine.ErrLocked, "") {
+		t.Error("non-config errors must NOT fall back")
+	}
+	if searchFallsBackToLegacy(nil, "") {
+		t.Error("nil error must not fall back")
+	}
+}

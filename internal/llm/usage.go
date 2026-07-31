@@ -14,13 +14,37 @@ import (
 	"github.com/xoai/sage-wiki/internal/log"
 )
 
-// The usage-ledger wire schema (pinned by the cost-report golden fixture)
-// requires Cost as a JSON number or null, never a string. shopspring's
-// default is a quoted string; this knob is the library's official switch.
-// Decimal is new to this repo (SPEC-05) so no other marshal site is
-// affected.
-func init() {
-	decimal.MarshalJSONWithoutQuotes = true
+// MarshalJSON emits the pinned wire schema with Cost as a JSON number or
+// null — NOT shopspring's default quoted string. A custom marshaler
+// (rather than the library's MarshalJSONWithoutQuotes global) keeps the
+// encoding scoped to this type: importing the package must not change
+// decimal JSON encoding for the whole host process (embedding rule).
+func (e UsageEvent) MarshalJSON() ([]byte, error) {
+	// Shadow struct with the identical schema; only the cost field differs.
+	type shadow struct {
+		TS               time.Time       `json:"ts"`
+		Pass             string          `json:"pass"`
+		Provider         string          `json:"provider"`
+		Model            string          `json:"model"`
+		Tier             int             `json:"tier"`
+		InputTokens      int             `json:"input_tokens"`
+		CachedTokens     int             `json:"cached_tokens"`
+		CacheWriteTokens int             `json:"cache_write_tokens"`
+		OutputTokens     int             `json:"output_tokens"`
+		Cost             json.RawMessage `json:"cost"`
+		PriceSource      string          `json:"price_source"`
+		Assumptions      []string        `json:"assumptions,omitempty"`
+	}
+	cost := json.RawMessage("null")
+	if e.Cost != nil {
+		cost = json.RawMessage(e.Cost.String())
+	}
+	return json.Marshal(shadow{
+		TS: e.TS, Pass: e.Pass, Provider: e.Provider, Model: e.Model,
+		Tier: e.Tier, InputTokens: e.InputTokens, CachedTokens: e.CachedTokens,
+		CacheWriteTokens: e.CacheWriteTokens, OutputTokens: e.OutputTokens,
+		Cost: cost, PriceSource: e.PriceSource, Assumptions: e.Assumptions,
+	})
 }
 
 // TierNotCompileScoped marks usage events from non-compile paths
