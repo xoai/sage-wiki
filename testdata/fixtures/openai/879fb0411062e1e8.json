@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "# Project Lighthouse Status (Updated)\n\nProject Lighthouse moved to a decentralized lease model in early 2025.\nWorkers claim jobs directly from the queue using short-lived leases;\nthe centralized coordinator was removed. The older centralized\ndescription is superseded by this document.",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.996,
+            0.615,
+            0.234,
+            0.853,
+            0.52,
+            0.139,
+            0.758,
+            0.377
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

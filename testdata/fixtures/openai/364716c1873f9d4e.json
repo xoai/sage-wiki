@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "# Running K8s in Production\n\nTeams running K8s in production should pin their container images,\nconfigure resource requests and limits per pod, and use network\npolicies by default. K8s probes (liveness and readiness) determine\ntraffic routing. See the architecture overview for control-plane\ndetails.\n",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.129,
+            0.51,
+            0.891,
+            0.272,
+            0.605,
+            0.986,
+            0.367,
+            0.748
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

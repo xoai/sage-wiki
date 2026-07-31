@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/xoai/sage-wiki/internal/config"
-	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/search"
@@ -41,6 +40,20 @@ type SearchGolden struct {
 	Queries             []SearchQuery `json:"queries"`
 }
 
+// fnvEmbedder is the deterministic in-process embedder for search (same
+// fnv scheme + 8 dims as the scripted origin, so query vectors are
+// consistent with the compile-time vectors stored in the DB).
+type fnvEmbedder struct{}
+
+// Embed implements embed.Embedder.
+func (fnvEmbedder) Embed(text string) ([]float32, error) { return fnvVec(text, 8), nil }
+
+// Dimensions implements embed.Embedder.
+func (fnvEmbedder) Dimensions() int { return 8 }
+
+// Name implements embed.Embedder.
+func (fnvEmbedder) Name() string { return "parity-fnv" }
+
 // searchDeps builds search.Deps directly from the workspace (harness is
 // in-module; engine's unexported app is not needed — F-013's mechanism).
 func searchDeps(wsDir string) (search.Deps, *storage.DB, error) {
@@ -58,14 +71,14 @@ func searchDeps(wsDir string) (search.Deps, *storage.DB, error) {
 		Mem:          memory.NewStore(db),
 		Chunks:       memory.NewChunkStore(db),
 		Vec:          vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled())),
-		Embedder:     embed.NewFromConfig(cfg),
+		Embedder:     fnvEmbedder{},
 		Model:        cfg.Models.Query,
 		BM25Weight:   cfg.Search.HybridWeightBM25,
 		VectorWeight: cfg.Search.HybridWeightVector,
 		Ont: ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes),
 			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault())),
 		GraphWeight: cfg.Search.HybridWeightGraph,
-		Now:         goldenEpoch,
+		Now:         goldenNow,
 	}
 	if deps.Model == "" {
 		deps.Model = cfg.Models.Write

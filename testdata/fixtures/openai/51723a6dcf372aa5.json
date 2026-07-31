@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "# Cache Economics\n\nPrefix caching reuses the shared system prompt across calls in a\ncompile pass, cutting input-token spend substantially on long\ndocuments. Cache-aware pricing must distinguish cache-read from\ncache-write tokens: they are billed at different rates by providers\nthat expose the split.\n",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.951,
+            0.332,
+            0.189,
+            0.57,
+            0.475,
+            0.856,
+            0.713,
+            0.094
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "# Gamma Proof\n\nThe Gamma Proof is a zero-knowledge confirmation that both peers\nderived the same session key without revealing it. It is the terminal\nstep of the Beta Handshake and the root of the Alpha protocol's trust.\n",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.687,
+            0.068,
+            0.925,
+            0.306,
+            0.211,
+            0.592,
+            0.449,
+            0.83
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

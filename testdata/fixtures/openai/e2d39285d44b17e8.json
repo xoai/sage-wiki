@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "# Tiered Compilation\n\nTier 0 indexes raw sources for lexical search. Tier 1 adds embeddings\nfor vector retrieval. Tier 2 extracts structure from code. Tier 3 runs\nthe full LLM pipeline: summarize, extract concepts, write articles.\nMost corpora should mix tiers by source type rather than compile\neverything at Tier 3.\n",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.287,
+            0.668,
+            0.525,
+            0.906,
+            0.811,
+            0.192,
+            0.049,
+            0.43
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

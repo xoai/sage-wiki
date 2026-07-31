@@ -17,13 +17,23 @@ import (
 	"github.com/xoai/sage-wiki/internal/manifest"
 )
 
-// goldenEpoch pins corpus mtimes and Deps.Now so source dates and the
-// recency bonus are byte-stable (SPEC-09 discovery: sourcedate falls back
-// to file mtime; search recency reads time.Now()).
+// goldenEpoch pins corpus mtimes (SPEC-09 discovery: sourcedate falls
+// back to file mtime).
 var goldenEpoch = time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 
-// GoldenEpoch returns the pinned epoch (also used for Deps.Now).
+// goldenNow is the search-side clock: far enough in the future that the
+// recency bonus underflows to exactly +0 for every document
+// (0.05·2^(-ageDays/14) = 0). Generated articles carry per-build
+// wall-clock mtimes, so any near-now epoch lets recency drift scores
+// between builds; a far-future epoch makes scores deterministic by
+// construction. Golden queries assert doc+rank+exact-score on this basis.
+var goldenNow = time.Date(3000, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// GoldenEpoch returns the mtime epoch.
 func GoldenEpoch() time.Time { return goldenEpoch }
+
+// GoldenNow returns the search clock (far-future recency suppressor).
+func GoldenNow() time.Time { return goldenNow }
 
 var rfc3339Re = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:\d{2})`)
 
@@ -114,11 +124,17 @@ compiler:
   auto_commit: false
   default_tier: 3
   mode: standard
+  max_parallel: 1
 %s`, replayURL, goldenConfig)
 	if err := os.WriteFile(filepath.Join(wsDir, "config.yaml"), []byte(configBody), 0o644); err != nil {
 		return err
 	}
 
+	// Pin the compile clock (SOURCE_DATE_EPOCH) so timestamps in compiled
+	// artifacts — and everything indexed from them — are build-stable.
+	if err := os.Setenv("SOURCE_DATE_EPOCH", fmt.Sprintf("%d", goldenEpoch.Unix())); err != nil {
+		return err
+	}
 	_, err = compiler.Compile(wsDir, compiler.CompileOpts{})
 	if err != nil {
 		return fmt.Errorf("compile: %w", err)
@@ -137,6 +153,10 @@ func copyTree(src, dst string) error {
 			return err
 		}
 		if rel == "." || info.IsDir() {
+			return nil
+		}
+		// The corpus's own README is documentation, not a source.
+		if rel == "README.md" {
 			return nil
 		}
 		target := filepath.Join(dst, "raw", rel)

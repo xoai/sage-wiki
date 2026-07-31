@@ -70,7 +70,14 @@ func originClassify(userMsg string) string {
 	marker := markerOf(userMsg)
 	switch {
 	case strings.Contains(userMsg, "concept extraction system"):
-		return `[{"name": "` + marker + `", "aliases": [], "sources": ["` + sourceOf(userMsg) + `"], "type": "concept"}]`
+		// One concept per source marker in the batch (up to 5) so the
+		// golden corpus builds a real graph.
+		markers := allMarkers(userMsg, 12)
+		var parts []string
+		for _, m := range markers {
+			parts = append(parts, `{"name": "`+m.slug+`", "aliases": [], "sources": ["`+m.src+`"], "type": "concept"}`)
+		}
+		return `[` + strings.Join(parts, ", ") + `]`
 	case strings.Contains(userMsg, "wiki author writing a comprehensive article"):
 		return "---\nconcept: " + marker + "\n---\n\n# " + titleCase(marker) + "\n\n" +
 			titleCase(marker) + " is a documented concept in this workspace. It relates to its source material directly.\n\n## See also\n\n- Related concepts appear across the corpus."
@@ -115,6 +122,38 @@ func sourceOf(s string) string {
 		}
 	}
 	return "raw/unknown.md"
+}
+
+type srcMarker struct{ slug, src string }
+
+// allMarkers extracts every "### Source:" marker in a batch, capped.
+// Concept names come from the BASENAME (semantic, distinct) — a shared
+// prefix would make the embedding dedup merge them all into a few.
+func allMarkers(s string, limit int) []srcMarker {
+	var out []srcMarker
+	rest := s
+	for len(out) < limit {
+		i := strings.Index(rest, "### Source: ")
+		if i == -1 {
+			break
+		}
+		rest = rest[i+len("### Source: "):]
+		j := strings.Index(rest, "\n")
+		if j == -1 {
+			break
+		}
+		src := strings.TrimSpace(rest[:j])
+		base := src
+		if k := strings.LastIndex(src, "/"); k != -1 {
+			base = src[k+1:]
+		}
+		out = append(out, srcMarker{slug: slugify(base), src: src})
+		rest = rest[j:]
+	}
+	if len(out) == 0 {
+		out = append(out, srcMarker{slug: "doc", src: "raw/unknown.md"})
+	}
+	return out
 }
 
 func slugify(s string) string {

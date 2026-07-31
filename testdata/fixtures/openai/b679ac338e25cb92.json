@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "# Undated Working Notes\n\nScratch notes with no frontmatter date: their provenance comes from\nthe filesystem or the manifest, never from content. Search recency\nboosts must tolerate missing dates — an undated doc receives no\nrecency contribution at all.\n",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.016,
+            0.635,
+            0.254,
+            0.873,
+            0.492,
+            0.111,
+            0.73,
+            0.349
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

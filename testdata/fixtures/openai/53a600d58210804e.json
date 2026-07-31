@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "# Mixed-Script Documents\n\nDocuments mix scripts freely: English prose with Ελληνικά terms,\nматематическая notation, and 漢字 inline. Tokenization must handle\nscript boundaries without dropping either segment. Search for\n\"λ-calculus\" or \"גרפים\" should hit this document.\n",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.101,
+            0.482,
+            0.863,
+            0.244,
+            0.625,
+            0.006,
+            0.387,
+            0.768
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

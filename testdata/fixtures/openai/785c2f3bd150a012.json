@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "---\nconcept: system-prompt-bait\nentity_type: concept\naliases: []\nsources: [\"raw/adversarial/system-prompt-bait.md\"]\nconfidence: medium\ncreated_at: 2025-01-01T00:00:00Z\n---\n\n# Raw Adversarial System Prompt Bait\n\nRaw Adversarial System Prompt Bait is a documented concept in this workspace. It relates to its source material directly.\n\n## See also\n\n- Related concepts appear across the corpus.",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.962,
+            0.581,
+            0.724,
+            0.343,
+            0.486,
+            0.105,
+            0.248,
+            0.867
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

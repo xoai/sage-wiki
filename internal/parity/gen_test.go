@@ -1,0 +1,100 @@
+package parity
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// TestRecordFixtures records LLM fixtures via the scripted origin (or
+// ORIGIN for a real vendor). Guarded: requires SAGE_PARITY_FORCE=1.
+// Maintainer action only — CI never runs this.
+func TestRecordFixtures(t *testing.T) {
+	if os.Getenv("SAGE_PARITY_FORCE") != "1" {
+		t.Skip("record-fixtures requires SAGE_PARITY_FORCE=1")
+	}
+	originURL := os.Getenv("ORIGIN")
+	if originURL == "" {
+		origin := NewOriginServer()
+		defer origin.Close()
+		originURL = origin.URL
+	}
+	fixtureDir := filepath.Join("..", "..", "testdata", "fixtures", "openai")
+	rec, err := NewRecordServer(originURL, fixtureDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rec.Close()
+
+	corpus := filepath.Join("..", "..", "testdata", "golden-corpus")
+	ws := filepath.Join(t.TempDir(), "ws")
+	goldenCfg := readGoldenConfig(t)
+	if err := BuildWorkspace(corpus, ws, rec.URL(), goldenCfg); err != nil {
+		t.Fatalf("record build: %v", err)
+	}
+	entries, _ := os.ReadDir(fixtureDir)
+	t.Logf("recorded %d fixtures into %s", len(entries), fixtureDir)
+}
+
+// TestRegenGoldens rebuilds against the replay server and rewrites all
+// goldens. Guarded: requires SAGE_PARITY_FORCE=1.
+func TestRegenGoldens(t *testing.T) {
+	if os.Getenv("SAGE_PARITY_FORCE") != "1" {
+		t.Skip("regen-goldens requires SAGE_PARITY_FORCE=1")
+	}
+	fixtureDir := filepath.Join("..", "..", "testdata", "fixtures", "openai")
+	replay, err := NewReplayServer(fixtureDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replay.Close()
+
+	corpus := filepath.Join("..", "..", "testdata", "golden-corpus")
+	ws := filepath.Join(t.TempDir(), "ws")
+	goldenCfg := readGoldenConfig(t)
+	if err := BuildWorkspace(corpus, ws, replay.URL(), goldenCfg); err != nil {
+		t.Fatalf("regen build: %v", err)
+	}
+	goldenDir := filepath.Join("..", "..", "testdata", "golden")
+	goldenConfigPath := filepath.Join(goldenDir, "config.yaml")
+	if err := RegenGoldens(ws, goldenConfigPath, goldenDir); err != nil {
+		t.Fatalf("regen: %v", err)
+	}
+
+	// Search golden: expectations captured from the built workspace.
+	searchGoldenPath := filepath.Join(goldenDir, "search.json")
+	raw, err := os.ReadFile(searchGoldenPath)
+	if err != nil {
+		t.Fatalf("search.json must be hand-authored first: %v", err)
+	}
+	var sg SearchGolden
+	if err := json.Unmarshal(raw, &sg); err != nil {
+		t.Fatal(err)
+	}
+	results, err := RunSearchSet(ws, sg.Queries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range sg.Queries {
+		sg.Queries[i].Expect = results[i]
+	}
+	sg.GoldenFormatVersion = 1
+	out, err := json.MarshalIndent(sg, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(searchGoldenPath, append(out, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("goldens regenerated into %s", goldenDir)
+}
+
+func readGoldenConfig(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "golden", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}

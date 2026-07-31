@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "---\nconcept: examplejs\nentity_type: concept\naliases: []\nsources: [\"raw/code/example.js\"]\nconfidence: medium\ncreated_at: 2025-01-01T00:00:00Z\n---\n\n# Raw Code Examplejs\n\nRaw Code Examplejs is a documented concept in this workspace. It relates to its source material directly.\n\n## See also\n\n- Related concepts appear across the corpus.",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.402,
+            0.021,
+            0.164,
+            0.783,
+            0.926,
+            0.545,
+            0.688,
+            0.307
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

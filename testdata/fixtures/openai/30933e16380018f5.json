@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "// Retry helper with exponential backoff and jitter.\nexport async function retry(fn, { attempts = 3, baseMs = 100 } = {}) {\n  let lastError;\n  for (let i = 0; i \u003c attempts; i++) {\n    try {\n      return await fn();\n    } catch (err) {\n      lastError = err;\n      const jitter = Math.random() * baseMs;\n      const delay = baseMs * 2 ** i + jitter;\n      await new Promise((r) =\u003e setTimeout(r, delay));\n    }\n  }\n  throw lastError;\n}\n",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.37,
+            0.989,
+            0.132,
+            0.751,
+            0.894,
+            0.513,
+            0.656,
+            0.275
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

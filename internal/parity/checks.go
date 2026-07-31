@@ -1,6 +1,7 @@
 package parity
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/pkg/engine"
 )
 
 // ByteGolden is the byte-parity golden schema (SPEC-09 §2.4 §1).
@@ -247,7 +249,36 @@ func RegenGoldens(wsDir, goldenConfigPath, goldenDir string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(goldenDir, "graph.jsonl"), []byte(graph), 0o644)
+	if err := os.WriteFile(filepath.Join(goldenDir, "graph.jsonl"), []byte(graph), 0o644); err != nil {
+		return err
+	}
+
+	// graph-asof.json: the AsOf view at the golden epoch (entities +
+	// relations live at that instant).
+	asof := map[string]any{
+		"golden_format_version": 1,
+		"asof":                  goldenEpoch.Format("2006-01-02T15:04:05Z07:00"),
+	}
+	w, err := engine.Open(context.Background(), wsDir, engine.WithReadOnly())
+	if err != nil {
+		return err
+	}
+	defer w.Close()
+	ents, err := w.Graph().AsOf(goldenEpoch).Neighbors(context.Background(), "", 5)
+	if err != nil {
+		return err
+	}
+	asof["neighbors"] = ents
+	rels, err := w.Graph().Relations(context.Background(), engine.GraphFilter{})
+	if err != nil {
+		return err
+	}
+	asof["relations"] = rels
+	raw, err = json.MarshalIndent(asof, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(goldenDir, "graph-asof.json"), append(raw, '\n'), 0o644)
 }
 
 // mustJSON marshals v, panicking on error (test harness convenience).

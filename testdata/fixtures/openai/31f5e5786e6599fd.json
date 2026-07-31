@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "# Frontmatter Handling\n\nDocuments may carry YAML frontmatter. The compiler preserves unknown\nfields, interprets `tags:` for search filtering, and must never let\nfrontmatter leak into the article body text.",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.014,
+            0.633,
+            0.776,
+            0.395,
+            0.49,
+            0.109,
+            0.252,
+            0.871
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

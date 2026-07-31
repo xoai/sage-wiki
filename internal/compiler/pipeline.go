@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1500,7 +1501,15 @@ func convertSignals(typeSignals []config.TypeSignal) []extract.TypeSignal {
 
 // timeNow returns the current time in RFC3339 using the given timezone.
 // Used for user-facing timestamps (frontmatter, changelog).
+// SOURCE_DATE_EPOCH (the reproducible-builds convention) overrides the
+// clock: with it set, every compile timestamp is the epoch — the seed of
+// SPEC-04's deterministic artifacts and what the parity suite pins.
 func timeNow(loc *time.Location) string {
+	if s := os.Getenv("SOURCE_DATE_EPOCH"); s != "" {
+		if sec, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return time.Unix(sec, 0).In(loc).Format(time.RFC3339)
+		}
+	}
 	return time.Now().In(loc).Format(time.RFC3339)
 }
 

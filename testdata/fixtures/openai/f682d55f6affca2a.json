@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "# API Gateway Patterns\n\nAn API gateway (sometimes just \"gateway\") terminates TLS, routes\nrequests, and enforces rate limits at the edge. The gateway pattern\ncentralizes cross-cutting concerns so backend services stay thin.\nSome teams call their gateway a \"front door\".\n",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.542,
+            0.161,
+            0.304,
+            0.923,
+            0.018,
+            0.637,
+            0.78,
+            0.399
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

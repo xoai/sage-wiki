@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "---\nconcept: distributed-systemstxt\nentity_type: concept\naliases: []\nsources: [\"raw/text/distributed-systems.txt\"]\nconfidence: medium\ncreated_at: 2025-01-01T00:00:00Z\n---\n\n# Raw Text Distributed Systemstxt\n\nRaw Text Distributed Systemstxt is a documented concept in this workspace. It relates to its source material directly.\n\n## See also\n\n- Related concepts appear across the corpus.",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.824,
+            0.443,
+            0.062,
+            0.681,
+            0.3,
+            0.919,
+            0.538,
+            0.157
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

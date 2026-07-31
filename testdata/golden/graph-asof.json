@@ -1,0 +1,61 @@
+{
+  "asof": "2025-01-01T00:00:00Z",
+  "golden_format_version": 1,
+  "neighbors": [],
+  "relations": [
+    {
+      "ID": "distributed-systemstxt-cites-raw-text-distributed-systems-txt",
+      "SourceID": "distributed-systemstxt",
+      "TargetID": "raw/text/distributed-systems.txt",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
+      "ID": "dated-2024-cites-raw-dates-dated-2024-md",
+      "SourceID": "dated-2024",
+      "TargetID": "raw/dates/dated-2024.md",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
+      "ID": "examplejs-cites-raw-code-example-js",
+      "SourceID": "examplejs",
+      "TargetID": "raw/code/example.js",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
+      "ID": "api-gateway-cites-raw-alias-api-gateway-md",
+      "SourceID": "api-gateway",
+      "TargetID": "raw/alias/api-gateway.md",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
+      "ID": "system-prompt-bait-cites-raw-adversarial-system-prompt-bait-md",
+      "SourceID": "system-prompt-bait",
+      "TargetID": "raw/adversarial/system-prompt-bait.md",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
+      "ID": "instruction-lookalike-cites-raw-adversarial-instruction-lookalike-md",
+      "SourceID": "instruction-lookalike",
+      "TargetID": "raw/adversarial/instruction-lookalike.md",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    }
+  ]
+}

@@ -40,8 +40,13 @@ type CanonicalResponse struct {
 }
 
 // canonicalKey hashes method+path+canonical-body into the fixture name.
+// RFC3339 timestamps in the body are sentinel-replaced first: compiled
+// artifacts carry wall-clock `created_at` until SPEC-04 lands, and
+// fixtures must match across different compile times. The recorded
+// response (computed from the timestamped text at record time) is the
+// STABLE value goldens compare against.
 func canonicalKey(method, path string, body []byte) (string, error) {
-	canon, err := canonicalJSON(body)
+	canon, err := canonicalJSON(rfc3339Re.ReplaceAll(body, []byte("<TS>")))
 	if err != nil {
 		return "", err
 	}

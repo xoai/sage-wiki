@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "# Beta Handshake\n\nThe Beta Handshake negotiates cipher suites and session keys. It\ndelegates key confirmation to the [[Gamma Proof]] step: a handshake\nis only complete once the Gamma Proof verifies.\n",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.666,
+            0.285,
+            0.428,
+            0.047,
+            0.19,
+            0.809,
+            0.952,
+            0.571
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

@@ -36,7 +36,7 @@ func TestOriginDeterministic(t *testing.T) {
 	resp, _ := http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(extract))
 	raw, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if !strings.Contains(string(raw), `\"name\": \"raw-attention\"`) {
+	if !strings.Contains(string(raw), `\"name\": \"attention\"`) {
 		t.Errorf("extract class marker wrong: %s", raw)
 	}
 
