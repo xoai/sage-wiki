@@ -1,4 +1,4 @@
-[English](README.md) | **中文** | [日本語](README_ja.md) | [한국어](README_ko.md) | [Tiếng Việt](README_vi.md) | [Français](README_fr.md) | [Русский](README_ru.md)
+[English](../../README.md) | **中文** | [日本語](README_ja.md) | [한국어](README_ko.md) | [Tiếng Việt](README_vi.md) | [Français](README_fr.md) | [Русский](README_ru.md)
 
 <!-- translations: may-lag -->
 > ⚠️ 本翻译可能滞后于 README.md — 以英文版为准。
@@ -24,18 +24,18 @@ _外圈边界上的点代表知识库中所有文档的摘要，内圈的点代�
 
 ## 从个人 vault 到公司知识图谱
 
-- **个人** —— 在已有 Obsidian vault 上叠加运行（`init --vault`），使用[本地模型](docs/guides/local-models.md)实现零成本，并在需要带证据的图谱时选择启用图谱处理阶段（`ontology.triples` + `ontology.resolve`）。
-- **团队** —— 通过 git 或[自托管服务器](docs/guides/self-hosted-server.md)共享同一个 wiki，共同评审实体消解提案与[输出信任](docs/guides/output-trust.md)，并用 hub 将多个 wiki 联邦起来。参阅[团队配置](docs/guides/team-setup.md)。
-- **公司** —— 将存储迁移到 [PostgreSQL/pgvector](docs/guides/storage-backends.md)，开启[指标监控](docs/guides/metrics.md)，在服务器前加上认证，并用[分层编译](docs/guides/large-vault-performance.md)扩展摄取能力。
+- **个人** —— 在已有 Obsidian vault 上叠加运行（`init --vault`），使用[本地模型](../guides/local-models.md)实现零成本，并在需要带证据的图谱时选择启用图谱处理阶段（`ontology.triples` + `ontology.resolve`）。
+- **团队** —— 通过 git 或[自托管服务器](../guides/self-hosted-server.md)共享同一个 wiki，共同评审实体消解提案与[输出信任](../guides/output-trust.md)，并用 hub 将多个 wiki 联邦起来。参阅[团队配置](../guides/team-setup.md)。
+- **公司** —— 将存储迁移到 [PostgreSQL/pgvector](../guides/storage-backends.md)，开启[指标监控](../guides/metrics.md)，在服务器前加上认证，并用[分层编译](../guides/large-vault-performance.md)扩展摄取能力。
 
 ## 知识图谱与图记忆
 
-![sage-wiki 图引擎](assets/sage-wiki-graph-engine.png)
+![sage-wiki 图引擎](../../assets/sage-wiki-graph-engine.png)
 
 向量检索返回与查询*看起来相似*的片段。图还记录 **事物之间如何关联**，因此需要两三跳才能回答的问题可以靠遍历得出，而不必指望某个片段恰好包含完整链条。sage-wiki 把这张图作为编译产物构建 —— 而不是另一套需要同步的数据库。
 
 - **实体与带类型的关系。** 每次编译都会抽取实体（概念、来源、产物）并用带类型的关系连接。关系词表由你定义 —— 参见
-  [可配置关系](docs/guides/configurable-relations.md)。
+  [可配置关系](../guides/configurable-relations.md)。
 - **带证据的边。** 关系可携带 `evidence`（支撑它的原文片段）、`confidence`（0–1）和 `source_doc`，因此结论能追溯到证成这条边的那句话，而不只是整篇文档。
 - **三元组。** 可选的结构化输出流程直接抽取 主语 → 关系 → 宾语。需显式开启（`ontology.triples`）：它会为每篇文档增加一次 LLM 调用，默认配置绝不在未经询问时花你的额度。
 - **实体归一。** “K8s”与“Kubernetes”合并为同一节点。合并提案默认需经复核，不会静默合并。
@@ -50,29 +50,29 @@ sage-wiki provenance "service mesh"    # 哪些来源产生了这个概念
 ```
 
 边是双时态（bi-temporal）的：事实被更正时旧边会被作废而非冲突，默认答案不含矛盾，`as_of` 查询可回答"一月份我们相信什么？"。有歧义的矛盾仍通过
-[输出可信度](docs/guides/output-trust.md)复核浮现。对于跨语料的问题（“整体的主要主题是什么？”），可选的社区检测（`ontology.communities.enabled`）会生成缓存的社区摘要，并通过 `wiki_graph_query` `mode: "global"` 作答。深入了解：
-[图记忆](docs/guides/graph-memory.md)。
+[输出可信度](../guides/output-trust.md)复核浮现。对于跨语料的问题（“整体的主要主题是什么？”），可选的社区检测（`ontology.communities.enabled`）会生成缓存的社区摘要，并通过 `wiki_graph_query` `mode: "global"` 作答。深入了解：
+[图记忆](../guides/graph-memory.md)。
 
 ## 指南
 
 | 指南 | 说明 |
 |-------|-------------|
-| [Agent 记忆层](docs/guides/agent-memory-layer.md) | MCP 配置、技能文件、捕获工作流、读取-捕获-演进循环 |
-| [HTTP API](docs/guides/http-api.md) | /v1 REST 接口：认证、错误模型、幂等性、异步任务 |
-| [图记忆](docs/guides/graph-memory.md) | 带证据的关系、三元组抽取、实体消解、图问答 |
-| [配置](docs/guides/configuration.md) | 逐行注释的完整 config.yaml、多提供商配置、serve 工作器 |
-| [团队配置](docs/guides/team-setup.md) | Git 同步、共享服务器与 hub 联邦三种部署模式 |
-| [搜索质量](docs/guides/search-quality.md) | 分块索引、查询扩展、重排序、图扩展、ANN |
-| [大型 Vault 性能](docs/guides/large-vault-performance.md) | 分层编译、背压控制、代码解析器、100K+ 扩展 |
-| [输出信任](docs/guides/output-trust.md) | 事实性验证、共识确认、提升/降级生命周期 |
-| [订阅认证](docs/guides/subscription-auth.md) | OAuth 登录、令牌导入、凭证管理 |
-| [自托管服务器](docs/guides/self-hosted-server.md) | Docker Compose、Syncthing、反向代理、VPS 部署 |
-| [存储后端](docs/guides/storage-backends.md) | SQLite 与 PostgreSQL/pgvector 的安装、切换、连接池配置 |
-| [可配置关系](docs/guides/configurable-relations.md) | 自定义本体类型、多语言同义词、类型限制 |
-| [自定义提示词](docs/guides/customizing-prompts.md) | 提示词脚手架、按类型覆盖、自定义 frontmatter 字段 |
-| [本地模型](docs/guides/local-models.md) | Ollama 设置、GPU/CPU 路由、按阶段模型配置 |
-| [指标监控](docs/guides/metrics.md) | 日志快照、/metrics 端点、基数控制 |
-| [贡献包](CONTRIBUTING.md) | 创建包、解析器开发、注册表提交 |
+| [Agent 记忆层](../guides/agent-memory-layer.md) | MCP 配置、技能文件、捕获工作流、读取-捕获-演进循环 |
+| [HTTP API](../guides/http-api.md) | /v1 REST 接口：认证、错误模型、幂等性、异步任务 |
+| [图记忆](../guides/graph-memory.md) | 带证据的关系、三元组抽取、实体消解、图问答 |
+| [配置](../guides/configuration.md) | 逐行注释的完整 config.yaml、多提供商配置、serve 工作器 |
+| [团队配置](../guides/team-setup.md) | Git 同步、共享服务器与 hub 联邦三种部署模式 |
+| [搜索质量](../guides/search-quality.md) | 分块索引、查询扩展、重排序、图扩展、ANN |
+| [大型 Vault 性能](../guides/large-vault-performance.md) | 分层编译、背压控制、代码解析器、100K+ 扩展 |
+| [输出信任](../guides/output-trust.md) | 事实性验证、共识确认、提升/降级生命周期 |
+| [订阅认证](../guides/subscription-auth.md) | OAuth 登录、令牌导入、凭证管理 |
+| [自托管服务器](../guides/self-hosted-server.md) | Docker Compose、Syncthing、反向代理、VPS 部署 |
+| [存储后端](../guides/storage-backends.md) | SQLite 与 PostgreSQL/pgvector 的安装、切换、连接池配置 |
+| [可配置关系](../guides/configurable-relations.md) | 自定义本体类型、多语言同义词、类型限制 |
+| [自定义提示词](../guides/customizing-prompts.md) | 提示词脚手架、按类型覆盖、自定义 frontmatter 字段 |
+| [本地模型](../guides/local-models.md) | Ollama 设置、GPU/CPU 路由、按阶段模型配置 |
+| [指标监控](../guides/metrics.md) | 日志快照、/metrics 端点、基数控制 |
+| [贡献包](../../CONTRIBUTING.md) | 创建包、解析器开发、注册表提交 |
 
 ## 安装
 
@@ -88,7 +88,7 @@ go build -tags webui -o sage-wiki ./cmd/sage-wiki/
 
 ## 快速开始
 
-![编译器管线](assets/sage-wiki-compiler-pipeline.png)
+![编译器管线](../../assets/sage-wiki-compiler-pipeline.png)
 
 ### 全新项目（Greenfield）
 
@@ -105,7 +105,7 @@ sage-wiki serve --ui                               # 浏览器（webui 构建）
 sage-wiki compile --watch                          # 监听文件夹
 ```
 
-`config.yaml` 的每一个键都有逐行注释：[配置指南](docs/guides/configuration.md)。
+`config.yaml` 的每一个键都有逐行注释：[配置指南](../guides/configuration.md)。
 
 ### Vault 覆盖模式（已有 Obsidian vault）
 
@@ -116,7 +116,7 @@ sage-wiki init --vault
 sage-wiki compile --watch
 ```
 
-更喜欢容器？预构建的多架构 Docker 镜像与 compose 文件见[自托管服务器指南](docs/guides/self-hosted-server.md)。
+更喜欢容器？预构建的多架构 Docker 镜像与 compose 文件见[自托管服务器指南](../guides/self-hosted-server.md)。
 
 ## 支持的源文件格式
 
@@ -145,7 +145,7 @@ sage-wiki compile --watch
 - **实体消解**（`ontology.resolve.enabled`）—— 表面形式的变体（"NASA" / "National Aeronautics and Space Administration"）会被链接到规范实体。高置信度提案自动应用（阈值 0.85；设为恰好 `1.0` 则仅供评审），每次链接都可通过 `ontology resolve --unlink` 精确撤销。
 - **图问答** —— `wiki_graph_query` MCP 工具回答多跳关系型问题，*仅*以有界的、序列化的边集合为依据；当边带有证据时，引用会携带 `source_doc` 和 `confidence`（关键词邻近边两者皆无）。常规问答的上下文也会在每篇相关文章下标注连接它的边。
 
-深入程度、成本、评审工作流与撤销语义：[图记忆](docs/guides/graph-memory.md)。
+深入程度、成本、评审工作流与撤销语义：[图记忆](../guides/graph-memory.md)。
 
 ## 命令
 
@@ -170,7 +170,7 @@ sage-wiki compile --watch
 | `sage-wiki skill <refresh\|preview> [--target <agent>]` | 生成或刷新 Agent 技能文件 |
 | `sage-wiki provenance <source-or-concept>` / `sage-wiki version` | 溯源映射、版本信息 |
 
-特定主题的命令族随各自的指南介绍：`pack *` 见 [CONTRIBUTING](CONTRIBUTING.md)，`auth *`（login、import、status、logout、migrate）见[订阅认证](docs/guides/subscription-auth.md)，`verify` / `outputs *` 见[输出信任](docs/guides/output-trust.md)。
+特定主题的命令族随各自的指南介绍：`pack *` 见 [CONTRIBUTING](../../CONTRIBUTING.md)，`auth *`（login、import、status、logout、migrate）见[订阅认证](../guides/subscription-auth.md)，`verify` / `outputs *` 见[输出信任](../guides/output-trust.md)。
 
 ## TUI
 
@@ -199,13 +199,13 @@ sage-wiki serve --ui        # http://127.0.0.1:3333，需要 -tags webui 构建
 - **流式问答** —— 提问并获取 LLM 合成的带来源引用的回答
 - **目录导航** —— 支持滚动监听；深色/浅色模式自动检测系统偏好；失效的文章链接以灰色显示
 
-使用 Preact + Tailwind 构建，通过 `go:embed` 嵌入（~1.2 MB，gzip 后 ~420 KB）；省略 `-tags webui` 可得到仅含 CLI/MCP 的二进制文件。认证令牌、允许的主机与部署加固：[自托管服务器](docs/guides/self-hosted-server.md)。
+使用 Preact + Tailwind 构建，通过 `go:embed` 嵌入（~1.2 MB，gzip 后 ~420 KB）；省略 `-tags webui` 可得到仅含 CLI/MCP 的二进制文件。认证令牌、允许的主机与部署加固：[自托管服务器](../guides/self-hosted-server.md)。
 
 ## MCP 集成
 
-![MCP 集成](assets/sage-wiki-interfaces.png)
+![MCP 集成](../../assets/sage-wiki-interfaces.png)
 
-添加到 `.mcp.json`（Claude Code；其他 Agent 见 [Agent 记忆层指南](docs/guides/agent-memory-layer.md)）：
+添加到 `.mcp.json`（Claude Code；其他 Agent 见 [Agent 记忆层指南](../guides/agent-memory-layer.md)）：
 
 ```json
 {
@@ -218,7 +218,7 @@ sage-wiki serve --ui        # http://127.0.0.1:3333，需要 -tags webui 构建
 }
 ```
 
-网络客户端：`sage-wiki serve --transport sse --port 3333`。服务器暴露 19 个工具——搜索、读取、图查询、捕获、按需编译等；各 Agent 的配置方法与捕获工作流见 [Agent 记忆层指南](docs/guides/agent-memory-layer.md)。
+网络客户端：`sage-wiki serve --transport sse --port 3333`。服务器暴露 19 个工具——搜索、读取、图查询、捕获、按需编译等；各 Agent 的配置方法与捕获工作流见 [Agent 记忆层指南](../guides/agent-memory-layer.md)。
 
 **Agent 技能文件** —— `sage-wiki skill refresh --target <agent>` 会向 Agent 的指令文件（CLAUDE.md、.cursorrules 等）写入一段行为规范，根据你的配置生成，教会它何时搜索、捕获什么、如何查询。支持的目标：`claude-code`、`cursor`、`windsurf`、`agents-md`（Antigravity）、`codex`、`gemini`、`generic`。
 
@@ -241,7 +241,7 @@ npx skills add https://github.com/xoai/sage-wiki --skill sage-wiki-integrate
 
 两个技能都从实时 MCP 注册表生成（`go run ./tools/skillgen/`），并在 CI 中进行漂移检查——工具变更时不会过时。Pre-1.0 —— 请锁定版本。
 
-**知识捕获** —— Agent 通过 `wiki_capture` / `wiki_learn` 将洞见存回 wiki，闭合"读取-捕获-演进"循环。工作流与技巧：[Agent 记忆层](docs/guides/agent-memory-layer.md)。
+**知识捕获** —— Agent 通过 `wiki_capture` / `wiki_learn` 将洞见存回 wiki，闭合"读取-捕获-演进"循环。工作流与技巧：[Agent 记忆层](../guides/agent-memory-layer.md)。
 
 ## 客户端 SDK
 
@@ -273,17 +273,17 @@ await job.waitUntilDone({ timeoutMs: 600_000 });
 
 两个客户端都覆盖完整的 `/v1` 接口：搜索、溯源、图查询、编译后的 wiki、
 捕获/写入，以及异步 compile/lint 任务和基于错误码的错误分类。文档：
-[Python](clients/python/README.md) · [TypeScript](clients/typescript/README.md) ·
-[HTTP API 指南](docs/guides/http-api.md)。Go 程序可以完全绕过 HTTP ——
+[Python](../../clients/python/README.md) · [TypeScript](../../clients/typescript/README.md) ·
+[HTTP API 指南](../guides/http-api.md)。Go 程序可以完全绕过 HTTP ——
 参见[在 Go 程序中嵌入](#在-go-程序中嵌入)。
 
 ### 示例
 
 可直接复制的框架集成，在 CI 中针对真实服务器运行验证：
 
-- [`examples/langgraph/`](examples/langgraph/) —— 带记忆的 LangGraph
+- [`examples/langgraph/`](../../examples/langgraph/) —— 带记忆的 LangGraph
   节点（Python 客户端）：`uncompiled_sources` → 主题编译模式的检索与捕获。
-- [`examples/vercel-ai-sdk/`](examples/vercel-ai-sdk/) —— 以 Vercel AI
+- [`examples/vercel-ai-sdk/`](../../examples/vercel-ai-sdk/) —— 以 Vercel AI
   SDK 工具形式提供 `search`、`graphQuery`、`provenance`（TypeScript
   客户端）；可部署到边缘。
 
@@ -325,15 +325,15 @@ res, err := cli.CallTool(ctx, mcp.CallToolRequest{
 
 ## 运维
 
-- **存储** —— 默认 SQLite（单文件、零配置）；服务器部署可用 PostgreSQL + pgvector。切换与连接池配置：[存储后端](docs/guides/storage-backends.md)。
-- **可观测性** —— 结构化日志快照与可选开启的 `/metrics` 端点：[指标监控](docs/guides/metrics.md)。
+- **存储** —— 默认 SQLite（单文件、零配置）；服务器部署可用 PostgreSQL + pgvector。切换与连接池配置：[存储后端](../guides/storage-backends.md)。
+- **可观测性** —— 结构化日志快照与可选开启的 `/metrics` 端点：[指标监控](../guides/metrics.md)。
 - **结构化输出** —— LLM 抽取阶段使用各提供商的原生机制（Anthropic tool-use、OpenAI `response_format`、Gemini `responseSchema`），并带有校验式代码块剥离回退。
-- **凭证** —— 订阅令牌在可用时存储于操作系统钥匙串；运行一次 `sage-wiki auth migrate` 即可将文件存储的凭证迁移过去。[订阅认证](docs/guides/subscription-auth.md)。
-- **配置** —— 每个键都有注释，含多提供商配方与 serve 模式编译工作器：[配置指南](docs/guides/configuration.md)。
+- **凭证** —— 订阅令牌在可用时存储于操作系统钥匙串；运行一次 `sage-wiki auth migrate` 即可将文件存储的凭证迁移过去。[订阅认证](../guides/subscription-auth.md)。
+- **配置** —— 每个键都有注释，含多提供商配方与 serve 模式编译工作器：[配置指南](../guides/configuration.md)。
 - **实体消解** —— 0.85 自动应用，可通过 `--unlink` 精确撤销；见上文[图记忆](#图记忆)。
-- **自定义关系/实体类型** —— 扩展内置类型或添加自定义类型（`ontology.relation_types`），支持多语言同义词与类型限制：[可配置关系](docs/guides/configurable-relations.md)。
-- **输出信任** —— 查询输出在通过事实性验证、共识确认或手动提升之前处于隔离状态：[输出信任](docs/guides/output-trust.md)。
-- **搜索调优** —— 分块、查询扩展、重排序、图扩展与可选 ANN：[搜索质量](docs/guides/search-quality.md)。
+- **自定义关系/实体类型** —— 扩展内置类型或添加自定义类型（`ontology.relation_types`），支持多语言同义词与类型限制：[可配置关系](../guides/configurable-relations.md)。
+- **输出信任** —— 查询输出在通过事实性验证、共识确认或手动提升之前处于隔离状态：[输出信任](../guides/output-trust.md)。
+- **搜索调优** —— 分块、查询扩展、重排序、图扩展与可选 ANN：[搜索质量](../guides/search-quality.md)。
 
 ### 费用
 
@@ -344,7 +344,7 @@ sage-wiki compile --batch       # 提交批次，保存检查点，退出
 sage-wiki compile               # 轮询状态，完成后取回结果
 ```
 
-`compile --estimate` 可预览费用；`compiler.mode: auto` 会在超过阈值后自动使用批处理。详情：[配置指南](docs/guides/configuration.md)。
+`compile --estimate` 可预览费用；`compiler.mode: auto` 会在超过阈值后自动使用批处理。详情：[配置指南](../guides/configuration.md)。
 
 ### 扩展到大型 vault
 
@@ -357,7 +357,7 @@ sage-wiki compile               # 轮询状态，完成后取回结果
 | **2** —— 代码解析 | 正则解析器生成结构摘要（无 LLM） | 免费 | ~10ms |
 | **3** —— 完整编译 | 摘要 + 提取概念 + 写作文章 | ~$0.05-0.15 | ~5-8 分钟 |
 
-对于大型 vault：先在层级 1 索引所有内容（100K 文档的 vault 约需 ~5.5 小时），然后按需编译——自动提升、背压与代码解析器详见[大型 Vault 性能](docs/guides/large-vault-performance.md)。
+对于大型 vault：先在层级 1 索引所有内容（100K 文档的 vault 约需 ~5.5 小时），然后按需编译——自动提升、背压与代码解析器详见[大型 Vault 性能](../guides/large-vault-performance.md)。
 
 ## 生态系统
 
@@ -376,20 +376,20 @@ sage-wiki compile               # 轮询状态，完成后取回结果
 | `content-creation` | 写作者 | references, revises, draft, published |
 | `legal-compliance` | 法务团队 | regulates, supersedes, policy, control |
 
-`sage-wiki init --pack academic-research` 可在初始化时应用一个包；`pack install <name|url>` 可添加更多。创建与发布包：[CONTRIBUTING](CONTRIBUTING.md)。
+`sage-wiki init --pack academic-research` 可在初始化时应用一个包；`pack install <name|url>` 可添加更多。创建与发布包：[CONTRIBUTING](../../CONTRIBUTING.md)。
 
 ### 外部解析器
 
-用任何语言编写的脚本处理任意文件格式（stdin → 文本输出到 stdout），在 `parsers/parser.yaml` 中声明，并需双重显式启用——它们作为未沙箱化的子进程运行，带有超时强制与环境变量清理。编写与加固细节：[CONTRIBUTING](CONTRIBUTING.md)；信任边界的讨论：[团队配置](docs/guides/team-setup.md)。
+用任何语言编写的脚本处理任意文件格式（stdin → 文本输出到 stdout），在 `parsers/parser.yaml` 中声明，并需双重显式启用——它们作为未沙箱化的子进程运行，带有超时强制与环境变量清理。编写与加固细节：[CONTRIBUTING](../../CONTRIBUTING.md)；信任边界的讨论：[团队配置](../guides/team-setup.md)。
 
 ### 团队
 
-三种共享模式——git 同步、共享服务器、hub 联邦——以及团队信任评审与费用管理：[团队配置](docs/guides/team-setup.md)。
+三种共享模式——git 同步、共享服务器、hub 联邦——以及团队信任评审与费用管理：[团队配置](../guides/team-setup.md)。
 
 ## 基准测试
 
 两套评测回答不同的问题。完整细节：
-[eval/benchmarks/REPORT.md](eval/benchmarks/REPORT.md) · [eval/REPORT.md](eval/REPORT.md)
+[eval/benchmarks/REPORT.md](../../eval/benchmarks/REPORT.md) · [eval/REPORT.md](../../eval/REPORT.md)
 
 **记忆基准** — 能否回答关于长对话的问题？采用公开数据集、LLM 评判，沿用
 [mem0ai/memory-benchmarks](https://github.com/mem0ai/memory-benchmarks) 的提示词与流程，仅将后端换成 sage-wiki（回答与评判均为 gpt-5，抽样）：

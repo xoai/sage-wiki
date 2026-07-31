@@ -7,11 +7,12 @@ On `main` itself the *local* drift range is empty (CI's push path checks
 
 ## Translations
 
-`README.md` and its six translations (`README_fr/ja/ko/ru/vi/zh.md`) move
-together. A change range that touches `README.md` without any `README_*.md`
-fails CI's Translation drift job (MAINT-05) — `make ci` runs the same check
-locally. If the change genuinely should not be translated yet, add
-`translations: lag-ok` to a commit message in the range to document the debt.
+`README.md` and its six translations (`docs/translations/README_{fr,ja,ko,ru,vi,zh}.md`)
+move together. A change range that touches `README.md` without any
+`docs/translations/README_*.md` fails CI's Translation drift job (MAINT-05) —
+`make ci` runs the same check locally. If the change genuinely should not be
+translated yet, add `translations: lag-ok` to a commit message in the range
+to document the debt.
 
 **Maintainers merging external PRs:** GitHub holds CI for first-time
 contributors at `action_required` — checks must have *run and passed*, not

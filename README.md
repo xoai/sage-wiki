@@ -1,4 +1,4 @@
-**English** | [中文](README_zh.md) | [日本語](README_ja.md) | [한국어](README_ko.md) | [Tiếng Việt](README_vi.md) | [Français](README_fr.md) | [Русский](README_ru.md)
+**English** | [中文](docs/translations/README_zh.md) | [日本語](docs/translations/README_ja.md) | [한국어](docs/translations/README_ko.md) | [Tiếng Việt](docs/translations/README_vi.md) | [Français](docs/translations/README_fr.md) | [Русский](docs/translations/README_ru.md)
 
 # sage-wiki
 

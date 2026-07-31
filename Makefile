@@ -45,7 +45,7 @@ tidy:
 	$(GO) mod tidy
 
 # Translation drift (MAINT-05): README.md must move with at least one
-# README_*.md translation, or a commit in the range carries
+# docs/translations/README_*.md translation, or a commit in the range carries
 # `translations: lag-ok`. One shell per target: recipe lines would otherwise
 # lose the computed vars between lines.
 translations:

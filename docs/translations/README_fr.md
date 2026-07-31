@@ -1,4 +1,4 @@
-[English](README.md) | [中文](README_zh.md) | [日本語](README_ja.md) | [한국어](README_ko.md) | [Tiếng Việt](README_vi.md) | **Français** | [Русский](README_ru.md)
+[English](../../README.md) | [中文](README_zh.md) | [日本語](README_ja.md) | [한국어](README_ko.md) | [Tiếng Việt](README_vi.md) | **Français** | [Русский](README_ru.md)
 
 <!-- translations: may-lag -->
 > ⚠️ Cette traduction peut être en retard sur README.md — la version anglaise fait foi.
@@ -24,18 +24,18 @@ _Les points sur la bordure extérieure représentent les résumés de tous les d
 
 ## Du vault personnel au graphe de connaissances d'entreprise
 
-- **Personnel** — superposez un vault Obsidian existant (`init --vault`), tournez sur des [modèles locaux](docs/guides/local-models.md) pour un coût nul, et activez les passes de graphe (`ontology.triples` + `ontology.resolve`) quand vous voulez le graphe avec preuves.
-- **Équipe** — partagez un même wiki via git ou un [serveur auto-hébergé](docs/guides/self-hosted-server.md), passez en revue ensemble les propositions de résolution d'entités et la [confiance des sorties](docs/guides/output-trust.md), et fédérez plusieurs wikis avec le hub. Voir [Configuration d'équipe](docs/guides/team-setup.md).
-- **Entreprise** — déplacez le stockage vers [PostgreSQL/pgvector](docs/guides/storage-backends.md), activez les [métriques](docs/guides/metrics.md), placez une authentification devant le serveur, et faites passer l'ingestion à l'échelle avec la [compilation par paliers](docs/guides/large-vault-performance.md).
+- **Personnel** — superposez un vault Obsidian existant (`init --vault`), tournez sur des [modèles locaux](../guides/local-models.md) pour un coût nul, et activez les passes de graphe (`ontology.triples` + `ontology.resolve`) quand vous voulez le graphe avec preuves.
+- **Équipe** — partagez un même wiki via git ou un [serveur auto-hébergé](../guides/self-hosted-server.md), passez en revue ensemble les propositions de résolution d'entités et la [confiance des sorties](../guides/output-trust.md), et fédérez plusieurs wikis avec le hub. Voir [Configuration d'équipe](../guides/team-setup.md).
+- **Entreprise** — déplacez le stockage vers [PostgreSQL/pgvector](../guides/storage-backends.md), activez les [métriques](../guides/metrics.md), placez une authentification devant le serveur, et faites passer l'ingestion à l'échelle avec la [compilation par paliers](../guides/large-vault-performance.md).
 
 ## Graphe de connaissances & mémoire de graphe
 
-![moteur de graphe sage-wiki](assets/sage-wiki-graph-engine.png)
+![moteur de graphe sage-wiki](../../assets/sage-wiki-graph-engine.png)
 
 La recherche vectorielle retrouve des passages qui *ressemblent* à la requête. Un graphe enregistre en plus **comment les choses sont reliées** : une question qui demande deux ou trois sauts se résout par traversée, au lieu d'espérer qu'un seul fragment contienne toute la chaîne. sage-wiki construit ce graphe comme une sortie de compilation — pas une seconde base à synchroniser.
 
 - **Entités et relations typées.** Chaque compilation extrait des entités (concepts, sources, artefacts) et les relie par des relations typées. Le vocabulaire des relations vous appartient — voir
-  [relations configurables](docs/guides/configurable-relations.md).
+  [relations configurables](../guides/configurable-relations.md).
 - **Arêtes sourcées.** Une relation peut porter `evidence` (le passage qui la justifie), `confidence` (0–1) et `source_doc` : une conclusion remonte jusqu'à la phrase qui a justifié l'arête, pas seulement jusqu'au document.
 - **Triplets.** Une passe optionnelle en sortie structurée extrait directement sujet → relation → objet. Activation explicite (`ontology.triples`) : elle ajoute un appel LLM par document, et les valeurs par défaut ne dépensent jamais votre clé sans demande.
 - **Résolution d'entités.** « K8s » et « Kubernetes » deviennent un seul nœud. Les propositions passent par revue plutôt que d'être fusionnées en silence.
@@ -50,29 +50,29 @@ sage-wiki provenance "service mesh"    # quelles sources ont produit ce concept
 ```
 
 Les arêtes sont bi-temporelles : contredire un fait invalide l'ancienne arête au lieu d'entrer en collision, les réponses par défaut sont sans contradiction, et les requêtes `as_of` répondent à « qu'est-ce qu'on croyait en janvier ? ». Les contradictions ambiguës remontent toujours via la revue de
-[confiance des sorties](docs/guides/output-trust.md). Pour les questions globales (« quels sont les grands thèmes de l'ensemble ? »), la détection de communautés (`ontology.communities.enabled`) génère des résumés de communautés mis en cache et répond via `wiki_graph_query` `mode: "global"`. Détails :
-[mémoire de graphe](docs/guides/graph-memory.md).
+[confiance des sorties](../guides/output-trust.md). Pour les questions globales (« quels sont les grands thèmes de l'ensemble ? »), la détection de communautés (`ontology.communities.enabled`) génère des résumés de communautés mis en cache et répond via `wiki_graph_query` `mode: "global"`. Détails :
+[mémoire de graphe](../guides/graph-memory.md).
 
 ## Guides
 
 | Guide | Description |
 |-------|-------------|
-| [Couche mémoire agent](docs/guides/agent-memory-layer.md) | Configuration MCP, fichiers de compétences, workflows de capture, boucle lire-capturer-évoluer |
-| [API HTTP](docs/guides/http-api.md) | La surface REST /v1 : auth, modèle d'erreur, idempotence, jobs asynchrones |
-| [Mémoire graphe](docs/guides/graph-memory.md) | Relations avec preuves, extraction de triplets, résolution d'entités, Q&R sur graphe |
-| [Configuration](docs/guides/configuration.md) | Le config.yaml complet annoté, configuration multi-fournisseurs, worker de serve |
-| [Configuration d'équipe](docs/guides/team-setup.md) | Modèles de déploiement git synchronisé, serveur partagé et fédération hub |
-| [Qualité de recherche](docs/guides/search-quality.md) | Indexation par fragments, expansion de requêtes, re-classement, expansion par graphe, ANN |
-| [Performance des grands vaults](docs/guides/large-vault-performance.md) | Compilation par paliers, contre-pression, analyseurs de code, passage à l'échelle 100K+ |
-| [Confiance des sorties](docs/guides/output-trust.md) | Vérification d'ancrage, consensus, cycle de vie promotion/rétrogradation |
-| [Authentification par abonnement](docs/guides/subscription-auth.md) | Connexion OAuth, import de tokens, gestion des identifiants |
-| [Serveur auto-hébergé](docs/guides/self-hosted-server.md) | Docker Compose, Syncthing, reverse proxy, déploiement VPS |
-| [Backends de stockage](docs/guides/storage-backends.md) | Installation SQLite vs PostgreSQL/pgvector, bascule, dimensionnement du pool |
-| [Relations configurables](docs/guides/configurable-relations.md) | Types d'ontologie personnalisés, synonymes multilingues, restrictions de types |
-| [Personnalisation des prompts](docs/guides/customizing-prompts.md) | Échafaudage de prompts, remplacements par type, champs frontmatter personnalisés |
-| [Modèles locaux](docs/guides/local-models.md) | Configuration Ollama, routage GPU/CPU, config de modèle par passe |
-| [Métriques](docs/guides/metrics.md) | Instantanés de logs, endpoint /metrics, contrôles de cardinalité |
-| [Packs de contribution](CONTRIBUTING.md) | Création de packs, écriture de parseurs, soumission au registre |
+| [Couche mémoire agent](../guides/agent-memory-layer.md) | Configuration MCP, fichiers de compétences, workflows de capture, boucle lire-capturer-évoluer |
+| [API HTTP](../guides/http-api.md) | La surface REST /v1 : auth, modèle d'erreur, idempotence, jobs asynchrones |
+| [Mémoire graphe](../guides/graph-memory.md) | Relations avec preuves, extraction de triplets, résolution d'entités, Q&R sur graphe |
+| [Configuration](../guides/configuration.md) | Le config.yaml complet annoté, configuration multi-fournisseurs, worker de serve |
+| [Configuration d'équipe](../guides/team-setup.md) | Modèles de déploiement git synchronisé, serveur partagé et fédération hub |
+| [Qualité de recherche](../guides/search-quality.md) | Indexation par fragments, expansion de requêtes, re-classement, expansion par graphe, ANN |
+| [Performance des grands vaults](../guides/large-vault-performance.md) | Compilation par paliers, contre-pression, analyseurs de code, passage à l'échelle 100K+ |
+| [Confiance des sorties](../guides/output-trust.md) | Vérification d'ancrage, consensus, cycle de vie promotion/rétrogradation |
+| [Authentification par abonnement](../guides/subscription-auth.md) | Connexion OAuth, import de tokens, gestion des identifiants |
+| [Serveur auto-hébergé](../guides/self-hosted-server.md) | Docker Compose, Syncthing, reverse proxy, déploiement VPS |
+| [Backends de stockage](../guides/storage-backends.md) | Installation SQLite vs PostgreSQL/pgvector, bascule, dimensionnement du pool |
+| [Relations configurables](../guides/configurable-relations.md) | Types d'ontologie personnalisés, synonymes multilingues, restrictions de types |
+| [Personnalisation des prompts](../guides/customizing-prompts.md) | Échafaudage de prompts, remplacements par type, champs frontmatter personnalisés |
+| [Modèles locaux](../guides/local-models.md) | Configuration Ollama, routage GPU/CPU, config de modèle par passe |
+| [Métriques](../guides/metrics.md) | Instantanés de logs, endpoint /metrics, contrôles de cardinalité |
+| [Packs de contribution](../../CONTRIBUTING.md) | Création de packs, écriture de parseurs, soumission au registre |
 
 ## Installation
 
@@ -88,7 +88,7 @@ go build -tags webui -o sage-wiki ./cmd/sage-wiki/
 
 ## Démarrage rapide
 
-![Pipeline du compilateur](assets/sage-wiki-compiler-pipeline.png)
+![Pipeline du compilateur](../../assets/sage-wiki-compiler-pipeline.png)
 
 ### Nouveau projet (greenfield)
 
@@ -105,7 +105,7 @@ sage-wiki serve --ui                               # navigateur (build webui)
 sage-wiki compile --watch                          # surveillance du dossier
 ```
 
-Chaque clé de `config.yaml`, annotée ligne par ligne : [Configuration](docs/guides/configuration.md).
+Chaque clé de `config.yaml`, annotée ligne par ligne : [Configuration](../guides/configuration.md).
 
 ### Surcouche Vault (vault Obsidian existant)
 
@@ -117,7 +117,7 @@ sage-wiki compile --watch
 ```
 
 Vous préférez les conteneurs ? Les images Docker multi-arch précompilées et les
-fichiers compose sont couverts dans le [guide du serveur auto-hébergé](docs/guides/self-hosted-server.md).
+fichiers compose sont couverts dans le [guide du serveur auto-hébergé](../guides/self-hosted-server.md).
 
 ## Formats sources supportés
 
@@ -162,7 +162,7 @@ un `[[wikilink]]` dans le même bloc. Activez les
   portent aucune). Le contexte des Q&R classiques nomme aussi l'arête de
   liaison sous chaque article lié.
 
-Profondeur, coûts, workflow de revue et sémantique d'annulation : [Mémoire graphe](docs/guides/graph-memory.md).
+Profondeur, coûts, workflow de revue et sémantique d'annulation : [Mémoire graphe](../guides/graph-memory.md).
 
 ## Commandes
 
@@ -188,9 +188,9 @@ La surface principale ; exécutez `sage-wiki <command> --help` pour les flags.
 | `sage-wiki provenance <source-or-concept>` / `sage-wiki version` | Correspondances de provenance, version |
 
 Les familles de commandes thématiques vivent avec leurs guides : `pack *` dans
-[CONTRIBUTING](CONTRIBUTING.md), `auth *` (login, import, status, logout,
-migrate) dans [Authentification par abonnement](docs/guides/subscription-auth.md), et
-`verify` / `outputs *` dans [Confiance des sorties](docs/guides/output-trust.md).
+[CONTRIBUTING](../../CONTRIBUTING.md), `auth *` (login, import, status, logout,
+migrate) dans [Authentification par abonnement](../guides/subscription-auth.md), et
+`verify` / `outputs *` dans [Confiance des sorties](../guides/output-trust.md).
 
 ## TUI
 
@@ -219,13 +219,13 @@ sage-wiki serve --ui        # http://127.0.0.1:3333, nécessite un build -tags w
 - **Q&R en streaming** — posez des questions et obtenez des réponses synthétisées par LLM avec citations des sources
 - **Table des matières** avec suivi du défilement ; mode sombre/clair avec détection des préférences système ; les liens d'articles brisés apparaissent en gris
 
-Construite avec Preact + Tailwind, intégrée via `go:embed` (~1.2 MB, ~420 KB compressée gzip) ; omettez `-tags webui` pour un binaire CLI/MCP uniquement. Tokens d'authentification, hôtes autorisés et durcissement du déploiement : [Serveur auto-hébergé](docs/guides/self-hosted-server.md).
+Construite avec Preact + Tailwind, intégrée via `go:embed` (~1.2 MB, ~420 KB compressée gzip) ; omettez `-tags webui` pour un binaire CLI/MCP uniquement. Tokens d'authentification, hôtes autorisés et durcissement du déploiement : [Serveur auto-hébergé](../guides/self-hosted-server.md).
 
 ## Intégration MCP
 
-![Intégration MCP](assets/sage-wiki-interfaces.png)
+![Intégration MCP](../../assets/sage-wiki-interfaces.png)
 
-Ajoutez à `.mcp.json` (Claude Code ; les autres agents dans le [guide de la couche mémoire agent](docs/guides/agent-memory-layer.md)) :
+Ajoutez à `.mcp.json` (Claude Code ; les autres agents dans le [guide de la couche mémoire agent](../guides/agent-memory-layer.md)) :
 
 ```json
 {
@@ -241,7 +241,7 @@ Ajoutez à `.mcp.json` (Claude Code ; les autres agents dans le [guide de la cou
 Clients réseau : `sage-wiki serve --transport sse --port 3333`. Le serveur
 expose 19 outils — recherche, lecture, requête de graphe, capture, compilation
 à la demande et plus ; la configuration par agent et les workflows de capture
-vivent dans le [guide de la couche mémoire agent](docs/guides/agent-memory-layer.md).
+vivent dans le [guide de la couche mémoire agent](../guides/agent-memory-layer.md).
 
 **Fichiers de compétences agent** — `sage-wiki skill refresh --target <agent>`
 écrit une section comportementale dans le fichier d'instructions de l'agent
@@ -278,7 +278,7 @@ peuvent pas devenir obsolètes quand les outils changent. Pre-1.0 —
 
 **Capture de connaissances** — les agents stockent leurs découvertes en retour
 via `wiki_capture` / `wiki_learn`, fermant la boucle lire-capturer-évoluer.
-Workflows et astuces : [Couche mémoire agent](docs/guides/agent-memory-layer.md).
+Workflows et astuces : [Couche mémoire agent](../guides/agent-memory-layer.md).
 
 ## SDK clients
 
@@ -311,18 +311,18 @@ await job.waitUntilDone({ timeoutMs: 600_000 });
 Les deux clients couvrent toute la surface `/v1` : recherche, provenance,
 requêtes de graphe, wiki compilé, captures/écritures et jobs compile/lint
 asynchrones avec une taxonomie d'erreurs pilotée par code. Docs :
-[Python](clients/python/README.md) · [TypeScript](clients/typescript/README.md) ·
-[guide API HTTP](docs/guides/http-api.md). Les programmes Go peuvent éviter
+[Python](../../clients/python/README.md) · [TypeScript](../../clients/typescript/README.md) ·
+[guide API HTTP](../guides/http-api.md). Les programmes Go peuvent éviter
 HTTP entièrement — voir [Intégration dans un programme Go](#intégration-dans-un-programme-go).
 
 ### Exemples
 
 Intégrations copiables, exercées en CI contre un serveur réel :
 
-- [`examples/langgraph/`](examples/langgraph/) — nœuds LangGraph adossés à
+- [`examples/langgraph/`](../../examples/langgraph/) — nœuds LangGraph adossés à
   la mémoire (client Python) : récupération avec le pattern
   `uncompiled_sources` → compile par sujet, plus capture.
-- [`examples/vercel-ai-sdk/`](examples/vercel-ai-sdk/) — `search`,
+- [`examples/vercel-ai-sdk/`](../../examples/vercel-ai-sdk/) — `search`,
   `graphQuery`, `provenance` comme outils Vercel AI SDK (client TypeScript) ;
   déployable en edge.
 
@@ -365,25 +365,25 @@ Le package est **expérimental** tant que sage-wiki est en pré-1.0 : les signat
 ## Opérations
 
 - **Stockage** — SQLite par défaut (fichier unique, zéro config) ; PostgreSQL +
-  pgvector pour les déploiements serveur. Bascule et dimensionnement du pool : [Backends de stockage](docs/guides/storage-backends.md).
+  pgvector pour les déploiements serveur. Bascule et dimensionnement du pool : [Backends de stockage](../guides/storage-backends.md).
 - **Observabilité** — instantanés de logs structurés et un endpoint `/metrics`
-  opt-in : [Métriques](docs/guides/metrics.md).
+  opt-in : [Métriques](../guides/metrics.md).
 - **Sorties structurées** — les passes d'extraction LLM utilisent le mécanisme
   natif de chaque fournisseur (tool-use Anthropic, `response_format` OpenAI,
   `responseSchema` Gemini) avec un repli validant par extraction de blocs de code.
 - **Identifiants** — les tokens d'abonnement vivent dans le trousseau de l'OS
   quand il est disponible ; exécutez `sage-wiki auth migrate` une fois pour y
-  déplacer les identifiants stockés en fichier. [Authentification par abonnement](docs/guides/subscription-auth.md).
+  déplacer les identifiants stockés en fichier. [Authentification par abonnement](../guides/subscription-auth.md).
 - **Configuration** — chaque clé, annotée, avec des recettes multi-fournisseurs
-  et le worker de compilation du mode serve : [Configuration](docs/guides/configuration.md).
+  et le worker de compilation du mode serve : [Configuration](../guides/configuration.md).
 - **Résolution d'entités** — application automatique à 0.85, exactement réversible avec `--unlink` ; voir [Mémoire graphe](#mémoire-graphe) ci-dessus.
 - **Types de relations/entités personnalisés** — étendez les types intégrés ou
   ajoutez les vôtres (`ontology.relation_types`), avec synonymes multilingues
-  et restrictions de types : [Relations configurables](docs/guides/configurable-relations.md).
+  et restrictions de types : [Relations configurables](../guides/configurable-relations.md).
 - **Confiance des sorties** — les sorties de requêtes restent en quarantaine
-  jusqu'à être ancrées, confirmées par consensus ou promues manuellement : [Confiance des sorties](docs/guides/output-trust.md).
+  jusqu'à être ancrées, confirmées par consensus ou promues manuellement : [Confiance des sorties](../guides/output-trust.md).
 - **Réglage de la recherche** — découpage en fragments, expansion, re-classement,
-  expansion par graphe et ANN opt-in : [Qualité de recherche](docs/guides/search-quality.md).
+  expansion par graphe et ANN opt-in : [Qualité de recherche](../guides/search-quality.md).
 
 ### Coût
 
@@ -400,7 +400,7 @@ sage-wiki compile               # vérifier le statut, récupérer à la fin
 ```
 
 `compile --estimate` prévisualise le coût ; `compiler.mode: auto` bascule
-automatiquement en batch au-delà d'un seuil. Détails : [Configuration](docs/guides/configuration.md).
+automatiquement en batch au-delà d'un seuil. Détails : [Configuration](../guides/configuration.md).
 
 ### Passage à l'échelle pour les grands vaults
 
@@ -417,7 +417,7 @@ utilisation au lieu de tout compiler par LLM :
 Pour les grands vaults : indexez tout au palier 1 (un vault de 100K documents
 en ~5.5 heures), puis compilez à la demande — la promotion automatique, la
 contre-pression et les analyseurs de code sont couverts dans
-[Performance des grands vaults](docs/guides/large-vault-performance.md).
+[Performance des grands vaults](../guides/large-vault-performance.md).
 
 ## Écosystème
 
@@ -439,7 +439,7 @@ pour un domaine. Huit packs intégrés fonctionnent hors ligne :
 
 `sage-wiki init --pack academic-research` en applique un à l'initialisation ;
 `pack install <name|url>` en ajoute d'autres. Créer et publier des packs :
-[CONTRIBUTING](CONTRIBUTING.md).
+[CONTRIBUTING](../../CONTRIBUTING.md).
 
 ### Parseurs externes
 
@@ -447,18 +447,18 @@ Gérez n'importe quel format de fichier avec un script dans n'importe quel
 langage (stdin → texte sur stdout), déclaré dans `parsers/parser.yaml` derrière
 un double opt-in — ils s'exécutent comme des sous-processus non isolés avec
 application d'un timeout et suppression des variables d'environnement. Détails
-d'écriture et de durcissement : [CONTRIBUTING](CONTRIBUTING.md) ;
-la discussion sur la frontière de confiance : [Configuration d'équipe](docs/guides/team-setup.md).
+d'écriture et de durcissement : [CONTRIBUTING](../../CONTRIBUTING.md) ;
+la discussion sur la frontière de confiance : [Configuration d'équipe](../guides/team-setup.md).
 
 ### Équipes
 
 Trois modèles de partage — synchronisation git, serveur partagé, fédération
-hub — plus la revue de confiance en équipe et la gestion des coûts : [Configuration d'équipe](docs/guides/team-setup.md).
+hub — plus la revue de confiance en équipe et la gestion des coûts : [Configuration d'équipe](../guides/team-setup.md).
 
 ## Benchmarks
 
 Deux suites répondent à des questions différentes. Détail complet :
-[eval/benchmarks/REPORT.md](eval/benchmarks/REPORT.md) · [eval/REPORT.md](eval/REPORT.md)
+[eval/benchmarks/REPORT.md](../../eval/benchmarks/REPORT.md) · [eval/REPORT.md](../../eval/REPORT.md)
 
 **Benchmarks mémoire** — sait-il répondre à des questions sur une longue conversation ? Jeux de données publiés, jugés par LLM, avec les prompts et la procédure de
 [mem0ai/memory-benchmarks](https://github.com/mem0ai/memory-benchmarks) et sage-wiki comme backend (gpt-5 comme répondeur/juge, échantillons réduits) :

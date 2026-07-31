@@ -1,4 +1,4 @@
-[English](README.md) | [中文](README_zh.md) | [日本語](README_ja.md) | **한국어** | [Tiếng Việt](README_vi.md) | [Français](README_fr.md) | [Русский](README_ru.md)
+[English](../../README.md) | [中文](README_zh.md) | [日本語](README_ja.md) | **한국어** | [Tiếng Việt](README_vi.md) | [Français](README_fr.md) | [Русский](README_ru.md)
 
 <!-- translations: may-lag -->
 > ⚠️ 이 번역은 README.md보다 뒤처질 수 있습니다 — 영어 버전이 정본입니다.
@@ -24,18 +24,18 @@ _외곽 경계의 점들은 지식 베이스에 있는 모든 문서의 요약�
 
 ## 개인 볼트에서 회사 지식 그래프까지
 
-- **개인** — 기존 Obsidian 볼트에 오버레이하고(`init --vault`), [로컬 모델](docs/guides/local-models.md)로 비용 없이 실행하며, 근거 그래프가 필요할 때 그래프 패스(`ontology.triples` + `ontology.resolve`)를 옵트인하세요.
-- **팀** — git 또는 [셀프 호스팅 서버](docs/guides/self-hosted-server.md)로 하나의 위키를 공유하고, 엔티티 해소 제안과 [출력 신뢰](docs/guides/output-trust.md)를 함께 검토하며, 허브로 여러 위키를 연합하세요. [팀 설정](docs/guides/team-setup.md)을 참조하세요.
-- **회사** — 스토리지를 [PostgreSQL/pgvector](docs/guides/storage-backends.md)로 옮기고, [메트릭](docs/guides/metrics.md)을 켜고, 서버 앞단에 인증을 두고, [계층화된 컴파일](docs/guides/large-vault-performance.md)로 수집을 확장하세요.
+- **개인** — 기존 Obsidian 볼트에 오버레이하고(`init --vault`), [로컬 모델](../guides/local-models.md)로 비용 없이 실행하며, 근거 그래프가 필요할 때 그래프 패스(`ontology.triples` + `ontology.resolve`)를 옵트인하세요.
+- **팀** — git 또는 [셀프 호스팅 서버](../guides/self-hosted-server.md)로 하나의 위키를 공유하고, 엔티티 해소 제안과 [출력 신뢰](../guides/output-trust.md)를 함께 검토하며, 허브로 여러 위키를 연합하세요. [팀 설정](../guides/team-setup.md)을 참조하세요.
+- **회사** — 스토리지를 [PostgreSQL/pgvector](../guides/storage-backends.md)로 옮기고, [메트릭](../guides/metrics.md)을 켜고, 서버 앞단에 인증을 두고, [계층화된 컴파일](../guides/large-vault-performance.md)로 수집을 확장하세요.
 
 ## 지식 그래프와 그래프 메모리
 
-![sage-wiki 그래프 엔진](assets/sage-wiki-graph-engine.png)
+![sage-wiki 그래프 엔진](../../assets/sage-wiki-graph-engine.png)
 
 벡터 검색은 질의와 *비슷해 보이는* 구절을 찾아옵니다. 그래프는 여기에 더해 **사물이 어떻게 연결되는지**를 저장하므로, 두세 단계를 거쳐야 하는 질문도 하나의 청크가 전체 사슬을 담고 있기를 기대하는 대신 순회로 답할 수 있습니다. sage-wiki는 이 그래프를 컴파일 산출물로 만듭니다 — 따로 동기화해야 하는 두 번째 데이터베이스가 아닙니다.
 
 - **엔티티와 타입이 있는 관계.** 컴파일마다 엔티티(개념·출처·산출물)를 추출하고 타입이 지정된 관계로 연결합니다. 관계 어휘는 직접 정의합니다 —
-  [설정 가능한 관계](docs/guides/configurable-relations.md) 참고.
+  [설정 가능한 관계](../guides/configurable-relations.md) 참고.
 - **근거가 붙은 간선.** 관계는 `evidence`(근거가 되는 구절), `confidence`(0–1), `source_doc`을 가질 수 있어, 결론을 문서 단위가 아니라 그 간선을 뒷받침한 문장까지 추적할 수 있습니다.
 - **트리플.** 선택적 구조화 출력 패스가 주어 → 관계 → 목적어를 직접 추출합니다. 명시적 활성화(`ontology.triples`): 문서당 LLM 호출이 하나 늘어나므로, 기본값이 사용자의 키를 말없이 쓰지 않습니다.
 - **엔티티 해소.** “K8s”와 “Kubernetes”를 한 노드로 합칩니다. 제안은 기본적으로 검토를 거치며 조용히 병합되지 않습니다.
@@ -50,29 +50,29 @@ sage-wiki provenance "service mesh"    # 이 개념을 만든 출처
 ```
 
 엣지는 이중 시간(bi-temporal)입니다: 사실이 바뀌면 이전 엣지가 충돌 대신 무효화되고, 기본 답변은 모순이 없으며, `as_of` 쿼리로 "1월에는 무엇을 사실로 믿었는가"를 물을 수 있습니다. 모호한 모순은 여전히
-[출력 신뢰](docs/guides/output-trust.md) 검토로 드러납니다. 코퍼스 전반의 질문("전체의 주요 주제는 무엇인가?")에는 옵트인 커뮤니티 탐지(`ontology.communities.enabled`)가 캐시된 커뮤니티 요약을 생성하고 `wiki_graph_query` `mode: "global"`로 답합니다. 자세한 내용:
-[그래프 메모리](docs/guides/graph-memory.md).
+[출력 신뢰](../guides/output-trust.md) 검토로 드러납니다. 코퍼스 전반의 질문("전체의 주요 주제는 무엇인가?")에는 옵트인 커뮤니티 탐지(`ontology.communities.enabled`)가 캐시된 커뮤니티 요약을 생성하고 `wiki_graph_query` `mode: "global"`로 답합니다. 자세한 내용:
+[그래프 메모리](../guides/graph-memory.md).
 
 ## 가이드
 
 | 가이드 | 설명 |
 |-------|-------------|
-| [에이전트 메모리 레이어](docs/guides/agent-memory-layer.md) | MCP 설정, 스킬 파일, 캡처 워크플로우, 읽기-캡처-진화 루프 |
-| [HTTP API](docs/guides/http-api.md) | /v1 REST 표면: 인증, 에러 모델, 멱등성, 비동기 작업 |
-| [그래프 메모리](docs/guides/graph-memory.md) | 근거가 있는 관계, 트리플 추출, 엔티티 해소, 그래프 QA |
-| [설정](docs/guides/configuration.md) | 전체 주석이 달린 config.yaml, 멀티 프로바이더 설정, serve 워커 |
-| [팀 설정](docs/guides/team-setup.md) | Git 동기화, 공유 서버, 허브 연합 배포 패턴 |
-| [검색 품질](docs/guides/search-quality.md) | 청크 인덱싱, 쿼리 확장, 재순위 매기기, 그래프 확장, ANN |
-| [대규모 볼트 성능](docs/guides/large-vault-performance.md) | 계층화된 컴파일, 백프레셔, 코드 파서, 100K+ 스케일링 |
-| [출력 신뢰](docs/guides/output-trust.md) | 근거 검증, 합의, 승격/강등 라이프사이클 |
-| [구독 인증](docs/guides/subscription-auth.md) | OAuth 로그인, 토큰 가져오기, 자격 증명 관리 |
-| [셀프 호스팅 서버](docs/guides/self-hosted-server.md) | Docker Compose, Syncthing, 리버스 프록시, VPS 배포 |
-| [스토리지 백엔드](docs/guides/storage-backends.md) | SQLite vs PostgreSQL/pgvector 설정, 전환, 풀 크기 조정 |
-| [설정 가능한 관계](docs/guides/configurable-relations.md) | 커스텀 온톨로지 유형, 다국어 동의어, 유형 제한 |
-| [프롬프트 커스터마이징](docs/guides/customizing-prompts.md) | 프롬프트 스캐폴딩, 유형별 재정의, 커스텀 프론트매터 필드 |
-| [로컬 모델](docs/guides/local-models.md) | Ollama 설정, GPU/CPU 라우팅, 패스별 모델 설정 |
-| [메트릭](docs/guides/metrics.md) | 로그 스냅샷, /metrics 엔드포인트, 카디널리티 제어 |
-| [기여 팩](CONTRIBUTING.md) | 팩 생성, 파서 작성, 레지스트리 제출 |
+| [에이전트 메모리 레이어](../guides/agent-memory-layer.md) | MCP 설정, 스킬 파일, 캡처 워크플로우, 읽기-캡처-진화 루프 |
+| [HTTP API](../guides/http-api.md) | /v1 REST 표면: 인증, 에러 모델, 멱등성, 비동기 작업 |
+| [그래프 메모리](../guides/graph-memory.md) | 근거가 있는 관계, 트리플 추출, 엔티티 해소, 그래프 QA |
+| [설정](../guides/configuration.md) | 전체 주석이 달린 config.yaml, 멀티 프로바이더 설정, serve 워커 |
+| [팀 설정](../guides/team-setup.md) | Git 동기화, 공유 서버, 허브 연합 배포 패턴 |
+| [검색 품질](../guides/search-quality.md) | 청크 인덱싱, 쿼리 확장, 재순위 매기기, 그래프 확장, ANN |
+| [대규모 볼트 성능](../guides/large-vault-performance.md) | 계층화된 컴파일, 백프레셔, 코드 파서, 100K+ 스케일링 |
+| [출력 신뢰](../guides/output-trust.md) | 근거 검증, 합의, 승격/강등 라이프사이클 |
+| [구독 인증](../guides/subscription-auth.md) | OAuth 로그인, 토큰 가져오기, 자격 증명 관리 |
+| [셀프 호스팅 서버](../guides/self-hosted-server.md) | Docker Compose, Syncthing, 리버스 프록시, VPS 배포 |
+| [스토리지 백엔드](../guides/storage-backends.md) | SQLite vs PostgreSQL/pgvector 설정, 전환, 풀 크기 조정 |
+| [설정 가능한 관계](../guides/configurable-relations.md) | 커스텀 온톨로지 유형, 다국어 동의어, 유형 제한 |
+| [프롬프트 커스터마이징](../guides/customizing-prompts.md) | 프롬프트 스캐폴딩, 유형별 재정의, 커스텀 프론트매터 필드 |
+| [로컬 모델](../guides/local-models.md) | Ollama 설정, GPU/CPU 라우팅, 패스별 모델 설정 |
+| [메트릭](../guides/metrics.md) | 로그 스냅샷, /metrics 엔드포인트, 카디널리티 제어 |
+| [기여 팩](../../CONTRIBUTING.md) | 팩 생성, 파서 작성, 레지스트리 제출 |
 
 ## 설치
 
@@ -88,7 +88,7 @@ go build -tags webui -o sage-wiki ./cmd/sage-wiki/
 
 ## 빠른 시작
 
-![컴파일러 파이프라인](assets/sage-wiki-compiler-pipeline.png)
+![컴파일러 파이프라인](../../assets/sage-wiki-compiler-pipeline.png)
 
 ### 새 프로젝트 (Greenfield)
 
@@ -105,7 +105,7 @@ sage-wiki serve --ui                               # 브라우저 (webui 빌드)
 sage-wiki compile --watch                          # 폴더 감시
 ```
 
-모든 `config.yaml` 키에 한 줄씩 주석이 달려 있습니다: [설정](docs/guides/configuration.md).
+모든 `config.yaml` 키에 한 줄씩 주석이 달려 있습니다: [설정](../guides/configuration.md).
 
 ### 볼트 오버레이 (기존 Obsidian 볼트)
 
@@ -117,7 +117,7 @@ sage-wiki compile --watch
 ```
 
 컨테이너를 선호하시나요? 미리 빌드된 멀티 아키텍처 Docker 이미지와 compose 파일은
-[셀프 호스팅 서버 가이드](docs/guides/self-hosted-server.md)에서 다룹니다.
+[셀프 호스팅 서버 가이드](../guides/self-hosted-server.md)에서 다룹니다.
 
 ## 지원하는 소스 형식
 
@@ -159,7 +159,7 @@ sage-wiki compile --watch
   담깁니다(키워드 근접성 엣지에는 둘 다 없습니다). 일반 Q&A
   컨텍스트도 각 관련 문서 아래에 연결 엣지를 명시합니다.
 
-깊이, 비용, 검토 워크플로우, 실행 취소 의미론: [그래프 메모리](docs/guides/graph-memory.md).
+깊이, 비용, 검토 워크플로우, 실행 취소 의미론: [그래프 메모리](../guides/graph-memory.md).
 
 ## 명령어
 
@@ -185,9 +185,9 @@ sage-wiki compile --watch
 | `sage-wiki provenance <source-or-concept>` / `sage-wiki version` | 출처 매핑, 버전 |
 
 주제별 명령어 계열은 해당 가이드와 함께 있습니다: `pack *`은
-[CONTRIBUTING](CONTRIBUTING.md)에, `auth *`(login, import, status, logout,
-migrate)는 [구독 인증](docs/guides/subscription-auth.md)에,
-`verify` / `outputs *`는 [출력 신뢰](docs/guides/output-trust.md)에 있습니다.
+[CONTRIBUTING](../../CONTRIBUTING.md)에, `auth *`(login, import, status, logout,
+migrate)는 [구독 인증](../guides/subscription-auth.md)에,
+`verify` / `outputs *`는 [출력 신뢰](../guides/output-trust.md)에 있습니다.
 
 ## TUI
 
@@ -216,13 +216,13 @@ sage-wiki serve --ui        # http://127.0.0.1:3333, -tags webui 빌드 필요
 - **스트리밍 Q&A** — 질문을 하면 소스 인용이 포함된 LLM 합성 답변을 받습니다
 - **목차** — 스크롤 스파이 포함; 시스템 설정을 감지하는 다크/라이트 모드; 깨진 문서 링크는 회색으로 표시
 
-Preact + Tailwind로 구축되어 `go:embed`로 임베딩됩니다 (~1.2 MB, gzip 시 ~420 KB). CLI/MCP 전용 바이너리를 원하면 `-tags webui`를 생략하세요. 인증 토큰, 허용 호스트, 배포 하드닝: [셀프 호스팅 서버](docs/guides/self-hosted-server.md).
+Preact + Tailwind로 구축되어 `go:embed`로 임베딩됩니다 (~1.2 MB, gzip 시 ~420 KB). CLI/MCP 전용 바이너리를 원하면 `-tags webui`를 생략하세요. 인증 토큰, 허용 호스트, 배포 하드닝: [셀프 호스팅 서버](../guides/self-hosted-server.md).
 
 ## MCP 통합
 
-![MCP 통합](assets/sage-wiki-interfaces.png)
+![MCP 통합](../../assets/sage-wiki-interfaces.png)
 
-`.mcp.json`에 추가하세요 (Claude Code 기준; 다른 에이전트는 [에이전트 메모리 레이어 가이드](docs/guides/agent-memory-layer.md) 참조):
+`.mcp.json`에 추가하세요 (Claude Code 기준; 다른 에이전트는 [에이전트 메모리 레이어 가이드](../guides/agent-memory-layer.md) 참조):
 
 ```json
 {
@@ -238,7 +238,7 @@ Preact + Tailwind로 구축되어 `go:embed`로 임베딩됩니다 (~1.2 MB, gzi
 네트워크 클라이언트: `sage-wiki serve --transport sse --port 3333`. 서버는
 19개의 도구를 노출합니다 — 검색, 읽기, 그래프 쿼리, 캡처, 온디맨드
 컴파일 등. 에이전트별 설정과 캡처 워크플로우는
-[에이전트 메모리 레이어 가이드](docs/guides/agent-memory-layer.md)에 있습니다.
+[에이전트 메모리 레이어 가이드](../guides/agent-memory-layer.md)에 있습니다.
 
 **에이전트 스킬 파일** — `sage-wiki skill refresh --target <agent>`는
 에이전트의 지시 파일(CLAUDE.md, .cursorrules 등)에 언제 검색하고,
@@ -272,7 +272,7 @@ Pre-1.0 — 버전을 고정하세요.
 
 **지식 캡처** — 에이전트는 `wiki_capture` / `wiki_learn`을 통해
 인사이트를 다시 저장하여 읽기-캡처-진화 루프를 완성합니다. 워크플로우와 팁:
-[에이전트 메모리 레이어](docs/guides/agent-memory-layer.md).
+[에이전트 메모리 레이어](../guides/agent-memory-layer.md).
 
 ## 클라이언트 SDK
 
@@ -304,18 +304,18 @@ await job.waitUntilDone({ timeoutMs: 600_000 });
 
 두 클라이언트 모두 `/v1` 표면 전체를 다룹니다: 검색, 출처, 그래프 쿼리,
 컴파일된 wiki, 캡처/쓰기, 비동기 compile/lint 작업과 코드 기반 에러 분류.
-문서: [Python](clients/python/README.md) · [TypeScript](clients/typescript/README.md) ·
-[HTTP API 가이드](docs/guides/http-api.md). Go 프로그램은 HTTP를 완전히
+문서: [Python](../../clients/python/README.md) · [TypeScript](../../clients/typescript/README.md) ·
+[HTTP API 가이드](../guides/http-api.md). Go 프로그램은 HTTP를 완전히
 생략할 수 있습니다 — [Go 프로그램에 임베딩](#go-프로그램에-임베딩) 참조.
 
 ### 예제
 
 실제 서버를 대상으로 CI에서 검증되는 복사 가능한 프레임워크 통합:
 
-- [`examples/langgraph/`](examples/langgraph/) — 메모리 기반 LangGraph
+- [`examples/langgraph/`](../../examples/langgraph/) — 메모리 기반 LangGraph
   노드 (Python 클라이언트): `uncompiled_sources` → 토픽 컴파일 패턴의
   검색과 캡처.
-- [`examples/vercel-ai-sdk/`](examples/vercel-ai-sdk/) — `search`,
+- [`examples/vercel-ai-sdk/`](../../examples/vercel-ai-sdk/) — `search`,
   `graphQuery`, `provenance`를 Vercel AI SDK 도구로 제공 (TypeScript
   클라이언트). 엣지 배포 가능.
 
@@ -358,25 +358,25 @@ res, err := cli.CallTool(ctx, mcp.CallToolRequest{
 ## 운영
 
 - **스토리지** — 기본은 SQLite (단일 파일, 제로 설정); 서버 배포에는
-  PostgreSQL + pgvector. 전환과 풀 크기 조정: [스토리지 백엔드](docs/guides/storage-backends.md).
+  PostgreSQL + pgvector. 전환과 풀 크기 조정: [스토리지 백엔드](../guides/storage-backends.md).
 - **관측 가능성** — 구조화된 로그 스냅샷과 옵트인 `/metrics`
-  엔드포인트: [메트릭](docs/guides/metrics.md).
+  엔드포인트: [메트릭](../guides/metrics.md).
 - **구조화된 출력** — LLM 추출 패스는 각 프로바이더의 네이티브
   메커니즘(Anthropic 도구 사용, OpenAI `response_format`, Gemini
   `responseSchema`)을 사용하며, 검증하는 펜스 제거 폴백을 갖추고 있습니다.
 - **자격 증명** — 구독 토큰은 가능한 경우 OS 키체인에 저장됩니다.
   파일에 저장된 자격 증명을 옮기려면 `sage-wiki auth migrate`를 한 번
-  실행하세요. [구독 인증](docs/guides/subscription-auth.md).
+  실행하세요. [구독 인증](../guides/subscription-auth.md).
 - **설정** — 모든 키에 주석이 달려 있으며, 멀티 프로바이더 레시피와
-  serve 모드 컴파일 워커 포함: [설정](docs/guides/configuration.md).
+  serve 모드 컴파일 워커 포함: [설정](../guides/configuration.md).
 - **엔티티 해소** — 0.85에서 자동 적용, `--unlink`로 정확히 되돌릴 수 있습니다. 위의 [그래프 메모리](#그래프-메모리)를 참조하세요.
 - **커스텀 관계/엔티티 유형** — 내장 유형을 확장하거나 직접 추가할 수
   있으며(`ontology.relation_types`), 다국어 동의어와 유형 제한을
-  지원합니다: [설정 가능한 관계](docs/guides/configurable-relations.md).
+  지원합니다: [설정 가능한 관계](../guides/configurable-relations.md).
 - **출력 신뢰** — 쿼리 출력은 근거가 확인되거나, 합의로 확정되거나,
-  수동으로 승격될 때까지 격리됩니다: [출력 신뢰](docs/guides/output-trust.md).
+  수동으로 승격될 때까지 격리됩니다: [출력 신뢰](../guides/output-trust.md).
 - **검색 튜닝** — 청킹, 확장, 재순위 매기기, 그래프 확장,
-  옵트인 ANN: [검색 품질](docs/guides/search-quality.md).
+  옵트인 ANN: [검색 품질](../guides/search-quality.md).
 
 ### 비용
 
@@ -392,7 +392,7 @@ sage-wiki compile               # 상태 폴링, 완료 시 결과 수신
 ```
 
 `compile --estimate`는 비용을 미리 보여주고, `compiler.mode: auto`는
-임계값을 넘으면 자동으로 배치를 사용합니다. 자세한 내용: [설정](docs/guides/configuration.md).
+임계값을 넘으면 자동으로 배치를 사용합니다. 자세한 내용: [설정](../guides/configuration.md).
 
 ### 대규모 볼트로 확장
 
@@ -408,7 +408,7 @@ sage-wiki compile               # 상태 폴링, 완료 시 결과 수신
 
 대규모 볼트의 경우: 모든 것을 Tier 1로 인덱싱한 다음(100K 문서 볼트를
 ~5.5시간에), 필요할 때 컴파일하세요 — 자동 승격, 백프레셔, 코드 파서는
-[대규모 볼트 성능](docs/guides/large-vault-performance.md)에서 다룹니다.
+[대규모 볼트 성능](../guides/large-vault-performance.md)에서 다룹니다.
 
 ## 에코시스템
 
@@ -430,25 +430,25 @@ sage-wiki compile               # 상태 폴링, 완료 시 결과 수신
 
 `sage-wiki init --pack academic-research`는 초기화 시 팩 하나를 적용하고,
 `pack install <name|url>`로 더 추가할 수 있습니다. 팩 생성과 게시:
-[CONTRIBUTING](CONTRIBUTING.md).
+[CONTRIBUTING](../../CONTRIBUTING.md).
 
 ### 외부 파서
 
 어떤 파일 형식이든 모든 언어의 스크립트로 처리할 수 있습니다(stdin →
 stdout으로 텍스트 출력). `parsers/parser.yaml`에 선언하며 이중 옵트인
 뒤에 있습니다 — 샌드박스 없는 서브프로세스로 실행되지만 타임아웃 강제와
-환경 변수 제거가 적용됩니다. 작성과 하드닝 세부사항: [CONTRIBUTING](CONTRIBUTING.md);
-신뢰 경계에 대한 논의: [팀 설정](docs/guides/team-setup.md).
+환경 변수 제거가 적용됩니다. 작성과 하드닝 세부사항: [CONTRIBUTING](../../CONTRIBUTING.md);
+신뢰 경계에 대한 논의: [팀 설정](../guides/team-setup.md).
 
 ### 팀
 
 세 가지 공유 패턴 — git 동기화, 공유 서버, 허브 연합 — 그리고
-팀 신뢰 검토와 비용 관리: [팀 설정](docs/guides/team-setup.md).
+팀 신뢰 검토와 비용 관리: [팀 설정](../guides/team-setup.md).
 
 ## 벤치마크
 
 두 스위트는 서로 다른 질문에 답합니다. 자세한 내용:
-[eval/benchmarks/REPORT.md](eval/benchmarks/REPORT.md) · [eval/REPORT.md](eval/REPORT.md)
+[eval/benchmarks/REPORT.md](../../eval/benchmarks/REPORT.md) · [eval/REPORT.md](../../eval/REPORT.md)
 
 **메모리 벤치마크** — 긴 대화에 대한 질문에 답할 수 있는가. 공개 데이터셋을 LLM이 채점하며,
 [mem0ai/memory-benchmarks](https://github.com/mem0ai/memory-benchmarks) 의 프롬프트와 절차를 그대로 쓰고 백엔드만 sage-wiki로 교체했습니다(응답·판정 모두 gpt-5, 표본 추출):

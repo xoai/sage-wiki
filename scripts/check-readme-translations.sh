@@ -27,14 +27,14 @@ check() { # BASE HEAD COMMIT_MSGS -> exit 1 on drift
 	if ! grep -qx "README.md" <<< "$changed"; then
 		return 0 # English README untouched — nothing to check
 	fi
-	if grep -qE '^README_[a-z]{2}\.md$' <<< "$changed"; then
+	if grep -qE '^docs/translations/README_[a-z]{2}\.md$' <<< "$changed"; then
 		return 0 # a translation moved with it
 	fi
 	if grep -qF "translations: lag-ok" <<< "$msgs"; then
 		return 0 # documented debt
 	fi
 	echo "::error::README.md changed without a translation update." >&2
-	echo "Update a README_*.md or add 'translations: lag-ok' to a commit message." >&2
+	echo "Update a docs/translations/README_*.md or add 'translations: lag-ok' to a commit message." >&2
 	return 1
 }
 
@@ -64,7 +64,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
 	echo z >> README.md && git add . && git commit -qm "docs: english only"
 	t "readme only" HEAD~1 HEAD "docs: english only" 1
 	# case 3: README + translation in the SAME commit → pass
-	echo t2 >> README.md && echo t > README_fr.md && git add . && git commit -qm "docs: with fr"
+	echo t2 >> README.md && mkdir -p docs/translations && echo t > docs/translations/README_fr.md && git add . && git commit -qm "docs: with fr"
 	t "readme + translation" HEAD~1 HEAD "docs: with fr" 0
 	# case 4: README-only with escape hatch → pass
 	echo w >> README.md && git add . && git commit -qm "docs: more
@@ -80,7 +80,7 @@ fi
 
 if [[ "${1:-}" == "--verify-headers" ]]; then
 	missing=0
-	for f in README_fr.md README_ja.md README_ko.md README_ru.md README_vi.md README_zh.md; do
+	for f in docs/translations/README_fr.md docs/translations/README_ja.md docs/translations/README_ko.md docs/translations/README_ru.md docs/translations/README_vi.md docs/translations/README_zh.md; do
 		if ! head -5 "$f" | grep -q "translations: may-lag"; then
 			echo "missing lag header: $f" >&2
 			missing=1

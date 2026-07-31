@@ -1,4 +1,4 @@
-[English](README.md) | [中文](README_zh.md) | **日本語** | [한국어](README_ko.md) | [Tiếng Việt](README_vi.md) | [Français](README_fr.md) | [Русский](README_ru.md)
+[English](../../README.md) | [中文](README_zh.md) | **日本語** | [한국어](README_ko.md) | [Tiếng Việt](README_vi.md) | [Français](README_fr.md) | [Русский](README_ru.md)
 
 <!-- translations: may-lag -->
 > ⚠️ この翻訳は README.md に遅れている場合があります — 英語版が正本です。
@@ -24,18 +24,18 @@ _外側の境界上のドットはナレッジベース内のすべてのドキ�
 
 ## パーソナルボールトから企業ナレッジグラフまで
 
-- **パーソナル** — 既存のObsidianボールトにオーバーレイし（`init --vault`）、[ローカルモデル](docs/guides/local-models.md)でコストゼロで運用し、根拠付きグラフが欲しくなったらグラフパス（`ontology.triples` + `ontology.resolve`）をオプトインします。
-- **チーム** — 1つのWikiをgitまたは[セルフホストサーバー](docs/guides/self-hosted-server.md)で共有し、エンティティ解決の提案と[出力信頼](docs/guides/output-trust.md)をチームでレビューし、ハブで複数のWikiをフェデレートします。[チームセットアップ](docs/guides/team-setup.md)を参照してください。
-- **企業** — ストレージを[PostgreSQL/pgvector](docs/guides/storage-backends.md)に移行し、[メトリクス](docs/guides/metrics.md)を有効にし、サーバーの前段に認証を置き、[ティアードコンパイル](docs/guides/large-vault-performance.md)で取り込みをスケールさせます。
+- **パーソナル** — 既存のObsidianボールトにオーバーレイし（`init --vault`）、[ローカルモデル](../guides/local-models.md)でコストゼロで運用し、根拠付きグラフが欲しくなったらグラフパス（`ontology.triples` + `ontology.resolve`）をオプトインします。
+- **チーム** — 1つのWikiをgitまたは[セルフホストサーバー](../guides/self-hosted-server.md)で共有し、エンティティ解決の提案と[出力信頼](../guides/output-trust.md)をチームでレビューし、ハブで複数のWikiをフェデレートします。[チームセットアップ](../guides/team-setup.md)を参照してください。
+- **企業** — ストレージを[PostgreSQL/pgvector](../guides/storage-backends.md)に移行し、[メトリクス](../guides/metrics.md)を有効にし、サーバーの前段に認証を置き、[ティアードコンパイル](../guides/large-vault-performance.md)で取り込みをスケールさせます。
 
 ## ナレッジグラフとグラフメモリ
 
-![sage-wiki グラフエンジン](assets/sage-wiki-graph-engine.png)
+![sage-wiki グラフエンジン](../../assets/sage-wiki-graph-engine.png)
 
 ベクトル検索はクエリに*似た*文章を取り出します。グラフはさらに **物事がどう関係しているか** を保持するため、2〜3 ホップ必要な問いも、単一チャンクに連鎖全体が含まれていることを期待せず、走査で答えられます。sage-wiki はこのグラフをコンパイル成果物として構築します — 別途同期が必要な第二のデータベースではありません。
 
 - **エンティティと型付き関係。** コンパイルのたびにエンティティ（概念・ソース・成果物）を抽出し、型付き関係で結びます。関係の語彙は利用者が定義できます —
-  [設定可能な関係](docs/guides/configurable-relations.md)を参照。
+  [設定可能な関係](../guides/configurable-relations.md)を参照。
 - **根拠付きのエッジ。** 関係は `evidence`（根拠となる箇所）、`confidence`（0–1）、`source_doc` を保持できます。結論は文書単位ではなく、そのエッジを裏づけた一文まで辿れます。
 - **トリプル。** 任意の構造化出力パスが 主語 → 関係 → 目的語 を直接抽出します。明示的な有効化が必要（`ontology.triples`）: 文書ごとに LLM 呼び出しが 1 回増えるため、既定値が黙って課金することはありません。
 - **エンティティ解決。** 「K8s」と「Kubernetes」を 1 ノードに統合します。提案は既定でレビューを経由し、黙って統合されません。
@@ -50,29 +50,29 @@ sage-wiki provenance "service mesh"    # この概念を生んだソース
 ```
 
 エッジはバイテンポラルです: 事実を更新すると古いエッジは衝突せず無効化され、デフォルトの回答は矛盾のないものになり、`as_of` クエリで「1月時点では何を信じていたか」を答えられます。曖昧な矛盾は引き続き
-[出力信頼](docs/guides/output-trust.md)のレビューで表面化します。コーパス全体の問い（「全体の主なテーマは？」）には、オプトインのコミュニティ検出（`ontology.communities.enabled`）がキャッシュ済みコミュニティ要約を生成し、`wiki_graph_query` `mode: "global"` で回答します。詳細:
-[グラフメモリ](docs/guides/graph-memory.md)。
+[出力信頼](../guides/output-trust.md)のレビューで表面化します。コーパス全体の問い（「全体の主なテーマは？」）には、オプトインのコミュニティ検出（`ontology.communities.enabled`）がキャッシュ済みコミュニティ要約を生成し、`wiki_graph_query` `mode: "global"` で回答します。詳細:
+[グラフメモリ](../guides/graph-memory.md)。
 
 ## ガイド
 
 | ガイド | 説明 |
 |-------|------|
-| [エージェントメモリレイヤー](docs/guides/agent-memory-layer.md) | MCP設定、スキルファイル、キャプチャワークフロー、読み取り・キャプチャ・進化ループ |
-| [HTTP API](docs/guides/http-api.md) | /v1 REST サーフェス：認証、エラーモデル、冪等性、非同期ジョブ |
-| [グラフメモリ](docs/guides/graph-memory.md) | 根拠付きリレーション、トリプル抽出、エンティティ解決、グラフQA |
-| [設定](docs/guides/configuration.md) | 完全な注釈付きconfig.yaml、マルチプロバイダーセットアップ、serveワーカー |
-| [チームセットアップ](docs/guides/team-setup.md) | Git同期、共有サーバー、ハブフェデレーションのデプロイパターン |
-| [検索品質](docs/guides/search-quality.md) | チャンクインデックス、クエリ拡張、リランキング、グラフ拡張、ANN |
-| [大規模ボールトのパフォーマンス](docs/guides/large-vault-performance.md) | ティアードコンパイル、バックプレッシャー、コードパーサー、100K以上へのスケーリング |
-| [出力信頼](docs/guides/output-trust.md) | グラウンディング検証、コンセンサス、昇格/降格ライフサイクル |
-| [サブスクリプション認証](docs/guides/subscription-auth.md) | OAuthログイン、トークンインポート、認証情報管理 |
-| [セルフホストサーバー](docs/guides/self-hosted-server.md) | Docker Compose、Syncthing、リバースプロキシ、VPSデプロイ |
-| [ストレージバックエンド](docs/guides/storage-backends.md) | SQLite vs PostgreSQL/pgvectorのセットアップ、切り替え、プールサイズ調整 |
-| [設定可能な関係](docs/guides/configurable-relations.md) | カスタムオントロジー型、多言語シノニム、型制限 |
-| [プロンプトのカスタマイズ](docs/guides/customizing-prompts.md) | プロンプトスキャフォールディング、タイプ別オーバーライド、カスタムフロントマターフィールド |
-| [ローカルモデル](docs/guides/local-models.md) | Ollamaセットアップ、GPU/CPUルーティング、パス別モデル設定 |
-| [メトリクス](docs/guides/metrics.md) | ログスナップショット、/metricsエンドポイント、カーディナリティ制御 |
-| [コントリビューションパック](CONTRIBUTING.md) | パック作成、パーサー開発、レジストリ登録 |
+| [エージェントメモリレイヤー](../guides/agent-memory-layer.md) | MCP設定、スキルファイル、キャプチャワークフロー、読み取り・キャプチャ・進化ループ |
+| [HTTP API](../guides/http-api.md) | /v1 REST サーフェス：認証、エラーモデル、冪等性、非同期ジョブ |
+| [グラフメモリ](../guides/graph-memory.md) | 根拠付きリレーション、トリプル抽出、エンティティ解決、グラフQA |
+| [設定](../guides/configuration.md) | 完全な注釈付きconfig.yaml、マルチプロバイダーセットアップ、serveワーカー |
+| [チームセットアップ](../guides/team-setup.md) | Git同期、共有サーバー、ハブフェデレーションのデプロイパターン |
+| [検索品質](../guides/search-quality.md) | チャンクインデックス、クエリ拡張、リランキング、グラフ拡張、ANN |
+| [大規模ボールトのパフォーマンス](../guides/large-vault-performance.md) | ティアードコンパイル、バックプレッシャー、コードパーサー、100K以上へのスケーリング |
+| [出力信頼](../guides/output-trust.md) | グラウンディング検証、コンセンサス、昇格/降格ライフサイクル |
+| [サブスクリプション認証](../guides/subscription-auth.md) | OAuthログイン、トークンインポート、認証情報管理 |
+| [セルフホストサーバー](../guides/self-hosted-server.md) | Docker Compose、Syncthing、リバースプロキシ、VPSデプロイ |
+| [ストレージバックエンド](../guides/storage-backends.md) | SQLite vs PostgreSQL/pgvectorのセットアップ、切り替え、プールサイズ調整 |
+| [設定可能な関係](../guides/configurable-relations.md) | カスタムオントロジー型、多言語シノニム、型制限 |
+| [プロンプトのカスタマイズ](../guides/customizing-prompts.md) | プロンプトスキャフォールディング、タイプ別オーバーライド、カスタムフロントマターフィールド |
+| [ローカルモデル](../guides/local-models.md) | Ollamaセットアップ、GPU/CPUルーティング、パス別モデル設定 |
+| [メトリクス](../guides/metrics.md) | ログスナップショット、/metricsエンドポイント、カーディナリティ制御 |
+| [コントリビューションパック](../../CONTRIBUTING.md) | パック作成、パーサー開発、レジストリ登録 |
 
 ## インストール
 
@@ -88,7 +88,7 @@ go build -tags webui -o sage-wiki ./cmd/sage-wiki/
 
 ## クイックスタート
 
-![コンパイラパイプライン](assets/sage-wiki-compiler-pipeline.png)
+![コンパイラパイプライン](../../assets/sage-wiki-compiler-pipeline.png)
 
 ### グリーンフィールド（新規プロジェクト）
 
@@ -105,7 +105,7 @@ sage-wiki serve --ui                               # ブラウザ（webui ビル
 sage-wiki compile --watch                          # フォルダ監視
 ```
 
-`config.yaml`の全キーを行ごとに注釈付きで解説：[設定](docs/guides/configuration.md)。
+`config.yaml`の全キーを行ごとに注釈付きで解説：[設定](../guides/configuration.md)。
 
 ### ボールトオーバーレイ（既存のObsidianボールト）
 
@@ -116,7 +116,7 @@ sage-wiki init --vault
 sage-wiki compile --watch
 ```
 
-コンテナがお好みですか？ビルド済みのマルチアーキテクチャDockerイメージとcomposeファイルについては、[セルフホストサーバーガイド](docs/guides/self-hosted-server.md)で説明しています。
+コンテナがお好みですか？ビルド済みのマルチアーキテクチャDockerイメージとcomposeファイルについては、[セルフホストサーバーガイド](../guides/self-hosted-server.md)で説明しています。
 
 ## 対応ソースフォーマット
 
@@ -158,7 +158,7 @@ Wikiは標準でキーワード近接からナレッジグラフを構築しま�
   伴います（キーワード近接エッジはどちらも伴いません）。通常のQ&A
   コンテキストでも、各関連記事の下に接続エッジの名前が示されます。
 
-深掘り、コスト、レビューワークフロー、取り消しのセマンティクス：[グラフメモリ](docs/guides/graph-memory.md)。
+深掘り、コスト、レビューワークフロー、取り消しのセマンティクス：[グラフメモリ](../guides/graph-memory.md)。
 
 ## コマンド
 
@@ -184,9 +184,9 @@ Wikiは標準でキーワード近接からナレッジグラフを構築しま�
 | `sage-wiki provenance <source-or-concept>` / `sage-wiki version` | 来歴マッピング、バージョン |
 
 トピック別のコマンド群はそれぞれのガイドにあります：`pack *`は
-[CONTRIBUTING](CONTRIBUTING.md)、`auth *`（login、import、status、logout、
-migrate）は[サブスクリプション認証](docs/guides/subscription-auth.md)、
-`verify` / `outputs *`は[出力信頼](docs/guides/output-trust.md)を参照してください。
+[CONTRIBUTING](../../CONTRIBUTING.md)、`auth *`（login、import、status、logout、
+migrate）は[サブスクリプション認証](../guides/subscription-auth.md)、
+`verify` / `outputs *`は[出力信頼](../guides/output-trust.md)を参照してください。
 
 ## TUI
 
@@ -215,13 +215,13 @@ sage-wiki serve --ui        # http://127.0.0.1:3333、-tags webui ビルドが�
 - **ストリーミングQ&A** — 質問すると、ソース引用付きのLLM合成回答が得られます
 - スクロールスパイ付きの**目次**。システム設定検出付きのダーク/ライトモード。壊れた記事リンクはグレーで表示
 
-Preact + Tailwindで構築され、`go:embed`で埋め込まれます（約1.2 MB、gzip圧縮で約420 KB）。CLI/MCP専用バイナリにするには`-tags webui`を省略してください。認証トークン、許可ホスト、デプロイの堅牢化：[セルフホストサーバー](docs/guides/self-hosted-server.md)。
+Preact + Tailwindで構築され、`go:embed`で埋め込まれます（約1.2 MB、gzip圧縮で約420 KB）。CLI/MCP専用バイナリにするには`-tags webui`を省略してください。認証トークン、許可ホスト、デプロイの堅牢化：[セルフホストサーバー](../guides/self-hosted-server.md)。
 
 ## MCP統合
 
-![MCP統合](assets/sage-wiki-interfaces.png)
+![MCP統合](../../assets/sage-wiki-interfaces.png)
 
-`.mcp.json`に追加します（Claude Codeの場合。他のエージェントは[エージェントメモリレイヤーガイド](docs/guides/agent-memory-layer.md)を参照）：
+`.mcp.json`に追加します（Claude Codeの場合。他のエージェントは[エージェントメモリレイヤーガイド](../guides/agent-memory-layer.md)を参照）：
 
 ```json
 {
@@ -237,7 +237,7 @@ Preact + Tailwindで構築され、`go:embed`で埋め込まれます（約1.2 M
 ネットワーククライアント向け：`sage-wiki serve --transport sse --port 3333`。
 サーバーは19のツールを公開します — 検索、読み取り、グラフクエリ、キャプチャ、
 オンデマンドコンパイルなど。エージェントごとのセットアップとキャプチャ
-ワークフローは[エージェントメモリレイヤーガイド](docs/guides/agent-memory-layer.md)にあります。
+ワークフローは[エージェントメモリレイヤーガイド](../guides/agent-memory-layer.md)にあります。
 
 **エージェントスキルファイル** — `sage-wiki skill refresh --target <agent>`は、
 エージェントの指示ファイル（CLAUDE.md、.cursorrules など）に、いつ検索し、
@@ -273,7 +273,7 @@ Pre-1.0 — バージョンを固定してください。
 
 **知識キャプチャ** — エージェントは`wiki_capture` / `wiki_learn`を介して
 インサイトを書き戻し、読み取り・キャプチャ・進化のループを閉じます。
-ワークフローとヒント：[エージェントメモリレイヤー](docs/guides/agent-memory-layer.md)。
+ワークフローとヒント：[エージェントメモリレイヤー](../guides/agent-memory-layer.md)。
 
 ## クライアントSDK
 
@@ -306,18 +306,18 @@ await job.waitUntilDone({ timeoutMs: 600_000 });
 両クライアントとも`/v1`サーフェス全体をカバー：検索、プロベナンス、
 グラフクエリ、コンパイル済みwiki、キャプチャ/書き込み、非同期
 compile/lintジョブとコード駆動のエラー分類。ドキュメント：
-[Python](clients/python/README.md) · [TypeScript](clients/typescript/README.md) ·
-[HTTP APIガイド](docs/guides/http-api.md)。GoプログラムはHTTPを完全に
+[Python](../../clients/python/README.md) · [TypeScript](../../clients/typescript/README.md) ·
+[HTTP APIガイド](../guides/http-api.md)。GoプログラムはHTTPを完全に
 省略できます — [Goプログラムへの埋め込み](#goプログラムへの埋め込み)を参照。
 
 ### 使用例
 
 実サーバーに対してCIで検証される、コピー可能なフレームワーク統合：
 
-- [`examples/langgraph/`](examples/langgraph/) — メモリバックドのLangGraph
+- [`examples/langgraph/`](../../examples/langgraph/) — メモリバックドのLangGraph
   ノード（Pythonクライアント）：`uncompiled_sources` → トピックコンパイルの
   パターンによる取得とキャプチャ。
-- [`examples/vercel-ai-sdk/`](examples/vercel-ai-sdk/) — `search`、
+- [`examples/vercel-ai-sdk/`](../../examples/vercel-ai-sdk/) — `search`、
   `graphQuery`、`provenance`をVercel AI SDKツールとして提供
   （TypeScriptクライアント）。エッジにデプロイ可能。
 
@@ -360,25 +360,25 @@ res, err := cli.CallTool(ctx, mcp.CallToolRequest{
 ## 運用
 
 - **ストレージ** — デフォルトはSQLite（単一ファイル、設定不要）。サーバー
-  デプロイにはPostgreSQL + pgvector。切り替えとプールサイズ調整：[ストレージバックエンド](docs/guides/storage-backends.md)。
+  デプロイにはPostgreSQL + pgvector。切り替えとプールサイズ調整：[ストレージバックエンド](../guides/storage-backends.md)。
 - **オブザーバビリティ** — 構造化ログスナップショットとオプトインの`/metrics`
-  エンドポイント：[メトリクス](docs/guides/metrics.md)。
+  エンドポイント：[メトリクス](../guides/metrics.md)。
 - **構造化出力** — LLM抽出パスは各プロバイダーのネイティブメカニズム
   （Anthropicツール使用、OpenAI `response_format`、Gemini
   `responseSchema`）を使用し、検証付きのフェンス除去フォールバックを備えます。
 - **認証情報** — サブスクリプショントークンは利用可能な環境ではOSの
   キーチェーンに保存されます。ファイル保存された認証情報を移行するには
-  `sage-wiki auth migrate`を一度実行してください。[サブスクリプション認証](docs/guides/subscription-auth.md)。
+  `sage-wiki auth migrate`を一度実行してください。[サブスクリプション認証](../guides/subscription-auth.md)。
 - **設定** — すべてのキーの注釈付き解説、マルチプロバイダーレシピ、
-  serveモードのコンパイルワーカー：[設定](docs/guides/configuration.md)。
+  serveモードのコンパイルワーカー：[設定](../guides/configuration.md)。
 - **エンティティ解決** — 0.85で自動適用、`--unlink`で正確に元に戻せます。上記の[グラフメモリ](#グラフメモリ)を参照。
 - **カスタム関係/エンティティ型** — 組み込み型の拡張や独自型の追加
   （`ontology.relation_types`）が可能で、多言語シノニムと型制限に
-  対応：[設定可能な関係](docs/guides/configurable-relations.md)。
+  対応：[設定可能な関係](../guides/configurable-relations.md)。
 - **出力信頼** — クエリ出力は、グラウンディングされるか、コンセンサスで
-  確認されるか、手動で昇格されるまで隔離されます：[出力信頼](docs/guides/output-trust.md)。
+  確認されるか、手動で昇格されるまで隔離されます：[出力信頼](../guides/output-trust.md)。
 - **検索チューニング** — チャンキング、拡張、リランキング、グラフ拡張、
-  オプトインのANN：[検索品質](docs/guides/search-quality.md)。
+  オプトインのANN：[検索品質](../guides/search-quality.md)。
 
 ### コスト
 
@@ -394,7 +394,7 @@ sage-wiki compile               # ステータスをポーリング、完了時�
 ```
 
 `compile --estimate`はコストをプレビューし、`compiler.mode: auto`は閾値を
-超えると自動的にバッチ処理します。詳細：[設定](docs/guides/configuration.md)。
+超えると自動的にバッチ処理します。詳細：[設定](../guides/configuration.md)。
 
 ### 大規模ボールトへのスケーリング
 
@@ -411,7 +411,7 @@ sage-wiki compile               # ステータスをポーリング、完了時�
 大規模ボールトの場合：まずティア1ですべてをインデックスし（100Kドキュメントの
 ボールトで約5.5時間）、その後オンデマンドでコンパイルします — 自動昇格、
 バックプレッシャー、コードパーサーについては
-[大規模ボールトのパフォーマンス](docs/guides/large-vault-performance.md)で説明しています。
+[大規模ボールトのパフォーマンス](../guides/large-vault-performance.md)で説明しています。
 
 ## エコシステム
 
@@ -433,7 +433,7 @@ sage-wiki compile               # ステータスをポーリング、完了時�
 
 `sage-wiki init --pack academic-research`は初期化時にパックを1つ適用し、
 `pack install <name|url>`で追加できます。パックの作成と公開：
-[CONTRIBUTING](CONTRIBUTING.md)。
+[CONTRIBUTING](../../CONTRIBUTING.md)。
 
 ### 外部パーサー
 
@@ -441,18 +441,18 @@ sage-wiki compile               # ステータスをポーリング、完了時�
 フォーマットを処理できます。`parsers/parser.yaml`で宣言し、二重の
 オプトインの背後にあります — サンドボックスなしのサブプロセスとして
 実行されますが、タイムアウト強制と環境変数のストリップが適用されます。
-作成と堅牢化の詳細：[CONTRIBUTING](CONTRIBUTING.md)、
-信頼境界の議論：[チームセットアップ](docs/guides/team-setup.md)。
+作成と堅牢化の詳細：[CONTRIBUTING](../../CONTRIBUTING.md)、
+信頼境界の議論：[チームセットアップ](../guides/team-setup.md)。
 
 ### チーム
 
 3つの共有パターン — git同期、共有サーバー、ハブフェデレーション — に
-加えて、チームでの信頼レビューとコスト管理：[チームセットアップ](docs/guides/team-setup.md)。
+加えて、チームでの信頼レビューとコスト管理：[チームセットアップ](../guides/team-setup.md)。
 
 ## ベンチマーク
 
 2 つのスイートは異なる問いに答えます。詳細:
-[eval/benchmarks/REPORT.md](eval/benchmarks/REPORT.md) · [eval/REPORT.md](eval/REPORT.md)
+[eval/benchmarks/REPORT.md](../../eval/benchmarks/REPORT.md) · [eval/REPORT.md](../../eval/REPORT.md)
 
 **メモリベンチマーク** — 長い会話について質問に答えられるか。公開データセットを LLM が採点し、
 [mem0ai/memory-benchmarks](https://github.com/mem0ai/memory-benchmarks) のプロンプトと手順を用い、バックエンドを sage-wiki に置き換えています（回答・採点とも gpt-5、サンプル抽出）:

@@ -1,4 +1,4 @@
-[English](README.md) | [中文](README_zh.md) | [日本語](README_ja.md) | [한국어](README_ko.md) | **Tiếng Việt** | [Français](README_fr.md) | [Русский](README_ru.md)
+[English](../../README.md) | [中文](README_zh.md) | [日本語](README_ja.md) | [한국어](README_ko.md) | **Tiếng Việt** | [Français](README_fr.md) | [Русский](README_ru.md)
 
 <!-- translations: may-lag -->
 > ⚠️ Bản dịch này có thể chưa cập nhật theo README.md — bản tiếng Anh là chuẩn.
@@ -24,18 +24,18 @@ _Các điểm trên đường biên ngoài đại diện cho tóm tắt của t�
 
 ## Từ vault cá nhân tới đồ thị tri thức công ty
 
-- **Cá nhân** — phủ lên một vault Obsidian hiện có (`init --vault`), chạy trên [model cục bộ](docs/guides/local-models.md) với chi phí bằng không, và bật các pass đồ thị (`ontology.triples` + `ontology.resolve`) khi bạn muốn có đồ thị có bằng chứng.
-- **Nhóm** — chia sẻ một wiki qua git hoặc một [máy chủ tự host](docs/guides/self-hosted-server.md), cùng nhau rà soát các đề xuất phân giải thực thể và [tin cậy đầu ra](docs/guides/output-trust.md), và liên kết nhiều wiki bằng hub. Xem [Thiết lập nhóm](docs/guides/team-setup.md).
-- **Công ty** — chuyển lưu trữ sang [PostgreSQL/pgvector](docs/guides/storage-backends.md), bật [số liệu](docs/guides/metrics.md), đặt lớp xác thực trước máy chủ, và mở rộng tiếp nhận với [biên dịch phân tầng](docs/guides/large-vault-performance.md).
+- **Cá nhân** — phủ lên một vault Obsidian hiện có (`init --vault`), chạy trên [model cục bộ](../guides/local-models.md) với chi phí bằng không, và bật các pass đồ thị (`ontology.triples` + `ontology.resolve`) khi bạn muốn có đồ thị có bằng chứng.
+- **Nhóm** — chia sẻ một wiki qua git hoặc một [máy chủ tự host](../guides/self-hosted-server.md), cùng nhau rà soát các đề xuất phân giải thực thể và [tin cậy đầu ra](../guides/output-trust.md), và liên kết nhiều wiki bằng hub. Xem [Thiết lập nhóm](../guides/team-setup.md).
+- **Công ty** — chuyển lưu trữ sang [PostgreSQL/pgvector](../guides/storage-backends.md), bật [số liệu](../guides/metrics.md), đặt lớp xác thực trước máy chủ, và mở rộng tiếp nhận với [biên dịch phân tầng](../guides/large-vault-performance.md).
 
 ## Đồ thị tri thức & bộ nhớ đồ thị
 
-![engine đồ thị sage-wiki](assets/sage-wiki-graph-engine.png)
+![engine đồ thị sage-wiki](../../assets/sage-wiki-graph-engine.png)
 
 Tìm kiếm vector trả về những đoạn *trông giống* câu hỏi. Đồ thị còn lưu **các sự vật liên hệ với nhau ra sao**, nên một câu hỏi cần hai ba bước suy luận được trả lời bằng cách duyệt đồ thị, thay vì hy vọng một đoạn văn chứa trọn chuỗi lập luận. sage-wiki dựng đồ thị đó như một sản phẩm của quá trình biên dịch — không phải một cơ sở dữ liệu thứ hai phải đồng bộ.
 
 - **Thực thể và quan hệ có kiểu.** Mỗi lần biên dịch sẽ trích xuất thực thể (khái niệm, nguồn, hiện vật) và nối chúng bằng quan hệ có kiểu. Bộ từ vựng quan hệ do bạn định nghĩa — xem
-  [quan hệ có thể cấu hình](docs/guides/configurable-relations.md).
+  [quan hệ có thể cấu hình](../guides/configurable-relations.md).
 - **Cạnh có bằng chứng.** Một quan hệ có thể mang `evidence` (đoạn văn chống lưng), `confidence` (0–1) và `source_doc`, nhờ đó kết luận truy ngược tới đúng câu đã tạo ra cạnh, chứ không chỉ tới cả tài liệu.
 - **Bộ ba (triple).** Một lượt xử lý tùy chọn với đầu ra có cấu trúc trích thẳng chủ thể → quan hệ → đối tượng. Phải bật thủ công (`ontology.triples`): nó thêm một lệnh gọi LLM cho mỗi tài liệu, và mặc định không bao giờ tiêu tiền của bạn mà không hỏi.
 - **Hợp nhất thực thể.** “K8s” và “Kubernetes” trở thành một nút. Đề xuất mặc định phải qua duyệt chứ không âm thầm gộp.
@@ -50,29 +50,29 @@ sage-wiki provenance "service mesh"    # những nguồn nào sinh ra khái ni�
 ```
 
 Các cạnh mang tính lưỡng thời gian (bi-temporal): khi một sự thật bị bác bỏ, cạnh cũ bị vô hiệu thay vì xung đột, câu trả lời mặc định không còn mâu thuẫn, và truy vấn `as_of` trả lời "tháng Giêng chúng ta đã tin điều gì?". Các mâu thuẫn không rõ ràng vẫn lộ ra qua khâu duyệt
-[độ tin cậy đầu ra](docs/guides/output-trust.md). Cho câu hỏi toàn corpus ("các chủ đề chính là gì?"), tính năng phát hiện cộng đồng opt-in (`ontology.communities.enabled`) tạo tóm tắt cộng đồng được cache và trả lời qua `wiki_graph_query` `mode: "global"`. Chi tiết:
-[bộ nhớ đồ thị](docs/guides/graph-memory.md).
+[độ tin cậy đầu ra](../guides/output-trust.md). Cho câu hỏi toàn corpus ("các chủ đề chính là gì?"), tính năng phát hiện cộng đồng opt-in (`ontology.communities.enabled`) tạo tóm tắt cộng đồng được cache và trả lời qua `wiki_graph_query` `mode: "global"`. Chi tiết:
+[bộ nhớ đồ thị](../guides/graph-memory.md).
 
 ## Hướng dẫn
 
 | Hướng dẫn | Mô tả |
 |-------|-------------|
-| [Lớp bộ nhớ Agent](docs/guides/agent-memory-layer.md) | Cấu hình MCP, tệp kỹ năng, quy trình ghi nhận, vòng lặp đọc-ghi nhận-tiến hóa |
-| [HTTP API](docs/guides/http-api.md) | Bề mặt REST /v1: xác thực, mô hình lỗi, idempotency, job bất đồng bộ |
-| [Bộ nhớ đồ thị](docs/guides/graph-memory.md) | Quan hệ có bằng chứng, trích xuất bộ ba, phân giải thực thể, hỏi đáp đồ thị |
-| [Cấu hình](docs/guides/configuration.md) | config.yaml đầy đủ có chú giải, cấu hình đa nhà cung cấp, worker của serve |
-| [Thiết lập nhóm](docs/guides/team-setup.md) | Các mẫu triển khai đồng bộ git, máy chủ dùng chung, và liên kết hub |
-| [Chất lượng tìm kiếm](docs/guides/search-quality.md) | Lập chỉ mục chunk, mở rộng truy vấn, xếp hạng lại, mở rộng đồ thị, ANN |
-| [Hiệu năng Vault lớn](docs/guides/large-vault-performance.md) | Biên dịch phân tầng, backpressure, trình phân tích mã, mở rộng 100K+ |
-| [Tin cậy đầu ra](docs/guides/output-trust.md) | Xác minh grounding, đồng thuận, vòng đời thăng/giáng cấp |
-| [Xác thực đăng ký](docs/guides/subscription-auth.md) | Đăng nhập OAuth, nhập token, quản lý thông tin xác thực |
-| [Máy chủ tự host](docs/guides/self-hosted-server.md) | Docker Compose, Syncthing, reverse proxy, triển khai VPS |
-| [Backend lưu trữ](docs/guides/storage-backends.md) | Cài đặt SQLite vs PostgreSQL/pgvector, chuyển đổi, định cỡ pool |
-| [Quan hệ có thể cấu hình](docs/guides/configurable-relations.md) | Loại ontology tùy chỉnh, từ đồng nghĩa đa ngôn ngữ, hạn chế theo loại |
-| [Tùy chỉnh Prompt](docs/guides/customizing-prompts.md) | Khung prompt, ghi đè theo loại, trường frontmatter tùy chỉnh |
-| [Model cục bộ](docs/guides/local-models.md) | Cài đặt Ollama, định tuyến GPU/CPU, cấu hình model theo từng pass |
-| [Số liệu](docs/guides/metrics.md) | Snapshot log, endpoint /metrics, kiểm soát cardinality |
-| [Gói đóng góp](CONTRIBUTING.md) | Tạo gói, viết parser, gửi lên registry |
+| [Lớp bộ nhớ Agent](../guides/agent-memory-layer.md) | Cấu hình MCP, tệp kỹ năng, quy trình ghi nhận, vòng lặp đọc-ghi nhận-tiến hóa |
+| [HTTP API](../guides/http-api.md) | Bề mặt REST /v1: xác thực, mô hình lỗi, idempotency, job bất đồng bộ |
+| [Bộ nhớ đồ thị](../guides/graph-memory.md) | Quan hệ có bằng chứng, trích xuất bộ ba, phân giải thực thể, hỏi đáp đồ thị |
+| [Cấu hình](../guides/configuration.md) | config.yaml đầy đủ có chú giải, cấu hình đa nhà cung cấp, worker của serve |
+| [Thiết lập nhóm](../guides/team-setup.md) | Các mẫu triển khai đồng bộ git, máy chủ dùng chung, và liên kết hub |
+| [Chất lượng tìm kiếm](../guides/search-quality.md) | Lập chỉ mục chunk, mở rộng truy vấn, xếp hạng lại, mở rộng đồ thị, ANN |
+| [Hiệu năng Vault lớn](../guides/large-vault-performance.md) | Biên dịch phân tầng, backpressure, trình phân tích mã, mở rộng 100K+ |
+| [Tin cậy đầu ra](../guides/output-trust.md) | Xác minh grounding, đồng thuận, vòng đời thăng/giáng cấp |
+| [Xác thực đăng ký](../guides/subscription-auth.md) | Đăng nhập OAuth, nhập token, quản lý thông tin xác thực |
+| [Máy chủ tự host](../guides/self-hosted-server.md) | Docker Compose, Syncthing, reverse proxy, triển khai VPS |
+| [Backend lưu trữ](../guides/storage-backends.md) | Cài đặt SQLite vs PostgreSQL/pgvector, chuyển đổi, định cỡ pool |
+| [Quan hệ có thể cấu hình](../guides/configurable-relations.md) | Loại ontology tùy chỉnh, từ đồng nghĩa đa ngôn ngữ, hạn chế theo loại |
+| [Tùy chỉnh Prompt](../guides/customizing-prompts.md) | Khung prompt, ghi đè theo loại, trường frontmatter tùy chỉnh |
+| [Model cục bộ](../guides/local-models.md) | Cài đặt Ollama, định tuyến GPU/CPU, cấu hình model theo từng pass |
+| [Số liệu](../guides/metrics.md) | Snapshot log, endpoint /metrics, kiểm soát cardinality |
+| [Gói đóng góp](../../CONTRIBUTING.md) | Tạo gói, viết parser, gửi lên registry |
 
 ## Cài đặt
 
@@ -88,7 +88,7 @@ go build -tags webui -o sage-wiki ./cmd/sage-wiki/
 
 ## Bắt đầu nhanh
 
-![Pipeline trình biên dịch](assets/sage-wiki-compiler-pipeline.png)
+![Pipeline trình biên dịch](../../assets/sage-wiki-compiler-pipeline.png)
 
 ### Dự án mới (greenfield)
 
@@ -105,7 +105,7 @@ sage-wiki serve --ui                               # trình duyệt (build webui
 sage-wiki compile --watch                          # theo dõi thư mục
 ```
 
-Mọi khóa trong `config.yaml`, được chú giải từng dòng: [Cấu hình](docs/guides/configuration.md).
+Mọi khóa trong `config.yaml`, được chú giải từng dòng: [Cấu hình](../guides/configuration.md).
 
 ### Lớp phủ Vault (vault Obsidian hiện có)
 
@@ -117,7 +117,7 @@ sage-wiki compile --watch
 ```
 
 Thích dùng container? Image Docker đa kiến trúc dựng sẵn và các tệp compose
-được trình bày trong [hướng dẫn máy chủ tự host](docs/guides/self-hosted-server.md).
+được trình bày trong [hướng dẫn máy chủ tự host](../guides/self-hosted-server.md).
 
 ## Các định dạng nguồn được hỗ trợ
 
@@ -159,7 +159,7 @@ trong cùng một khối. Bật các
   bằng chứng (cạnh từ độ lân cận từ khóa không kèm cả hai). Ngữ cảnh hỏi đáp
   thông thường cũng nêu tên cạnh kết nối dưới mỗi bài viết liên quan.
 
-Chi tiết chuyên sâu, chi phí, quy trình rà soát, và ngữ nghĩa hoàn tác: [Bộ nhớ đồ thị](docs/guides/graph-memory.md).
+Chi tiết chuyên sâu, chi phí, quy trình rà soát, và ngữ nghĩa hoàn tác: [Bộ nhớ đồ thị](../guides/graph-memory.md).
 
 ## Các lệnh
 
@@ -185,9 +185,9 @@ Bề mặt lệnh cốt lõi; chạy `sage-wiki <command> --help` để xem các
 | `sage-wiki provenance <source-or-concept>` / `sage-wiki version` | Ánh xạ nguồn gốc, phiên bản |
 
 Các nhóm lệnh theo chủ đề nằm cùng hướng dẫn của chúng: `pack *` trong
-[CONTRIBUTING](CONTRIBUTING.md), `auth *` (login, import, status, logout,
-migrate) trong [Xác thực đăng ký](docs/guides/subscription-auth.md), và
-`verify` / `outputs *` trong [Tin cậy đầu ra](docs/guides/output-trust.md).
+[CONTRIBUTING](../../CONTRIBUTING.md), `auth *` (login, import, status, logout,
+migrate) trong [Xác thực đăng ký](../guides/subscription-auth.md), và
+`verify` / `outputs *` trong [Tin cậy đầu ra](../guides/output-trust.md).
 
 ## TUI
 
@@ -216,13 +216,13 @@ sage-wiki serve --ui        # http://127.0.0.1:3333, yêu cầu build -tags webu
 - **Hỏi đáp streaming** — đặt câu hỏi và nhận câu trả lời do LLM tổng hợp với trích dẫn nguồn
 - **Mục lục** với scroll-spy; chế độ tối/sáng với phát hiện tùy chọn hệ thống; liên kết bài viết hỏng hiển thị màu xám
 
-Xây dựng với Preact + Tailwind, nhúng qua `go:embed` (~1.2 MB, ~420 KB khi nén gzip); bỏ `-tags webui` để có tệp nhị phân chỉ CLI/MCP. Token xác thực, host được phép, và gia cố triển khai: [Máy chủ tự host](docs/guides/self-hosted-server.md).
+Xây dựng với Preact + Tailwind, nhúng qua `go:embed` (~1.2 MB, ~420 KB khi nén gzip); bỏ `-tags webui` để có tệp nhị phân chỉ CLI/MCP. Token xác thực, host được phép, và gia cố triển khai: [Máy chủ tự host](../guides/self-hosted-server.md).
 
 ## Tích hợp MCP
 
-![Tích hợp MCP](assets/sage-wiki-interfaces.png)
+![Tích hợp MCP](../../assets/sage-wiki-interfaces.png)
 
-Thêm vào `.mcp.json` (Claude Code; các agent khác trong [hướng dẫn Lớp bộ nhớ Agent](docs/guides/agent-memory-layer.md)):
+Thêm vào `.mcp.json` (Claude Code; các agent khác trong [hướng dẫn Lớp bộ nhớ Agent](../guides/agent-memory-layer.md)):
 
 ```json
 {
@@ -238,7 +238,7 @@ Thêm vào `.mcp.json` (Claude Code; các agent khác trong [hướng dẫn Lớ
 Client mạng: `sage-wiki serve --transport sse --port 3333`. Máy chủ
 cung cấp 19 công cụ — tìm kiếm, đọc, truy vấn đồ thị, ghi nhận, biên dịch
 theo yêu cầu và nhiều hơn nữa; cách thiết lập cho từng agent và quy trình
-ghi nhận nằm trong [hướng dẫn Lớp bộ nhớ Agent](docs/guides/agent-memory-layer.md).
+ghi nhận nằm trong [hướng dẫn Lớp bộ nhớ Agent](../guides/agent-memory-layer.md).
 
 **Tệp kỹ năng agent** — `sage-wiki skill refresh --target <agent>` ghi
 một phần kỹ năng hành vi vào tệp hướng dẫn của agent (CLAUDE.md,
@@ -274,7 +274,7 @@ thay đổi. Pre-1.0 — hãy ghim một phiên bản.
 
 **Ghi nhận tri thức** — agent lưu lại các phát hiện qua `wiki_capture` /
 `wiki_learn`, khép kín vòng lặp đọc-ghi nhận-tiến hóa. Quy trình và mẹo:
-[Lớp bộ nhớ Agent](docs/guides/agent-memory-layer.md).
+[Lớp bộ nhớ Agent](../guides/agent-memory-layer.md).
 
 ## Client SDK
 
@@ -306,19 +306,19 @@ await job.waitUntilDone({ timeoutMs: 600_000 });
 
 Cả hai client bao phủ toàn bộ bề mặt `/v1`: tìm kiếm, provenance, truy vấn
 đồ thị, wiki đã biên dịch, capture/ghi, và các job compile/lint bất đồng bộ
-với phân loại lỗi theo mã. Tài liệu: [Python](clients/python/README.md) ·
-[TypeScript](clients/typescript/README.md) ·
-[hướng dẫn HTTP API](docs/guides/http-api.md). Chương trình Go có thể bỏ qua
+với phân loại lỗi theo mã. Tài liệu: [Python](../../clients/python/README.md) ·
+[TypeScript](../../clients/typescript/README.md) ·
+[hướng dẫn HTTP API](../guides/http-api.md). Chương trình Go có thể bỏ qua
 HTTP hoàn toàn — xem [Nhúng vào chương trình Go](#nhúng-vào-chương-trình-go).
 
 ### Ví dụ
 
 Các tích hợp framework có thể sao chép, được chạy trong CI với server thật:
 
-- [`examples/langgraph/`](examples/langgraph/) — các node LangGraph có bộ
+- [`examples/langgraph/`](../../examples/langgraph/) — các node LangGraph có bộ
   nhớ (client Python): truy xuất với pattern `uncompiled_sources` →
   compile theo chủ đề, cùng capture.
-- [`examples/vercel-ai-sdk/`](examples/vercel-ai-sdk/) — `search`,
+- [`examples/vercel-ai-sdk/`](../../examples/vercel-ai-sdk/) — `search`,
   `graphQuery`, `provenance` dưới dạng tool Vercel AI SDK (client
   TypeScript); triển khai được trên edge.
 
@@ -361,25 +361,25 @@ Package này **thử nghiệm** trong khi sage-wiki chưa đạt 1.0: các chữ
 ## Vận hành
 
 - **Lưu trữ** — SQLite theo mặc định (một tệp duy nhất, không cần cấu hình); PostgreSQL +
-  pgvector cho triển khai máy chủ. Chuyển đổi và định cỡ pool: [Backend lưu trữ](docs/guides/storage-backends.md).
+  pgvector cho triển khai máy chủ. Chuyển đổi và định cỡ pool: [Backend lưu trữ](../guides/storage-backends.md).
 - **Khả năng quan sát** — snapshot log có cấu trúc và endpoint `/metrics`
-  tùy chọn: [Số liệu](docs/guides/metrics.md).
+  tùy chọn: [Số liệu](../guides/metrics.md).
 - **Đầu ra có cấu trúc** — các pass trích xuất LLM dùng cơ chế riêng của
   từng nhà cung cấp (Anthropic tool-use, OpenAI `response_format`, Gemini
   `responseSchema`) với phương án dự phòng tách fence có kiểm tra.
 - **Thông tin xác thực** — token đăng ký nằm trong keychain của hệ điều hành
   khi khả dụng; chạy `sage-wiki auth migrate` một lần để chuyển thông tin
-  xác thực lưu trong tệp sang. [Xác thực đăng ký](docs/guides/subscription-auth.md).
+  xác thực lưu trong tệp sang. [Xác thực đăng ký](../guides/subscription-auth.md).
 - **Cấu hình** — mọi khóa, có chú giải, kèm công thức đa nhà cung cấp
-  và compile worker ở chế độ serve: [Cấu hình](docs/guides/configuration.md).
+  và compile worker ở chế độ serve: [Cấu hình](../guides/configuration.md).
 - **Phân giải thực thể** — tự động áp dụng ở ngưỡng 0.85, hoàn tác chính xác bằng `--unlink`; xem [Bộ nhớ đồ thị](#bộ-nhớ-đồ-thị) ở trên.
 - **Loại quan hệ/thực thể tùy chỉnh** — mở rộng loại tích hợp hoặc thêm loại của riêng bạn
   (`ontology.relation_types`), với từ đồng nghĩa đa ngôn ngữ và hạn chế
-  theo loại: [Quan hệ có thể cấu hình](docs/guides/configurable-relations.md).
+  theo loại: [Quan hệ có thể cấu hình](../guides/configurable-relations.md).
 - **Tin cậy đầu ra** — đầu ra truy vấn bị cách ly cho đến khi được xác minh grounding,
-  xác nhận bằng đồng thuận, hoặc thăng cấp thủ công: [Tin cậy đầu ra](docs/guides/output-trust.md).
+  xác nhận bằng đồng thuận, hoặc thăng cấp thủ công: [Tin cậy đầu ra](../guides/output-trust.md).
 - **Tinh chỉnh tìm kiếm** — chia chunk, mở rộng truy vấn, xếp hạng lại, mở rộng đồ thị,
-  và ANN tùy chọn: [Chất lượng tìm kiếm](docs/guides/search-quality.md).
+  và ANN tùy chọn: [Chất lượng tìm kiếm](../guides/search-quality.md).
 
 ### Chi phí
 
@@ -395,7 +395,7 @@ sage-wiki compile               # kiểm tra trạng thái, nhận khi xong
 ```
 
 `compile --estimate` xem trước chi phí; `compiler.mode: auto` tự động dùng batch
-khi vượt ngưỡng. Chi tiết: [Cấu hình](docs/guides/configuration.md).
+khi vượt ngưỡng. Chi tiết: [Cấu hình](../guides/configuration.md).
 
 ### Mở rộng cho vault lớn
 
@@ -411,7 +411,7 @@ biên dịch mọi thứ bằng LLM:
 
 Với vault lớn: lập chỉ mục mọi thứ ở Tầng 1 (một vault 100K tài liệu trong ~5.5
 giờ), rồi biên dịch theo yêu cầu — tự động thăng cấp, backpressure, và trình phân tích mã được trình bày trong
-[Hiệu năng Vault lớn](docs/guides/large-vault-performance.md).
+[Hiệu năng Vault lớn](../guides/large-vault-performance.md).
 
 ## Hệ sinh thái
 
@@ -433,25 +433,25 @@ Tám gói đi kèm hoạt động offline:
 
 `sage-wiki init --pack academic-research` áp dụng một gói lúc khởi tạo;
 `pack install <name|url>` thêm gói khác. Tạo và xuất bản gói:
-[CONTRIBUTING](CONTRIBUTING.md).
+[CONTRIBUTING](../../CONTRIBUTING.md).
 
 ### Trình phân tích ngoài
 
 Xử lý bất kỳ định dạng tệp nào bằng một script viết bằng bất kỳ ngôn ngữ nào
 (stdin → văn bản ra stdout), khai báo trong `parsers/parser.yaml` sau hai lớp
 opt-in — chúng chạy dưới dạng subprocess không sandbox với cưỡng chế timeout và
-loại bỏ biến môi trường. Chi tiết viết parser và gia cố: [CONTRIBUTING](CONTRIBUTING.md);
-thảo luận về ranh giới tin cậy: [Thiết lập nhóm](docs/guides/team-setup.md).
+loại bỏ biến môi trường. Chi tiết viết parser và gia cố: [CONTRIBUTING](../../CONTRIBUTING.md);
+thảo luận về ranh giới tin cậy: [Thiết lập nhóm](../guides/team-setup.md).
 
 ### Nhóm
 
 Ba mẫu chia sẻ — đồng bộ git, máy chủ dùng chung, liên kết hub — cộng thêm
-rà soát tin cậy theo nhóm và quản lý chi phí: [Thiết lập nhóm](docs/guides/team-setup.md).
+rà soát tin cậy theo nhóm và quản lý chi phí: [Thiết lập nhóm](../guides/team-setup.md).
 
 ## Đánh giá hiệu năng
 
 Hai bộ đánh giá trả lời hai câu hỏi khác nhau. Chi tiết:
-[eval/benchmarks/REPORT.md](eval/benchmarks/REPORT.md) · [eval/REPORT.md](eval/REPORT.md)
+[eval/benchmarks/REPORT.md](../../eval/benchmarks/REPORT.md) · [eval/REPORT.md](../../eval/REPORT.md)
 
 **Đánh giá bộ nhớ** — nó có trả lời được câu hỏi về một cuộc hội thoại dài không? Dữ liệu công bố, chấm bằng LLM, dùng đúng prompt và quy trình của
 [mem0ai/memory-benchmarks](https://github.com/mem0ai/memory-benchmarks) với sage-wiki làm backend (gpt-5 vừa trả lời vừa chấm, mẫu rút gọn):

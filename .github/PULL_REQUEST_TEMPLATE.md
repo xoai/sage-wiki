@@ -1,7 +1,7 @@
 ## Checklist
 
 - [ ] `make ci` passes on this branch (build, vet, race tests, new-issue lint, translation drift)
-- [ ] If `README.md` changed: the six `README_*.md` translations are updated, or a commit carries `translations: lag-ok`
+- [ ] If `README.md` changed: the six `docs/translations/README_*.md` translations are updated, or a commit carries `translations: lag-ok`
 - [ ] User-facing changes are documented (CHANGELOG `[Unreleased]`, README, affected guides — all README translations for user-visible behavior)
 - [ ] Tests added or updated for the change
 
