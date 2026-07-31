@@ -343,13 +343,18 @@ func TestWikiQueryFilingErrorSurfaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedAttentionArticle(t, dir)
-	// Make the outputs directory unwritable so autoFile fails.
-	if err := os.MkdirAll(filepath.Join(dir, "wiki", "outputs"), 0o555); err != nil {
+	// Make filing fail platform-independently: replace the outputs
+	// DIRECTORY with a same-named FILE — MkdirAll/WriteFile under it fails
+	// everywhere (chmod is a no-op on Windows, and a path blocker is
+	// defeated by the dedup suffix).
+	outputsDir := filepath.Join(dir, "wiki", "outputs")
+	if err := os.RemoveAll(outputsDir); err != nil {
 		t.Fatal(err)
 	}
-	os.Chmod(filepath.Join(dir, "wiki", "outputs"), 0o555)
+	if err := os.WriteFile(outputsDir, []byte("not a dir"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	srv := newQueryToolServer(t, dir)
-	t.Cleanup(func() { os.Chmod(filepath.Join(dir, "wiki", "outputs"), 0o755) })
 
 	res := srv.CallTool(context.Background(), "wiki_query", makeToolRequest(map[string]any{
 		"question": "what is attention",

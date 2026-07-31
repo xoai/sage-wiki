@@ -226,11 +226,11 @@ func TestV1_ToolSetImmutability(t *testing.T) {
 		"wiki_graph_query", "wiki_list", "wiki_provenance", "wiki_add_source",
 		"wiki_write_summary", "wiki_write_article", "wiki_add_ontology",
 		"wiki_learn", "wiki_commit", "wiki_compile_diff", "wiki_capture",
-		"wiki_compile_topic", "wiki_compile", "wiki_lint",
+		"wiki_compile_topic", "wiki_compile", "wiki_lint", "wiki_query",
 	}
 	tools := mcpSrv.MCPServer().ListTools()
-	if len(tools) != 18 {
-		t.Fatalf("tool count = %d, want 18", len(tools))
+	if len(tools) != 19 {
+		t.Fatalf("tool count = %d, want 19", len(tools))
 	}
 	for _, name := range want {
 		if _, ok := tools[name]; !ok {
