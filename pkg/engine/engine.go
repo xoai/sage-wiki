@@ -152,14 +152,6 @@ func Open(ctx context.Context, dir string, optFns ...Option) (*Workspace, error)
 		return nil, fmt.Errorf("engine: load workspace manifest: %w", err)
 	}
 	preFormat := mf.IsPreFormat()
-	if preFormat && opts.upgrade {
-		mf.FormatVersion = manifest.CurrentFormatVersion
-		mf.Engine = manifest.EngineVersion
-		if err := mf.Save(manifestPath); err != nil {
-			return nil, fmt.Errorf("engine: adopt workspace format: %w", err)
-		}
-		preFormat = false
-	}
 
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -167,14 +159,27 @@ func Open(ctx context.Context, dir string, optFns ...Option) (*Workspace, error)
 
 	w := &Workspace{dir: abs, opts: opts, preFormat: preFormat}
 
-	// Lock: read-write opens only, and never for a pre-format workspace
-	// (which is read-only anyway).
-	if !opts.readOnly && !preFormat {
+	// Lock: read-write opens only — never for a pre-format workspace
+	// (read-only anyway), but ALWAYS before an adoption stamp so two
+	// concurrent --upgrade opens serialize on the lock, not on luck (B-02).
+	needsLock := !opts.readOnly && (!preFormat || opts.upgrade)
+	if needsLock {
 		lock, err := acquireLock(abs)
 		if err != nil {
 			return nil, err
 		}
 		w.lock = lock
+	}
+
+	if preFormat && opts.upgrade {
+		mf.FormatVersion = manifest.CurrentFormatVersion
+		mf.Engine = manifest.EngineVersion
+		if err := mf.Save(manifestPath); err != nil {
+			w.lock.release()
+			return nil, fmt.Errorf("engine: adopt workspace format: %w", err)
+		}
+		preFormat = false
+		w.preFormat = false
 	}
 
 	mode := store.ModeWriter

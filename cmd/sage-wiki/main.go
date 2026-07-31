@@ -578,8 +578,10 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		return cli.CLIError(outputFormat, err)
 	}
 	defer w.Close()
-	if w.RequiresUpgrade() {
-		return fmt.Errorf("workspace predates format versioning (v0.2.x) — re-run with --upgrade to adopt it (one-way); reads still work")
+	// Dry-run mutates nothing, so it may run against a pre-format workspace
+	// without the one-way adoption (B-04).
+	if w.RequiresUpgrade() && !dryRun {
+		return cli.CLIError(outputFormat, fmt.Errorf("workspace predates format versioning (v0.2.x) — re-run with --upgrade to adopt it (one-way); reads still work"))
 	}
 
 	result, err := w.Compile(ctx, engine.CompileRequest{
