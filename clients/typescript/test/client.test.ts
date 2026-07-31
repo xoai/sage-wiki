@@ -222,9 +222,17 @@ test("non-idempotent POST without key never retried", async () => {
 });
 
 test("request timeout rejects a hanging fetch", async () => {
+  // The guard timer keeps the event loop alive: AbortSignal.timeout's
+  // internal timer is unref'd on Node 18/20, and a pending promise with no
+  // live handles makes node --test report "event loop has already
+  // resolved". If the client's timeout works, abort fires at 50ms.
   const fetchMock = (input: unknown, init?: RequestInit) =>
     new Promise<Response>((_, reject) => {
-      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      const guard = setTimeout(() => reject(new Error("mock hung — client timeout never fired")), 5000);
+      init?.signal?.addEventListener("abort", () => {
+        clearTimeout(guard);
+        reject(init.signal?.reason);
+      });
     });
   const client = new SageWikiClient({ url: "http://f", timeoutMs: 50, fetch: fetchMock as typeof fetch });
   await assert.rejects(() => client.status(), /timed out|abort/i);

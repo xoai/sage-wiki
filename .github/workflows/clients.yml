@@ -105,7 +105,7 @@ jobs:
           # Node 22: --experimental-strip-types (the example's start script)
           # landed in 22.6. The client itself is tested on 18+20 in ts-unit.
           node-version: "22"
-      - run: pip install -r examples/langgraph/requirements.txt
+      - run: cd examples/langgraph && pip install -r requirements.txt
       - run: cd clients/typescript && npm ci && npm run build
       - run: cd examples/vercel-ai-sdk && npm ci
       - name: Start fixture server
