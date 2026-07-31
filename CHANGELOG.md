@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## 0.2.6 — 2026-07-31
+
 ### Added
 
 - **Python client `sagewiki` (`clients/python/`, P4-3).** Typed sync
