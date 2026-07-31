@@ -250,9 +250,7 @@ func TestWikiQueryLLMFailure(t *testing.T) {
 	}
 }
 
-// Q-07b: LLM 200 with empty content → guarded error, no file.
-// Questions with quotes/newlines must not corrupt the filed frontmatter
-// (the outputs/ path escaped nothing before this fix — Gate 8).
+// Frontmatter escaping for hostile questions (YAML injection probe).
 func TestWikiQueryFrontmatterEscaping(t *testing.T) {
 	llm := queryLLMStub(t, "An answer about quoting [[attention]].", 200)
 	dir := queryToolProject(t, llm.URL)
@@ -380,6 +378,7 @@ func TestWikiQueryTopKNaN(t *testing.T) {
 	}
 }
 
+// Q-07b: LLM 200 with empty content → guarded error, no file.
 func TestWikiQueryEmptyContentGuarded(t *testing.T) {
 	llm := queryLLMStub(t, "", 200)
 	dir := queryToolProject(t, llm.URL)

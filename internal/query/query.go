@@ -717,9 +717,9 @@ func autoFile(projectDir string, outputDir string, result *QueryResult,
 	}
 
 	// Escape frontmatter exactly like writeUnderReviewFile (trust/hooks.go)
-	// — a raw question with quotes or newlines corrupts/injects YAML.
-	escapedQ := strings.ReplaceAll(result.Question, `"`, `\"`)
-	escapedQ = strings.ReplaceAll(escapedQ, "\n", " ")
+	// — a raw question with quotes or newlines corrupts/injects YAML. %q
+	// does the quote escaping; newlines are flattened for readability.
+	escapedQ := strings.ReplaceAll(result.Question, "\n", " ")
 	sourcesStr := "[]"
 	if len(result.Sources) > 0 {
 		quoted := make([]string, len(result.Sources))
@@ -895,7 +895,7 @@ func StreamQuery(ctx context.Context, projectDir string, question string, topK i
 	}
 
 	// Auto-file the result to outputs/
-	if resp != nil && resp.Content != "" {
+	if resp != nil && strings.TrimSpace(resp.Content) != "" {
 		result := &QueryResult{
 			Question: question,
 			Answer:   resp.Content,
