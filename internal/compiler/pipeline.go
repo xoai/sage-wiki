@@ -192,6 +192,11 @@ const (
 // stops at CompileOpts.MaxCost between passes.
 var ErrBudgetExceeded = errors.New("compiler: stopped at MaxCost")
 
+// ShuffleSourcesForTest, when non-nil, reorders the diff's Added/Modified
+// slices before processing (SPEC-09 AC-P2 sabotage seam). Nil in
+// production — only the parity suite's sabotage test sets it.
+var ShuffleSourcesForTest func([]SourceInfo) []SourceInfo
+
 // renderPrompt renders through the per-workspace registry when set, else
 // the prompts package default (CLI back-compat).
 func renderPrompt(pr *prompts.Registry, name string, data any, language string) (string, error) {
@@ -253,6 +258,12 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	diff, err := Diff(projectDir, run.cfg, run.mf)
 	if err != nil {
 		return nil, fmt.Errorf("compile: diff: %w", err)
+	}
+	// Test seam (SPEC-09 sabotage test): when set, reorders the diff's
+	// source slices before any processing — nil in production.
+	if ShuffleSourcesForTest != nil {
+		diff.Added = ShuffleSourcesForTest(diff.Added)
+		diff.Modified = ShuffleSourcesForTest(diff.Modified)
 	}
 	run.diff = diff
 

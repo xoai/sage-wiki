@@ -12,7 +12,9 @@ import (
 	"strings"
 
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/sqlitestore"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/pkg/engine"
 )
 
@@ -53,34 +55,50 @@ func CaptureByteSnapshot(wsDir, goldenConfigPath string) (*ByteGolden, error) {
 		Counts:              map[string]int{},
 	}
 
-	db, err := storage.Open(filepath.Join(wsDir, ".sage", "wiki.db"))
+	backend, err := sqlitestore.OpenPath(filepath.Join(wsDir, ".sage", "wiki.db"), store.ModeReader, sqlitestore.Options{})
 	if err != nil {
-		return nil, fmt.Errorf("open workspace db: %w", err)
+		return nil, fmt.Errorf("open workspace backend: %w", err)
 	}
-	defer db.Close()
+	defer backend.Close()
 
-	rows, err := db.ReadDB().Query(`SELECT source_path, tier, pass_indexed, pass_embedded, pass_summarized, pass_extracted, pass_written FROM compile_items ORDER BY source_path`)
-	if err != nil {
-		return nil, fmt.Errorf("compile_items: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var path string
-		var tier int
-		var pi, pe, ps, px, pw bool
-		if err := rows.Scan(&path, &tier, &pi, &pe, &ps, &px, &pw); err != nil {
-			return nil, err
+	// Read through the store interfaces (the escape-hatch guard's
+	// sanctioned path — no raw handles).
+	items := backend.CompileItems()
+	for tier := 0; tier <= 3; tier++ {
+		list, err := items.ListByTier(tier)
+		if err != nil {
+			return nil, fmt.Errorf("compile_items tier %d: %w", tier, err)
 		}
-		g.CompileItems[path] = fmt.Sprintf("t%d/%v%v%v%v%v", tier, pi, pe, ps, px, pw)
-	}
-	for table, name := range map[string]string{
-		"entries": "fts", "vec_entries": "vec", "chunks_meta": "chunks", "entities": "ontology", "relations": "relations",
-	} {
-		var n int
-		if err := db.ReadDB().QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n); err != nil {
-			return nil, fmt.Errorf("count %s: %w", table, err)
+		for _, it := range list {
+			g.CompileItems[it.SourcePath] = fmt.Sprintf("t%d/%v%v%v%v%v",
+				it.Tier, it.PassIndexed, it.PassEmbedded, it.PassSummarized, it.PassExtracted, it.PassWritten)
 		}
-		g.Counts[name] = n
+	}
+
+	if n, err := backend.Entries().Count(); err != nil {
+		return nil, err
+	} else {
+		g.Counts["fts"] = n
+	}
+	if n, err := backend.Vectors().Count(); err != nil {
+		return nil, err
+	} else {
+		g.Counts["vec"] = n
+	}
+	if n, err := backend.Chunks().Count(); err != nil {
+		return nil, err
+	} else {
+		g.Counts["chunks"] = n
+	}
+	if n, err := backend.Ontology().EntityCount(""); err != nil {
+		return nil, err
+	} else {
+		g.Counts["ontology"] = n
+	}
+	if n, err := backend.Ontology().RelationCount(); err != nil {
+		return nil, err
+	} else {
+		g.Counts["relations"] = n
 	}
 	return g, nil
 }
