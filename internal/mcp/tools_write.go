@@ -498,7 +498,14 @@ func extractKnowledgeItems(cfg *config.Config, projectDir string, content, captu
 	client.SetPass("extract")
 	client.SetPriceOverride(cfg.Compiler.TokenPriceOverride)
 
-	prompt, err := prompts.Render("capture_knowledge", prompts.CaptureData{
+	// Per-workspace template registry (SPEC-01): the MCP server is bound to
+	// one projectDir, so its prompt overrides must not depend on whatever
+	// the process-global default last loaded.
+	registry := prompts.NewRegistry()
+	if err := registry.LoadFromDir(filepath.Join(projectDir, "prompts")); err != nil {
+		return nil, fmt.Errorf("load prompt overrides: %w", err)
+	}
+	prompt, err := registry.Render("capture_knowledge", prompts.CaptureData{
 		Context: captureCtx,
 		Tags:    tags,
 	}, cfg.Language)

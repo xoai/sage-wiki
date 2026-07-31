@@ -617,6 +617,7 @@ func ResolveEntitiesPass(
 	cfg *config.Config,
 	client *llm.Client,
 	embedder embed.Embedder,
+	pr *prompts.Registry,
 ) {
 	// cfg == nil FIRST: cfg.Ontology on a nil *Config panics, and the
 	// fullpipeline call site can hand over a partially-built config.
@@ -739,7 +740,7 @@ func ResolveEntitiesPass(
 				"blocks_done", stats.calls, "blocks", len(blocks))
 			break
 		}
-		clusters, err := arbitrateBlock(ctx, b, rcfg, model, client, &stats)
+		clusters, err := arbitrateBlock(ctx, b, rcfg, model, client, &stats, pr)
 		stats.calls++
 		if err != nil {
 			stats.failed++
@@ -1080,12 +1081,13 @@ func arbitrateBlock(
 	model string,
 	client *llm.Client,
 	stats *resolveStats,
+	pr *prompts.Registry,
 ) ([]normalizedCluster, error) {
 	// NeutralizeTags over the whole rendered block: names and descriptions are
 	// model-generated text derived from arbitrary source documents, i.e.
 	// second-order untrusted input (SEC-04), and Render does not neutralize.
 	body := prompts.NeutralizeTags(renderBlockMembers(b))
-	prompt, err := prompts.Render("resolve_entities", prompts.ResolveData{Members: body}, "")
+	prompt, err := renderPrompt(pr, "resolve_entities", prompts.ResolveData{Members: body}, "")
 	if err != nil {
 		return nil, fmt.Errorf("render resolve_entities: %w", err)
 	}

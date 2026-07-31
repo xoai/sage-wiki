@@ -47,6 +47,7 @@ type SummarizeOpts struct {
 	Language     string
 	Backpressure *BackpressureController // optional; if nil, uses fixed semaphore
 	ExtractOpts  []extract.ExtractOpts   // optional; passed to extract.Extract
+	Prompts      *prompts.Registry       // optional; nil = prompts package default
 	// Summary filename scheme + configured source roots for "relative" naming
 	// (issue #107). SummaryNaming "" behaves as "full".
 	SummaryNaming string
@@ -110,7 +111,7 @@ func Summarize(opts SummarizeOpts) []SummaryResult {
 			defer wg.Done()
 			defer release()
 
-			result := summarizeOne(opts.Ctx, opts.ProjectDir, opts.OutputDir, info, opts.Client, opts.Model, opts.MaxTokens, opts.UserTZ, opts.Language, opts.SummaryNaming, opts.SourceRoots, opts.ExtractOpts...)
+			result := summarizeOne(opts.Ctx, opts.ProjectDir, opts.OutputDir, info, opts.Client, opts.Model, opts.MaxTokens, opts.UserTZ, opts.Language, opts.SummaryNaming, opts.SourceRoots, opts.Prompts, opts.ExtractOpts...)
 			results[idx] = result
 
 			n := int(done.Add(1))
@@ -153,6 +154,7 @@ func summarizeOne(
 	language string,
 	summaryNaming string,
 	sourceRoots []string,
+	pr *prompts.Registry,
 	extractOpts ...extract.ExtractOpts,
 ) SummaryResult {
 	result := SummaryResult{SourcePath: info.Path}
@@ -229,13 +231,13 @@ func summarizeOne(
 
 	// Select prompt template — try type-specific first, fall back to article
 	templateName := "summarize_" + content.Type
-	if _, err := prompts.Render(templateName, prompts.SummarizeData{}, ""); err != nil {
+	if _, err := renderPrompt(pr, templateName, prompts.SummarizeData{}, ""); err != nil {
 		templateName = "summarize_article" // fallback for unknown types
 	}
 
 	if content.ChunkCount <= 1 {
 		// Single-chunk summarization
-		prompt, err := prompts.Render(templateName, prompts.SummarizeData{
+		prompt, err := renderPrompt(pr, templateName, prompts.SummarizeData{
 			SourcePath: info.Path,
 			SourceType: content.Type,
 			MaxTokens:  maxTokens,
@@ -261,7 +263,7 @@ func summarizeOne(
 		summaryText = resp.Content
 	} else {
 		// Multi-chunk: summarize each chunk, then synthesize hierarchically
-		chunkSummaries, err := summarizeChunks(ctx, content.Chunks, info, templateName, content.Type, client, model, maxTokens, language)
+		chunkSummaries, err := summarizeChunks(ctx, content.Chunks, info, templateName, content.Type, client, model, maxTokens, language, pr)
 		if err != nil {
 			result.Error = err
 			return result
@@ -396,6 +398,7 @@ func summarizeChunks(
 	model string,
 	maxTokens int,
 	language string,
+	pr *prompts.Registry,
 ) ([]string, error) {
 	// Group chunks if per-chunk budget is too low
 	groups := groupChunks(chunks, maxTokens)
@@ -425,7 +428,7 @@ func summarizeChunks(
 			groupText.WriteString(chunk.Text)
 		}
 
-		prompt, err := prompts.Render(templateName, prompts.SummarizeData{
+		prompt, err := renderPrompt(pr, templateName, prompts.SummarizeData{
 			SourcePath: info.Path,
 			SourceType: sourceType,
 			MaxTokens:  perGroupBudget,

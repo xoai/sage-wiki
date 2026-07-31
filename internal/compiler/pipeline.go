@@ -48,6 +48,11 @@ type CompileOpts struct {
 	Prune   bool             // delete orphaned articles when sources removed
 	Tracker *llm.CostTracker // optional cost tracker
 
+	// Prompts, when set, is the per-workspace template registry (SPEC-01) —
+	// overrides load into it instead of the process-global prompts default,
+	// so two workspaces never share render state. nil = package default.
+	Prompts *prompts.Registry
+
 	// Progress, when set, is the event hub the pipeline reports into (P2-3 —
 	// the TUI and the serve worker share one so subscribers see live events);
 	// nil creates a fresh stderr-only tracker.
@@ -163,6 +168,15 @@ const (
 // compileRun carries the shared state of a single Compile execution across
 // its decomposed steps (P1-8). Field set enumerated in the P1-8 spec D3;
 // statements were MOVED here verbatim from the former ~450-line Compile().
+// renderPrompt renders through the per-workspace registry when set, else
+// the prompts package default (CLI back-compat).
+func renderPrompt(pr *prompts.Registry, name string, data any, language string) (string, error) {
+	if pr == nil {
+		return prompts.Render(name, data, language)
+	}
+	return pr.Render(name, data, language)
+}
+
 type compileRun struct {
 	cfg                *config.Config
 	opts               CompileOpts
@@ -377,9 +391,15 @@ func loadInputs(projectDir string, opts *CompileOpts, run *compileRun) (done boo
 	}
 	run.cfg = cfg
 
-	// Load user prompt overrides if prompts/ directory exists
+	// Load user prompt overrides if prompts/ directory exists — into the
+	// per-workspace registry when one was supplied (SPEC-01), else the
+	// process-global default (CLI behavior unchanged).
 	promptsDir := filepath.Join(projectDir, "prompts")
-	if err := prompts.LoadFromDir(promptsDir); err != nil {
+	if opts.Prompts != nil {
+		if err := opts.Prompts.LoadFromDir(promptsDir); err != nil {
+			log.Warn("failed to load custom prompts", "error", err)
+		}
+	} else if err := prompts.LoadFromDir(promptsDir); err != nil {
 		log.Warn("failed to load custom prompts", "error", err)
 	}
 
@@ -491,7 +511,7 @@ func resolveMode(projectDir string, run *compileRun) (done bool, result *Compile
 		if !run.client.SupportsBatch() {
 			return false, nil, fmt.Errorf("compile: provider %s does not support batch API", cfg.API.Provider)
 		}
-		res, rerr := submitBatch(projectDir, run.client, cfg, run.mf, run.diff, run.tracker)
+		res, rerr := submitBatch(projectDir, run.client, cfg, run.mf, run.diff, run.tracker, run.opts.Prompts)
 		return true, res, rerr
 	}
 	return false, nil, nil
@@ -839,6 +859,7 @@ func submitBatch(
 	mf *manifest.Manifest,
 	diff *DiffResult,
 	tracker *llm.CostTracker,
+	pr *prompts.Registry,
 ) (*CompileResult, error) {
 	result := &CompileResult{
 		Added:    len(diff.Added),
@@ -899,11 +920,11 @@ func submitBatch(
 		}
 
 		templateName := "summarize_" + content.Type
-		if _, err := prompts.Render(templateName, prompts.SummarizeData{}, ""); err != nil {
+		if _, err := renderPrompt(pr, templateName, prompts.SummarizeData{}, ""); err != nil {
 			templateName = "summarize_article"
 		}
 
-		prompt, err := prompts.Render(templateName, prompts.SummarizeData{
+		prompt, err := renderPrompt(pr, templateName, prompts.SummarizeData{
 			SourcePath: src.Path,
 			SourceType: content.Type,
 			MaxTokens:  maxTokens,
@@ -1226,7 +1247,7 @@ func resumeBatch(
 		client.SetPass("extract")
 		extCacheID, _ := client.SetupCache("You are an expert knowledge organizer. Extract structured concepts from source summaries.", model)
 		progress.StartPhase("Pass 2: Extract concepts", len(successfulSummaries))
-		concepts, err := ExtractConcepts(opts.Ctx, successfulSummaries, mf.Concepts, client, model, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel)
+		concepts, err := ExtractConcepts(opts.Ctx, successfulSummaries, mf.Concepts, client, model, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel, opts.Prompts)
 		if err != nil {
 			progress.ItemError("concept extraction", err)
 			result.Errors++
@@ -1265,6 +1286,7 @@ func resumeBatch(
 				relPatterns := ontology.RelationPatterns(merged)
 				progress.StartPhase("Pass 3: Write articles", len(concepts))
 				articles := WriteArticles(ArticleWriteOpts{
+					Prompts:            opts.Prompts,
 					Ctx:                opts.Ctx,
 					ProjectDir:         projectDir,
 					OutputDir:          cfg.Output,

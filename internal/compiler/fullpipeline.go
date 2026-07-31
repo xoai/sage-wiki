@@ -14,6 +14,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/sourcedate"
 	"github.com/xoai/sage-wiki/internal/store"
 )
@@ -73,6 +74,10 @@ type FullPipelineOpts struct {
 	OntStore     store.OntologyStore
 	TrustStore   store.TrustStore // optional — edge conflicts skipped when nil (P3-6)
 	Embedder     embed.Embedder
+
+	// Prompts is the per-workspace template registry (SPEC-01); nil = the
+	// prompts package default (CLI behavior).
+	Prompts *prompts.Registry
 	Backpressure *BackpressureController
 	ItemStore    store.CompileItemStore // optional — for per-article quality scoring
 	CacheEnabled bool
@@ -141,6 +146,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	warnSummaryNameCollisions(sourceInfoPaths(sources), sourceRoots, summaryNaming)
 
 	summaries := Summarize(SummarizeOpts{
+		Prompts:      opts.Prompts,
 		Ctx:           opts.Ctx,
 		ProjectDir:    opts.ProjectDir,
 		OutputDir:     cfg.Output,
@@ -232,7 +238,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		extCacheID, _ = client.SetupCache("You are an expert knowledge organizer. Extract structured concepts from source summaries.", extractModel)
 	}
 	progress.StartPhase("Pass 2: Extract concepts", len(successfulSummaries))
-	concepts, err := ExtractConcepts(opts.Ctx, successfulSummaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel)
+	concepts, err := ExtractConcepts(opts.Ctx, successfulSummaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel, opts.Prompts)
 	if err != nil {
 		progress.ItemError("concept extraction", err)
 		result.Errors++
@@ -310,7 +316,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	// zero-concept early return below — otherwise triples would silently never
 	// persist on an incremental compile where every concept dedup-merged, which
 	// is the ordinary case. Never fails the compile; see ExtractTriplesPass.
-	touched, supersessions := ExtractTriplesPass(opts.Ctx, writeOntStore, successfulSummaries, concepts, cfg, client, false, opts.ProjectDir, mf, opts.TrustStore)
+	touched, supersessions := ExtractTriplesPass(opts.Ctx, writeOntStore, successfulSummaries, concepts, cfg, client, false, opts.ProjectDir, mf, opts.TrustStore, opts.Prompts)
 
 	// Pass 4: entity resolution (P3-3, opt-in). Deferred rather than called
 	// inline because it must run AFTER Pass 3 — WriteArticles is what creates
@@ -321,7 +327,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	// adds a third. The closure reads `touched` at return time, so Pass 3's
 	// contribution is included.
 	defer func() {
-		ResolveEntitiesPass(opts.Ctx, writeOntStore, touched, cfg, client, opts.Embedder)
+		ResolveEntitiesPass(opts.Ctx, writeOntStore, touched, cfg, client, opts.Embedder, opts.Prompts)
 		// Second supersession trigger (P3-6): links applied above may have
 		// created alias forms the write-time trigger could not see.
 		runSupersessionSweep(writeOntStore, supersessions)
@@ -361,6 +367,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	relPatterns := ontology.RelationPatterns(merged)
 	progress.StartPhase("Pass 3: Write articles", len(concepts))
 	articles := WriteArticles(ArticleWriteOpts{
+		Prompts:            opts.Prompts,
 		Ctx:                opts.Ctx,
 		ProjectDir:         opts.ProjectDir,
 		OutputDir:          cfg.Output,

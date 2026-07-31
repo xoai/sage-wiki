@@ -14,9 +14,9 @@ import (
 
 func emptyChoiceResponse() map[string]any {
 	return map[string]any{
-		"choices": []map[string]any{{"message": map[string]string{"content": ""}, "finish_reason": "length"}},
-		"model":   "m",
-		"usage":   map[string]int{"total_tokens": 10},
+		"choices":	[]map[string]any{{"message": map[string]string{"content": ""}, "finish_reason": "length"}},
+		"model":	"m",
+		"usage":	map[string]int{"total_tokens": 10},
 	}
 }
 
@@ -25,8 +25,8 @@ func conceptChoiceResponse() map[string]any {
 		"choices": []map[string]any{{"message": map[string]string{
 			"content": `[{"name": "test-concept", "aliases": [], "sources": ["raw/a.md"], "type": "concept"}]`,
 		}}},
-		"model": "m",
-		"usage": map[string]int{"total_tokens": 10},
+		"model":	"m",
+		"usage":	map[string]int{"total_tokens": 10},
 	}
 }
 
@@ -46,7 +46,7 @@ func TestExtractConcepts_AllEmptyReturnsError(t *testing.T) {
 	}
 	summaries := []SummaryResult{{SourcePath: "raw/a.md", Summary: "A valid summary of the source."}}
 
-	concepts, err := ExtractConcepts(context.Background(), summaries, nil, client, "m", 20, 8192, 1)
+	concepts, err := ExtractConcepts(context.Background(), summaries, nil, client, "m", 20, 8192, 1, nil)
 	if err == nil {
 		t.Fatal("expected error when all concept-extraction batches return empty content")
 	}
@@ -73,7 +73,7 @@ func TestExtractConcepts_SuccessReturnsConcepts(t *testing.T) {
 	}
 	summaries := []SummaryResult{{SourcePath: "raw/a.md", Summary: "A valid summary of the source."}}
 
-	concepts, err := ExtractConcepts(context.Background(), summaries, nil, client, "m", 20, 8192, 1)
+	concepts, err := ExtractConcepts(context.Background(), summaries, nil, client, "m", 20, 8192, 1, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -88,9 +88,9 @@ func TestExtractConcepts_SuccessReturnsConcepts(t *testing.T) {
 func TestExtractConcepts_ParseErrorReturnsError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{"message": map[string]string{"content": "this is not json at all"}}},
-			"model":   "m",
-			"usage":   map[string]int{"total_tokens": 10},
+			"choices":	[]map[string]any{{"message": map[string]string{"content": "this is not json at all"}}},
+			"model":	"m",
+			"usage":	map[string]int{"total_tokens": 10},
 		})
 	}))
 	defer server.Close()
@@ -101,7 +101,7 @@ func TestExtractConcepts_ParseErrorReturnsError(t *testing.T) {
 	}
 	summaries := []SummaryResult{{SourcePath: "raw/a.md", Summary: "A valid summary."}}
 
-	concepts, err := ExtractConcepts(context.Background(), summaries, nil, client, "m", 20, 8192, 1)
+	concepts, err := ExtractConcepts(context.Background(), summaries, nil, client, "m", 20, 8192, 1, nil)
 	if err == nil {
 		t.Fatal("expected error when all batches return unparseable content")
 	}
@@ -134,7 +134,7 @@ func TestExtractConcepts_PartialFailureProceeds(t *testing.T) {
 
 	// batchSize=1 → 2 batches; concurrency=1 → serialized so the call counter is
 	// deterministic (exactly one batch succeeds, one fails).
-	concepts, err := ExtractConcepts(context.Background(), summaries, nil, client, "m", 1, 8192, 1)
+	concepts, err := ExtractConcepts(context.Background(), summaries, nil, client, "m", 1, 8192, 1, nil)
 	if err != nil {
 		t.Fatalf("partial failure should not error: %v", err)
 	}

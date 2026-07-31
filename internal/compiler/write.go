@@ -60,6 +60,7 @@ type ArticleWriteOpts struct {
 	SplitThreshold     int // chars — enable section-aware writing above this (default 15000)
 	Language           string
 	Backpressure       *BackpressureController // optional; if nil, uses fixed semaphore
+	Prompts            *prompts.Registry       // optional; nil = prompts package default
 	AntiPatternPhrases []string                // sentences containing these are stripped (issue #95); nil/empty → no strip
 	// AllConcepts is the FULL manifest concept set (Name + Sources), used to
 	// seed each article's "See also" [[wikilinks]] from co-occurring concepts
@@ -163,7 +164,7 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap m
 
 	// Build prompt. relatedNames are real, co-occurring concept slugs (issue
 	// #106) that resolve to existing article files and survive the strip pass.
-	prompt, err := prompts.Render("write_article", prompts.WriteArticleData{
+	prompt, err := renderPrompt(opts.Prompts, "write_article", prompts.WriteArticleData{
 		ConceptName:     ontology.FormatConceptName(concept.Name),
 		ConceptID:       concept.Name,
 		Sources:         strings.Join(concept.Sources, ", "),
