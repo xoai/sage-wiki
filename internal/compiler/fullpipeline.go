@@ -14,6 +14,8 @@ import (
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/shopspring/decimal"
+
 	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/sourcedate"
 	"github.com/xoai/sage-wiki/internal/store"
@@ -78,6 +80,12 @@ type FullPipelineOpts struct {
 	// Prompts is the per-workspace template registry (SPEC-01); nil = the
 	// prompts package default (CLI behavior).
 	Prompts *prompts.Registry
+
+	// MaxCost + Tracker implement the budget guard (pkg/engine
+	// CompileRequest.MaxCost): between passes, if accumulated cost exceeds
+	// MaxCost the run stops with BudgetExhausted set. nil = no guard.
+	MaxCost *decimal.Decimal
+	Tracker *llm.CostTracker
 	Backpressure *BackpressureController
 	ItemStore    store.CompileItemStore // optional — for per-article quality scoring
 	CacheEnabled bool
@@ -97,11 +105,24 @@ type FullPipelineResult struct {
 	// must not mark SucceededSources extracted/written unless this is true, or an
 	// interrupted/failed run leaves them un-resumable. P1-1 / C1.
 	Pass23Completed bool
+	// BudgetExhausted is true when the run stopped early at MaxCost.
+	BudgetExhausted bool
 }
 
 // runFullPipeline executes Pass 1 (summarize) → Pass 2 (extract) → Pass 3 (write)
 // on the given sources. This is the existing LLM compilation pipeline, extracted
 // from Compile() for reuse by both the tiered orchestrator and compile-on-demand.
+// budgetExceeded reports whether accumulated tracked cost passed MaxCost.
+// Unknown cost (nil) never trips the guard — an unknown spend cannot be
+// compared to a budget (SPEC-05: unknown is not zero).
+func budgetExceeded(tracker *llm.CostTracker, max *decimal.Decimal) bool {
+	if max == nil || tracker == nil {
+		return false
+	}
+	rep := tracker.Report()
+	return rep.Cost != nil && rep.Cost.GreaterThan(*max)
+}
+
 func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineResult {
 	result := &FullPipelineResult{}
 	cfg := opts.Config
@@ -221,6 +242,13 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 
 	client.TeardownCache(sumCacheID)
 
+	// Budget guard: stop between passes when MaxCost is exceeded.
+	if budgetExceeded(opts.Tracker, opts.MaxCost) {
+		log.Info("MaxCost guard: stopping after summarize pass")
+		result.BudgetExhausted = true
+		return result
+	}
+
 	// Pass 2: Concept extraction
 	successfulSummaries := filterSuccessful(summaries)
 	if len(successfulSummaries) == 0 {
@@ -244,6 +272,14 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		result.Errors++
 		progress.EndPhase()
 		client.TeardownCache(extCacheID)
+		return result
+	}
+
+	// Budget guard: stop between passes when MaxCost is exceeded.
+	if budgetExceeded(opts.Tracker, opts.MaxCost) {
+		log.Info("MaxCost guard: stopping after extract pass")
+		progress.EndPhase()
+		result.BudgetExhausted = true
 		return result
 	}
 

@@ -5,12 +5,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/shopspring/decimal"
 
 	"github.com/xoai/sage-wiki/internal/auth"
 	"github.com/xoai/sage-wiki/internal/config"
@@ -52,6 +55,14 @@ type CompileOpts struct {
 	// overrides load into it instead of the process-global prompts default,
 	// so two workspaces never share render state. nil = package default.
 	Prompts *prompts.Registry
+
+	// Per-run overrides (pkg/engine CompileRequest); unset = config.
+	Tier    *int // nil = use config; 0..3 overrides default_tier
+	Model   string
+	MaxDocs int
+	// MaxCost stops the run between passes once accumulated cost exceeds
+	// it (partial result + ErrBudgetExceeded). nil = no guard.
+	MaxCost *decimal.Decimal
 
 	// Progress, when set, is the event hub the pipeline reports into (P2-3 —
 	// the TUI and the serve worker share one so subscribers see live events);
@@ -168,6 +179,10 @@ const (
 // compileRun carries the shared state of a single Compile execution across
 // its decomposed steps (P1-8). Field set enumerated in the P1-8 spec D3;
 // statements were MOVED here verbatim from the former ~450-line Compile().
+// ErrBudgetExceeded is returned (with a partial CompileResult) when a run
+// stops at CompileOpts.MaxCost between passes.
+var ErrBudgetExceeded = errors.New("compiler: stopped at MaxCost")
+
 // renderPrompt renders through the per-workspace registry when set, else
 // the prompts package default (CLI back-compat).
 func renderPrompt(pr *prompts.Registry, name string, data any, language string) (string, error) {
@@ -202,6 +217,7 @@ type compileRun struct {
 	exOpts             []extract.ExtractOpts
 	toProcess          []SourceInfo
 	pipelineIncomplete bool
+	budgetExhausted    bool
 	compileID          string
 }
 
@@ -302,6 +318,9 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 
 	// Step 4: runTiers — tiers 0/1/3 orchestration, promotions/demotions.
 	runTiers(projectDir, run)
+	if run.budgetExhausted {
+		return run.result, ErrBudgetExceeded
+	}
 
 	// Pass 4: Image extraction (placeholder)
 	ExtractImages(projectDir, run.cfg.Output, run.toProcess)
@@ -390,6 +409,17 @@ func loadInputs(projectDir string, opts *CompileOpts, run *compileRun) (done boo
 		return false, nil, fmt.Errorf("compile: load config: %w", err)
 	}
 	run.cfg = cfg
+
+	// Per-run overrides (pkg/engine CompileRequest) — applied to the loaded
+	// config copy, never written back.
+	if opts.Tier != nil {
+		cfg.Compiler.DefaultTier = *opts.Tier
+	}
+	if opts.Model != "" {
+		cfg.Models.Summarize = opts.Model
+		cfg.Models.Extract = opts.Model
+		cfg.Models.Write = opts.Model
+	}
 
 	// Load user prompt overrides if prompts/ directory exists — into the
 	// per-workspace registry when one was supplied (SPEC-01), else the
@@ -723,6 +753,12 @@ func runTiers(projectDir string, run *compileRun) {
 			run.toProcess = append(run.toProcess, s)
 		}
 	}
+	// MaxDocs guard (pkg/engine CompileRequest): deterministic truncation —
+	// toProcess is in diff order, so the first N are taken.
+	if opts.MaxDocs > 0 && len(run.toProcess) > opts.MaxDocs {
+		log.Info("MaxDocs guard: truncating compile set", "total", len(run.toProcess), "max", opts.MaxDocs)
+		run.toProcess = run.toProcess[:opts.MaxDocs]
+	}
 
 	// pipelineIncomplete is set when a tiered pipeline run does not complete Pass
 	// 2/3 (cancelled or a total-extraction failure). Such a run persists NO new
@@ -756,6 +792,8 @@ func runTiers(projectDir string, run *compileRun) {
 				TrustStore:   run.trustStore,
 				Embedder:     run.embedder,
 				Backpressure: run.bp,
+				MaxCost:      opts.MaxCost,
+				Tracker:      run.tracker,
 				ItemStore:    run.itemStore,
 				CacheEnabled: cacheEnabled,
 				Progress:     run.progress,
@@ -775,6 +813,9 @@ func runTiers(projectDir string, run *compileRun) {
 		// rollback (RemoveSource on just the sources) left the run's concepts
 		// orphaned, since RemoveSource deletes Sources only. P1-1 / C1.
 		run.pipelineIncomplete = !pipelineResult.Pass23Completed
+		if pipelineResult.BudgetExhausted {
+			run.budgetExhausted = true
+		}
 		succeeded := make(map[string]bool)
 		for _, p := range pipelineResult.SucceededSources {
 			succeeded[p] = true
