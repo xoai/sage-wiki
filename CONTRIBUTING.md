@@ -5,6 +5,28 @@ CI quality gate (build, vet, race tests, new-issue lint, translation drift).
 On `main` itself the *local* drift range is empty (CI's push path checks
 `before..after` and is not), so always check from your branch.
 
+## Repository layout
+
+Selected entries (illustrative, not exhaustive):
+
+```
+├── cmd/sage-wiki/        # CLI entrypoint + command wiring
+├── internal/             # the core (~30 packages): compiler, llm, storage,
+│                         #   memory, vectors, search, graph, ontology, mcp,
+│                         #   trust, api (/v1 REST), web, tui, linter, …
+├── pkg/sagewiki/         # public Go module for embedding (in-process MCP)
+├── clients/              # SDKs: python/ + typescript/
+├── tools/skillgen/       # agent-skill generator (skills/ is generated output)
+├── skills/               # generated agent skills — never hand-edit; CI drift-checked
+├── examples/             # CI-exercised framework examples (langgraph, vercel-ai-sdk)
+├── eval/                 # benchmarks (LOCOMO, LongMemEval, BEAM)
+├── api/openapi.yaml      # the /v1 REST contract (drift-checked against tools+routes)
+├── web/                  # Preact web UI source (embedded via -tags webui)
+├── docs/                 # guides/ + translations/ (six README locales)
+├── assets/               # README images
+└── scripts/              # CI/dev shell tools
+```
+
 ## Translations
 
 `README.md` and its six translations (`docs/translations/README_{fr,ja,ko,ru,vi,zh}.md`)

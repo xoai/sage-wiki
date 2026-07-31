@@ -107,6 +107,23 @@ sage-wiki compile --watch                          # 监听文件夹
 
 `config.yaml` 的每一个键都有逐行注释：[配置指南](../guides/configuration.md)。
 
+**项目结构**（`init` 创建的内容 — 节选，仅为示意并不详尽）：
+
+```
+my-wiki/
+├── config.yaml           # 提供商、模型、编译器、搜索、本体
+├── raw/                  # 将来源放在这里（文章、论文、代码、图片）
+├── wiki/                 # 编译输出 — 兼容 Obsidian 的 markdown
+│   ├── summaries/        # 每个来源的 LLM 摘要
+│   ├── concepts/         # 概念文章（知识图谱）
+│   ├── images/           # 视觉模型生成的图片描述
+│   ├── outputs/          # 已归档的查询回答（trust.include_outputs: "true"）
+│   ├── under_review/     # 等待信任审核的回答（默认）
+│   └── archive/          # 已清理的文章
+├── .sage/wiki.db         # 单个 SQLite 文件：FTS 索引、向量、本体、队列
+└── .manifest.json        # 来源↔文章映射 + 编译状态
+```
+
 ### Vault 覆盖模式（已有 Obsidian vault）
 
 ```bash

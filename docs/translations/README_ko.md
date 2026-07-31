@@ -107,6 +107,23 @@ sage-wiki compile --watch                          # 폴더 감시
 
 모든 `config.yaml` 키에 한 줄씩 주석이 달려 있습니다: [설정](../guides/configuration.md).
 
+**프로젝트 구조** (`init`이 생성하는 것 — 일부 항목, 예시이며 전체는 아님):
+
+```
+my-wiki/
+├── config.yaml           # 프로바이더, 모델, 컴파일러, 검색, 온톨로지
+├── raw/                  # 소스를 여기에 추가 (기사, 논문, 코드, 이미지)
+├── wiki/                 # 컴파일 출력 — Obsidian 호환 마크다운
+│   ├── summaries/        # 소스별 LLM 요약
+│   ├── concepts/         # 개념 문서 (지식 그래프)
+│   ├── images/           # 비전 캡션 이미지 설명
+│   ├── outputs/          # 파일링된 질의 응답 (trust.include_outputs: "true")
+│   ├── under_review/     # 검토 대기 중인 응답 (기본값)
+│   └── archive/          # 정리된 문서
+├── .sage/wiki.db         # 단일 SQLite 파일: FTS 인덱스, 벡터, 온톨로지, 큐
+└── .manifest.json        # 소스↔문서 매핑 + 컴파일 상태
+```
+
 ### 볼트 오버레이 (기존 Obsidian 볼트)
 
 ```bash

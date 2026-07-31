@@ -107,6 +107,23 @@ sage-wiki compile --watch                          # フォルダ監視
 
 `config.yaml`の全キーを行ごとに注釈付きで解説：[設定](../guides/configuration.md)。
 
+**プロジェクト構成**（`init`が作成するもの — 抜粋、網羅的ではなく例示）：
+
+```
+my-wiki/
+├── config.yaml           # プロバイダー、モデル、コンパイラ、検索、オントロジー
+├── raw/                  # ソースをここに置く（記事、論文、コード、画像）
+├── wiki/                 # コンパイル出力 — Obsidian互換markdown
+│   ├── summaries/        # ソースごとのLLM要約
+│   ├── concepts/         # コンセプト記事（ナレッジグラフ）
+│   ├── images/           # ビジョンキャプション付き画像説明
+│   ├── outputs/          # ファイリングされたクエリ回答（trust.include_outputs: "true"）
+│   ├── under_review/     # レビュー待ちの回答（デフォルト）
+│   └── archive/          # 刈り込まれた記事
+├── .sage/wiki.db         # 単一SQLiteファイル：FTS索引、ベクトル、オントロジー、キュー
+└── .manifest.json        # ソース↔記事の対応 + コンパイル状態
+```
+
 ### ボールトオーバーレイ（既存のObsidianボールト）
 
 ```bash

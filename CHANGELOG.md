@@ -4,6 +4,13 @@
 
 ### Documentation
 
+- **Folder-structure maps.** README gains a "Project layout" tree (what
+  `sage-wiki init` creates, in all seven locales) and CONTRIBUTING gains a
+  "Repository layout" tree for contributors — both marked illustrative,
+  one level deep.
+
+### Documentation
+
 - **Docs pass for the wiki_query + restructure surface.** `wiki_query`
   documented in the Agent Memory Layer guide (new "Free-form Q&A with
   filing" section) and in all seven READMEs' MCP sections; the

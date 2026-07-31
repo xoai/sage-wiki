@@ -107,6 +107,23 @@ sage-wiki compile --watch                          # theo dõi thư mục
 
 Mọi khóa trong `config.yaml`, được chú giải từng dòng: [Cấu hình](../guides/configuration.md).
 
+**Cấu trúc dự án** (những gì `init` tạo ra — một số mục tiêu biểu, không đầy đủ):
+
+```
+my-wiki/
+├── config.yaml           # provider, model, compiler, search, ontology
+├── raw/                  # thả nguồn vào đây (bài viết, paper, code, ảnh)
+├── wiki/                 # kết quả biên dịch — markdown tương thích Obsidian
+│   ├── summaries/        # tóm tắt LLM theo nguồn
+│   ├── concepts/         # bài viết khái niệm (đồ thị tri thức)
+│   ├── images/           # mô tả ảnh bằng vision
+│   ├── outputs/          # câu trả lời được lưu (trust.include_outputs: "true")
+│   ├── under_review/     # câu trả lời chờ duyệt (mặc định)
+│   └── archive/          # bài viết đã prune
+├── .sage/wiki.db         # một tệp SQLite: chỉ mục FTS, vector, ontology, queue
+└── .manifest.json        # ánh xạ nguồn↔bài viết + trạng thái biên dịch
+```
+
 ### Lớp phủ Vault (vault Obsidian hiện có)
 
 ```bash

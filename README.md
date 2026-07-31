@@ -124,6 +124,23 @@ sage-wiki compile --watch                          # watch folder
 
 Every `config.yaml` key, annotated line by line: [Configuration](docs/guides/configuration.md).
 
+**Project layout** (what `init` creates — selected entries, illustrative not exhaustive):
+
+```
+my-wiki/
+├── config.yaml           # providers, models, compiler, search, ontology
+├── raw/                  # drop sources here (articles, papers, code, images)
+├── wiki/                 # compiled output — Obsidian-compatible markdown
+│   ├── summaries/        # per-source LLM summaries
+│   ├── concepts/         # concept articles (the knowledge graph)
+│   ├── images/           # vision-captioned image descriptions
+│   ├── outputs/          # filed query answers (trust.include_outputs: "true")
+│   ├── under_review/     # filed answers awaiting trust review (default)
+│   └── archive/          # pruned articles
+├── .sage/wiki.db         # one SQLite file: FTS index, vectors, ontology, queue
+└── .manifest.json        # source↔article mapping + compile state
+```
+
 ### Vault Overlay (existing Obsidian vault)
 
 ```bash
