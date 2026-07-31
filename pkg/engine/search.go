@@ -7,7 +7,6 @@ import (
 
 	"github.com/xoai/sage-wiki/internal/auth"
 	"github.com/xoai/sage-wiki/internal/embed"
-	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/search"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/trust"
@@ -56,18 +55,18 @@ type SearchResults struct {
 // Search runs the unified retrieval pipeline over the workspace.
 func (w *Workspace) Search(ctx context.Context, req SearchRequest) (*SearchResults, error) {
 	ctx = orBackground(ctx)
+	w.mu.RLock()
+	defer w.mu.RUnlock()
 	if err := w.checkOpen(); err != nil {
 		return nil, err
 	}
-	w.mu.RLock()
-	defer w.mu.RUnlock()
 
 	cfg := w.app.Config
 	deps := search.Deps{
 		Mem:                  w.app.Mem,
 		Chunks:               w.app.Backend.Chunks(),
 		Vec:                  w.app.Vec,
-		Embedder:             w.searchEmbedder(),
+		Embedder:             w.searchEmbedder(ctx),
 		Ont:                  w.app.Ont,
 		Model:                cfg.Models.Query,
 		BM25Weight:           cfg.Search.HybridWeightBM25,
@@ -94,7 +93,7 @@ func (w *Workspace) Search(ctx context.Context, req SearchRequest) (*SearchResul
 		if err != nil {
 			return nil, fmt.Errorf("engine: expand/rerank need an LLM client: %w", err)
 		}
-		client.SetRecorder(llm.NewFileRecorder(w.dir))
+		client.SetRecorder(w.usageRecorder())
 		client.SetPass("expand")
 		client.SetPriceOverride(cfg.Compiler.TokenPriceOverride)
 		deps.Client = client
@@ -142,21 +141,25 @@ func (w *Workspace) Search(ctx context.Context, req SearchRequest) (*SearchResul
 }
 
 // searchEmbedder prefers an injected pkg/provider.Provider (adapted) and
-// falls back to the workspace's configured embedder.
-func (w *Workspace) searchEmbedder() embed.Embedder {
+// falls back to the workspace's configured embedder. The ctx threads
+// search cancellation into the provider (F-057).
+func (w *Workspace) searchEmbedder(ctx context.Context) embed.Embedder {
 	if w.opts.provider != nil {
-		return &providerEmbedder{p: w.opts.provider}
+		return &providerEmbedder{p: w.opts.provider, ctx: ctx}
 	}
 	return w.app.Embedder()
 }
 
 // providerEmbedder adapts a pkg/provider.Provider to the internal
 // embed.Embedder interface (one text per call).
-type providerEmbedder struct{ p provider.Provider }
+type providerEmbedder struct {
+	p   provider.Provider
+	ctx context.Context
+}
 
 // Embed implements embed.Embedder.
 func (a *providerEmbedder) Embed(text string) ([]float32, error) {
-	vecs, err := a.p.Embed(context.Background(), []string{text})
+	vecs, err := a.p.Embed(a.ctx, []string{text})
 	if err != nil {
 		return nil, err
 	}
@@ -219,11 +222,11 @@ func (w *Workspace) Graph() GraphAPI {
 }
 
 func (g *graphAPI) Entities(ctx context.Context, f GraphFilter) ([]Entity, error) {
+	g.w.mu.RLock()
+	defer g.w.mu.RUnlock()
 	if err := g.w.checkOpen(); err != nil {
 		return nil, err
 	}
-	g.w.mu.RLock()
-	defer g.w.mu.RUnlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -235,15 +238,19 @@ func (g *graphAPI) Entities(ctx context.Context, f GraphFilter) ([]Entity, error
 	for _, e := range ents {
 		out = append(out, mapEntity(e))
 	}
+	// F-058: honor the filter limit (the store has no entity LIMIT).
+	if f.Limit > 0 && len(out) > f.Limit {
+		out = out[:f.Limit]
+	}
 	return out, nil
 }
 
 func (g *graphAPI) Relations(ctx context.Context, f GraphFilter) ([]Relation, error) {
+	g.w.mu.RLock()
+	defer g.w.mu.RUnlock()
 	if err := g.w.checkOpen(); err != nil {
 		return nil, err
 	}
-	g.w.mu.RLock()
-	defer g.w.mu.RUnlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -263,11 +270,18 @@ func (g *graphAPI) Relations(ctx context.Context, f GraphFilter) ([]Relation, er
 }
 
 func (g *graphAPI) Neighbors(ctx context.Context, entityID string, depth int) ([]Entity, error) {
+	g.w.mu.RLock()
+	defer g.w.mu.RUnlock()
 	if err := g.w.checkOpen(); err != nil {
 		return nil, err
 	}
-	g.w.mu.RLock()
-	defer g.w.mu.RUnlock()
+	// Clamp to the documented range (F-060).
+	if depth < 1 {
+		depth = 1
+	}
+	if depth > 5 {
+		depth = 5
+	}
 	ents, err := g.w.app.Ont.Traverse(entityID, store.TraverseOpts{
 		Direction: store.Both,
 		MaxDepth:  depth,

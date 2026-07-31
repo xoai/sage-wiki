@@ -186,6 +186,7 @@ func init() {
 	initCmd.Flags().String("pack", "", "Install a contribution pack during init")
 
 	// Compile flags
+	compileCmd.Flags().Bool("upgrade", false, "Adopt a pre-format (v0.2.x) workspace (one-way) and compile")
 	compileCmd.Flags().Bool("watch", false, "Watch for changes and recompile")
 	compileCmd.Flags().Bool("dry-run", false, "Show what would change without writing")
 	compileCmd.Flags().Bool("fresh", false, "Clear checkpoint state (batch + legacy) and recompile from scratch")
@@ -222,6 +223,8 @@ func init() {
 
 	// Query flags
 	queryCmd.Flags().String("scope", "local", "Query scope: local, global, or all")
+	queryCmd.Flags().Bool("upgrade", false, "Adopt a pre-format (v0.2.x) workspace (one-way)")
+	ingestCmd.Flags().Bool("upgrade", false, "Adopt a pre-format (v0.2.x) workspace (one-way)")
 
 	rootCmd.AddCommand(initCmd, compileCmd, reindexCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, scribeCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, sourceCmd, hubCmd, skillCmd, packCmd, costCmd, versionCmd)
 
@@ -565,11 +568,19 @@ func runCompile(cmd *cobra.Command, args []string) error {
 	// Routed through pkg/engine (SPEC-01): the workspace lock, format
 	// adoption, and store wiring are the engine's; storage.backend is
 	// honored via the engine's storedial open (same options as before).
-	w, err := engine.Open(ctx, dir)
+	upgrade, _ := cmd.Flags().GetBool("upgrade")
+	var openOpts []engine.Option
+	if upgrade {
+		openOpts = append(openOpts, engine.WithUpgrade())
+	}
+	w, err := engine.Open(ctx, dir, openOpts...)
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
 	defer w.Close()
+	if w.RequiresUpgrade() {
+		return fmt.Errorf("workspace predates format versioning (v0.2.x) — re-run with --upgrade to adopt it (one-way); reads still work")
+	}
 
 	result, err := w.Compile(ctx, engine.CompileRequest{
 		Selector: "pending",
@@ -957,11 +968,19 @@ func runQuery(cmd *cobra.Command, args []string) error {
 	// active compile (spec §B.1 8e). The Q&A pipeline itself has no
 	// engine surface (SPEC-01 exposes no Query method) — the Open is the
 	// lock, the pipeline is unchanged.
-	w, err := engine.Open(cmd.Context(), dir)
+	upgrade, _ := cmd.Flags().GetBool("upgrade")
+	var openOpts []engine.Option
+	if upgrade {
+		openOpts = append(openOpts, engine.WithUpgrade())
+	}
+	w, err := engine.Open(cmd.Context(), dir, openOpts...)
 	if err != nil {
 		return cli.CLIError(outputFormat, lockSentinel(err))
 	}
 	defer w.Close()
+	if w.RequiresUpgrade() {
+		return cli.CLIError(outputFormat, fmt.Errorf("workspace predates format versioning (v0.2.x) — re-run with --upgrade to adopt it (one-way)"))
+	}
 
 	result, err := query.Query(dir, question, "terminal", 5)
 	if err != nil {
@@ -1002,8 +1021,23 @@ func runIngest(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
 	target := args[0]
 
+	// SPEC-01: ingest registers the source in the manifest (a mutation) —
+	// take the engine's single-writer lock like capture/query (F-048).
+	upgrade, _ := cmd.Flags().GetBool("upgrade")
+	var openOpts []engine.Option
+	if upgrade {
+		openOpts = append(openOpts, engine.WithUpgrade())
+	}
+	w, err := engine.Open(cmd.Context(), dir, openOpts...)
+	if err != nil {
+		return cli.CLIError(outputFormat, lockSentinel(err))
+	}
+	defer w.Close()
+	if w.RequiresUpgrade() {
+		return cli.CLIError(outputFormat, fmt.Errorf("workspace predates format versioning (v0.2.x) — re-run with --upgrade to adopt it (one-way)"))
+	}
+
 	var result *wiki.IngestResult
-	var err error
 
 	if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
 		result, err = wiki.IngestURL(dir, target)

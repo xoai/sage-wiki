@@ -181,3 +181,48 @@ func TestStatsAndExport(t *testing.T) {
 		}
 	}
 }
+
+// TestCaptureReaderDedup: two Reader captures in the same second must not
+// overwrite each other (F-050).
+func TestCaptureReaderDedup(t *testing.T) {
+	dir := initWorkspace(t)
+	w, err := Open(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+
+	id1, err := w.Capture(context.Background(), Source{Reader: strings.NewReader("first")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id2, err := w.Capture(context.Background(), Source{Reader: strings.NewReader("second")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id1 == id2 {
+		t.Fatalf("same-second captures collided: %q", id1)
+	}
+	data, err := os.ReadFile(string(id1))
+	if err != nil || string(data) != "first" {
+		t.Errorf("first capture lost/corrupt: %q %v", data, err)
+	}
+	data2, _ := os.ReadFile(string(id2))
+	if string(data2) != "second" {
+		t.Errorf("second capture content = %q", data2)
+	}
+}
+
+// TestBatchMaxCostRejected: Batch+MaxCost errors honestly (F-051).
+func TestBatchMaxCostRejected(t *testing.T) {
+	dir := initWorkspace(t)
+	w, err := Open(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	mc := decimal.NewFromFloat(1)
+	if _, err := w.Compile(context.Background(), CompileRequest{Batch: true, MaxCost: &mc}); err == nil {
+		t.Error("Batch+MaxCost must be rejected")
+	}
+}

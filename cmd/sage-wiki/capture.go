@@ -23,6 +23,7 @@ func init() {
 	captureCmd.Flags().String("file", "", "File to read (use - for stdin)")
 	captureCmd.Flags().String("context", "", "Context description")
 	captureCmd.Flags().String("tags", "", "Comma-separated tags")
+	captureCmd.Flags().Bool("upgrade", false, "Adopt a pre-format (v0.2.x) workspace (one-way)")
 }
 
 func runCapture(cmd *cobra.Command, args []string) error {
@@ -65,11 +66,20 @@ func runCapture(cmd *cobra.Command, args []string) error {
 	// fails fast (spec §B.1 8e) instead of racing the manifest. The file
 	// format below is unchanged (parity); the engine's own
 	// Workspace.Capture serves API consumers with its own simpler shape.
-	w, err := engine.Open(cmd.Context(), dir, engine.WithConfigFile(resolveConfigPath(dir)))
+	upgrade, _ := cmd.Flags().GetBool("upgrade")
+	var openOpts []engine.Option
+	if upgrade {
+		openOpts = append(openOpts, engine.WithUpgrade())
+	}
+	openOpts = append(openOpts, engine.WithConfigFile(resolveConfigPath(dir)))
+	w, err := engine.Open(cmd.Context(), dir, openOpts...)
 	if err != nil {
 		return cli.CLIError(outputFormat, lockSentinel(err))
 	}
 	defer w.Close()
+	if w.RequiresUpgrade() {
+		return cli.CLIError(outputFormat, fmt.Errorf("workspace predates format versioning (v0.2.x) — re-run with --upgrade to adopt it (one-way)"))
+	}
 
 	// Write as raw capture file (same as MCP fallback)
 	capturesDir := filepath.Join(dir, "raw", "captures")

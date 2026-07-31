@@ -55,8 +55,12 @@ func WithConfigFile(path string) Option {
 	return func(o *options) { o.configFile = path }
 }
 
-// WithProvider injects the LLM/embedding provider (tests, examples,
-// self-hosters' custom backends). Default: built from the workspace config.
+// WithProvider injects an embedding provider for the vector search legs
+// (tests, examples, self-hosters' custom backends). Default: built from
+// the workspace config. v1 SCOPE: the provider feeds search embeddings
+// only — compile and expand/rerank LLM calls are config-driven (threading
+// an injected provider into the compiler is future work; recorded in the
+// initiative decisions log).
 func WithProvider(p provider.Provider) Option {
 	return func(o *options) { o.provider = p }
 }
@@ -191,9 +195,15 @@ func Open(ctx context.Context, dir string, optFns ...Option) (*Workspace, error)
 	w.app = a
 
 	w.prompts = prompts.NewRegistry()
+	// Unparseable overrides warn and fall back to embedded defaults — the
+	// same degrade the compiler always had (Open must not hard-fail where
+	// compile/search previously continued).
 	if err := w.prompts.LoadFromDir(filepath.Join(abs, "prompts")); err != nil {
-		w.Close()
-		return nil, fmt.Errorf("engine: load prompt overrides: %w", err)
+		if opts.logger != nil {
+			opts.logger.Warn("prompt overrides failed to load, using defaults", "error", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: prompt overrides failed to load (%v) — using defaults\n", err)
+		}
 	}
 
 	return w, nil
@@ -233,7 +243,9 @@ func (w *Workspace) Close() error {
 	return firstErr
 }
 
-// checkOpen guards against use-after-close.
+// checkOpen guards against use-after-close. Callers MUST hold w.mu (read
+// or write) — w.closed is written under the write lock in Close, so an
+// unlocked read would race it.
 func (w *Workspace) checkOpen() error {
 	if w.closed {
 		return errors.New("engine: workspace is closed")
@@ -242,6 +254,7 @@ func (w *Workspace) checkOpen() error {
 }
 
 // checkMutable guards mutators on read-only/pre-format workspaces.
+// Callers MUST hold w.mu (write) — see checkOpen.
 func (w *Workspace) checkMutable() error {
 	if err := w.checkOpen(); err != nil {
 		return err
@@ -257,3 +270,9 @@ func (w *Workspace) checkMutable() error {
 
 // Dir returns the workspace's absolute directory.
 func (w *Workspace) Dir() string { return w.dir }
+
+// RequiresUpgrade reports whether this workspace predates format
+// versioning (v0.2.x) and was therefore opened read-only — mutators
+// return ErrIncompatibleVersion until it is re-opened with WithUpgrade.
+// CLI shims use this to direct users at the --upgrade flag.
+func (w *Workspace) RequiresUpgrade() bool { return w.preFormat }

@@ -41,15 +41,42 @@ func TestNoInternalLeak(t *testing.T) {
 	}
 
 	qualifier := func(p *types.Package) string { return p.Path() }
+	check := func(label string, typ types.Type) {
+		t.Helper()
+		sig := types.TypeString(typ, qualifier)
+		if strings.Contains(sig, "sage-wiki/internal/") {
+			t.Errorf("exported %s leaks internal type: %s", label, sig)
+		}
+	}
+
 	scope := pkg.Scope()
 	for _, name := range scope.Names() {
 		obj := scope.Lookup(name)
 		if !obj.Exported() {
 			continue
 		}
-		sig := types.TypeString(obj.Type(), qualifier)
-		if strings.Contains(sig, "sage-wiki/internal/") {
-			t.Errorf("exported %s leaks internal type: %s", name, sig)
+		check(name, obj.Type())
+
+		// Named types: walk exported struct fields and method signatures —
+		// TypeString of a named type does not expand them (F-052).
+		named, ok := obj.Type().(*types.Named)
+		if !ok {
+			continue
+		}
+		if st, ok := named.Underlying().(*types.Struct); ok {
+			for i := 0; i < st.NumFields(); i++ {
+				f := st.Field(i)
+				if f.Exported() {
+					check(name+"."+f.Name(), f.Type())
+				}
+			}
+		}
+		ms := types.NewMethodSet(named)
+		for i := 0; i < ms.Len(); i++ {
+			m := ms.At(i).Obj()
+			if m.Exported() {
+				check(name+"."+m.Name()+" (method)", m.Type())
+			}
 		}
 	}
 }

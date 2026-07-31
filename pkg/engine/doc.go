@@ -31,9 +31,9 @@
 //
 // # Options
 //
-// WithConfigFile (alternate config path), WithProvider (inject an LLM /
-// embedding provider — tests and custom backends; embeddings feed the
-// vector search legs), WithEventSink (usage events today; the typed event
+// WithConfigFile (alternate config path), WithProvider (inject an
+// embedding provider for the vector search legs — v1 scope; LLM calls
+// stay config-driven), WithEventSink (usage events today; the typed event
 // union arrives with SPEC-07), WithLogger, WithUpgrade, WithReadOnly.
 // WithStorageMirror and WithLimits are deferred to SPEC-03/SPEC-08 —
 // functional options are additive, so those land without breaking this

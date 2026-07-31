@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -78,5 +80,57 @@ func TestCapture_LockReleasedAfterClose(t *testing.T) {
 	err := runCapture(captureCmd, nil)
 	if err != nil && strings.Contains(err.Error(), "workspace is locked") {
 		t.Errorf("capture must not fail with lock error after release: %v", err)
+	}
+}
+
+// TestCompile_PreFormatRequiresUpgradeFlag is the F-045 regression test: a
+// v0.2.x workspace (no format_version) fails compile with the --upgrade
+// hint, and compiles once the flag is passed.
+func TestCompile_PreFormatRequiresUpgradeFlag(t *testing.T) {
+	dir := t.TempDir()
+	w, err := engine.Init(t.Context(), dir)
+	if err != nil {
+		t.Fatalf("engine.Init: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Strip format fields → v0.2.x workspace.
+	mPath := dir + "/.manifest.json"
+	raw, _ := os.ReadFile(mPath)
+	var m map[string]any
+	json.Unmarshal(raw, &m)
+	delete(m, "format_version")
+	delete(m, "engine_version")
+	delete(m, "created_at")
+	out, _ := json.Marshal(m)
+	if err := os.WriteFile(mPath, out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	old := projectDir
+	projectDir = dir
+	defer func() { projectDir = old }()
+
+	compileCmd.Flags().Set("upgrade", "false")
+	err = runCompile(compileCmd, nil)
+	if err == nil {
+		t.Fatal("compile must fail on a pre-format workspace without --upgrade")
+	}
+	if !strings.Contains(err.Error(), "--upgrade") {
+		t.Errorf("error must direct at --upgrade, got: %v", err)
+	}
+
+	compileCmd.Flags().Set("upgrade", "true")
+	defer compileCmd.Flags().Set("upgrade", "false")
+	if err := runCompile(compileCmd, nil); err != nil {
+		t.Errorf("compile with --upgrade must succeed: %v", err)
+	}
+
+	// Adoption persisted: format stamped.
+	raw2, _ := os.ReadFile(mPath)
+	if !strings.Contains(string(raw2), `"format_version"`) {
+		t.Error("adoption must stamp format_version")
 	}
 }

@@ -40,10 +40,7 @@ func bridgeUsageEvent(dir string, ev llm.UsageEvent) events.Event {
 		OutputTokens:     ev.OutputTokens,
 		PriceSource:      ev.PriceSource,
 	}
-	if ev.Cost != nil {
-		f, _ := ev.Cost.Float64()
-		out.Cost = &f
-	}
+	out.Cost = ev.Cost // decimal end to end — nil when unknown
 	return out
 }
 

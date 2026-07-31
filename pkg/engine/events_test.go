@@ -91,3 +91,25 @@ compiler:
 		t.Error("file ledger must also carry the events")
 	}
 }
+
+// TestEventSinkReceivesSearchExpansion: the sink sees search-expansion
+// spend too (F-049), via the same fan-out as compile.
+func TestEventSinkReceivesSearchExpansion(t *testing.T) {
+	sink := &captureSink{}
+	dir := initWorkspace(t)
+	w, err := Open(context.Background(), dir, WithEventSink(sink))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+
+	// Direct fan-out assertion (the wiring point): the workspace recorder
+	// multiplies file + sink.
+	rec := w.usageRecorder()
+	rec.RecordUsage(context.Background(), llm.UsageEvent{Pass: "expand", Provider: "openai", Model: "gpt-4o", Tier: -1, InputTokens: 5, OutputTokens: 2})
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if len(sink.events) != 1 || sink.events[0].Pass != "expand" {
+		t.Fatalf("sink events = %+v", sink.events)
+	}
+}

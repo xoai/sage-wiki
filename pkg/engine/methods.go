@@ -33,11 +33,11 @@ type Source struct {
 // Capture ingests one document and returns its id.
 func (w *Workspace) Capture(ctx context.Context, src Source) (DocID, error) {
 	ctx = orBackground(ctx)
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if err := w.checkMutable(); err != nil {
 		return "", err
 	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
 
 	set := 0
 	for _, b := range []bool{src.Path != "", src.URL != "", src.Reader != nil} {
@@ -78,11 +78,19 @@ func (w *Workspace) Capture(ctx context.Context, src Source) (DocID, error) {
 		if err := os.MkdirAll(capturesDir, 0o755); err != nil {
 			return "", fmt.Errorf("engine: create captures dir: %w", err)
 		}
-		name := fmt.Sprintf("capture-%d.md", time.Now().Unix())
+		base := fmt.Sprintf("capture-%d", time.Now().Unix())
 		if src.Type != "" {
-			name = fmt.Sprintf("capture-%s-%d.md", src.Type, time.Now().Unix())
+			base = fmt.Sprintf("capture-%s-%d", src.Type, time.Now().Unix())
 		}
-		dst := filepath.Join(capturesDir, name)
+		// Same collision avoidance as the CLI capture path: two captures in
+		// one wall-clock second must never overwrite each other.
+		dst := filepath.Join(capturesDir, base+".md")
+		for i := 1; ; i++ {
+			if _, err := os.Stat(dst); os.IsNotExist(err) {
+				break
+			}
+			dst = filepath.Join(capturesDir, fmt.Sprintf("%s-%d.md", base, i))
+		}
 		data, err := io.ReadAll(io.LimitReader(src.Reader, maxCaptureBytes+1))
 		if err != nil {
 			return "", fmt.Errorf("engine: read capture: %w", err)
@@ -146,6 +154,8 @@ type CompileResult struct {
 // Compile runs the pipeline over the pending diff.
 func (w *Workspace) Compile(ctx context.Context, req CompileRequest) (*CompileResult, error) {
 	ctx = orBackground(ctx)
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if err := w.checkMutable(); err != nil {
 		return nil, err
 	}
@@ -155,8 +165,12 @@ func (w *Workspace) Compile(ctx context.Context, req CompileRequest) (*CompileRe
 	if req.Tier < TierUseConfig || req.Tier > 3 {
 		return nil, fmt.Errorf("engine: tier %d out of range (%d..3)", req.Tier, TierUseConfig)
 	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
+	// F-051: the budget guard lives in the full pipeline's pass boundaries;
+	// batch has no pass-boundary hook — reject the combination honestly
+	// rather than run unguarded.
+	if req.Batch && req.MaxCost != nil {
+		return nil, fmt.Errorf("engine: MaxCost is not supported with Batch (guard runs between passes; batch has no pass boundary)")
+	}
 
 	var tierOverride *int
 	if req.Tier >= 0 {
@@ -214,11 +228,11 @@ type WorkspaceStats struct {
 // Stats collects workspace statistics.
 func (w *Workspace) Stats(ctx context.Context) (WorkspaceStats, error) {
 	ctx = orBackground(ctx)
+	w.mu.RLock()
+	defer w.mu.RUnlock()
 	if err := w.checkOpen(); err != nil {
 		return WorkspaceStats{}, err
 	}
-	w.mu.RLock()
-	defer w.mu.RUnlock()
 	if err := ctx.Err(); err != nil {
 		return WorkspaceStats{}, err
 	}
@@ -243,11 +257,11 @@ func (w *Workspace) Stats(ctx context.Context) (WorkspaceStats, error) {
 // Export writes a tar of the workspace directory to dst.
 func (w *Workspace) Export(ctx context.Context, dst io.Writer) error {
 	ctx = orBackground(ctx)
+	w.mu.RLock()
+	defer w.mu.RUnlock()
 	if err := w.checkOpen(); err != nil {
 		return err
 	}
-	w.mu.RLock()
-	defer w.mu.RUnlock()
 
 	tw := tar.NewWriter(dst)
 	walkErr := filepath.WalkDir(w.dir, func(path string, d fs.DirEntry, err error) error {
@@ -283,9 +297,12 @@ func (w *Workspace) Export(ctx context.Context, dst io.Writer) error {
 		if err != nil {
 			return err
 		}
-		defer f.Close()
-		_, err = io.Copy(tw, f)
-		return err
+		_, copyErr := io.Copy(tw, f)
+		closeErr := f.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
 	})
 	if err := tw.Close(); walkErr == nil {
 		walkErr = err

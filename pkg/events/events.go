@@ -3,7 +3,11 @@
 // usage events (SPEC-05) through this seam.
 package events
 
-import "time"
+import (
+	"time"
+
+	"github.com/shopspring/decimal"
+)
 
 // Sink receives events from a Workspace. Implementations must be safe for
 // concurrent use and must not block — a slow sink must not stall the
@@ -37,6 +41,6 @@ type Event struct {
 	CachedTokens     int
 	CacheWriteTokens int
 	OutputTokens     int
-	Cost             *float64 // nil when unknown — never a fabricated zero
+	Cost             *decimal.Decimal // nil when unknown — never a fabricated zero
 	PriceSource      string
 }
