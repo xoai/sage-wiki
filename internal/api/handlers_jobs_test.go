@@ -579,6 +579,31 @@ func TestJ24LintProgress(t *testing.T) {
 // J-12 (18 tool names unchanged) by tools/skillgen TestToolCount and the
 // MCP adapter parity tests.
 
+// Regression (independent /review): a job cancelled via DELETE while the
+// runner finishes successfully must stay cancelled — the client's 202
+// 'cancelled' verdict stands.
+func TestJobCancelledStaysCancelledOnRunnerSuccess(t *testing.T) {
+	f := &fakeJobRunner{gate: make(chan struct{})}
+	_, mux := newJobTestRouter(t, f, nil)
+
+	w := submitJob(t, mux, "compile", `{"dry_run": false}`, "")
+	id := jobField(t, w, "job_id").(string)
+	pollJob(t, mux, id, func(m map[string]any) bool { return m["status"] == "running" })
+
+	wd := deleteJob(t, mux, id)
+	if wd.Code != http.StatusAccepted {
+		t.Fatalf("delete status = %d", wd.Code)
+	}
+	close(f.gate) // runner now succeeds
+
+	m := pollJob(t, mux, id, func(m map[string]any) bool {
+		return m["status"] == "cancelled" || m["status"] == "done"
+	})
+	if m["status"] != "cancelled" {
+		t.Fatalf("cancelled job flipped to %v after runner success", m["status"])
+	}
+}
+
 // Regression (found by the Python contract test): net/http cancels a
 // request's context when the handler returns — a job derived from it was
 // cancelled the instant its 202 was sent. This drives the full stack

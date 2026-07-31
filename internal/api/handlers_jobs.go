@@ -223,7 +223,9 @@ func (r *Router) runJob(j *Job, kind JobKind, topic *string, maxSources int, opt
 				j.Status = JobFailed
 				j.Error = &apiError{Code: CodeInternal, Message: safeErrorMessage(err)}
 			}
-		} else {
+		} else if j.Status != JobCancelled {
+			// A user DELETE may have won while the runner finished — the
+			// client's cancelled verdict stands.
 			j.Status = JobDone
 			j.Result = result
 		}
@@ -260,7 +262,9 @@ func (r *Router) runJob(j *Job, kind JobKind, topic *string, maxSources int, opt
 				j.Status = JobFailed
 				j.Error = &apiError{Code: CodeInternal, Message: safeErrorMessage(err)}
 			}
-		} else {
+		} else if j.Status != JobCancelled {
+			// A user DELETE may have won while the runner finished — the
+			// client's cancelled verdict stands.
 			j.Status = JobDone
 			j.Result = result
 		}
@@ -290,7 +294,7 @@ func (r *Router) runJob(j *Job, kind JobKind, topic *string, maxSources int, opt
 				j.Status = JobFailed
 				j.Error = &apiError{Code: CodeInternal, Message: safeErrorMessage(err)}
 			}
-		} else {
+		} else if j.Status != JobCancelled {
 			j.Status = JobDone
 			j.Result = results
 			j.Progress = map[string]any{"stage": "done"}
