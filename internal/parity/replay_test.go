@@ -118,8 +118,8 @@ func TestRecordWriteThrough(t *testing.T) {
 	if err := json.Unmarshal(raw, &fx); err != nil {
 		t.Fatal(err)
 	}
-	var body2 map[string]bool
-	if err := json.Unmarshal(fx.Response.Body, &body2); err != nil || !body2["ok"] {
+	var body2 map[string]any
+	if err := json.Unmarshal(fx.Response.Body, &body2); err != nil || body2["ok"] != true {
 		t.Errorf("fixture response wrong: %s", fx.Response.Body)
 	}
 	if fx.Response.Status != 200 {
