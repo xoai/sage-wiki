@@ -223,7 +223,7 @@ func init() {
 	// Query flags
 	queryCmd.Flags().String("scope", "local", "Query scope: local, global, or all")
 
-	rootCmd.AddCommand(initCmd, compileCmd, reindexCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, scribeCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, sourceCmd, hubCmd, skillCmd, packCmd, versionCmd)
+	rootCmd.AddCommand(initCmd, compileCmd, reindexCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, scribeCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, sourceCmd, hubCmd, skillCmd, packCmd, costCmd, versionCmd)
 
 	// Enables `sage-wiki --version` in addition to the `version` subcommand.
 	rootCmd.Version = version
