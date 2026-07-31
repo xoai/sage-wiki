@@ -60,3 +60,19 @@ translations-self-test:
 # separately. Run on your feature branch: on main itself the drift range is
 # empty and `translations` is a no-op by design.
 ci: build build-webui vet test lint-new translations
+
+# SPEC-09: record LLM fixtures via the scripted origin (default) or a real
+# vendor (ORIGIN=https://... KEY=...). Maintainer action — CI never records.
+record-fixtures:
+	@test -n "$$SAGE_PARITY_FORCE" || { echo "refusing: set SAGE_PARITY_FORCE=1 (golden overwrite guard)"; exit 1; }
+	SAGE_PARITY_FORCE=1 ORIGIN="$(ORIGIN)" go test ./internal/parity/ -run TestRecordFixtures -count=1
+
+# SPEC-09: regenerate goldens from the current code. Guarded; commit with a
+# "Golden changes" PR section explaining every diff category.
+regen-goldens:
+	@test -n "$$SAGE_PARITY_FORCE" || { echo "refusing: set SAGE_PARITY_FORCE=1 (golden overwrite guard)"; exit 1; }
+	SAGE_PARITY_FORCE=1 go test ./internal/parity/ -run TestRegenGoldens -count=1
+
+# SPEC-09: the parity suite (replay mode, offline).
+parity:
+	go test -count=1 ./internal/parity/

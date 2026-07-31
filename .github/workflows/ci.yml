@@ -56,6 +56,43 @@ jobs:
       - name: Embed example runs offline
         run: CGO_ENABLED=0 go run ./examples/embed
 
+  # SPEC-09 golden-corpus parity suite: linux required, macOS best-effort.
+  # Fully offline (recorded fixtures; CI never records).
+  parity:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            required: true
+          - os: macos-latest
+            required: false
+    continue-on-error: ${{ matrix.required == false }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+      - name: Vet
+        run: CGO_ENABLED=0 go vet ./internal/parity/
+      - name: Parity suite (replay mode)
+        run: CGO_ENABLED=0 go test -count=1 ./internal/parity/
+      - name: Flake loop (10x)
+        run: CGO_ENABLED=0 go test -count=10 -run TestParity ./internal/parity/
+      - name: Golden-changes marker (PRs)
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if git diff --name-only origin/${{ github.base_ref }}...HEAD -- testdata/golden/ testdata/fixtures/ | grep -q .; then
+            case "$PR_BODY" in
+              *"Golden changes"*) ;;
+              *) echo "goldens changed without a 'Golden changes' PR section"; exit 1 ;;
+            esac
+          fi
+
   # Tests are sharded three ways per OS so the slowest shard (~compiler,
   # ~6 min) bounds wall time instead of the whole suite (~14 min serial).
   go-test:
