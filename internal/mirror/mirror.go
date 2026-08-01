@@ -68,10 +68,16 @@ func Open(wsDir string, cfg Config, src ChangeSource) (*Mirror, error) {
 		return nil, err
 	}
 	m := &Mirror{dir: wsDir, cfg: cfg, src: src, client: client, local: local}
-	// Real ops are wired by later tasks; the facade is nil-guarded until
-	// then (Open alone cannot ship/verify without the M2-M4 internals).
+	// Wire the real ops (enable.go's init sets openWiresOps).
+	if openWiresOps != nil {
+		openWiresOps(m)
+	}
 	return m, nil
 }
+
+// openWiresOps is set by enable.go's init to attach the real ops behind the
+// facade (kept a var so the facade file stays free of implementation deps).
+var openWiresOps func(*Mirror)
 
 func localStatePath(dir string) string {
 	return dir + "/.sage/mirror-local.json"

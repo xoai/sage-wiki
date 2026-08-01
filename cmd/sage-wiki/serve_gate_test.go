@@ -6,7 +6,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-
 )
 
 // TestUseHTTPMode pins the gate predicate (R-07/N-05): bare serve → HTTP
