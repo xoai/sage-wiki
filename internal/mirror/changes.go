@@ -97,9 +97,10 @@ type diffChangeSource struct {
 }
 
 type diffCacheEntry struct {
-	SHA256  string `json:"s"`
-	ModUnix int64  `json:"m"`
-	Size    int64  `json:"z"`
+	SHA256   string `json:"s"`
+	ModUnix  int64  `json:"m"`
+	Size     int64  `json:"z"`
+	WriteSec int64  `json:"w"` // hashed-at second (git racy-clean: hit only when ModUnix < WriteSec)
 }
 
 // NewDiffChangeSource walks the ship set and diffs against the committed
@@ -167,14 +168,19 @@ func (d *diffChangeSource) Changes(ctx context.Context, since ChangeToken) ([]Ch
 		// Racy-clean guard (F-096, git's rule): an entry cached in the SAME
 		// second as this scan is re-hashed — a same-size rewrite inside one
 		// mtime second (or a preserved mtime) must never hide an edit.
-		if ent, ok := d.cache[rel]; ok && ent.ModUnix == info.ModTime().Unix() && ent.Size == info.Size() && ent.ModUnix < scanStartSec {
+		// Racy-clean guard (F-096/PB-2, git's rule done right): an entry is
+		// trusted only when its recorded mtime-second is OLDER than the
+		// second it was hashed in — an mtime equal to the hash-second may
+		// have changed after the hash within that second. Legacy entries
+		// (WriteSec 0) miss once and self-heal.
+		if ent, ok := d.cache[rel]; ok && ent.ModUnix == info.ModTime().Unix() && ent.Size == info.Size() && ent.ModUnix < ent.WriteSec {
 			return ent.SHA256, true // cache hit — NO file read (F-082)
 		}
 		sha, _, err := hashFile(full)
 		if err != nil {
 			return "", false
 		}
-		d.cache[rel] = diffCacheEntry{SHA256: sha, ModUnix: info.ModTime().Unix(), Size: info.Size()}
+		d.cache[rel] = diffCacheEntry{SHA256: sha, ModUnix: info.ModTime().Unix(), Size: info.Size(), WriteSec: scanStartSec}
 		return sha, true
 	}
 

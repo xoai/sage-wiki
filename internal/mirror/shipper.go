@@ -486,6 +486,12 @@ func (m *Mirror) commitSegment(ctx context.Context, st *State, seg []byte, seq i
 // segments from index fromSeq onward (decrypting when needed) — the exact
 // realign distance for lost bookkeeping.
 func (m *Mirror) chainTailLength(ctx context.Context, st *State, fromSeq int) (int64, error) {
+	// Loud, never a panic (F-099/PB-1): local bookkeeping AHEAD of the
+	// remote chain means bucket rollback, manual deletion, or a split-brain
+	// second writer — a wrong realign would corrupt the chain silently.
+	if fromSeq > len(st.DB.WAL) {
+		return 0, fmt.Errorf("ship: local seq %d ahead of remote chain length %d (bucket rollback or split-brain — manual inspection required)", fromSeq, len(st.DB.WAL))
+	}
 	var total int64
 	for _, seg := range st.DB.WAL[fromSeq:] {
 		b, err := m.client.GetObject(ctx, m.cfg.Bucket, seg.Key)

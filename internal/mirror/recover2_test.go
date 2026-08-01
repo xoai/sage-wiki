@@ -97,3 +97,16 @@ func TestRecover_RealignDoesNotSkipLiveFrames(t *testing.T) {
 }
 
 var _ = time.Now
+
+// TestChainTailLength_LocalAheadOfRemote (F-099/PB-1): local bookkeeping
+// ahead of the remote chain must error loudly, never panic.
+func TestChainTailLength_LocalAheadOfRemote(t *testing.T) {
+	f := newShipFixture(t)
+	defer f.dbClose()
+	st := f.remoteState(t)
+	// Simulate split-brain/bucket rollback: local seq beyond the chain.
+	f.m.local.LastSegmentSeq = len(st.DB.WAL) + 5
+	if _, err := f.m.chainTailLength(context.Background(), st, f.m.local.LastSegmentSeq); err == nil {
+		t.Fatal("local-ahead-of-remote must return a loud error, not a panic")
+	}
+}
