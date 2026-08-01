@@ -1373,15 +1373,23 @@ func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
 		return err
 	}
 
-	// Bind FIRST and serve healthz/readyz immediately (AC-S1): the port
-	// answers while the (potentially slow) workspace open + store build
-	// runs below. readyz stays 503 until the build completes.
+	// Bind FIRST and serve healthz/readyz immediately (AC-S1): ONE
+	// listener, ONE http.Server. The handler is readiness-aware — until
+	// the build completes it answers healthz/readyz (503) only; at
+	// handoff the handler is swapped atomically to the full surface (N-01:
+	// no interim server, no closed listener).
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
 	var ready atomic.Bool
-	interim := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var liveHandler atomic.Value // http.Handler, installed at handoff
+	httpSrv := &http.Server{}
+	httpSrv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h, ok := liveHandler.Load().(http.Handler); ok && h != nil {
+			h.ServeHTTP(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		switch r.URL.Path {
 		case "/healthz":
@@ -1394,22 +1402,17 @@ func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
 				w.Write([]byte(`{"status":"starting"}`))
 			}
 		default:
-			http.NotFound(w, r)
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"error":{"code":"not_found","message":"server is starting"}}`))
 		}
-	})}
-	interimDone := make(chan struct{})
-	go func() { interim.Serve(listener); close(interimDone) }()
-	stopInterim := func() {
-		interim.Shutdown(context.Background())
-		<-interimDone
-	}
+	})
+	go httpSrv.Serve(listener)
 
 	// Workspace lock (§2.0): the read-write open acquires engine.lock and
 	// fails fast when another process holds it.
 	w, err := engine.Open(cmd.Context(), dir)
 	if err != nil {
-		stopInterim()
-		listener.Close()
+		httpSrv.Shutdown(context.Background())
 		return err
 	}
 	defer w.Close() // idempotent; Shutdown may close it first
@@ -1417,15 +1420,13 @@ func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
 
 	deps, err := serve.AssembleDeps(dir)
 	if err != nil {
-		stopInterim()
-		listener.Close()
+		httpSrv.Shutdown(context.Background())
 		return err
 	}
 	defer deps.Close()
 	mcpSrv, err := mcppkg.NewServer(dir, deps.Coordinator())
 	if err != nil {
-		stopInterim()
-		listener.Close()
+		httpSrv.Shutdown(context.Background())
 		return err
 	}
 	defer mcpSrv.Close()
@@ -1439,14 +1440,15 @@ func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
 		ReadyFn:               ready.Load,
 	})
 	if err != nil {
-		stopInterim()
-		listener.Close()
+		httpSrv.Shutdown(context.Background())
 		return err
 	}
 	srv.SetWorkspace(w)
 
-	// Build complete: hand the listener to the real server; readyz flips.
-	stopInterim()
+	// Build complete: swap to the full handler and flip readyz (N-01:
+	// atomic swap on ONE server — no Shutdown, no closed listener).
+	srv.InjectHTTPServer(httpSrv)
+	liveHandler.Store(srv.Handler())
 	ready.Store(true)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -1455,5 +1457,7 @@ func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
 		deps.StartWorker(ctx)
 	}
 	fmt.Fprintf(os.Stderr, "sage-wiki serve (HTTP) listening on %s — REST at /, MCP at /mcp, metrics at /metrics\n", addr)
-	return srv.ServeWithListener(ctx, listener)
+	go srv.StartQueue(ctx)
+	<-ctx.Done()
+	return srv.Shutdown()
 }

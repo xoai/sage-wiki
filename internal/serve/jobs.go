@@ -339,9 +339,19 @@ func (q *Queue) drainOnce(ctx context.Context) {
 		if len(ids) == 0 {
 			return
 		}
+		// Deterministic stop check BEFORE starting the next job (N-02):
+		// a tied sem/stopCh select picks randomly — never let the backlog
+		// start during shutdown.
+		select {
+		case <-q.stopCh:
+			return
+		default:
+		}
 		select {
 		case q.sem <- struct{}{}:
 		case <-ctx.Done():
+			return
+		case <-q.stopCh:
 			return
 		}
 		q.runOne(ctx, ids[0])

@@ -90,6 +90,15 @@ func (s *Server) Queue() *Queue { return s.queue }
 // SetWorkspace attaches the engine workspace held for the lock (§2.0).
 func (s *Server) SetWorkspace(w *engine.Workspace) { s.ws = w }
 
+// InjectHTTPServer hands an externally created http.Server to the drain
+// sequence (used when the caller serves with a readiness-aware handler —
+// N-01: one listener, one server, handler swapped atomically at handoff).
+func (s *Server) InjectHTTPServer(h *http.Server) {
+	s.srvMu.Lock()
+	s.httpSrv = h
+	s.srvMu.Unlock()
+}
+
 // ServeWithListener serves on a pre-bound listener (early bind, AC-S1).
 func (s *Server) ServeWithListener(ctx context.Context, l net.Listener) error {
 	s.srvMu.Lock()
@@ -367,6 +376,12 @@ func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
 	path := r.PathValue("path")
 	if strings.HasPrefix(path, "src:") {
 		writeErr(w, http.StatusNotFound, "not_found", path+" is not an article id (only article DocIDs are served)")
+		return
+	}
+	// Classify not-found BEFORE the tool call (N-03): redacted errors are
+	// path-free by design, so existence is decided here, not from text.
+	if _, err := os.Stat(filepath.Join(s.cfg.Workspace, path)); os.IsNotExist(err) {
+		writeErr(w, http.StatusNotFound, "not_found", "article not found")
 		return
 	}
 	_, raw, err := s.callTool(r.Context(), "wiki_read", map[string]any{"path": path})

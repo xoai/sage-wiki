@@ -121,7 +121,18 @@ func TestQueueSerializesPerWorkspace(t *testing.T) {
 	if s2.StartedAt != "" {
 		t.Fatalf("job2 started before job1 finished: serialization broken (%s >= %s)", s2.StartedAt, s1.StartedAt)
 	}
-	close(release)
+	close(release) // j1 finishes; the queue then processes j2 naturally.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		s, _ := l.Get(j2.ID)
+		if s.Status == JobDone {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("j2 never completed (status %q)", s.Status)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if err := q.Stop(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -178,5 +189,39 @@ func TestJobTimestampsNano(t *testing.T) {
 	j, _ := l.Submit(CompileJobRequest{}, clockSeq(time.Nanosecond))
 	if !strings.Contains(j.CreatedAt, ".") || len(j.CreatedAt) < 30 {
 		t.Errorf("CreatedAt not RFC3339Nano: %q", j.CreatedAt)
+	}
+}
+
+// TestStopLeavesBacklogPending (N-02): Stop during an active drain does
+// NOT start remaining backlog jobs — they stay pending for the restart.
+func TestStopLeavesBacklogPending(t *testing.T) {
+	dir := t.TempDir()
+	l, _ := OpenLedger(dir)
+	release := make(chan struct{})
+	exec := func(ctx context.Context, j *Job) (json.RawMessage, error) {
+		<-release
+		return json.RawMessage(`{}`), nil
+	}
+	q := NewQueue(l, 1, exec, clockSeq(time.Millisecond))
+	go q.Run(context.Background())
+
+	j1, _ := q.Submit(CompileJobRequest{})
+	j2, _ := q.Submit(CompileJobRequest{})
+	time.Sleep(100 * time.Millisecond) // j1 running, j2 pending
+
+	go func() { close(release) }() // j1 completes shortly
+	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := q.Stop(stopCtx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	s1, _ := l.Get(j1.ID)
+	s2, _ := l.Get(j2.ID)
+	if s1.Status != JobDone {
+		t.Errorf("j1 = %q, want done (current job finishes)", s1.Status)
+	}
+	if s2.Status != JobPending {
+		t.Errorf("j2 = %q, want pending (backlog must NOT start during shutdown)", s2.Status)
 	}
 }
