@@ -98,7 +98,13 @@ func OpenLedger(wsDir string) (*Ledger, error) {
 	// transition IS appended (F-042): the file is the restart-proof
 	// record, and it must not claim a job is still running.
 	now := time.Now
-	for _, j := range l.jobs {
+	var ids []string
+	for id := range l.jobs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids) // rule 6: ledger line order must not inherit map order (Q-4)
+	for _, id := range ids {
+		j := l.jobs[id]
 		if j.Status == JobRunning {
 			j.Status = JobInterrupted
 			j.FinishedAt = now().UTC().Format(time.RFC3339Nano)
@@ -372,6 +378,12 @@ func (q *Queue) runOne(ctx context.Context, id string) {
 // Only on budget expiry does it cancel in-flight execs (they mark
 // interrupted). Safe to call before Run starts.
 func (q *Queue) Stop(ctx context.Context) error {
+	q.mu.Lock()
+	started := q.cancel != nil
+	q.mu.Unlock()
+	if !started {
+		return nil // Run never started — nothing to drain (Q-6)
+	}
 	q.once.Do(func() { close(q.stopCh) })
 	select {
 	case <-q.doneCh:

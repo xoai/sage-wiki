@@ -58,7 +58,10 @@ func CheckRefusal(addr string, tokens []string, insecureNoAuth bool) error {
 		host = addr[:i]
 	}
 	switch host {
-	case "", "127.0.0.1", "localhost", "::1", "[::1]":
+	case "", "localhost", "::1", "[::1]":
+		return nil
+	}
+	if strings.HasPrefix(host, "127.") { // all of 127/8 is loopback (Q-10)
 		return nil
 	}
 	return fmt.Errorf("refusing to bind %s without a token (use --token-file, or --insecure-no-auth to override)", addr)
@@ -90,19 +93,22 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		} else if q := r.URL.Query().Get("token"); q != "" {
 			presented = q
 		}
-		pd := tokenDigest(presented)
-		ok := 0
-		for _, d := range digests {
-			// No early exit: every candidate is compared, so timing does
-			// not leak the match position (spec §4 structural property).
-			ok |= subtle.ConstantTimeCompare(pd, d)
-		}
-		if ok != 1 {
+		if !anyTokenMatch(tokenDigest(presented), digests, subtle.ConstantTimeCompare) {
 			writeErr(w, http.StatusUnauthorized, "unauthenticated", "invalid token")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// anyTokenMatch compares the presented digest against EVERY candidate
+// (no early exit — timing must not leak the match position, spec §4).
+func anyTokenMatch(pd []byte, digests [][]byte, cmp func(a, b []byte) int) bool {
+	ok := 0
+	for _, d := range digests {
+		ok |= cmp(pd, d)
+	}
+	return ok == 1
 }
 
 // execCompile runs one queued compile through the SHARED serveJobRunner

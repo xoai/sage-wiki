@@ -3,6 +3,11 @@ package serve
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +21,21 @@ import (
 func TestShutdownDrainPortable(t *testing.T) {
 	dir := t.TempDir()
 	if err := wiki.InitGreenfield(dir, "test", "gpt-4o-mini"); err != nil {
+		t.Fatal(err)
+	}
+	// Doctor validates live LLM connectivity — point the fixture at a stub
+	// (doctor must measure drain damage, not the environment).
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"model":"gpt-4o-mini","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer stub.Close()
+	cfgRaw, err := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged := strings.Replace(string(cfgRaw), "provider: gemini\n  api_key: ${GEMINI_API_KEY}", "provider: openai\n  api_key: sk-test\n  base_url: "+stub.URL, 1)
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(merged), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	deps, err := AssembleDeps(dir)
@@ -77,7 +97,14 @@ func TestShutdownDrainPortable(t *testing.T) {
 	}
 	w2.Close()
 
-	// Integrity: config + manifest + DB readable post-drain.
+	// AC-S5's integrity clause: the existing doctor checks pass on the
+	// post-drain workspace (not a proxy — the real RunDoctor).
+	result := wiki.RunDoctor(dir)
+	if result.HasErrors() {
+		t.Errorf("doctor found errors on the post-drain workspace:\n%s", wiki.FormatDoctor(result))
+	}
+
+	// Ledger integrity: intact and restart-readable.
 	l3, err := OpenLedger(dir)
 	if err != nil {
 		t.Fatalf("ledger unreadable post-drain: %v", err)

@@ -634,9 +634,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// metrics on one listener. --transport stdio|sse and --ui keep the
 	// pre-existing lock-free behavior.
 	addr, _ := cmd.Flags().GetString("addr")
-	transportEarly, _ := cmd.Flags().GetString("transport")
 	uiEarly, _ := cmd.Flags().GetBool("ui")
-	if addr != "" || (transportEarly == "" && !uiEarly) {
+	if addr != "" || (!cmd.Flags().Changed("transport") && !uiEarly) {
 		if addr == "" {
 			addr = "127.0.0.1:8484"
 		}
@@ -1367,7 +1366,16 @@ func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
 	if err != nil {
 		return err
 	}
+	defer w.Close() // idempotent; Shutdown may close it first
+	defer w.Close() // idempotent; Shutdown may close it first
 	fmt.Fprintf(os.Stderr, "sage-wiki serve (HTTP) — workspace %s locked for exclusive use\n", dir)
+
+	// Bind EARLY (AC-S1: /healthz answers while stores load; /readyz
+	// stays 503 until the build completes below).
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
 
 	deps, err := serve.AssembleDeps(dir)
 	if err != nil {
@@ -1404,5 +1412,5 @@ func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
 		deps.StartWorker(ctx)
 	}
 	fmt.Fprintf(os.Stderr, "sage-wiki serve (HTTP) listening on %s — REST at /, MCP at /mcp, metrics at /metrics\n", addr)
-	return srv.Serve(ctx, addr)
+	return srv.ServeWithListener(ctx, listener)
 }

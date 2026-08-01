@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"crypto/subtle"
+
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
 
@@ -202,4 +204,36 @@ func TestDocNegativeSrcID(t *testing.T) {
 
 func writeTestFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o600)
+}
+
+// TestAnyTokenMatchComparesEveryCandidate pins Q-5's structural property:
+// the comparator runs once per candidate even when the first matches or
+// the presented digest matches nothing.
+func TestAnyTokenMatchComparesEveryCandidate(t *testing.T) {
+	digests := [][]byte{tokenDigest("a"), tokenDigest("b"), tokenDigest("c")}
+	calls := 0
+	counting := func(a, b []byte) int {
+		calls++
+		return subtle.ConstantTimeCompare(a, b)
+	}
+	if !anyTokenMatch(tokenDigest("a"), digests, counting) {
+		t.Fatal("first candidate should match")
+	}
+	if calls != len(digests) {
+		t.Errorf("early exit leaked: %d compares for %d digests", calls, len(digests))
+	}
+	calls = 0
+	if anyTokenMatch(tokenDigest("zzz"), digests, counting) {
+		t.Fatal("no candidate should match")
+	}
+	if calls != len(digests) {
+		t.Errorf("miss path early exit: %d compares for %d digests", calls, len(digests))
+	}
+	calls = 0
+	if anyTokenMatch(tokenDigest(""), digests, counting) {
+		t.Fatal("empty presented must not match")
+	}
+	if calls != len(digests) {
+		t.Errorf("empty presented early exit: %d compares", calls)
+	}
 }

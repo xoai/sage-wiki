@@ -20,8 +20,10 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/xoai/sage-wiki/internal/api"
 	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
+	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/pkg/engine"
+	"net"
 )
 
 // Config is the server's construction surface (spec §2.2).
@@ -55,7 +57,9 @@ func New(deps *Deps, mcpSrv *mcppkg.Server, cfg Config) (*Server, error) {
 	if cfg.MaxConcurrentCompiles < 1 {
 		cfg.MaxConcurrentCompiles = 2
 	}
-	if cfg.DrainTimeout < 10*time.Second {
+	if cfg.DrainTimeout == 0 {
+		cfg.DrainTimeout = 30 * time.Second // spec default (Q-9)
+	} else if cfg.DrainTimeout < 10*time.Second {
 		fmt.Fprintf(os.Stderr, "warning: --drain-timeout %v clamped to 10s (minimum)\n", cfg.DrainTimeout)
 		cfg.DrainTimeout = 10 * time.Second
 	}
@@ -70,6 +74,13 @@ func New(deps *Deps, mcpSrv *mcppkg.Server, cfg Config) (*Server, error) {
 	s.queue = NewQueue(ledger, cfg.MaxConcurrentCompiles, s.execCompile, nil)
 	s.routes()
 	s.mcpStream = s.mountMCP()
+	// /v1 stays live on this listener too (Q-3): the existing facade over
+	// the same MCP dispatch + the deps job runner.
+	apiCfg, err := config.Load(filepath.Join(cfg.Workspace, "config.yaml"))
+	if err != nil {
+		return nil, fmt.Errorf("serve: load config for /v1: %w", err)
+	}
+	s.mux.Handle("/v1/", api.New(mcpSrv, apiCfg, cfg.Workspace, NewJobRunner(deps, mcpSrv), deps.Progress()).Handler())
 	return s, nil
 }
 
@@ -79,12 +90,10 @@ func (s *Server) Queue() *Queue { return s.queue }
 // SetWorkspace attaches the engine workspace held for the lock (§2.0).
 func (s *Server) SetWorkspace(w *engine.Workspace) { s.ws = w }
 
-// Serve binds addr and blocks until ctx is cancelled (SIGTERM path),
-// then drains per spec §2.7.
-func (s *Server) Serve(ctx context.Context, addr string) error {
+// ServeWithListener serves on a pre-bound listener (early bind, AC-S1).
+func (s *Server) ServeWithListener(ctx context.Context, l net.Listener) error {
 	s.srvMu.Lock()
 	s.httpSrv = &http.Server{
-		Addr:              addr,
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -93,7 +102,7 @@ func (s *Server) Serve(ctx context.Context, addr string) error {
 	s.srvMu.Unlock()
 	errCh := make(chan error, 1)
 	go func() {
-		if err := s.httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.httpSrv.Serve(l); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 			return
 		}
@@ -102,10 +111,25 @@ func (s *Server) Serve(ctx context.Context, addr string) error {
 	s.StartQueue(ctx)
 	select {
 	case err := <-errCh:
+		// Bind/serve failure still drains (spec §2.7: bind failure after
+		// acquisition releases immediately).
+		if derr := s.Shutdown(); derr != nil {
+			return derr
+		}
 		return err
 	case <-ctx.Done():
 		return s.Shutdown()
 	}
+}
+
+// Serve binds addr and blocks until ctx is cancelled (SIGTERM path),
+// then drains per spec §2.7.
+func (s *Server) Serve(ctx context.Context, addr string) error {
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	return s.ServeWithListener(ctx, l)
 }
 
 // Shutdown executes the drain sequence (spec §2.7): stop accepting →
