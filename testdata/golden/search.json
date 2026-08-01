@@ -1650,6 +1650,109 @@
           "score": 0.06605617258942743
         }
       ]
+    },
+    {
+      "q": "token bucket rate limiter",
+      "channels": [
+        "bm25"
+      ],
+      "expect": [
+        {
+          "doc": "src:raw/code/example.py",
+          "rank": 1,
+          "score": 1
+        },
+        {
+          "doc": "src:raw/notes/cache-economics.md",
+          "rank": 2,
+          "score": 0.7870967741935483
+        },
+        {
+          "doc": "src:raw/alias/api-gateway.md",
+          "rank": 3,
+          "score": 0.5809523809523802
+        },
+        {
+          "doc": "src:raw/unicode/emoji.md",
+          "rank": 4,
+          "score": 0.3812500000000002
+        },
+        {
+          "doc": "src:raw/alias/k8s-usage.md",
+          "rank": 5,
+          "score": 0.1876923076923083
+        },
+        {
+          "doc": "src:raw/unicode/mixed-scripts.md",
+          "rank": 6,
+          "score": 0
+        }
+      ]
+    },
+    {
+      "q": "kubernetes container orchestration",
+      "channels": [
+        "vector"
+      ],
+      "expect": [
+        {
+          "doc": "wiki/concepts/distributed-systemstxt.md",
+          "rank": 1,
+          "score": 1
+        },
+        {
+          "doc": "wiki/concepts/dated-2024.md",
+          "rank": 2,
+          "score": 0.9265574823378294
+        },
+        {
+          "doc": "wiki/concepts/instruction-lookalike.md",
+          "rank": 3,
+          "score": 0.8790874102404372
+        },
+        {
+          "doc": "wiki/concepts/system-prompt-bait.md",
+          "rank": 4,
+          "score": 0.5850765716800349
+        },
+        {
+          "doc": "wiki/concepts/examplejs.md",
+          "rank": 5,
+          "score": 0.5658211492689561
+        },
+        {
+          "doc": "wiki/concepts/api-gateway.md",
+          "rank": 6,
+          "score": 0.5061452055917681
+        },
+        {
+          "doc": "src:raw/contradiction/fact-v2.md",
+          "rank": 7,
+          "score": 0.271290944123314
+        },
+        {
+          "doc": "src:raw/alias/kubernetes-k8s.md",
+          "rank": 8,
+          "score": 0.2585741811175338
+        },
+        {
+          "doc": "src:raw/unicode/emoji.md",
+          "rank": 9,
+          "score": 0.24626112487384158
+        },
+        {
+          "doc": "wiki/summaries/raw-adversarial-instruction-lookalike.md",
+          "rank": 10,
+          "score": 0.2343328516377649
+        }
+      ]
+    },
+    {
+      "q": "Alpha Beta Gamma chain",
+      "channels": [
+        "graph"
+      ],
+      "expect": []
     }
   ]
 }
