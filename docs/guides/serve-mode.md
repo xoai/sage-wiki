@@ -34,7 +34,10 @@ A non-loopback `--addr` without any token is refused with a clear error.
 Tokens resolve: `--token` flag > `--token-file` > `SAGE_WIKI_TOKEN` >
 config. The server warns when the token file is group/world-readable;
 tokens never appear in logs. TLS is out of scope — deploy behind a
-reverse proxy or tunnel.
+reverse proxy or tunnel. **Caveat:** bearer tokens are also accepted via
+the `?token=` query parameter (web-server precedent) — URLs leak via
+proxy/browser logs, so prefer the `Authorization: Bearer` header and
+expect proxies to log query strings.
 
 ## REST surface
 
@@ -48,8 +51,9 @@ reverse proxy or tunnel.
 ## Async compile jobs
 
 `POST /compile` returns 202 + `job_id`. Jobs run FIFO per workspace
-(the single-writer invariant) capped globally by
-`--max-concurrent-compiles`, and persist to `.sage/jobs.jsonl`
+(the single-writer invariant — one compile per workspace at a time, so
+`--max-concurrent-compiles` only becomes meaningful with SPEC-06's
+multi-workspace server), and persist to `.sage/jobs.jsonl`
 (parameters only, never source content). On restart: pending jobs
 resume, running jobs are marked `interrupted` — never silently
 "running" forever.

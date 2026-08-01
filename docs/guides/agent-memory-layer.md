@@ -79,7 +79,7 @@ Setting `default_tier: 1` indexes everything fast (FTS5 + vector embedding). Art
   "mcpServers": {
     "sage-wiki": {
       "command": "sage-wiki",
-      "args": ["serve", "--project", ".sage-wiki"]
+      "args": ["serve", "--transport", "stdio", "--project", ".sage-wiki"]
     }
   }
 }
@@ -96,7 +96,7 @@ Add to your project's `.mcp.json`:
   "mcpServers": {
     "sage-wiki": {
       "command": "sage-wiki",
-      "args": ["serve", "--project", "/path/to/your/wiki"]
+      "args": ["serve", "--transport", "stdio", "--project", "/path/to/your/wiki"]
     }
   }
 }
@@ -121,7 +121,7 @@ Add to `.cursor/mcp.json` in your project:
   "mcpServers": {
     "sage-wiki": {
       "command": "sage-wiki",
-      "args": ["serve", "--project", "/path/to/your/wiki"]
+      "args": ["serve", "--transport", "stdio", "--project", "/path/to/your/wiki"]
     }
   }
 }

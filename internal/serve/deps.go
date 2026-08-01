@@ -23,6 +23,7 @@ type Deps struct {
 	worker    *compiler.Worker
 	workerApp *app.App // the worker's own backend handle; nil when disabled
 	workerWG  sync.WaitGroup
+	closeOnce sync.Once
 }
 
 // Progress returns the shared progress hub.
@@ -71,11 +72,13 @@ func AssembleDeps(dir string) (*Deps, error) {
 }
 
 func (d *Deps) Close() {
-	// Wait for the in-flight cycle before closing the handle under it.
-	d.workerWG.Wait()
-	if d.workerApp != nil {
-		d.workerApp.Close()
-	}
+	d.closeOnce.Do(func() {
+		// Wait for the in-flight cycle before closing the handle under it.
+		d.workerWG.Wait()
+		if d.workerApp != nil {
+			d.workerApp.Close()
+		}
+	})
 }
 
 // newJobRunner creates a JobRunner backed by serve-mode state. Full compile

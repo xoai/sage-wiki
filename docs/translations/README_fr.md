@@ -249,7 +249,7 @@ Ajoutez à `.mcp.json` (Claude Code ; les autres agents dans le [guide de la cou
   "mcpServers": {
     "sage-wiki": {
       "command": "sage-wiki",
-      "args": ["serve", "--project", "/path/to/wiki"]
+      "args": ["serve", "--transport", "stdio", "--project", "/path/to/wiki"]
     }
   }
 }

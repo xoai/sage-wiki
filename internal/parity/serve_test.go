@@ -2,7 +2,6 @@ package parity
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"os"
@@ -95,5 +94,4 @@ func TestServeSearchParity(t *testing.T) {
 			}
 		}
 	}
-	_ = context.Background
 }

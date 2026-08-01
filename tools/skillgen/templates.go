@@ -19,7 +19,7 @@ Local-first knowledge graph that compiles documents into an interlinked, human-r
   "mcpServers": {
     "sage-wiki": {
       "command": "sage-wiki",
-      "args": ["serve", "--project", "/path/to/wiki"]
+      "args": ["serve", "--transport", "stdio", "--project", "/path/to/wiki"]
     }
   }
 }
@@ -155,7 +155,7 @@ Add to the project's MCP config:
   "mcpServers": {
     "sage-wiki": {
       "command": "sage-wiki",
-      "args": ["serve", "--project", "."]
+      "args": ["serve", "--transport", "stdio", "--project", "."]
     }
   }
 }

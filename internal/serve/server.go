@@ -12,15 +12,15 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"sync"
 	"strings"
+	"sync"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/xoai/sage-wiki/internal/api"
-	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
 	"github.com/xoai/sage-wiki/internal/config"
+	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/pkg/engine"
 	"net"
@@ -231,7 +231,7 @@ func (s *Server) callTool(ctx context.Context, name string, args map[string]any)
 	req.Params.Name = name
 	req.Params.Arguments = args
 	res := s.mcp.CallTool(ctx, name, req)
-	isErr, body := api.TranslateToolResult(res)
+	isErr, body := api.TranslateToolResult(name, res)
 	if isErr {
 		var envelope struct {
 			Error string `json:"error"`
@@ -406,6 +406,9 @@ func exportTar(ctx context.Context, dir string, dst io.Writer) error {
 		}
 		if path == dir {
 			return nil
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil // symlinks are skipped (R-15: empty link targets break readers)
 		}
 		rel, err := filepath.Rel(dir, path)
 		if err != nil {

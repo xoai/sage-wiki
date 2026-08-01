@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -16,8 +17,8 @@ import (
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"strings"
-	"time"
 	"sync/atomic"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/api"
 	"github.com/xoai/sage-wiki/internal/auth"
@@ -208,7 +209,7 @@ func init() {
 	serveCmd.Flags().String("addr", "", "HTTP mode bind (REST+MCP+metrics, takes the workspace lock; bare serve defaults to 127.0.0.1:8484)")
 	serveCmd.Flags().String("workspace", "", "workspace dir for HTTP mode (default: --project)")
 	serveCmd.Flags().String("token-file", "", "bearer token file for HTTP mode (one per line)")
-	serveCmd.Flags().Int("max-concurrent-compiles", 2, "global cap on concurrent compiles in HTTP mode")
+	serveCmd.Flags().Int("max-concurrent-compiles", 2, "global cap on concurrent compiles (matters for SPEC-06 multi-workspace; single-workspace FIFO already serializes)")
 	serveCmd.Flags().Duration("drain-timeout", 30*time.Second, "graceful shutdown drain budget (min 10s, warns when clamped)")
 	serveCmd.Flags().Bool("insecure-no-auth", false, "allow non-loopback bind without tokens in HTTP mode")
 	serveCmd.Flags().Int("port", 3333, "SSE/UI port")
@@ -635,7 +636,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// pre-existing lock-free behavior.
 	addr, _ := cmd.Flags().GetString("addr")
 	uiEarly, _ := cmd.Flags().GetBool("ui")
-	if addr != "" || (!cmd.Flags().Changed("transport") && !uiEarly) {
+	if useHTTPMode(addr, cmd.Flags().Changed("transport"), uiEarly) {
 		if addr == "" {
 			addr = "127.0.0.1:8484"
 		}
@@ -1335,6 +1336,18 @@ func runScribe(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// useHTTPMode is the serve-mode gate (R-07): an explicit --addr always
+// selects HTTP mode; bare serve selects it only when the user did NOT
+// pass --transport or --ui. Decided by Flags().Changed because
+// --transport's default is "stdio" — comparing the string value is the
+// dead-gate bug Gate 8 Q-1 caught.
+func useHTTPMode(addr string, transportChanged, ui bool) bool {
+	if addr != "" {
+		return true
+	}
+	return !transportChanged && !ui
+}
+
 // runServeHTTP is the SPEC-02 unified server: workspace lock + REST +
 // streamable MCP + metrics + graceful drain on one listener.
 func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
@@ -1360,37 +1373,63 @@ func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
 		return err
 	}
 
-	// Workspace lock (§2.0): the read-write open acquires engine.lock and
-	// fails fast when another process holds it.
-	w, err := engine.Open(cmd.Context(), dir)
-	if err != nil {
-		return err
-	}
-	defer w.Close() // idempotent; Shutdown may close it first
-	defer w.Close() // idempotent; Shutdown may close it first
-	fmt.Fprintf(os.Stderr, "sage-wiki serve (HTTP) — workspace %s locked for exclusive use\n", dir)
-
-	// Bind EARLY (AC-S1: /healthz answers while stores load; /readyz
-	// stays 503 until the build completes below).
+	// Bind FIRST and serve healthz/readyz immediately (AC-S1): the port
+	// answers while the (potentially slow) workspace open + store build
+	// runs below. readyz stays 503 until the build completes.
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
+	var ready atomic.Bool
+	interim := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		switch r.URL.Path {
+		case "/healthz":
+			w.Write([]byte(`{"status":"ok"}`))
+		case "/readyz":
+			if ready.Load() {
+				w.Write([]byte(`{"status":"ready"}`))
+			} else {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte(`{"status":"starting"}`))
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	})}
+	interimDone := make(chan struct{})
+	go func() { interim.Serve(listener); close(interimDone) }()
+	stopInterim := func() {
+		interim.Shutdown(context.Background())
+		<-interimDone
+	}
+
+	// Workspace lock (§2.0): the read-write open acquires engine.lock and
+	// fails fast when another process holds it.
+	w, err := engine.Open(cmd.Context(), dir)
+	if err != nil {
+		stopInterim()
+		listener.Close()
+		return err
+	}
+	defer w.Close() // idempotent; Shutdown may close it first
+	fmt.Fprintf(os.Stderr, "sage-wiki serve (HTTP) — workspace %s locked for exclusive use\n", dir)
 
 	deps, err := serve.AssembleDeps(dir)
 	if err != nil {
-		w.Close()
+		stopInterim()
+		listener.Close()
 		return err
 	}
 	defer deps.Close()
 	mcpSrv, err := mcppkg.NewServer(dir, deps.Coordinator())
 	if err != nil {
-		w.Close()
+		stopInterim()
+		listener.Close()
 		return err
 	}
 	defer mcpSrv.Close()
 
-	var ready atomic.Bool
 	srv, err := serve.New(deps, mcpSrv, serve.Config{
 		Workspace:             dir,
 		Tokens:                tokens,
@@ -1400,11 +1439,15 @@ func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
 		ReadyFn:               ready.Load,
 	})
 	if err != nil {
-		w.Close()
+		stopInterim()
+		listener.Close()
 		return err
 	}
 	srv.SetWorkspace(w)
-	ready.Store(true) // stores + server built: readyz flips from 503 to 200
+
+	// Build complete: hand the listener to the real server; readyz flips.
+	stopInterim()
+	ready.Store(true)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

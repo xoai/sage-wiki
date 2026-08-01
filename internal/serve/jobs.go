@@ -269,7 +269,7 @@ type Queue struct {
 	stopCh chan struct{}
 	doneCh chan struct{}
 	once   sync.Once
-	mu     sync.Mutex        // guards cancel
+	mu     sync.Mutex // guards cancel
 	cancel context.CancelFunc
 }
 
@@ -322,7 +322,10 @@ func (q *Queue) Run(ctx context.Context) {
 		case <-runCtx.Done():
 			return
 		case <-q.stopCh:
-			q.drainOnce(runCtx) // final drain of the backlog
+			// Finish the CURRENT job only (spec §2.7's "finish current job
+			// or mark interrupted") — the backlog stays pending and
+			// resumes on the next start. Draining the whole backlog would
+			// start fresh compiles during shutdown.
 			return
 		case <-q.wake:
 			q.drainOnce(runCtx)

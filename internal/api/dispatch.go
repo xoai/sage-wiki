@@ -71,15 +71,21 @@ func toolRequest(tool string, args map[string]any) mcp.CallToolRequest {
 // codes before dispatch, so anything reaching here is unclassified. Error
 // text is never string-matched to pick a code.
 // TranslateToolResult is the ONE result translation (spec adaptation #2):
-// tool text that parses as a JSON object/array passes through verbatim;
-// anything else wraps as {"result": text}. Used by /v1 and internal/serve
-// so the two route surfaces cannot drift.
-func TranslateToolResult(res *mcp.CallToolResult) (isErr bool, body json.RawMessage) {
+// tool text that parses as a JSON object/array is re-emitted (re-marshal
+// preserves shape, not raw bytes); anything else wraps as {"result": text}.
+// Used by /v1 and internal/serve so the two route surfaces cannot drift.
+// toolName drives the path-redaction branch: path-sensitive tools return
+// a generic message instead of leaking filesystem paths (R-01).
+func TranslateToolResult(toolName string, res *mcp.CallToolResult) (isErr bool, body json.RawMessage) {
 	if res == nil {
 		return true, json.RawMessage(`{"error":{"code":"internal","message":"tool returned no result"}}`)
 	}
 	text := resultText(res)
 	if res.IsError {
+		if pathSensitiveTools[toolName] {
+			wrapped, _ := json.Marshal(map[string]string{"error": toolName + " failed"})
+			return true, wrapped
+		}
 		wrapped, _ := json.Marshal(map[string]string{"error": text})
 		return true, wrapped
 	}

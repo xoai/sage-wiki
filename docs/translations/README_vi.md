@@ -246,7 +246,7 @@ Thêm vào `.mcp.json` (Claude Code; các agent khác trong [hướng dẫn Lớ
   "mcpServers": {
     "sage-wiki": {
       "command": "sage-wiki",
-      "args": ["serve", "--project", "/path/to/wiki"]
+      "args": ["serve", "--transport", "stdio", "--project", "/path/to/wiki"]
     }
   }
 }
