@@ -54,6 +54,8 @@ type Mirror struct {
 	now         func() time.Time // injected clock (status lag; tests)
 	pruneDelete func(ctx context.Context, bucket, key string) error
 
+	encKey []byte // AES-256 key when encryption.enabled (nil otherwise)
+
 	lastPruneWarnings []string
 }
 
@@ -111,6 +113,9 @@ func Open(wsDir string, cfg Config, src ChangeSource) (*Mirror, error) {
 	}
 	m := &Mirror{dir: wsDir, cfg: cfg, src: src, client: client, local: local, now: time.Now}
 	m.pruneDelete = m.pruneDeleteDefault
+	if err := m.loadEncryptionKey(); err != nil {
+		return nil, err
+	}
 	// Wire the real ops (enable.go's init sets openWiresOps).
 	if openWiresOps != nil {
 		openWiresOps(m)

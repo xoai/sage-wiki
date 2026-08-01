@@ -26,10 +26,15 @@ type DBState struct {
 }
 
 // ObjectRef is a content-addressed shipped object (Deleted = tombstone).
+// SHA256 is over the SHIPPED bytes (ciphertext when encrypted — verify
+// works without the key). ContentSHA256 is the plaintext content hash,
+// set only under encryption: diff dedupe and key addressing use it,
+// because ciphertext is nonce-random per put.
 type ObjectRef struct {
-	Key     string `json:"key"`
-	SHA256  string `json:"sha256"`
-	Deleted bool   `json:"deleted"`
+	Key           string `json:"key"`
+	SHA256        string `json:"sha256"`
+	Deleted       bool   `json:"deleted"`
+	ContentSHA256 string `json:"content_sha256,omitempty"`
 }
 
 // State is mirror-state.json — the single commit pointer, always written
@@ -173,10 +178,15 @@ func validateObjectRef(kind, name string, ref ObjectRef) error {
 	if !ValidSHA256Hex(ref.SHA256) {
 		return fmt.Errorf("%s[%q]: sha256 invalid", kind, name)
 	}
-	// Content-addressed: the key must END with the sha (docs: .../<sha2>/<sha>,
-	// vectors: .../<sha>). Tombstones keep the deleted content's sha.
-	if len(ref.Key) < 64 || ref.Key[len(ref.Key)-64:] != ref.SHA256 {
-		return fmt.Errorf("%s[%q]: key %q is not content-addressed by its sha256", kind, name, ref.Key)
+	// Content-addressed: the key must END with the content sha (docs:
+	// .../<sha2>/<sha>, vectors: .../<sha>) — the CONTENT hash when
+	// encrypted, else the shipped-bytes hash. Tombstones keep it too.
+	addrSHA := ref.SHA256
+	if ref.ContentSHA256 != "" {
+		addrSHA = ref.ContentSHA256
+	}
+	if len(ref.Key) < 64 || ref.Key[len(ref.Key)-64:] != addrSHA {
+		return fmt.Errorf("%s[%q]: key %q is not content-addressed by its content sha256", kind, name, ref.Key)
 	}
 	return nil
 }

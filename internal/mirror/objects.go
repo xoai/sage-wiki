@@ -38,10 +38,11 @@ func (m *Mirror) shipObjects(ctx context.Context, st *State, changes []Change, r
 				continue
 			}
 			key := DocObjectKey(prefix, ch.SHA256)
-			if err := m.putObject(ctx, key, b); err != nil {
+			shippedSHA, err := m.putObjectShasum(ctx, key, b)
+			if err != nil {
 				return fmt.Errorf("ship: PUT %s: %w", ch.Path, err)
 			}
-			st.Objects[ch.Path] = ObjectRef{Key: key, SHA256: ch.SHA256}
+			st.Objects[ch.Path] = m.objectRef(key, shippedSHA, ch.SHA256)
 			res.ObjectsShipped++
 		case ChangeDelete:
 			ref, ok := st.Objects[ch.Path]
@@ -65,10 +66,11 @@ func (m *Mirror) syncVector(ctx context.Context, st *State, prefix string, ch Ch
 			return nil
 		}
 		key := VectorObjectKey(prefix, ch.SHA256)
-		if err := m.putObject(ctx, key, b); err != nil {
+		shippedSHA, err := m.putObjectShasum(ctx, key, b)
+		if err != nil {
 			return fmt.Errorf("ship: PUT vector %s: %w", ch.Path, err)
 		}
-		st.Vectors[ch.Path] = ObjectRef{Key: key, SHA256: ch.SHA256}
+		st.Vectors[ch.Path] = m.objectRef(key, shippedSHA, ch.SHA256)
 		res.ObjectsShipped++
 	case ChangeDelete:
 		ref, ok := st.Vectors[ch.Path]
@@ -82,7 +84,25 @@ func (m *Mirror) syncVector(ctx context.Context, st *State, prefix string, ch Ch
 	return nil
 }
 
-// putObject is the single byte-path seam (Task 21 encryption hooks here).
-func (m *Mirror) putObject(ctx context.Context, key string, b []byte) error {
-	return m.client.PutObject(ctx, m.cfg.Bucket, key, b)
+// putObjectShasum ships through the single byte-path seam and returns the
+// sha of the SHIPPED bytes (ciphertext when encrypted).
+func (m *Mirror) putObjectShasum(ctx context.Context, key string, b []byte) (string, error) {
+	shipped, err := m.shipBytes(b)
+	if err != nil {
+		return "", err
+	}
+	if err := m.client.PutObject(ctx, m.cfg.Bucket, key, shipped); err != nil {
+		return "", err
+	}
+	return sha256HexBytes(shipped), nil
+}
+
+// objectRef builds the committed reference: shipped-bytes sha for integrity,
+// content sha recorded only under encryption (diff dedupe + key addressing).
+func (m *Mirror) objectRef(key, shippedSHA, contentSHA string) ObjectRef {
+	ref := ObjectRef{Key: key, SHA256: shippedSHA}
+	if m.encKey != nil {
+		ref.ContentSHA256 = contentSHA
+	}
+	return ref
 }

@@ -154,7 +154,7 @@ func (d *diffChangeSource) Changes(ctx context.Context, since ChangeToken) ([]Ch
 	var changes []Change
 	for rel, sha := range present {
 		ref, ok := since.Committed[rel]
-		if !ok || ref.Deleted || ref.SHA256 != sha {
+		if !ok || ref.Deleted || committedContentSHA(ref) != sha {
 			changes = append(changes, Change{Path: rel, Kind: ChangeUpsert, SHA256: sha})
 		}
 	}
@@ -168,7 +168,7 @@ func (d *diffChangeSource) Changes(ctx context.Context, since ChangeToken) ([]Ch
 	}
 	for name, sha := range vectorsPresent {
 		ref, ok := since.CommittedVectors[name]
-		if !ok || ref.Deleted || ref.SHA256 != sha {
+		if !ok || ref.Deleted || committedContentSHA(ref) != sha {
 			changes = append(changes, Change{Path: name, Kind: ChangeUpsert, SHA256: sha, Vector: true})
 		}
 	}
@@ -183,6 +183,15 @@ func (d *diffChangeSource) Changes(ctx context.Context, since ChangeToken) ([]Ch
 
 	sort.Slice(changes, func(i, j int) bool { return changes[i].Path < changes[j].Path })
 	return changes, since, nil
+}
+
+// committedContentSHA is the hash the diff compares against: the plaintext
+// content hash when encrypted (ContentSHA256), else the shipped-bytes hash.
+func committedContentSHA(ref ObjectRef) string {
+	if ref.ContentSHA256 != "" {
+		return ref.ContentSHA256
+	}
+	return ref.SHA256
 }
 
 func mustRel(root, path string) string {

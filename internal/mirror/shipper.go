@@ -303,7 +303,8 @@ func (m *Mirror) rotate(ctx context.Context, st *State) error {
 		return fmt.Errorf("rotate: compress: %w", err)
 	}
 	newSnapKey := SnapshotKey(prefix, gen+1)
-	if err := m.client.PutObject(ctx, m.cfg.Bucket, newSnapKey, compressed); err != nil {
+	snapShippedSHA, err := m.putObjectShasum(ctx, newSnapKey, compressed)
+	if err != nil {
 		return fmt.Errorf("rotate: PUT snapshot: %w", err)
 	}
 
@@ -313,7 +314,7 @@ func (m *Mirror) rotate(ctx context.Context, st *State) error {
 		Generation:    gen + 1,
 		DB: DBState{
 			Snapshot:       newSnapKey,
-			SnapshotSHA256: sha256HexBytes(compressed),
+			SnapshotSHA256: snapShippedSHA,
 			CreatedAt:      now,
 			WAL:            []WALSegmentRef{},
 		},
@@ -357,12 +358,13 @@ func (m *Mirror) commitSegment(ctx context.Context, st *State, seg []byte, seq i
 		return err
 	}
 	key := WALSegmentKey(prefix, st.Generation, seq)
-	if err := m.client.PutObject(ctx, m.cfg.Bucket, key, compressed); err != nil {
+	shippedSHA, err := m.putObjectShasum(ctx, key, compressed)
+	if err != nil {
 		return fmt.Errorf("ship: PUT segment: %w", err)
 	}
 	st.DB.WAL = append(st.DB.WAL, WALSegmentRef{
 		Key:      key,
-		SHA256:   sha256HexBytes(compressed),
+		SHA256:   shippedSHA,
 		SealedAt: m.now().UTC(),
 	})
 	st.UpdatedAt = m.now().UTC()

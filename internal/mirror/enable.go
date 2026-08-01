@@ -95,11 +95,11 @@ func (o *mirrorOps) Enable(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("mirror enable: compress snapshot: %w", err)
 	}
-	sha := sha256HexBytes(compressed)
 	now := time.Now().UTC()
 
 	snapKey := SnapshotKey(prefix, 1)
-	if err := m.client.PutObject(ctx, m.cfg.Bucket, snapKey, compressed); err != nil {
+	sha, err := m.putObjectShasum(ctx, snapKey, compressed)
+	if err != nil {
 		return fmt.Errorf("mirror enable: PUT snapshot: %w", err)
 	}
 

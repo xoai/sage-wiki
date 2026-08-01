@@ -74,8 +74,34 @@ func hydrateWithClient(ctx context.Context, client *s3.Client, prefix, bucket, d
 	if manErr != nil {
 		return nil, manErr
 	}
-	if manifest.Encrypted && opts.KeyFile == "" {
-		return nil, fmt.Errorf("hydrate: mirror is encrypted — pass --key-file")
+	var encKey []byte
+	if manifest.Encrypted {
+		if opts.KeyFile == "" {
+			return nil, fmt.Errorf("hydrate: mirror is encrypted — pass --key-file")
+		}
+		k, err := LoadEncryptionKey(opts.KeyFile)
+		if err != nil {
+			return nil, err
+		}
+		encKey = k
+	}
+
+	// getPlain downloads, verifies the SHIPPED-bytes sha, and decrypts when
+	// the mirror is encrypted (AEAD failure names the object — never a
+	// partial-silent restore).
+	getPlain := func(key, wantSHA string) ([]byte, error) {
+		b, err := downloadVerified(ctx, client, bucket, key, wantSHA)
+		if err != nil {
+			return nil, err
+		}
+		if encKey != nil {
+			plain, err := decryptBytes(encKey, b)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", key, err)
+			}
+			return plain, nil
+		}
+		return b, nil
 	}
 
 	// Load the commit pointer.
@@ -115,7 +141,7 @@ func hydrateWithClient(ctx context.Context, client *s3.Client, prefix, bucket, d
 	// --- Phase: db (snapshot + WAL replay) ---
 	dbPath := filepath.Join(dst, ".sage", "wiki.db")
 	if !phases.alreadyDone("db") {
-		dbBytes, err := downloadVerified(ctx, client, bucket, sel.snapshot, sel.snapshotSHA)
+		dbBytes, err := getPlain(sel.snapshot, sel.snapshotSHA)
 		if err != nil {
 			return nil, err
 		}
@@ -131,7 +157,7 @@ func hydrateWithClient(ctx context.Context, client *s3.Client, prefix, bucket, d
 		if len(sel.wal) > 0 {
 			var walBytes []byte
 			for _, seg := range sel.wal {
-				b, err := downloadVerified(ctx, client, bucket, seg.Key, seg.SHA256)
+				b, err := getPlain(seg.Key, seg.SHA256)
 				if err != nil {
 					return nil, err
 				}
@@ -164,7 +190,7 @@ func hydrateWithClient(ctx context.Context, client *s3.Client, prefix, bucket, d
 			if ref.Deleted {
 				continue
 			}
-			b, err := downloadVerified(ctx, client, bucket, ref.Key, ref.SHA256)
+			b, err := getPlain(ref.Key, ref.SHA256)
 			if err != nil {
 				return nil, fmt.Errorf("hydrate: %w", err)
 			}
@@ -199,7 +225,7 @@ func hydrateWithClient(ctx context.Context, client *s3.Client, prefix, bucket, d
 			if ref.Deleted {
 				continue
 			}
-			b, err := downloadVerified(ctx, client, bucket, ref.Key, ref.SHA256)
+			b, err := getPlain(ref.Key, ref.SHA256)
 			if err != nil {
 				rep.Advisories = append(rep.Advisories, fmt.Sprintf("vector %s not restored (rebuild with `index rebuild-vectors`): %v", name, err))
 				continue
