@@ -61,6 +61,24 @@ func (s *Store) mmapFor(chunk bool) *parsedIndex {
 			s.warnFallbackOnce(chunk, err.Error())
 			return nil
 		}
+		// Coherence probe ONCE at load: counts exactly the rows the writer
+		// would have included (decoded-length predicate — the dimensions
+		// column is advisory and unused by the loader). Not per-search:
+		// intra-process writes mark the snapshot stale explicitly, and the
+		// SPEC-01 lock excludes a concurrent writer process — a per-search
+		// full-table COUNT would dominate query cost (P7 benchmark).
+		var count int
+		if err := s.db.ReadDB().QueryRow(probe, idx.header.dim).Scan(&count); err != nil {
+			_ = unmap()
+			s.warnFallbackOnce(chunk, "coherence probe failed: "+err.Error())
+			return nil
+		}
+		if count != int(idx.header.count) {
+			_ = unmap()
+			mt.stale = true
+			s.warnStaleOnce(chunk)
+			return nil
+		}
 		mt.idx, mt.unmap = idx, unmap
 		if !mmapIsReal {
 			log.Warn("vectors.backend=mmap: real mmap unavailable on this platform — " +
@@ -68,19 +86,6 @@ func (s *Store) mmapFor(chunk bool) *parsedIndex {
 		}
 	}
 	if mt.idx == nil {
-		return nil
-	}
-	// Coherence probe: count exactly the rows the writer would have
-	// included (decoded-length predicate — the dimensions column is
-	// advisory and unused by the loader).
-	var count int
-	if err := s.db.ReadDB().QueryRow(probe, mt.idx.header.dim).Scan(&count); err != nil {
-		s.warnFallbackOnce(chunk, "coherence probe failed: "+err.Error())
-		return nil
-	}
-	if count != int(mt.idx.header.count) {
-		mt.stale = true
-		s.warnStaleOnce(chunk)
 		return nil
 	}
 	return mt.idx
@@ -165,10 +170,19 @@ func searchMmap(idx *parsedIndex, nq []float32, limit int, filter map[string]boo
 		if filter != nil && !filter[idx.docIDs[i]] {
 			continue
 		}
-		idx.rowInto(i, row)
 		var dot float64
-		for j := range row {
-			dot += float64(nq[j]) * float64(row[j])
+		if row32 := idx.fp32Row(i); row32 != nil {
+			// fp32 fast path: the matrix is reinterpreted in place (ids
+			// section is 4-byte padded), so this is ONE pass over the
+			// mapped pages — same cost shape as the in-memory matrix.
+			for j, v := range row32 {
+				dot += float64(nq[j]) * float64(v)
+			}
+		} else {
+			idx.rowInto(i, row)
+			for j := range row {
+				dot += float64(nq[j]) * float64(row[j])
+			}
 		}
 		res := cacheResult{id: idx.ids[i], score: dot}
 		if idx.docIDs != nil {

@@ -208,6 +208,21 @@ func writeIndexTmp(tmp string, h indexHeader, ids, docIDs []string, rows [][]flo
 			return err
 		}
 	}
+	// Zero-pad to a 4-byte boundary: the fp32 matrix is reinterpreted in
+	// place at query time, which requires aligned rows.
+	written := int64(headerSize)
+	for _, id := range ids {
+		written += 2 + int64(len(id))
+	}
+	for _, id := range docIDs {
+		written += 2 + int64(len(id))
+	}
+	if pad := (4 - int(written%4)) % 4; pad > 0 {
+		if _, err := f.Write(make([]byte, pad)); err != nil {
+			_ = f.Close()
+			return err
+		}
+	}
 
 	var elem [4]byte
 	for _, row := range rows {

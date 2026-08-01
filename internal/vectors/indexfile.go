@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"unsafe"
 )
 
 // On-disk vector index format (SPEC-06): a per-table flat matrix of
@@ -24,6 +25,9 @@ import (
 //	offset 28  row_order u8 (=1 rowid) | reserved u8 ×3
 //	offset 32  ids: count × { id_len u16, id bytes }
 //	           (chunk files only: docids: count × { id_len u16, id bytes })
+//	           then ZERO PADDING to a 4-byte boundary — the fp32 matrix is
+//	           reinterpreted in place (no decode pass), which requires
+//	           4-byte row alignment
 //	offset …   matrix: count × dim × (4B fp32 | 1B int8), row-major
 const (
 	indexMagic    = "SWVI"
@@ -115,6 +119,23 @@ func (p *parsedIndex) row(i int) []float32 {
 	return out
 }
 
+// fp32Row reinterprets row i in place — valid only for fp32 files whose
+// matrix offset is 4-byte aligned (guaranteed by the writer's zero
+// padding). Returns nil for int8 files or any alignment surprise, and the
+// caller falls back to the decode path. The returned slice ALIASES the
+// mapped file: it is read-only by contract (MAP_PRIVATE) and must never
+// escape into a mutation.
+func (p *parsedIndex) fp32Row(i int) []float32 {
+	if p.header.quant != QuantNone {
+		return nil
+	}
+	off := p.matOff + i*p.header.dim*4
+	if off%4 != 0 {
+		return nil
+	}
+	return unsafe.Slice((*float32)(unsafe.Pointer(&p.data[off])), p.header.dim)
+}
+
 // rowInto decodes row i into out (len(out) must equal dim).
 func (p *parsedIndex) rowInto(i int, out []float32) {
 	dim := p.header.dim
@@ -164,6 +185,15 @@ func parseIndex(b []byte) (*parsedIndex, error) {
 		if p.docIDs, err = readIDs(); err != nil {
 			return nil, err
 		}
+	}
+	// Skip the 4-byte alignment padding the writer emitted.
+	if pad := (4 - off%4) % 4; pad > 0 {
+		for i := 0; i < pad; i++ {
+			if off+i >= len(b) || b[off+i] != 0 {
+				return nil, fmt.Errorf("%w: non-zero alignment padding", errCorruptIndex)
+			}
+		}
+		off += pad
 	}
 	matBytes := int(h.count) * h.dim * h.quantRowBytes()
 	if off+matBytes != len(b) {
