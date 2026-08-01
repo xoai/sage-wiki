@@ -11,9 +11,16 @@ import (
 // Failures are advisory warnings — the commit pointer is never at risk.
 func (m *Mirror) pruneGenerations(ctx context.Context, liveGen int) []string {
 	prefix := NormalizePrefix(m.cfg.Prefix)
-	floor := liveGen - m.cfg.RetainGenerations + 1
-	if floor <= 1 {
-		return nil // nothing old enough to prune
+	retain := m.cfg.RetainGenerations
+	if retain < 1 {
+		// Directly-constructed Config with a negative value (YAML Validate
+		// rejects it, Open/normalize maps only 0) — never delete on a bad
+		// knob (F-085).
+		return []string{fmt.Sprintf("prune: invalid retain_generations %d — skipped", retain)}
+	}
+	floor := liveGen - retain + 1
+	if floor < 1 {
+		floor = 1 // generation numbering starts at 1; floor 1 = nothing pruned
 	}
 	keys, err := m.client.ListObjects(ctx, m.cfg.Bucket, prefix+"db/")
 	if err != nil {
@@ -22,8 +29,8 @@ func (m *Mirror) pruneGenerations(ctx context.Context, liveGen int) []string {
 	var warnings []string
 	for _, key := range keys {
 		gen, ok := parseGenerationDirKey(key)
-		if !ok || gen >= floor {
-			continue
+		if !ok || gen >= floor || gen >= liveGen {
+			continue // floor math must never touch the live generation (F-085)
 		}
 		if err := m.pruneDelete(ctx, m.cfg.Bucket, key); err != nil {
 			warnings = append(warnings, fmt.Sprintf("prune: delete %s: %v", key, err))

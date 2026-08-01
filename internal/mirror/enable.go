@@ -12,6 +12,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -249,9 +251,11 @@ func snapshotViaVacuum(ctx context.Context, dbPath string, opts snapOptions) err
 	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d", opts.busyTimeout.Milliseconds())); err != nil {
 		return fmt.Errorf("set busy_timeout: %w", err)
 	}
+	// F-086: SQL string literal quoting — TMPDIR is environment-derived.
+	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
 	var lastErr error
 	for attempt := 0; attempt < opts.maxRetries; attempt++ {
-		if _, err := db.ExecContext(ctx, "VACUUM INTO '"+tmp+"'"); err != nil {
+		if _, err := db.ExecContext(ctx, "VACUUM INTO '"+sqlTmp+"'"); err != nil {
 			lastErr = err
 			continue
 		}
@@ -263,6 +267,7 @@ func snapshotViaVacuum(ctx context.Context, dbPath string, opts snapOptions) err
 
 // hashFile streams a file's SHA-256 and size.
 func hashFile(path string) (sha string, size int64, err error) {
+	hashFileCalls.Add(1)
 	f, err := os.Open(path)
 	if err != nil {
 		return "", 0, err
@@ -304,3 +309,7 @@ func zstdDecode(b []byte) ([]byte, error) {
 	defer r.Close()
 	return io.ReadAll(r)
 }
+
+// hashFileCalls counts file-hash operations (F-082's idle-cost proof in
+// tests; production reads are unaffected).
+var hashFileCalls atomic.Int64

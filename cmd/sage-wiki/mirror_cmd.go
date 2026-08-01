@@ -98,11 +98,26 @@ func runMirrorEnable(cmd *cobra.Command, args []string) error {
 
 func runMirrorStatus(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
-	_, mcfg, err := mirrorConfigFor(dir)
+	cfg, err := config.Load(resolveConfigPath(dir))
 	if err != nil {
 		return err
 	}
-	m, err := mirror.Open(dir, mcfg, nil)
+	// F-081: disabled workspaces report enabled:false WITHOUT demanding
+	// credentials (Open resolves creds unconditionally).
+	if !cfg.Mirror.Enabled {
+		if outputFormat == "json" {
+			fmt.Fprintln(cmd.OutOrStdout(), cli.FormatJSON(true, mirror.Status{Enabled: false}, ""))
+		} else {
+			fmt.Fprintf(cmd.OutOrStdout(), "mirror: disabled (mirror.enabled is not set)\n")
+		}
+		return nil
+	}
+	mcfg, err := mirror.ConfigFromYAML(dir, cfg.Mirror)
+	if err != nil {
+		return err
+	}
+	// F-080: status must run the real diff — pending_changes/lag depend on it.
+	m, err := mirror.Open(dir, mcfg, mirror.NewDiffChangeSource(dir))
 	if err != nil {
 		return err
 	}

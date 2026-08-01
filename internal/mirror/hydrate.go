@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/mirror/s3"
@@ -181,6 +182,14 @@ func hydrateWithClient(ctx context.Context, client *s3.Client, prefix, bucket, d
 	// --- Phase: markdown/docs (skip tombstones; per-class rule: abort on
 	// mismatch naming the object) ---
 	if !phases.alreadyDone("markdown") {
+		// Path confinement (F-084): mirror-state is data — a poisoned or buggy
+		// state must never write outside the restore dir.
+		for p := range sel.objects {
+			if err := confineRelPath(p); err != nil {
+				return nil, fmt.Errorf("hydrate: unsafe object path %q: %w", p, err)
+			}
+		}
+
 		paths := make([]string, 0, len(sel.objects))
 		for p := range sel.objects {
 			paths = append(paths, p)
@@ -324,6 +333,21 @@ func (p *hydrateProgress) complete(phase string) error {
 // doneBefore short-circuits a completed phase on resume.
 func (p *hydrateProgress) alreadyDone(phase string) bool {
 	return p.Done[phase]
+}
+
+// confineRelPath rejects absolute paths and any .. escape.
+func confineRelPath(p string) error {
+	if p == "" || filepath.IsAbs(p) || strings.HasPrefix(p, "/") {
+		return fmt.Errorf("absolute path")
+	}
+	if strings.Contains(p, "\\") {
+		return fmt.Errorf("backslash in path (workspace paths are slash-only)")
+	}
+	clean := filepath.ToSlash(filepath.Clean(p))
+	if clean == ".." || strings.HasPrefix(clean, "../") || strings.Contains(clean, "/../") {
+		return fmt.Errorf("escapes the restore directory")
+	}
+	return nil
 }
 
 // downloadVerified GETs key and checks its sha256 (per-class mismatch rule

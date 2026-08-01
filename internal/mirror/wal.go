@@ -29,6 +29,18 @@ func (h WALHeader) SaltID() uint64 {
 	return uint64(h.Salt1)<<32 | uint64(h.Salt2)
 }
 
+// ErrTornWALHeader marks a WAL shorter than its 32-byte header (crash
+// mid-creation). SQLite recovery ignores such a WAL — the shipper treats
+// it as absent (the fold rules own what happens next).
+type ErrTornWALHeader struct {
+	Path string
+	Size int64
+}
+
+func (e *ErrTornWALHeader) Error() string {
+	return fmt.Sprintf("wal: torn header (%d bytes < 32) in %s", e.Size, e.Path)
+}
+
 // WALInfoFromFile reads the WAL header and file size. A missing file
 // returns an error wrapping os.ErrNotExist (callers distinguish fold cases).
 func WALInfoFromFile(path string) (WALHeader, int64, error) {
@@ -40,6 +52,9 @@ func WALInfoFromFile(path string) (WALHeader, int64, error) {
 	info, err := f.Stat()
 	if err != nil {
 		return WALHeader{}, 0, fmt.Errorf("wal: stat: %w", err)
+	}
+	if info.Size() < walHeaderSize {
+		return WALHeader{}, info.Size(), &ErrTornWALHeader{Path: path, Size: info.Size()}
 	}
 	hdr := make([]byte, walHeaderSize)
 	if _, err := io.ReadFull(f, hdr); err != nil {

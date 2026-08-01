@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/mirror"
@@ -19,6 +20,8 @@ type MirrorShipper struct {
 	stop           chan struct{}
 	done           chan struct{}
 	drainAbandoned bool // observable by tests: drain exceeded budget
+
+	rotating atomic.Bool // F-087: rotation in flight — sealing ticks never wait on it
 }
 
 // NewMirrorShipper builds the in-process shipper (nil-safe usage patterns:
@@ -50,12 +53,17 @@ func (s *MirrorShipper) Start(ctx context.Context) {
 					slog.Warn("mirror ship pass failed (retrying next tick)", "err", err)
 					continue
 				}
-				// Scheduled rotation: measured from the last commit of any
-				// kind (fold-forced rotations reset it too).
-				if s.m.ScheduledRotationDue() {
-					if _, err := s.m.Snapshot(ctx); err != nil {
-						slog.Warn("mirror scheduled rotation failed", "err", err)
-					}
+				// Scheduled rotation on its OWN goroutine (F-087): a busy-
+				// writer rotation (~20s of retries) must not starve the
+				// segment-sealing cadence that RPO depends on. One in flight
+				// at a time.
+				if s.m.ScheduledRotationDue() && s.rotating.CompareAndSwap(false, true) {
+					go func() {
+						defer s.rotating.Store(false)
+						if _, err := s.m.Snapshot(ctx); err != nil {
+							slog.Warn("mirror scheduled rotation failed", "err", err)
+						}
+					}()
 				}
 			}
 		}

@@ -224,3 +224,53 @@ func TestChanges_MissingDirsOK(t *testing.T) {
 		t.Fatalf("missing ship-set dirs should be fine: %v", err)
 	}
 }
+
+// TestChanges_UserContentNamedLikeProcessFileShips (F-083): content under
+// wiki/raw/prompts named config.yaml or usage.jsonl is CONTENT — only the
+// root config.yaml and .sage/* process files are excluded.
+func TestChanges_UserContentNamedLikeProcessFileShips(t *testing.T) {
+	dir := populatedWorkspace(t)
+	writeWS(t, dir, "wiki/concepts/config.yaml", "user doc named config.yaml")
+	writeWS(t, dir, "raw/usage.jsonl", "user source named usage.jsonl")
+	src := NewDiffChangeSource(dir)
+	changes, _, err := src.Changes(context.Background(), ChangeToken{Committed: map[string]ObjectRef{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wikiCfg, rawUsage bool
+	for _, c := range changes {
+		if c.Path == "wiki/concepts/config.yaml" {
+			wikiCfg = true
+		}
+		if c.Path == "raw/usage.jsonl" {
+			rawUsage = true
+		}
+		if c.Path == "config.yaml" {
+			t.Fatal("root config.yaml must stay excluded")
+		}
+	}
+	if !wikiCfg || !rawUsage {
+		t.Fatalf("user content dropped: wikiCfg=%v rawUsage=%v", wikiCfg, rawUsage)
+	}
+}
+
+// TestChanges_IdlePassReadsNothing (F-082): a second identical pass hits the
+// stat cache for every file — zero file reads beyond stat (hashFileCalls
+// does not grow).
+func TestChanges_IdlePassReadsNothing(t *testing.T) {
+	dir := populatedWorkspace(t)
+	src := NewDiffChangeSource(dir)
+	token := ChangeToken{Committed: map[string]ObjectRef{}, CommittedVectors: map[string]ObjectRef{}}
+	if _, _, err := src.Changes(context.Background(), token); err != nil {
+		t.Fatal(err)
+	}
+	before := hashFileCalls.Load()
+	// Second pass on a FRESH source (loads cache from disk, like a new process).
+	src2 := NewDiffChangeSource(dir)
+	if _, _, err := src2.Changes(context.Background(), token); err != nil {
+		t.Fatal(err)
+	}
+	if got := hashFileCalls.Load() - before; got != 0 {
+		t.Fatalf("idle pass re-hashed %d files (cache miss)", got)
+	}
+}

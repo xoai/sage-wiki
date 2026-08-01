@@ -241,3 +241,35 @@ func TestMirrorSnapshotCmd(t *testing.T) {
 		t.Fatal("gen-1 meta.json missing after forced rotation")
 	}
 }
+
+func TestMirrorStatusCmd_PendingChangesReal(t *testing.T) {
+	fake := newCmdFakeS3()
+	srv := fake.server()
+	defer srv.Close()
+	dir := writeMirrorWorkspace(t, srv.URL)
+	t.Setenv("AWS_ACCESS_KEY_ID", "ak")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "sk")
+	old := projectDir
+	projectDir = dir
+	defer func() { projectDir = old }()
+	if err := mirrorEnableCmd.RunE(mirrorEnableCmd, nil); err != nil {
+		t.Fatal(err)
+	}
+	// Unshipped change → status must report it through the CLI path (F-080).
+	os.MkdirAll(filepath.Join(dir, "wiki", "concepts"), 0o755)
+	os.WriteFile(filepath.Join(dir, "wiki", "concepts", "New.md"), []byte("# New"), 0o644)
+	if err := mirrorStatusCmd.RunE(mirrorStatusCmd, nil); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+}
+
+func TestMirrorStatusCmd_DisabledNoCreds(t *testing.T) {
+	dir := writeMirrorWorkspace(t, "http://127.0.0.1:1")
+	// No env creds; mirror NOT enabled → clean disabled report, exit nil (F-081).
+	old := projectDir
+	projectDir = dir
+	defer func() { projectDir = old }()
+	if err := mirrorStatusCmd.RunE(mirrorStatusCmd, nil); err != nil {
+		t.Fatalf("disabled status should not require creds: %v", err)
+	}
+}

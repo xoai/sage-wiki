@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/mirror/s3"
 	pkmirror "github.com/xoai/sage-wiki/pkg/mirror"
@@ -79,6 +80,62 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 		return res, err
 	}
 
+	// WAL identity for reconciliation and sealing. A torn header (kill
+	// mid-WAL-creation) reads as ABSENT — SQLite recovery ignores it too.
+	walHdr, walSize, walErr := WALInfoFromFile(m.walPath())
+	walPresent := walErr == nil
+	if walErr != nil && !errors.Is(walErr, os.ErrNotExist) {
+		var torn *ErrTornWALHeader
+		if !errors.As(walErr, &torn) {
+			return res, walErr
+		}
+	}
+
+	// --- Pass-entry reconciliation (Gate-3 F-077/F-078): local wal
+	// bookkeeping must agree with the committed remote chain BEFORE any
+	// sealing, on EVERY pass — not only under pending_rotation. The two
+	// crash windows: (i) tail committed remotely but the local write lost
+	// (same generation, stale seq/offset); (ii) rotation step 4 committed
+	// remotely but step 5 lost (generation mismatch, and the on-disk WAL
+	// may still hold pre-restart content that must never seal into the new
+	// generation). ---
+	if local.Generation != st.Generation {
+		// (ii): force the WAL to a fresh incarnation before adopting — after
+		// a completed rotation step 3 the on-disk WAL can still carry the
+		// OLD salt until the next write (measured), and sealing that into
+		// the new generation poisons its chain.
+		if err := m.checkpointRestart(); err != nil {
+			return res, fmt.Errorf("ship: reconcile generation %d→%d: %w", local.Generation, st.Generation, err)
+		}
+		local.Generation = st.Generation
+		local.LastSegmentSeq = len(st.DB.WAL)
+		local.WALSalt, local.WALOffset = m.adoptWAL()
+		// A pending rotation IS this remote commit — consume it here.
+		if local.PendingRotation {
+			local.PendingRotation = false
+			local.ConsecutiveDefers = 0
+			local.LastRotationAt = st.DB.CreatedAt
+		}
+		// Refresh the hash reference for the adopted generation.
+		if hash, _, herr := hashFile(m.dbPath()); herr == nil {
+			local.LastDBSHA256 = hash
+			res.HashedDB = true
+		}
+		if err := SaveLocalState(localStatePath(m.dir), local); err != nil {
+			return res, err
+		}
+	} else if local.LastSegmentSeq != len(st.DB.WAL) {
+		// (i): the committed tail is exactly the current WAL end when the
+		// salt matches — realign precisely; on salt mismatch the fold rules
+		// below own the decision (rotation).
+		if walPresent && walHdr.SaltID() == local.WALSalt {
+			local.LastSegmentSeq = len(st.DB.WAL)
+			local.WALOffset = walSize
+			if err := SaveLocalState(localStatePath(m.dir), local); err != nil {
+				return res, err
+			}
+		}
+	}
 	// --- Step 2: reconcile pending_rotation (spec §Close-fold (5)) ---
 	if local.PendingRotation {
 		if st.Generation > local.Generation {
@@ -132,11 +189,6 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 	// --- WAL adoption: unknown incarnation (post-bootstrap/rotation/fold)
 	// → adopt the current WAL's salt with offset 0 (its frames are
 	// generation-start content, sealed below from byte 0 incl. header).
-	walHdr, walSize, walErr := WALInfoFromFile(m.walPath())
-	walPresent := walErr == nil
-	if walErr != nil && !errors.Is(walErr, os.ErrNotExist) {
-		return res, walErr
-	}
 	if walPresent && local.WALSalt == 0 {
 		local.WALSalt = walHdr.SaltID()
 		local.WALOffset = 0
@@ -268,12 +320,19 @@ func (m *Mirror) rotate(ctx context.Context, st *State) error {
 
 	// 2. meta.json PUT for the superseded generation (derived FROM the
 	// committed mirror-state's wal list — divergence-free by construction).
+	// SealedAt is DETERMINISTIC (F-091): a crash-recovery re-run re-derives
+	// identical bytes — the tail segment's sealed_at, else the state's last
+	// commit time.
 	now := m.now().UTC()
+	sealedAt := st.UpdatedAt
+	if n := len(st.DB.WAL); n > 0 {
+		sealedAt = st.DB.WAL[n-1].SealedAt
+	}
 	meta := &GenerationMeta{
 		FormatVersion:  FormatVersion,
 		Generation:     gen,
 		CreatedAt:      st.DB.CreatedAt,
-		SealedAt:       now,
+		SealedAt:       sealedAt,
 		Snapshot:       st.DB.Snapshot,
 		SnapshotSHA256: st.DB.SnapshotSHA256,
 		WAL:            st.DB.WAL,
@@ -287,10 +346,23 @@ func (m *Mirror) rotate(ctx context.Context, st *State) error {
 	}
 
 	// 3. Checkpoint RESTART (fresh WAL for the new generation) + snapshot.
+	// A busy writer defers the rotation HERE with the same accounting as
+	// the VACUUM fallback — exactly once per deferred attempt (F-079).
 	if err := m.checkpointRestart(); err != nil {
-		return fmt.Errorf("rotate: checkpoint: %w", err)
+		local.ConsecutiveDefers++
+		if serr := SaveLocalState(localStatePath(m.dir), local); serr != nil {
+			return fmt.Errorf("rotate: persist defer counter: %w", serr)
+		}
+		return &DeferredError{Reason: "checkpoint: " + err.Error()}
 	}
-	snapBytes, err := snapshotDatabase(ctx, m.dbPath())
+	// The defer counter lives HERE (F-079): each deferred rotation attempt
+	// increments and persists consecutive_defers exactly once.
+	snapBytes, err := snapshotForRotation(ctx, m.dbPath(), snapOptions{
+		busyTimeout: 5 * time.Second,
+		maxRetries:  3,
+		local:       local,
+		localPath:   localStatePath(m.dir),
+	})
 	var deferral *DeferredError
 	if errors.As(err, &deferral) {
 		return err // counter already incremented inside snapshotForRotation

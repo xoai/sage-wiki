@@ -247,3 +247,37 @@ func TestHydrate_PITRBeforeFirstGeneration(t *testing.T) {
 		t.Fatal("PITR before first generation must error naming the oldest point")
 	}
 }
+
+// assertRowPresent checks a row exists in the restored workspace's db.
+func assertRowPresent(t *testing.T, dst, row string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(dst, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var n int
+	if err := db.QueryRow("SELECT COUNT(*) FROM t WHERE v=?", row).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("row %q: n=%d err=%v", row, n, err)
+	}
+}
+
+// TestHydrate_PathTraversalRejected (F-084): a poisoned mirror-state must
+// never write outside the restore dir.
+func TestHydrate_PathTraversalRejected(t *testing.T) {
+	h := newHydrateFixture(t)
+	st := h.src.remoteState(t)
+	st.Objects["../escape.md"] = ObjectRef{
+		Key:    "ws/objects/docs/ab/" + sha256HexBytes([]byte("escape")),
+		SHA256: sha256HexBytes([]byte("escape")),
+	}
+	sb, _ := MarshalState(st)
+	h.fake.objects[StateKey("ws/")] = sb
+	dst := filepath.Join(t.TempDir(), "restored")
+	if _, err := Hydrate(context.Background(), h.cfg, dst, HydrateOpts{}); err == nil {
+		t.Fatal("path traversal must be rejected loudly")
+	}
+	if _, err := os.Stat(filepath.Join(dst, "..", "escape.md")); !os.IsNotExist(err) {
+		t.Fatal("traversal wrote outside dst")
+	}
+}

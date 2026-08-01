@@ -15,7 +15,9 @@ import (
 // (i.e. a serve is running) — used by status's serve-restart note.
 func probeServeLock(dir string) bool {
 	path := filepath.Join(dir, ".sage", "engine.lock")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	// F-089: read-only probe — a missing file means "not held", and status
+	// must not create it (read-only commands don't mutate the workspace).
+	f, err := os.OpenFile(path, os.O_RDWR, 0o644)
 	if err != nil {
 		return false
 	}

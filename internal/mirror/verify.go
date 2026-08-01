@@ -64,15 +64,20 @@ func (o *mirrorOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
 
 	// Rotated generations (b): LIST db/ — a generation dir is discovered
 	// from ANY key under it (a missing meta.json is itself the violation),
-	// and every generation < live must have a valid meta.json whose
-	// referenced objects check out.
+	// and every RETAINED generation < live must have a valid meta.json
+	// whose referenced objects check out. Retention is RULE-BASED, not
+	// physical: prune-eligible generations (gen ≤ live − retain_generations)
+	// are exempt — a kill mid-prune leaves one partially deleted BY DESIGN,
+	// and that is not corruption (the invariant covers only what the format
+	// promises to keep).
 	genKeys, err := m.client.ListObjects(ctx, m.cfg.Bucket, prefix+"db/")
 	if err != nil {
 		return rep, fmt.Errorf("mirror verify: list db/: %w", err)
 	}
 	rotated := map[int]bool{}
 	for _, k := range genKeys {
-		if gen, ok := parseGenerationDirKey(k); ok && gen < st.Generation {
+		if gen, ok := parseGenerationDirKey(k); ok && gen < st.Generation &&
+			gen > st.Generation-m.cfg.RetainGenerations {
 			rotated[gen] = true
 		}
 	}

@@ -30,12 +30,17 @@ func maybeShipAfterCommand() {
 		fmt.Fprintf(os.Stderr, "mirror: ship pass skipped: %v\n", err)
 		return
 	}
+	_ = mcfg
 	m, err := mirror.Open(dir, mcfg, mirror.NewDiffChangeSource(dir))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "mirror: ship pass skipped: %v\n", err)
 		return
 	}
-	if err := m.Ship(context.Background(), pkmirror.ChangeBatch{}); err != nil {
+	// Bounded budget (F-088): a blackholed bucket must not hold the invoking
+	// command — 2× ship_lock_timeout overall, then warn and defer.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*mcfg.ShipLockTimeout)
+	defer cancel()
+	if err := m.Ship(ctx, pkmirror.ChangeBatch{}); err != nil {
 		fmt.Fprintf(os.Stderr, "mirror: ship pass failed: %v (changes ship on a later pass)\n", err)
 	}
 }

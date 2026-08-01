@@ -159,6 +159,9 @@ func validateDB(what string, gen int, snapshot, snapshotSHA string, wal []WALSeg
 		}
 	}
 	for path, ref := range objects {
+		if err := confineRelPath(path); err != nil {
+			return fmt.Errorf("objects[%q]: unsafe path: %w", path, err)
+		}
 		if err := validateObjectRef("objects", path, ref); err != nil {
 			return err
 		}

@@ -40,15 +40,16 @@ func newShipFixture(t *testing.T) *shipFixture {
 
 func (f *shipFixture) dbWrite(t *testing.T, v string) {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(f.dir, ".sage", "wiki.db"))
-	if err != nil {
+	if f.db == nil {
+		db, err := sql.Open("sqlite", filepath.Join(f.dir, ".sage", "wiki.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.db = db
+	}
+	if _, err := f.db.Exec("INSERT INTO t (v) VALUES (?)", v); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("INSERT INTO t (v) VALUES (?)", v); err != nil {
-		t.Fatal(err)
-	}
-	// Keep the db OPEN so the WAL persists for sealing.
-	f.db = db
 }
 
 func (f *shipFixture) dbClose() {

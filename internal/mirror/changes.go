@@ -2,6 +2,7 @@ package mirror
 
 import (
 	"context"
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -49,33 +50,91 @@ var shipSetDirs = []string{"wiki", "raw", "prompts"}
 // shipSetFiles are individual shipped files.
 var shipSetFiles = []string{".manifest.json", ".sage/manifest.json", ".sage/pack-state.yaml"}
 
-// excludedBases are never shipped, anywhere (spec.md §Key decisions 7 —
-// config.yaml first: it can carry inline secrets, F-001).
+// excludedBases are never shipped — but ONLY under .sage/ (their home);
+// config.yaml is excluded at the ROOT only (F-083: user content under
+// wiki/raw/prompts named config.yaml or jobs.jsonl is CONTENT and ships —
+// the exclusions protect process files, not names). spec.md §Key
+// decisions 7. .sage/ as a whole is covered by the shipSetFiles allowlist
+// (only explicitly named files ship), so no directory exclusions are
+// needed there (F-090's dead list removed).
 var excludedBases = map[string]bool{
-	"config.yaml":        true,
-	"engine.lock":        true,
-	"jobs.jsonl":         true,
-	"batch-state.json":   true,
-	"compile-state.json": true,
-	"usage.jsonl":        true,
-	"mirror-local.json":  true,
-	"mirror-ship.lock":   true,
-	"hydrate-state.json": true,
-	"wiki.db":            true,
-	"wiki.db-wal":        true,
-	"wiki.db-shm":        true,
+	"engine.lock":           true,
+	"jobs.jsonl":            true,
+	"batch-state.json":      true,
+	"compile-state.json":    true,
+	"usage.jsonl":           true,
+	"mirror-local.json":     true,
+	"mirror-ship.lock":      true,
+	"mirror-diffcache.json": true,
+	"hydrate-state.json":    true,
+	"wiki.db":               true,
+	"wiki.db-wal":           true,
+	"wiki.db-shm":           true,
 }
 
-// excludedDirs are never shipped (prefix match on the relative path).
-var excludedDirs = []string{".sage/lintlog/", ".sage/pack-snapshots/"}
+// excludedPath reports whether rel (slash path) is excluded: config.yaml at
+// the ROOT only, excludedBases under .sage/ only.
+func excludedPath(rel string) bool {
+	if rel == "config.yaml" {
+		return true
+	}
+	if !strings.HasPrefix(rel, ".sage/") {
+		return false
+	}
+	return excludedBases[filepath.Base(rel)]
+}
 
-// diffChangeSource is the default mtime/manifest-diff detector.
-type diffChangeSource struct{ dir string }
+// diffChangeSource is the default mtime/manifest-diff detector. It keeps a
+// persistent stat cache (.sage/mirror-diffcache.json — machine-local,
+// never shipped) so an idle pass hashes NOTHING (F-082): mtime+size match
+// reuses the cached sha, anything else rehashes just that file.
+type diffChangeSource struct {
+	dir       string
+	cache     map[string]diffCacheEntry
+	cachePath string
+}
+
+type diffCacheEntry struct {
+	SHA256  string `json:"s"`
+	ModUnix int64  `json:"m"`
+	Size    int64  `json:"z"`
+}
 
 // NewDiffChangeSource walks the ship set and diffs against the committed
 // object maps in the token.
 func NewDiffChangeSource(dir string) ChangeSource {
-	return &diffChangeSource{dir: dir}
+	d := &diffChangeSource{
+		dir:       dir,
+		cachePath: filepath.Join(dir, ".sage", "mirror-diffcache.json"),
+		cache:     map[string]diffCacheEntry{},
+	}
+	d.loadCache()
+	return d
+}
+
+func (d *diffChangeSource) loadCache() {
+	b, err := os.ReadFile(d.cachePath)
+	if err != nil {
+		return // missing/corrupt cache → cold start (hashes repopulate it)
+	}
+	var m map[string]diffCacheEntry
+	if json.Unmarshal(b, &m) == nil && m != nil {
+		d.cache = m
+	}
+}
+
+func (d *diffChangeSource) saveCache() {
+	b, err := json.Marshal(d.cache)
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(d.cachePath), 0o755); err != nil {
+		return
+	}
+	tmp := d.cachePath + ".tmp"
+	if os.WriteFile(tmp, b, 0o644) == nil {
+		os.Rename(tmp, d.cachePath)
+	}
 }
 
 // Changes computes the diff: upserts for new/modified/resurrected files,
@@ -84,10 +143,19 @@ func NewDiffChangeSource(dir string) ChangeSource {
 func (d *diffChangeSource) Changes(ctx context.Context, since ChangeToken) ([]Change, ChangeToken, error) {
 	present := map[string]string{} // rel path → sha256 (docs set)
 	onDisk := func(rel string) (string, bool) {
-		sha, _, err := hashFile(filepath.Join(d.dir, filepath.FromSlash(rel)))
+		full := filepath.Join(d.dir, filepath.FromSlash(rel))
+		info, err := os.Stat(full)
 		if err != nil {
 			return "", false
 		}
+		if ent, ok := d.cache[rel]; ok && ent.ModUnix == info.ModTime().Unix() && ent.Size == info.Size() {
+			return ent.SHA256, true // cache hit — NO file read (F-082)
+		}
+		sha, _, err := hashFile(full)
+		if err != nil {
+			return "", false
+		}
+		d.cache[rel] = diffCacheEntry{SHA256: sha, ModUnix: info.ModTime().Unix(), Size: info.Size()}
 		return sha, true
 	}
 
@@ -117,15 +185,10 @@ func (d *diffChangeSource) Changes(ctx context.Context, since ChangeToken) ([]Ch
 			}
 			rel = filepath.ToSlash(rel) + "/"
 			if e.IsDir() {
-				for _, ex := range excludedDirs {
-					if rel == strings.TrimSuffix(ex, "/")+"/" || strings.HasPrefix(rel, ex) {
-						return filepath.SkipDir
-					}
-				}
 				return nil
 			}
 			rel = strings.TrimSuffix(rel, "/")
-			if excludedBases[e.Name()] || strings.HasSuffix(e.Name(), ".tmp") {
+			if excludedPath(rel) || strings.HasSuffix(e.Name(), ".tmp") {
 				return nil
 			}
 			return addFile(rel)
@@ -182,6 +245,15 @@ func (d *diffChangeSource) Changes(ctx context.Context, since ChangeToken) ([]Ch
 	}
 
 	sort.Slice(changes, func(i, j int) bool { return changes[i].Path < changes[j].Path })
+	// Prune cache entries for vanished files, then persist (atomic).
+	for rel := range d.cache {
+		if _, ok := present[rel]; !ok {
+			if _, isVec := vectorsPresent[filepath.Base(rel)]; !isVec {
+				delete(d.cache, rel)
+			}
+		}
+	}
+	d.saveCache()
 	return changes, since, nil
 }
 
