@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeWS(t *testing.T, dir, rel, content string) {
@@ -259,6 +260,15 @@ func TestChanges_UserContentNamedLikeProcessFileShips(t *testing.T) {
 // does not grow).
 func TestChanges_IdlePassReadsNothing(t *testing.T) {
 	dir := populatedWorkspace(t)
+	// Backdate all files so the racy-clean guard (same-second entries are
+	// re-hashed, F-096) doesn't fire — this test isolates the cache-hit path.
+	old := time.Now().Add(-10 * time.Second)
+	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			os.Chtimes(path, old, old)
+		}
+		return nil
+	})
 	src := NewDiffChangeSource(dir)
 	token := ChangeToken{Committed: map[string]ObjectRef{}, CommittedVectors: map[string]ObjectRef{}}
 	if _, _, err := src.Changes(context.Background(), token); err != nil {
@@ -272,5 +282,49 @@ func TestChanges_IdlePassReadsNothing(t *testing.T) {
 	}
 	if got := hashFileCalls.Load() - before; got != 0 {
 		t.Fatalf("idle pass re-hashed %d files (cache miss)", got)
+	}
+}
+
+// TestChanges_RacyCleanGuard (F-096): a same-size rewrite inside the SAME
+// mtime second must still be detected (pinned mtime via Chtimes).
+func TestChanges_RacyCleanGuard(t *testing.T) {
+	dir := populatedWorkspace(t)
+	src := NewDiffChangeSource(dir)
+	token := ChangeToken{Committed: map[string]ObjectRef{}}
+	if _, _, err := src.Changes(context.Background(), token); err != nil {
+		t.Fatal(err)
+	}
+	// Same-size rewrite, mtime pinned to the cached value's second.
+	p := filepath.Join(dir, "wiki/concepts/Foo.md")
+	info, _ := os.Stat(p)
+	if err := os.WriteFile(p, []byte("# Fxx"), 0o644); err != nil { // same len as "# Foo"
+		t.Fatal(err)
+	}
+	os.Chtimes(p, info.ModTime(), info.ModTime())
+	src2 := NewDiffChangeSource(dir)
+	changes, _, err := src2.Changes(context.Background(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, c := range changes {
+		if c.Path == "wiki/concepts/Foo.md" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("same-size same-mtime-second edit hidden by cache (racy-clean)")
+	}
+}
+
+// TestChanges_VectorPathTraversalRejected (F-095).
+func TestChanges_VectorBasenameEnforced(t *testing.T) {
+	s := fixtureState()
+	s.Vectors["../../escape-vec.idx"] = ObjectRef{
+		Key:    "ws/vectors/" + strings.Repeat("ab", 32),
+		SHA256: strings.Repeat("ab", 32),
+	}
+	if err := s.Validate(); err == nil {
+		t.Fatal("non-basename vector name must fail validation")
 	}
 }

@@ -231,6 +231,11 @@ func hydrateWithClient(ctx context.Context, client *s3.Client, prefix, bucket, d
 		}
 		sort.Strings(vecNames)
 		for _, name := range vecNames {
+			// F-095: vector names are basenames BY CONVENTION (changes.go);
+			// anything else is a poisoned state — reject, never write.
+			if name != filepath.Base(name) {
+				return nil, fmt.Errorf("hydrate: unsafe vector name %q (not a basename)", name)
+			}
 			ref := sel.vectors[name]
 			if ref.Deleted {
 				continue

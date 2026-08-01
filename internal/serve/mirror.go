@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -21,7 +22,8 @@ type MirrorShipper struct {
 	done           chan struct{}
 	drainAbandoned bool // observable by tests: drain exceeded budget
 
-	rotating atomic.Bool // F-087: rotation in flight — sealing ticks never wait on it
+	rotating atomic.Bool    // F-087: rotation in flight — sealing ticks never wait on it
+	rotWG    sync.WaitGroup // F-098: Stop awaits in-flight rotations within budget
 }
 
 // NewMirrorShipper builds the in-process shipper (nil-safe usage patterns:
@@ -58,7 +60,9 @@ func (s *MirrorShipper) Start(ctx context.Context) {
 				// segment-sealing cadence that RPO depends on. One in flight
 				// at a time.
 				if s.m.ScheduledRotationDue() && s.rotating.CompareAndSwap(false, true) {
+					s.rotWG.Add(1)
 					go func() {
+						defer s.rotWG.Done()
 						defer s.rotating.Store(false)
 						if _, err := s.m.Snapshot(ctx); err != nil {
 							slog.Warn("mirror scheduled rotation failed", "err", err)
@@ -70,11 +74,24 @@ func (s *MirrorShipper) Start(ctx context.Context) {
 	}()
 }
 
-// Stop signals the loop, runs the FINAL ship pass within drain_timeout,
-// and reports whether the drain completed in budget (abandonment is loud).
+// Stop signals the loop, waits for the ticker AND any in-flight rotation
+// (F-098: a healthy system never reports drainAbandoned just because the
+// shipper's own rotation holds the ship-mutex), then runs the FINAL ship
+// pass within drain_timeout.
 func (s *MirrorShipper) Stop() {
 	close(s.stop)
 	<-s.done
+	// Await in-flight rotations within the drain budget.
+	rotDone := make(chan struct{})
+	go func() {
+		s.rotWG.Wait()
+		close(rotDone)
+	}()
+	select {
+	case <-rotDone:
+	case <-time.After(s.drainTimeout):
+		slog.Warn("mirror drain: rotation still in flight at budget — proceeding to final pass")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), s.drainTimeout)
 	defer cancel()
 	if err := s.m.Ship(ctx, pkmirror.ChangeBatch{}); err != nil {

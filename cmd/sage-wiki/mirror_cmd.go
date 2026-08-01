@@ -116,8 +116,9 @@ func runMirrorStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	// F-080: status must run the real diff — pending_changes/lag depend on it.
-	m, err := mirror.Open(dir, mcfg, mirror.NewDiffChangeSource(dir))
+	// F-080: status must run the real diff — pending_changes/lag depend on
+	// it; F-097: read-only variant (status must not write the cache).
+	m, err := mirror.Open(dir, mcfg, mirror.NewDiffChangeSourceReadOnly(dir))
 	if err != nil {
 		return err
 	}

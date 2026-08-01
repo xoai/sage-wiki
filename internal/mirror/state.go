@@ -3,6 +3,7 @@ package mirror
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"time"
 )
@@ -167,6 +168,9 @@ func validateDB(what string, gen int, snapshot, snapshotSHA string, wal []WALSeg
 		}
 	}
 	for name, ref := range vectors {
+		if name != filepath.Base(name) {
+			return fmt.Errorf("vectors[%q]: not a basename (unsafe)", name)
+		}
 		if err := validateObjectRef("vectors", name, ref); err != nil {
 			return err
 		}

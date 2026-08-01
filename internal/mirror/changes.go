@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // ChangeSource detects unshipped workspace changes (spec.md §Components:
@@ -92,6 +93,7 @@ type diffChangeSource struct {
 	dir       string
 	cache     map[string]diffCacheEntry
 	cachePath string
+	readOnly  bool
 }
 
 type diffCacheEntry struct {
@@ -107,6 +109,19 @@ func NewDiffChangeSource(dir string) ChangeSource {
 		dir:       dir,
 		cachePath: filepath.Join(dir, ".sage", "mirror-diffcache.json"),
 		cache:     map[string]diffCacheEntry{},
+	}
+	d.loadCache()
+	return d
+}
+
+// NewDiffChangeSourceReadOnly is the status-path variant (F-097): reads the
+// cache but never writes it — read-only commands don't mutate the workspace.
+func NewDiffChangeSourceReadOnly(dir string) ChangeSource {
+	d := &diffChangeSource{
+		dir:       dir,
+		cachePath: filepath.Join(dir, ".sage", "mirror-diffcache.json"),
+		cache:     map[string]diffCacheEntry{},
+		readOnly:  true,
 	}
 	d.loadCache()
 	return d
@@ -142,13 +157,17 @@ func (d *diffChangeSource) saveCache() {
 // (sorted paths) — no map-order iteration reaches any serialized output.
 func (d *diffChangeSource) Changes(ctx context.Context, since ChangeToken) ([]Change, ChangeToken, error) {
 	present := map[string]string{} // rel path → sha256 (docs set)
+	scanStartSec := timeNowUnix()
 	onDisk := func(rel string) (string, bool) {
 		full := filepath.Join(d.dir, filepath.FromSlash(rel))
 		info, err := os.Stat(full)
 		if err != nil {
 			return "", false
 		}
-		if ent, ok := d.cache[rel]; ok && ent.ModUnix == info.ModTime().Unix() && ent.Size == info.Size() {
+		// Racy-clean guard (F-096, git's rule): an entry cached in the SAME
+		// second as this scan is re-hashed — a same-size rewrite inside one
+		// mtime second (or a preserved mtime) must never hide an edit.
+		if ent, ok := d.cache[rel]; ok && ent.ModUnix == info.ModTime().Unix() && ent.Size == info.Size() && ent.ModUnix < scanStartSec {
 			return ent.SHA256, true // cache hit — NO file read (F-082)
 		}
 		sha, _, err := hashFile(full)
@@ -253,7 +272,9 @@ func (d *diffChangeSource) Changes(ctx context.Context, since ChangeToken) ([]Ch
 			}
 		}
 	}
-	d.saveCache()
+	if !d.readOnly {
+		d.saveCache()
+	}
 	return changes, since, nil
 }
 
@@ -265,6 +286,8 @@ func committedContentSHA(ref ObjectRef) string {
 	}
 	return ref.SHA256
 }
+
+var timeNowUnix = func() int64 { return time.Now().Unix() }
 
 func mustRel(root, path string) string {
 	rel, err := filepath.Rel(root, path)

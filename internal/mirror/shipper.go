@@ -100,16 +100,42 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 	// may still hold pre-restart content that must never seal into the new
 	// generation). ---
 	if local.Generation != st.Generation {
-		// (ii): force the WAL to a fresh incarnation before adopting — after
-		// a completed rotation step 3 the on-disk WAL can still carry the
-		// OLD salt until the next write (measured), and sealing that into
-		// the new generation poisons its chain.
-		if err := m.checkpointRestart(); err != nil {
-			return res, fmt.Errorf("ship: reconcile generation %d→%d: %w", local.Generation, st.Generation, err)
-		}
+		// (ii): generation mismatch (rotation step 4 committed remotely,
+		// step 5 lost). The on-disk WAL may be (a) the PRE-restart
+		// incarnation (its content is already in the snapshot — sealing it
+		// would poison the new chain with a second salt), or (b) a
+		// POST-restart incarnation (frames written after the crashed
+		// rotation's checkpoint — they LEGITIMATELY belong to the new
+		// chain and must seal from byte 0 with their header). Distinguish
+		// by salt against the stale bookkeeping; checkpointRestart ONLY in
+		// case (a)/unknown, and re-read identity AFTER it — pass-entry
+		// reads are stale by then (F-093).
+		staleSalt := local.WALSalt
+		staleGen := local.Generation
+		curHdr, curSize, curErr := WALInfoFromFile(m.walPath())
 		local.Generation = st.Generation
 		local.LastSegmentSeq = len(st.DB.WAL)
-		local.WALSalt, local.WALOffset = m.adoptWAL()
+		switch {
+		case curErr == nil && staleSalt != 0 && curHdr.SaltID() != staleSalt:
+			// (b): adopt the fresh incarnation at offset 0 — branch (1)
+			// seals from the header; the chain keeps ONE salt.
+			local.WALSalt = curHdr.SaltID()
+			local.WALOffset = 0
+			walHdr, walSize, walPresent = curHdr, curSize, true
+		default:
+			// (a)/unknown: fold the stale incarnation (its content is
+			// either already in the snapshot or handled by the fold rules
+			// below), then adopt whatever fresh WAL exists.
+			if err := m.checkpointRestart(); err != nil {
+				return res, fmt.Errorf("ship: reconcile generation %d→%d: %w", staleGen, st.Generation, err)
+			}
+			local.WALSalt, local.WALOffset = m.adoptWAL()
+			if hdr2, size2, err2 := WALInfoFromFile(m.walPath()); err2 == nil {
+				walHdr, walSize, walPresent = hdr2, size2, true
+			} else {
+				walPresent = false
+			}
+		}
 		// A pending rotation IS this remote commit — consume it here.
 		if local.PendingRotation {
 			local.PendingRotation = false
@@ -124,16 +150,22 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 		if err := SaveLocalState(localStatePath(m.dir), local); err != nil {
 			return res, err
 		}
-	} else if local.LastSegmentSeq != len(st.DB.WAL) {
-		// (i): the committed tail is exactly the current WAL end when the
-		// salt matches — realign precisely; on salt mismatch the fold rules
-		// below own the decision (rotation).
-		if walPresent && walHdr.SaltID() == local.WALSalt {
-			local.LastSegmentSeq = len(st.DB.WAL)
-			local.WALOffset = walSize
-			if err := SaveLocalState(localStatePath(m.dir), local); err != nil {
-				return res, err
-			}
+	} else if local.LastSegmentSeq != len(st.DB.WAL) && walPresent && walHdr.SaltID() == local.WALSalt {
+		// (i): the remote chain has segments our bookkeeping lost. Realign
+		// EXACTLY: the next unsealed byte is the current offset plus the
+		// uncompressed lengths of the segments we missed — NOT walSize
+		// (frames appended between crash and recovery live there and must
+		// seal as the next seq — F-094), and NOT a re-seal of the tail
+		// (a duplicated frame breaks WAL's cumulative checksums and
+		// poisons everything after it — measured).
+		extra, err := m.chainTailLength(ctx, st, local.LastSegmentSeq)
+		if err != nil {
+			return res, fmt.Errorf("ship: realign offset: %w", err)
+		}
+		local.WALOffset += extra
+		local.LastSegmentSeq = len(st.DB.WAL)
+		if err := SaveLocalState(localStatePath(m.dir), local); err != nil {
+			return res, err
 		}
 	}
 	// --- Step 2: reconcile pending_rotation (spec §Close-fold (5)) ---
@@ -448,6 +480,31 @@ func (m *Mirror) commitSegment(ctx context.Context, st *State, seg []byte, seq i
 		return fmt.Errorf("ship: PUT state: %w", err)
 	}
 	return nil
+}
+
+// chainTailLength returns the total UNCOMPRESSED byte length of the chain's
+// segments from index fromSeq onward (decrypting when needed) — the exact
+// realign distance for lost bookkeeping.
+func (m *Mirror) chainTailLength(ctx context.Context, st *State, fromSeq int) (int64, error) {
+	var total int64
+	for _, seg := range st.DB.WAL[fromSeq:] {
+		b, err := m.client.GetObject(ctx, m.cfg.Bucket, seg.Key)
+		if err != nil {
+			return 0, fmt.Errorf("download %s: %w", seg.Key, err)
+		}
+		if m.encKey != nil {
+			b, err = decryptBytes(m.encKey, b)
+			if err != nil {
+				return 0, fmt.Errorf("decrypt %s: %w", seg.Key, err)
+			}
+		}
+		raw, err := zstdDecode(b)
+		if err != nil {
+			return 0, fmt.Errorf("decompress %s: %w", seg.Key, err)
+		}
+		total += int64(len(raw))
+	}
+	return total, nil
 }
 
 // adoptWAL returns (salt, offset) for the current WAL incarnation: its salt
