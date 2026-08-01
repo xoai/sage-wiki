@@ -14,8 +14,8 @@ import (
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/ontology"
-	"github.com/xoai/sage-wiki/internal/storedial"
 	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/internal/storedial"
 )
 
 // App bundles a project's shared dependencies.
@@ -82,6 +82,7 @@ func OpenWithOptions(projectDir, configPath string, mode store.Mode) (*App, erro
 		ValidEntityTypes: ontology.ValidEntityTypeNames(mergedTypes),
 		ANN:              cfg.Search.ANNEnabled(),
 		TemporalEnabled:  cfg.Ontology.Temporal.Enabled,
+		VectorBackend:    cfg.VectorBackend(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)

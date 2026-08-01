@@ -34,6 +34,10 @@ type Config struct {
 	DrainTimeout          time.Duration
 	RateLimit             func(next http.Handler) http.Handler
 	Addr                  string
+	// CompileSem, when non-nil, is a SHARED cross-server compile gate
+	// (SPEC-06 multi-workspace): the queue exec acquires it around every
+	// compile, bounding concurrency across all stacks, not just this one.
+	CompileSem chan struct{}
 	// ReadyFn reports store-open completion for /readyz. Required.
 	ReadyFn func() bool
 }
@@ -71,7 +75,7 @@ func New(deps *Deps, mcpSrv *mcppkg.Server, cfg Config) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{cfg: cfg, mcp: mcpSrv, deps: deps, ledger: ledger}
-	s.queue = NewQueue(ledger, cfg.MaxConcurrentCompiles, s.execCompile, nil)
+	s.queue = NewQueue(ledger, cfg.MaxConcurrentCompiles, semaphoreWrap(cfg.CompileSem, s.execCompile), nil)
 	s.routes()
 	s.mcpStream = s.mountMCP()
 	// /v1 stays live on this listener too (Q-3): the existing facade over
@@ -89,6 +93,12 @@ func (s *Server) Queue() *Queue { return s.queue }
 
 // SetWorkspace attaches the engine workspace held for the lock (§2.0).
 func (s *Server) SetWorkspace(w *engine.Workspace) { s.ws = w }
+
+// ClearWorkspace detaches the engine workspace — Shutdown will NOT close
+// it. Used when the handle is owned elsewhere (SPEC-06: the Manager owns
+// the shared handle; a duplicate stack teardown must never close it,
+// F-034).
+func (s *Server) ClearWorkspace() { s.ws = nil }
 
 // InjectHTTPServer hands an externally created http.Server to the drain
 // sequence (used when the caller serves with a readiness-aware handler —

@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"path/filepath"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -52,7 +53,7 @@ type Model struct {
 // New creates the dashboard with all tabs.
 func New(projectDir string, cfg *config.Config, db store.DBHandle) Model {
 	memStore := memory.NewStore(db)
-	vecStore := vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled()))
+	vecStore := vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled()), vectors.WithVectorBackend(cfg.VectorBackend()), vectors.WithIndexDir(filepath.Join(projectDir, ".sage")))
 	sourcePaths := cfg.ResolveSources(projectDir)
 
 	// Pipeline-aware search seam (M5): unified by default, legacy behind

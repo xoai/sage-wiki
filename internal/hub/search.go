@@ -119,7 +119,9 @@ func searchProject(projectDir string, query string, limit int) ([]hybrid.SearchR
 			return nil, err
 		}
 		defer db.Close()
-		return searchWithStores(hybrid.NewSearcher(memory.NewStore(db), vectors.NewStore(db)), cfg, query, limit, trust.NewStore(db))
+		return searchWithStores(hybrid.NewSearcher(memory.NewStore(db), vectors.NewStore(db,
+			vectors.WithVectorBackend(cfg.VectorBackend()),
+			vectors.WithIndexDir(filepath.Join(projectDir, ".sage")))), cfg, query, limit, trust.NewStore(db))
 	}
 	defer b.Close()
 

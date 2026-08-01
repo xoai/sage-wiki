@@ -165,6 +165,15 @@ search:
   # weight_common_neighbor: 1.5 # graph signal: Adamic-Adar common neighbors
   # weight_type_affinity: 1.0  # graph signal: entity type pair bonus
 
+# Vector index backend (SPEC-06) — default is the full in-memory matrix
+# cache; "mmap" serves an on-disk snapshot with bounded resident memory
+# (unix-only ceiling; other platforms fall back to resident with a warn).
+# After enabling, run: sage-wiki index rebuild-vectors
+# vectors:
+#   backend: mmap        # "memory" (default) | "mmap"
+#   quantization: none   # "none" (default, fp32 exact) | "int8" (4x smaller,
+#                        # measured recall@10 = 0.994 on the reference fixture)
+
 serve:
   transport: stdio # stdio or sse
   port: 3333 # SSE / web UI port

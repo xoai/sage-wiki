@@ -37,6 +37,35 @@ type Config struct {
 	Parsers     ParsersConfig  `yaml:"parsers,omitempty"`
 	TypeSignals []TypeSignal   `yaml:"type_signals,omitempty"`
 	Storage     StorageConfig  `yaml:"storage,omitempty"`
+	Vectors     VectorsConfig  `yaml:"vectors,omitempty"`
+}
+
+// VectorsConfig tunes the vector query backend (SPEC-06).
+type VectorsConfig struct {
+	// Backend selects the query-time vector index: "memory" (default — full
+	// in-memory matrix cache) or "mmap" (on-disk snapshot served via mmap,
+	// falling back to memory with a warning when missing/corrupt/stale).
+	Backend string `yaml:"backend,omitempty"`
+	// Quantization selects the on-disk matrix encoding written by
+	// `index rebuild-vectors`: "none" (default — fp32, exact) or "int8"
+	// (4x smaller, measured recall trade-off).
+	Quantization string `yaml:"quantization,omitempty"`
+}
+
+// VectorBackend resolves the backend (default: memory).
+func (c *Config) VectorBackend() string {
+	if c.Vectors.Backend == "" {
+		return "memory"
+	}
+	return c.Vectors.Backend
+}
+
+// VectorQuantization resolves the quantization (default: none).
+func (c *Config) VectorQuantization() string {
+	if c.Vectors.Quantization == "" {
+		return "none"
+	}
+	return c.Vectors.Quantization
 }
 
 // StorageConfig selects the storage backend. SQLite is the zero-config default;
@@ -123,17 +152,17 @@ type CompilerConfig struct {
 	ArticleFields []string `yaml:"article_fields,omitempty"` // custom frontmatter fields extracted from LLM response
 
 	// Tiered compilation
-	DefaultTier    int            `yaml:"default_tier,omitempty"`  // default tier for sources (default: 3)
-	TierDefaults   map[string]int `yaml:"tier_defaults,omitempty"` // file extension → default tier
+	DefaultTier  int            `yaml:"default_tier,omitempty"`  // default tier for sources (default: 3)
+	TierDefaults map[string]int `yaml:"tier_defaults,omitempty"` // file extension → default tier
 	// MinConceptSources is the minimum declared sources a concept needs
 	// before an article is written for it (issue #128). *int so "unset"
 	// (nil → 1, skip only truly source-less concepts) is distinguishable
 	// from an explicit 0 (gate disabled).
-	MinConceptSources *int         `yaml:"min_concept_sources,omitempty"`
-	AutoPromote    *bool          `yaml:"auto_promote,omitempty"`  // auto-promote based on signals (default: true)
-	PromoteSignals PromoteSignals `yaml:"promote_signals,omitempty"`
-	AutoDemote     *bool          `yaml:"auto_demote,omitempty"` // auto-demote stale articles (default: true)
-	DemoteSignals  DemoteSignals  `yaml:"demote_signals,omitempty"`
+	MinConceptSources *int           `yaml:"min_concept_sources,omitempty"`
+	AutoPromote       *bool          `yaml:"auto_promote,omitempty"` // auto-promote based on signals (default: true)
+	PromoteSignals    PromoteSignals `yaml:"promote_signals,omitempty"`
+	AutoDemote        *bool          `yaml:"auto_demote,omitempty"` // auto-demote stale articles (default: true)
+	DemoteSignals     DemoteSignals  `yaml:"demote_signals,omitempty"`
 
 	// Document splitting (Phase B)
 	SplitThreshold int    `yaml:"split_threshold,omitempty"` // chars, enable section-aware writing above this (default: 15000)
@@ -999,6 +1028,12 @@ func (c *Config) validateStorage() error {
 func (c *Config) Validate() error {
 	if c.Project == "" {
 		return fmt.Errorf("config: 'project' is required")
+	}
+	if b := c.Vectors.Backend; b != "" && b != "memory" && b != "mmap" {
+		return fmt.Errorf("config: invalid vectors.backend %q (valid: memory, mmap)", b)
+	}
+	if q := c.Vectors.Quantization; q != "" && q != "none" && q != "int8" {
+		return fmt.Errorf("config: invalid vectors.quantization %q (valid: none, int8)", q)
 	}
 	if c.Output == "" {
 		return fmt.Errorf("config: 'output' is required")

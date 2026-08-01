@@ -205,6 +205,7 @@ The core surface; run `sage-wiki <command> --help` for flags.
 | `sage-wiki compile [--watch] [--batch] [--estimate] [--dry-run] [--no-cache] [--fresh] [--re-embed] [--re-extract] [--prune]` | Compile sources into wiki articles |
 | `sage-wiki serve [--addr 127.0.0.1:8484] [--transport stdio\|sse] [--ui]` | HTTP REST + MCP server / web UI |
 | `sage-wiki reindex [--drop-chunk-vectors]` | Rebuild the chunk index from documents on disk with the current `chunk_size`/`chunk_overlap_tokens` |
+| `sage-wiki index rebuild-vectors [--quantize none\|int8]` | Rebuild the on-disk vector index (`.sage/vectors*.idx`) from the stored embeddings — required once after enabling `vectors.backend: mmap` and again after compiles/re-embeds |
 | `sage-wiki search "query" [--tags ...] [--boost-tags ...] [--limit N] [--channels bm25,vector,graph] [--expand] [--rerank]` | Hybrid search (BM25 + vector + ontology graph) |
 | `sage-wiki query "question"` | Q&A against the wiki with citations |
 | `sage-wiki tui` | Interactive terminal dashboard |
@@ -497,6 +498,66 @@ LLM-compiling everything:
 For large vaults: index everything at Tier 1 (a 100K-doc vault in ~5.5
 hours), then compile on demand — auto-promotion, backpressure, and code parsers are covered in
 [Large Vault Performance](docs/guides/large-vault-performance.md).
+
+### Bounded vector memory (opt-in)
+
+By default every search loads the full vector matrix into memory per open
+workspace (`vectors.backend: memory`). For very large vaults — or many
+workspaces in one process — an on-disk, mmap-served index keeps resident
+memory bounded instead:
+
+```yaml
+vectors:
+  backend: mmap        # memory (default) | mmap
+  quantization: none   # none (default, fp32 exact) | int8 (4x smaller)
+```
+
+Then build the index once (and after any compile/re-embed — a stale
+snapshot falls back to the in-memory cache with a warning, never to wrong
+results):
+
+```
+sage-wiki index rebuild-vectors
+```
+
+- fp32 (`quantization: none`) returns results **identical** to the
+  in-memory backend (verified against the golden parity corpus).
+- int8 is 4x smaller with a measured recall trade-off (recall@10 = 0.994
+  on the reference fixture; the gate is ≥ 0.95).
+- The memory ceiling is **unix-only** (real `mmap`); other platforms serve
+  the index from memory and warn once.
+- Measured on a 50K×384 fixture: search heap 1.9 MB (mmap) vs 86.8 MB
+  (memory) — ~2% resident; warm latency within 1.1x; cold search ~6x
+  faster (no full cache load).
+
+### Multi-workspace serve
+
+One process can serve many workspaces (personal/work/project vaults —
+and the seam a hosting setup composes around; this repo stays
+workspace-scoped, with no tenant/quota concepts):
+
+```
+sage-wiki serve --workspace-root /path/to/vaults --addr 127.0.0.1:8484
+```
+
+- `GET /v1/workspaces` lists the registry (subdirectories of the root
+  containing a valid workspace).
+- `/w/{name}/...` serves the full per-workspace surface (REST + MCP at
+  `/w/{name}/mcp`). Workspace names are validated
+  (`[a-z0-9][a-z0-9-_]{0,63}`) — invalid or unknown names get the same
+  404.
+- Workspaces open lazily; `--max-concurrent-compiles` bounds compiles
+  **across** all workspaces (one shared gate). Live workspaces are
+  LRU-bounded by the engine Manager (`engine.WithMaxOpen` for API users).
+- Auth: the root `--token`/`--token-file` guards all `/w/*` routes.
+  Per-workspace auth is a non-goal — compose it in front (reverse proxy)
+  if you need it.
+- `--workspace-root` is HTTP-only and cannot be combined with `--ui`,
+  `--workspace`, or `--transport`.
+- Memory note: a served workspace opens up to 3 handles (engine, worker,
+  MCP); the bounded-memory goal in multi-workspace serve requires
+  `vectors.backend: mmap`.
+
 
 ## Ecosystem
 

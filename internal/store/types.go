@@ -38,6 +38,7 @@ type OpenOptions struct {
 	Pool            PoolConfig    // default 10/2 when zero; hub reader opens use 4/2
 	VectorDimension int           // required for postgres writer open
 	ANN             bool          // opt-in HNSW vector index (P2-7); false = brute-force
+	VectorBackend   string        // SPEC-06: ""|"memory" (default) | "mmap"
 	// Ontology validation lists (config-derived) for the concrete ontology store.
 	ValidRelations   []string
 	ValidEntityTypes []string

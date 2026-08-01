@@ -25,8 +25,9 @@ import (
 type Options struct {
 	ValidRelations   []string
 	ValidEntityTypes []string
-	ANN              bool  // opt-in HNSW vector index (P2-7)
-	TemporalEnabled  *bool // nil = enabled (P3-6 default); see store.OpenOptions
+	ANN              bool   // opt-in HNSW vector index (P2-7)
+	TemporalEnabled  *bool  // nil = enabled (P3-6 default); see store.OpenOptions
+	VectorBackend    string // SPEC-06: ""|"memory" | "mmap"
 }
 
 // temporalEnabledOrDefault resolves the P3-6 gate: nil = enabled (default).
@@ -96,12 +97,14 @@ func newBackend(db *storage.DB, path string, mode store.Mode, o Options) *backen
 		mode:    mode,
 		entries: memory.NewStore(db),
 		chunks:  memory.NewChunkStore(db),
-		vec:     vectors.NewStore(db, vectors.WithANN(o.ANN)),
-		ont:     ontology.NewStore(db, o.ValidRelations, o.ValidEntityTypes, ontology.WithTemporalEnabled(temporalEnabledOrDefault(o.TemporalEnabled))),
-		trustS:  trust.NewStore(db),
-		items:   compiler.NewCompileItemStore(db),
-		outIdx:  storage.NewOutputIndex(db),
-		learn:   &learningStore{db: db},
+		vec: vectors.NewStore(db, vectors.WithANN(o.ANN),
+			vectors.WithVectorBackend(o.VectorBackend),
+			vectors.WithIndexDir(filepath.Dir(path))),
+		ont:    ontology.NewStore(db, o.ValidRelations, o.ValidEntityTypes, ontology.WithTemporalEnabled(temporalEnabledOrDefault(o.TemporalEnabled))),
+		trustS: trust.NewStore(db),
+		items:  compiler.NewCompileItemStore(db),
+		outIdx: storage.NewOutputIndex(db),
+		learn:  &learningStore{db: db},
 	}
 }
 
@@ -158,7 +161,13 @@ func (b *backend) SchemaReady() bool {
 
 func (b *backend) Location() string { return b.path }
 
-func (b *backend) Close() error { return b.db.Close() }
+func (b *backend) Close() error {
+	// Release mapped vector index files before the DB under them goes
+	// away (F-038: without this, mmap'd indexes stay mapped for process
+	// lifetime and LRU-evicted workspaces keep pages resident).
+	_ = b.vec.Close()
+	return b.db.Close()
+}
 
 // learningStore adapts linter's learning persistence to store.LearningStore.
 type learningStore struct {
