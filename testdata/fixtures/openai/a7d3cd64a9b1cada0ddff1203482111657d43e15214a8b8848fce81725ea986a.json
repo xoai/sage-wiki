@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "Consensus protocols trade availability for consistency under\npartition. Raft elects a leader with randomized timeouts; Paxos\ngeneralizes to multi-decree consensus at higher implementation\ncost. Practical systems layer membership changes carefully because\njoint consensus doubles the quorum intersection requirement.\n",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.62,
+            0.239,
+            0.858,
+            0.477,
+            0.144,
+            0.763,
+            0.382,
+            0.001
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

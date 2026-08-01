@@ -1,0 +1,7 @@
+# Committed harness config fragment (SPEC-09 §2.4): the fusion weights the
+# parity suite compiles/searches with. Its SHA-256 is recorded in
+# byte-parity.json — a weights change IS a golden change.
+search:
+  hybrid_weight_bm25: 0.7
+  hybrid_weight_vector: 0.3
+  hybrid_weight_graph: 0.2

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/xoai/sage-wiki/internal/config"
@@ -126,12 +127,19 @@ func Diff(projectDir string, cfg *config.Config, mf *manifest.Manifest) (*DiffRe
 		}
 	}
 
+	// Determinism (AGENTS.md rule 6): the pipeline's source ordering feeds
+	// batch contents, concept labels, and replay fixtures — it must never
+	// inherit Go's map iteration order.
+	sort.Slice(result.Added, func(i, j int) bool { return result.Added[i].Path < result.Added[j].Path })
+	sort.Slice(result.Modified, func(i, j int) bool { return result.Modified[i].Path < result.Modified[j].Path })
+
 	// Find removed sources
 	for path := range mf.Sources {
 		if _, exists := current[path]; !exists {
 			result.Removed = append(result.Removed, path)
 		}
 	}
+	sort.Strings(result.Removed) // rule 6: no map-order iteration in output
 
 	log.Info("diff complete",
 		"added", len(result.Added),

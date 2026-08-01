@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "package scheduler\n\nimport \"testing\"\n\nfunc TestDispatchBackpressure(t *testing.T) {\n\ts := \u0026Scheduler{\n\t\tqueues: []chan Task{make(chan Task, 1)},\n\t\tweight: []int{1},\n\t}\n\tif !s.Dispatch(Task{ID: \"t1\"}) {\n\t\tt.Fatal(\"first dispatch must succeed\")\n\t}\n\tif s.Dispatch(Task{ID: \"t2\"}) {\n\t\tt.Fatal(\"second dispatch must hit backpressure\")\n\t}\n}\n",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.09,
+            0.709,
+            0.852,
+            0.471,
+            0.614,
+            0.233,
+            0.376,
+            0.995
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

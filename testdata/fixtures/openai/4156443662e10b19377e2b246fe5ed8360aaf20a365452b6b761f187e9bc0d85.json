@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "# Kubernetes Architecture\n\nKubernetes (often shortened to K8s) schedules containers across a\ncluster. The control plane comprises the API server, scheduler, and\ncontroller manager. K8s uses etcd for cluster state. Operators extend\nKubernetes with custom resources and reconcile loops.\n",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.948,
+            0.567,
+            0.186,
+            0.805,
+            0.472,
+            0.091,
+            0.71,
+            0.329
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

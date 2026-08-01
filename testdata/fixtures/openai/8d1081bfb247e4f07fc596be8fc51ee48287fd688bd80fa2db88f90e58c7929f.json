@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "# Project Lighthouse Status\n\nProject Lighthouse uses a centralized coordinator for all compile jobs.\nThe coordinator assigns work to a fixed pool of four workers. This is\nthe documented architecture as of mid-2024.",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.853,
+            0.234,
+            0.615,
+            0.996,
+            0.377,
+            0.758,
+            0.139,
+            0.52
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

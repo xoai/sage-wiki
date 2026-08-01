@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "# Link Integrity\n\nCross-references rot when concepts are renamed. The compile pipeline\nstrips links to concepts that do not exist on disk after the write\npass, so a renamed concept silently orphans its inbound links unless\nan alias preserves the old name.\n",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.538,
+            0.157,
+            0.3,
+            0.919,
+            0.062,
+            0.681,
+            0.824,
+            0.443
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

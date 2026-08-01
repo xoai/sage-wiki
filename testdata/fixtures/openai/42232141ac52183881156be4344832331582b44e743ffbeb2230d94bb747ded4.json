@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "# Delta Observability\n\nThe Delta observability layer samples traces from the [[Alpha Protocol]]\nsessions and correlates them with [[Gamma Proof]] latency, giving\noperators end-to-end visibility across the three-step chain.\n",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.869,
+            0.25,
+            0.631,
+            0.012,
+            0.393,
+            0.774,
+            0.155,
+            0.536
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

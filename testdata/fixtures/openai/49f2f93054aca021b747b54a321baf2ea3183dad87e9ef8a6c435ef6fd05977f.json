@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "# Emoji in Technical Content 🚀\n\nModern documentation includes emoji: 🎯 for targets, ⚠️ for warnings,\n✅ for completions, and ❌ for failures. The search index must tokenize\nemoji-adjacent words correctly — \"rocket🚀launch\" should not merge\ninto a single unfindable token. Zero-width joiners 👨‍👩‍👧‍👦 and\nvariation selectors ✈️ are edge cases for UTF-8 handling.\n",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.342,
+            0.961,
+            0.104,
+            0.723,
+            0.818,
+            0.437,
+            0.58,
+            0.199
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

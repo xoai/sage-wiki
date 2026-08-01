@@ -1,6 +1,8 @@
 package compiler
 
 import (
+	"sort"
+	"strings"
 	"os"
 	"path/filepath"
 	"testing"
@@ -311,5 +313,46 @@ func TestIsIgnored(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("isIgnored(%q, %v) = %v, want %v", tt.path, tt.ignore, got, tt.want)
 		}
+	}
+}
+
+// TestDiff_DeterministicOrder proves Added/Modified come out sorted by
+// path regardless of map iteration order (rule 6; was a live bug at
+// diff.go's map loop — replay fixtures can never match otherwise).
+func TestDiff_DeterministicOrder(t *testing.T) {
+	projDir := t.TempDir()
+	rawDir := filepath.Join(projDir, "raw")
+	names := []string{"zeta.md", "alpha.md", "mid/beta.md", "mid/aardvark.md", "gamma.md"}
+	for _, name := range names {
+		p := filepath.Join(rawDir, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("# "+name+"\n\nbody"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := &config.Config{
+		Sources: []config.Source{{Path: "raw", Type: "auto"}},
+	}
+	var orders []string
+	for i := 0; i < 5; i++ {
+		res, err := Diff(projDir, cfg, manifest.New())
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		var order []string
+		for _, src := range res.Added {
+			order = append(order, src.Path)
+		}
+		orders = append(orders, strings.Join(order, ","))
+	}
+	for i := 1; i < len(orders); i++ {
+		if orders[i] != orders[0] {
+			t.Fatalf("nondeterministic Added order: %q vs %q", orders[0], orders[i])
+		}
+	}
+	if !sort.StringsAreSorted(strings.Split(orders[0], ",")) {
+		t.Errorf("Added not sorted: %q", orders[0])
 	}
 }

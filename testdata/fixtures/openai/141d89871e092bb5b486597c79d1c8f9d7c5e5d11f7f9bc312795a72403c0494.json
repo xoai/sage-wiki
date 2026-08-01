@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "package scheduler\n\n// Scheduler assigns work to worker pools using a weighted\n// round-robin strategy with backpressure signals.\ntype Scheduler struct {\n\tqueues []chan Task\n\tweight []int\n}\n\n// Task is a unit of schedulable work with a priority hint.\ntype Task struct {\n\tID       string\n\tPriority int\n\tPayload  []byte\n}\n\n// Dispatch selects the next queue by weight and enqueues the task.\n// It returns false when every queue is full (backpressure).\nfunc (s *Scheduler) Dispatch(t Task) bool {\n\tfor i, q := range s.queues {\n\t\tif s.weight[i] \u003e 0 {\n\t\t\tselect {\n\t\t\tcase q \u003c- t:\n\t\t\t\treturn true\n\t\t\tdefault:\n\t\t\t}\n\t\t}\n\t}\n\treturn false\n}\n",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.026,
+            0.645,
+            0.788,
+            0.407,
+            0.55,
+            0.169,
+            0.312,
+            0.931
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

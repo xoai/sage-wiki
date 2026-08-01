@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "Plain text has no markdown structure at all. No headings, no links,\nno frontmatter. The compiler must still summarize it, extract its\nconcepts, and make it searchable. Content here covers mesoscale\nweather modeling: numerical grids, boundary conditions, and ensemble\nforecasting methods used in operational meteorology.\n",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.311,
+            0.692,
+            0.549,
+            0.93,
+            0.835,
+            0.216,
+            0.073,
+            0.454
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

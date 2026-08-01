@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "\"\"\"Rate limiter implementing the token bucket algorithm.\"\"\"\n\nimport time\n\n\nclass TokenBucket:\n    \"\"\"Token bucket with configurable rate and burst capacity.\"\"\"\n\n    def __init__(self, rate_per_sec: float, burst: int):\n        self.rate = rate_per_sec\n        self.burst = burst\n        self.tokens = float(burst)\n        self.updated = time.monotonic()\n\n    def allow(self, cost: float = 1.0) -\u003e bool:\n        \"\"\"Consume `cost` tokens if available, refilling by elapsed time.\"\"\"\n        now = time.monotonic()\n        self.tokens = min(self.burst, self.tokens + (now - self.updated) * self.rate)\n        self.updated = now\n        if self.tokens \u003e= cost:\n            self.tokens -= cost\n            return True\n        return False\n",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.638,
+            0.257,
+            0.4,
+            0.019,
+            0.114,
+            0.733,
+            0.876,
+            0.495
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

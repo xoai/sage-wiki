@@ -1,0 +1,5 @@
+Plain text has no markdown structure at all. No headings, no links,
+no frontmatter. The compiler must still summarize it, extract its
+concepts, and make it searchable. Content here covers mesoscale
+weather modeling: numerical grids, boundary conditions, and ensemble
+forecasting methods used in operational meteorology.

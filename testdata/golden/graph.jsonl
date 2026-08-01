@@ -1,0 +1,12 @@
+{"source_id":"alpha-protocol","relation":"prerequisite_of","target_id":"beta-handshake","evidence":"The Alpha protocol establishes sessions via the Beta Handshake.","confidence":0.9,"source_doc":"raw/multihop/a-links-b.md","valid_from":"2025-01-01T00:00:00Z"}
+{"source_id":"api-gateway","relation":"cites","target_id":"raw/alias/api-gateway.md"}
+{"source_id":"beta-handshake","relation":"prerequisite_of","target_id":"gamma-proof","evidence":"It delegates key confirmation to the Gamma Proof step.","confidence":0.9,"source_doc":"raw/multihop/b-links-c.md","valid_from":"2025-01-01T00:00:00Z"}
+{"source_id":"dated-2024","relation":"cites","target_id":"raw/dates/dated-2024.md"}
+{"source_id":"decentralized-lease","relation":"contradicts","target_id":"centralized-coordinator","evidence":"the centralized coordinator was removed.","confidence":0.95,"source_doc":"raw/contradiction/fact-v2.md","valid_from":"2025-03-01T00:00:00Z"}
+{"source_id":"distributed-systemstxt","relation":"cites","target_id":"raw/text/distributed-systems.txt"}
+{"source_id":"examplejs","relation":"cites","target_id":"raw/code/example.js"}
+{"source_id":"instruction-lookalike","relation":"cites","target_id":"raw/adversarial/instruction-lookalike.md"}
+{"source_id":"kubernetes","relation":"implements","target_id":"etcd","evidence":"K8s uses etcd for cluster state.","confidence":0.85,"source_doc":"raw/alias/kubernetes-k8s.md","valid_from":"2025-01-01T00:00:00Z"}
+{"source_id":"project-lighthouse","relation":"implements","target_id":"centralized-coordinator","evidence":"Project Lighthouse uses a centralized coordinator for all compile jobs.","confidence":0.9,"source_doc":"raw/contradiction/fact-v1.md","valid_from":"2024-06-01T00:00:00Z","valid_to":"2025-03-01T00:00:00Z","invalidated_by":"triple:6cb70c493478d572"}
+{"source_id":"project-lighthouse","relation":"implements","target_id":"decentralized-lease","evidence":"Project Lighthouse moved to a decentralized lease model in early 2025.","confidence":0.95,"source_doc":"raw/contradiction/fact-v2.md","valid_from":"2025-03-01T00:00:00Z","valid_to":"2025-03-01T00:00:00Z","invalidated_by":"triple:ffa8696fcd816e1c"}
+{"source_id":"system-prompt-bait","relation":"cites","target_id":"raw/adversarial/system-prompt-bait.md"}

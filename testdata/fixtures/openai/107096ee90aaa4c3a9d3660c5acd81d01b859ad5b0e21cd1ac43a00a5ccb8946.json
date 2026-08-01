@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "# Mesoscale Modeling Retrospective\n\nA 2024 retrospective on mesoscale weather modeling: the year brought\nconvective-permitting grids into operational use and ensemble sizes\npast fifty members. This document's frontmatter date pins its\nprovenance independently of any filesystem timestamp.",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.679,
+            0.06,
+            0.917,
+            0.298,
+            0.203,
+            0.584,
+            0.441,
+            0.822
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}
