@@ -266,21 +266,16 @@ func (q *Queue) Submit(req CompileJobRequest) (*Job, error) {
 }
 
 // Run processes jobs FIFO until Stop. Restart-pending jobs run first.
+// Stop means "finish the backlog, then halt" (graceful drain); ctx is
+// the hard cancel (the server's drain timeout).
 func (q *Queue) Run(ctx context.Context) {
 	defer close(q.doneCh)
-	for _, id := range q.ledger.PendingIDs() {
-		select {
-		case q.wake <- struct{}{}:
-		default:
-		}
-		_ = id
-		break
-	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-q.stopCh:
+			q.drainOnce(ctx) // final drain of the backlog
 			return
 		case <-q.wake:
 			q.drainOnce(ctx)
@@ -297,8 +292,6 @@ func (q *Queue) drainOnce(ctx context.Context) {
 		select {
 		case q.sem <- struct{}{}:
 		case <-ctx.Done():
-			return
-		case <-q.stopCh:
 			return
 		}
 		q.runOne(ctx, ids[0])

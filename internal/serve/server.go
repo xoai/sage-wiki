@@ -15,6 +15,7 @@ import (
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	mcpserver "github.com/mark3labs/mcp-go/server"
 	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
 	"github.com/xoai/sage-wiki/internal/metrics"
 )
@@ -33,12 +34,13 @@ type Config struct {
 
 // Server is the SPEC-02 unified serve process.
 type Server struct {
-	cfg    Config
-	mcp    *mcppkg.Server
-	deps   *Deps
-	queue  *Queue
-	ledger *Ledger
-	mux    *http.ServeMux
+	cfg       Config
+	mcp       *mcppkg.Server
+	deps      *Deps
+	queue     *Queue
+	ledger    *Ledger
+	mux       *http.ServeMux
+	mcpStream *mcpserver.StreamableHTTPServer
 }
 
 // New builds the server: job ledger + queue, routes, MCP mount.
@@ -59,6 +61,7 @@ func New(deps *Deps, mcpSrv *mcppkg.Server, cfg Config) (*Server, error) {
 	s := &Server{cfg: cfg, mcp: mcpSrv, deps: deps, ledger: ledger}
 	s.queue = NewQueue(ledger, cfg.MaxConcurrentCompiles, s.execCompile, nil)
 	s.routes()
+	s.mcpStream = s.mountMCP()
 	return s, nil
 }
 
