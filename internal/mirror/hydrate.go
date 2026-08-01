@@ -20,6 +20,7 @@ import (
 // passes its own. cfg carries endpoint/bucket/prefix/region for the client
 // built inside (creds resolved by the caller into s3.Credentials via cfg).
 func Hydrate(ctx context.Context, cfg Config, dst string, opts HydrateOpts) (*Report, error) {
+	cfg.normalize()
 	creds, err := ResolveCredentials(cfg.AccessKeyEnv, cfg.SecretKeyEnv, cfg.CredentialsFile)
 	if err != nil {
 		return nil, err
