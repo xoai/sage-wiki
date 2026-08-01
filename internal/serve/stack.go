@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/xoai/sage-wiki/internal/log"
 	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
 	"github.com/xoai/sage-wiki/pkg/engine"
 )
@@ -99,9 +100,17 @@ func (r *stackRegistry) acquire(ctx context.Context, name string) (*workspaceSta
 	}
 	r.mu.Lock()
 	// Lost an assembly race: adopt the winner, tear our duplicate down.
+	// The duplicate's engine handle is the SAME Manager-owned shared
+	// handle the winner uses — detach it before teardown or the close
+	// would kill the live workspace (F-034).
 	if existing, ok := r.stacks[name]; ok && existing.acquireRef() {
 		r.mu.Unlock()
-		go func() { _ = st.close() }()
+		st.srv.ClearWorkspace()
+		go func() {
+			if err := st.close(); err != nil {
+				log.Warn("serve: duplicate stack teardown failed", "workspace", name, "error", err)
+			}
+		}()
 		return existing, nil
 	}
 	st.refs = 1

@@ -94,6 +94,12 @@ func (s *Server) Queue() *Queue { return s.queue }
 // SetWorkspace attaches the engine workspace held for the lock (§2.0).
 func (s *Server) SetWorkspace(w *engine.Workspace) { s.ws = w }
 
+// ClearWorkspace detaches the engine workspace — Shutdown will NOT close
+// it. Used when the handle is owned elsewhere (SPEC-06: the Manager owns
+// the shared handle; a duplicate stack teardown must never close it,
+// F-034).
+func (s *Server) ClearWorkspace() { s.ws = nil }
+
 // InjectHTTPServer hands an externally created http.Server to the drain
 // sequence (used when the caller serves with a readiness-aware handler —
 // N-01: one listener, one server, handler swapped atomically at handoff).

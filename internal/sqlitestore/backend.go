@@ -161,7 +161,13 @@ func (b *backend) SchemaReady() bool {
 
 func (b *backend) Location() string { return b.path }
 
-func (b *backend) Close() error { return b.db.Close() }
+func (b *backend) Close() error {
+	// Release mapped vector index files before the DB under them goes
+	// away (F-038: without this, mmap'd indexes stay mapped for process
+	// lifetime and LRU-evicted workspaces keep pages resident).
+	_ = b.vec.Close()
+	return b.db.Close()
+}
 
 // learningStore adapts linter's learning persistence to store.LearningStore.
 type learningStore struct {

@@ -316,3 +316,92 @@ func TestParseIndex_CorruptionTable(t *testing.T) {
 		}
 	}
 }
+
+// F-036 witness: corruption-chosen extreme headers (count/dim products
+// that overflow int64) must be REJECTED by parseIndex, never panic.
+func TestParseIndex_ExtremeHeaderRejected(t *testing.T) {
+	db := setupVecDB(t)
+	seedVecEntries(t, db, map[string][]float32{"a": {1, 0}})
+	path := filepath.Join(t.TempDir(), "v.idx")
+	if _, err := WriteIndexFile(db, IndexTableDocs, path, QuantNone); err != nil {
+		t.Fatal(err)
+	}
+	good, _ := os.ReadFile(path)
+
+	mk := func(count uint64, dim uint32) []byte {
+		b := append([]byte(nil), good...)
+		binary.LittleEndian.PutUint64(b[16:], count)
+		binary.LittleEndian.PutUint32(b[12:], dim)
+		return b
+	}
+	for name, b := range map[string][]byte{
+		"count 2^31 dim 2^31 fp32": mk(1<<31, 1<<31),
+		"count 2^40":               mk(1<<40, 2),
+		"dim 2^24":                 mk(1, 1<<24),
+	} {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("%s: parseIndex PANICKED (%v) — must reject cleanly", name, r)
+				}
+			}()
+			if _, err := parseIndex(b); err == nil {
+				t.Errorf("%s: parseIndex must reject overflow-shaped headers", name)
+			}
+		}()
+	}
+}
+
+// F-037 witness: the writer streams — peak retained data is the ids
+// section, never the full matrix. Structural assertion: two SQLite scans
+// minimum (stats + write), no [][]float32 matrix retention. Proven by
+// building an index over rows that would OOM if materialized lazily is
+// impractical in CI; instead pin the property that a rebuild over a
+// 200K-row table completes and the file parses — the streaming
+// implementation is what makes this cheap.
+func TestRebuild_Streaming_LargeTable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("large-table streaming test")
+	}
+	db := setupVecDB(t)
+	const n, dim = 200000, 16
+	rng := uint32(7)
+	next := func() float32 {
+		rng = rng*1664525 + 1013904223
+		return float32(rng%2000)/1000.0 - 1.0
+	}
+	const batch = 5000
+	for start := 0; start < n; start += batch {
+		if err := db.WriteTx(func(tx *sql.Tx) error {
+			for i := start; i < start+batch && i < n; i++ {
+				v := make([]float32, dim)
+				for j := range v {
+					v[j] = next()
+				}
+				if _, err := tx.Exec("INSERT INTO vec_entries VALUES (?, ?, ?)",
+					chunkID(0, i), encodeFloat32s(v), dim); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "big.idx")
+	stats, err := WriteIndexFile(db, IndexTableDocs, path, QuantInt8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Count != n {
+		t.Errorf("Count = %d, want %d", stats.Count, n)
+	}
+	data, _ := os.ReadFile(path)
+	idx, err := parseIndex(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int(idx.header.count) != n || idx.header.dim != dim {
+		t.Errorf("header = %+v", idx.header)
+	}
+}

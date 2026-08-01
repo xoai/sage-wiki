@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/xoai/sage-wiki/internal/cli"
@@ -85,12 +86,13 @@ func runIndexRebuildVectors(cmd *cobra.Command, args []string) error {
 		{"documents", vectors.IndexTableDocs, "vectors.idx"},
 		{"chunks", vectors.IndexTableChunks, "vectors-chunks.idx"},
 	} {
+		start := time.Now()
 		stats, err := vectors.WriteIndexFile(db, job.table, filepath.Join(sageDir, job.file), quant)
 		if err != nil {
 			return cli.CLIError(outputFormat, fmt.Errorf("rebuilding %s index: %w", job.name, err))
 		}
-		fmt.Fprintf(os.Stdout, "%s: %d rows, dim %d, %d bytes, quantization %s",
-			job.name, stats.Count, stats.Dim, stats.Bytes, quantName)
+		fmt.Fprintf(os.Stdout, "%s: %d rows, dim %d, %d bytes, quantization %s, %s",
+			job.name, stats.Count, stats.Dim, stats.Bytes, quantName, time.Since(start).Round(time.Millisecond))
 		if stats.Skipped > 0 {
 			fmt.Fprintf(os.Stdout, " (%d dimension-mismatch rows skipped)", stats.Skipped)
 		}

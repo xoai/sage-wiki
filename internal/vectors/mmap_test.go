@@ -312,3 +312,35 @@ func TestANNPlusMmap_ExactScanWins(t *testing.T) {
 		t.Error("mmap exact scan must serve without loading the cache/graph")
 	}
 }
+
+// F-038 witness: Store.Close unmaps the snapshot (the only release path;
+// sqlitestore backend.Close now calls it).
+func TestStoreClose_Unmaps(t *testing.T) {
+	db, dir := setupMmapFixture(t)
+	mem := NewStore(db)
+	_ = mem.Upsert("v1", []float32{1, 0})
+	rebuildBoth(t, db, dir, QuantNone)
+
+	s := mmapStore(db, dir)
+	if _, err := s.Search([]float32{1, 0}, 1); err != nil {
+		t.Fatal(err)
+	}
+	s.mmMu.Lock()
+	mapped := s.mmDoc != nil && s.mmDoc.idx != nil
+	s.mmMu.Unlock()
+	if !mapped {
+		t.Fatal("precondition: snapshot mapped after search")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s.mmMu.Lock()
+	still := s.mmDoc.idx != nil || s.mmDoc.unmap != nil
+	s.mmMu.Unlock()
+	if still {
+		t.Error("Store.Close must unmap the snapshot")
+	}
+	if err := s.Close(); err != nil {
+		t.Error("second Close must be a no-op")
+	}
+}

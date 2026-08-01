@@ -63,14 +63,20 @@ func specFor(t IndexTable) tableSpec {
 // fully written, fsynced, then renamed over the target — readers see the
 // old file or the new one, never a torn write.
 //
-// The writer MIRRORS THE LOADER's row-selection rule exactly so fp32 files
-// serve bit-identical results to the in-memory cache: rows stream in rowid
-// order (matching the loader's ORDER BY rowid), dim latches from the first
-// row's DECODED length (len(blob)/4 — the dimensions column is advisory and
-// unused by the loader), and rows whose decoded length differs are skipped.
-// Deliberate divergence (spec §2): a first-row empty blob (dim=0 with rows
-// present) ERRORS — corrupt embeddings must not silently produce an
-// all-skipped index.
+// The writer STREAMS (spec §2 — no full materialization): a stats pass
+// over SQLite (dim/count/skipped/scale), an ids pass (collects the small
+// id sections), and a matrix pass (one row at a time). Peak retention is
+// the ids section — never the matrix.
+//
+// Row selection MIRRORS THE LOADER exactly so fp32 files serve
+// bit-identical results: rowid order (the loader's ORDER BY rowid), dim
+// latches from the first row's DECODED length (len(blob)/4 — the
+// dimensions column is advisory and unused by the loader), decoded-length
+// mismatches skipped. Deliberate divergence: a first-row empty blob
+// (dim=0 with rows present) ERRORS — corrupt embeddings must not
+// silently produce an all-skipped index. All passes apply the identical
+// rule; a table mutated mid-rebuild is caught by a count cross-check
+// (the workspace lock excludes concurrent writers — belt and braces).
 func WriteIndexFile(db store.DBHandle, table IndexTable, path string, quant int) (IndexStats, error) {
 	var stats IndexStats
 	spec := specFor(table)
@@ -79,34 +85,79 @@ func WriteIndexFile(db store.DBHandle, table IndexTable, path string, quant int)
 	}
 	stats.Quantization = quant
 
-	ids, docIDs, rows, err := scanRows(db.ReadDB(), spec, &stats)
+	// Pass 1: stats. Rows are normalized on the fly for the scale; nothing
+	// is retained.
+	var maxAbs float32
+	err := iterateRows(db.ReadDB(), spec, func(_, _ string, nv []float32) error {
+		for _, v := range nv {
+			if a := float32(math.Abs(float64(v))); a > maxAbs {
+				maxAbs = a
+			}
+		}
+		return nil
+	}, &stats)
 	if err != nil {
 		return stats, err
 	}
 
 	h := indexHeader{quant: quant, kind: spec.kind, dim: stats.Dim, count: uint64(stats.Count), scale: 1.0}
-	// int8 needs the global scale over the INCLUDED normalized rows; the
-	// scan already normalized them (rows are small enough to hold for one
-	// table — the writer is an offline command, not the query path).
-	if quant == QuantInt8 && stats.Count > 0 {
-		var maxAbs float32
-		for _, r := range rows {
-			for _, v := range r {
-				if a := float32(math.Abs(float64(v))); a > maxAbs {
-					maxAbs = a
-				}
-			}
+	if quant == QuantInt8 && stats.Count > 0 && maxAbs > 0 {
+		h.scale = maxAbs
+	}
+
+	// Pass 2: ids sections (small — the only retained data).
+	var ids, docIDs []string
+	var check IndexStats
+	err = iterateRows(db.ReadDB(), spec, func(id, docID string, _ []float32) error {
+		ids = append(ids, id)
+		if spec.kind == tableKindChunk {
+			docIDs = append(docIDs, docID)
 		}
-		if maxAbs > 0 {
-			h.scale = maxAbs
-		}
+		return nil
+	}, &check)
+	if err != nil {
+		return stats, err
+	}
+	if check.Count != stats.Count || check.Skipped != stats.Skipped || check.Dim != stats.Dim {
+		return stats, fmt.Errorf("vectors.WriteIndexFile: table changed during rebuild (pass 1 %d/%d rows, pass 2 %d/%d)",
+			stats.Count, stats.Skipped, check.Count, check.Skipped)
 	}
 
 	tmp := path + ".tmp"
-	if err := writeIndexTmp(tmp, h, ids, docIDs, rows); err != nil {
+	if err := writeIndexTmp(tmp, h, ids, docIDs); err != nil {
 		_ = os.Remove(tmp)
 		return stats, err
 	}
+
+	// Pass 3: stream the matrix, one row at a time.
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		_ = os.Remove(tmp)
+		return stats, err
+	}
+	writeErr := error(nil)
+	var matrixCheck IndexStats
+	err = iterateRows(db.ReadDB(), spec, func(_, _ string, nv []float32) error {
+		return writeMatrixRow(f, h, nv)
+	}, &matrixCheck)
+	if err != nil {
+		writeErr = err
+	}
+	if writeErr == nil {
+		if matrixCheck.Count != stats.Count {
+			writeErr = fmt.Errorf("vectors.WriteIndexFile: table changed during rebuild (matrix pass %d rows, want %d)", matrixCheck.Count, stats.Count)
+		} else if err := f.Sync(); err != nil {
+			writeErr = err
+		}
+	}
+	if cerr := f.Close(); cerr != nil && writeErr == nil {
+		writeErr = cerr
+	}
+	if writeErr != nil {
+		_ = os.Remove(tmp)
+		return stats, writeErr
+	}
+
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		return stats, fmt.Errorf("vectors.WriteIndexFile: rename: %w", err)
@@ -120,12 +171,13 @@ func WriteIndexFile(db store.DBHandle, table IndexTable, path string, quant int)
 	return stats, nil
 }
 
-// scanRows streams the table in rowid order, applies the loader's dim rule,
-// and returns normalized included rows.
-func scanRows(db *sql.DB, spec tableSpec, stats *IndexStats) (ids, docIDs []string, rows [][]float32, err error) {
+// iterateRows streams the table in rowid order, applies the loader's dim
+// rule, normalizes each included row, and calls fn per row. stats
+// accumulates count/dim/skipped.
+func iterateRows(db *sql.DB, spec tableSpec, fn func(id, docID string, nv []float32) error, stats *IndexStats) error {
 	r, err := db.Query(spec.selectSQL)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("vectors.WriteIndexFile: scan: %w", err)
+		return fmt.Errorf("vectors.WriteIndexFile: scan: %w", err)
 	}
 	defer func() { _ = r.Close() }()
 
@@ -136,17 +188,17 @@ func scanRows(db *sql.DB, spec tableSpec, stats *IndexStats) (ids, docIDs []stri
 		var blob []byte
 		if spec.kind == tableKindChunk {
 			if err := r.Scan(&id, &docID, &blob); err != nil {
-				return nil, nil, nil, err
+				return err
 			}
 		} else {
 			if err := r.Scan(&id, &blob); err != nil {
-				return nil, nil, nil, err
+				return err
 			}
 		}
 		vec := decodeFloat32s(blob)
 		if dim == 0 {
 			if len(vec) == 0 {
-				return nil, nil, nil, fmt.Errorf(
+				return fmt.Errorf(
 					"vectors.WriteIndexFile: first row %q has an empty/undecodable embedding — corrupt embeddings; re-embed the workspace", id)
 			}
 			dim = len(vec)
@@ -155,22 +207,21 @@ func scanRows(db *sql.DB, spec tableSpec, stats *IndexStats) (ids, docIDs []stri
 			stats.Skipped++
 			continue
 		}
-		ids = append(ids, id)
-		if spec.kind == tableKindChunk {
-			docIDs = append(docIDs, docID)
+		if err := fn(id, docID, normalizeCopy(vec)); err != nil {
+			return err
 		}
-		rows = append(rows, normalizeCopy(vec))
+		stats.Count++
 	}
 	if err := r.Err(); err != nil {
-		return nil, nil, nil, err
+		return err
 	}
-	stats.Count = len(ids)
 	stats.Dim = dim
-	return ids, docIDs, rows, nil
+	return nil
 }
 
-// writeIndexTmp serializes header + sections + matrix to tmp and fsyncs.
-func writeIndexTmp(tmp string, h indexHeader, ids, docIDs []string, rows [][]float32) error {
+// writeIndexTmp writes header + ids sections + alignment padding (the
+// matrix follows via append).
+func writeIndexTmp(tmp string, h indexHeader, ids, docIDs []string) error {
 	if err := os.MkdirAll(filepath.Dir(tmp), 0o755); err != nil {
 		return err
 	}
@@ -178,17 +229,17 @@ func writeIndexTmp(tmp string, h indexHeader, ids, docIDs []string, rows [][]flo
 	if err != nil {
 		return err
 	}
-	writeIDs := func(w *os.File, list []string) error {
+	writeIDs := func(list []string) error {
 		var lenBuf [2]byte
 		for _, id := range list {
 			if len(id) > 0xFFFF {
 				return fmt.Errorf("vectors.WriteIndexFile: id longer than 65535 bytes")
 			}
 			binary.LittleEndian.PutUint16(lenBuf[:], uint16(len(id)))
-			if _, err := w.Write(lenBuf[:]); err != nil {
+			if _, err := f.Write(lenBuf[:]); err != nil {
 				return err
 			}
-			if _, err := w.Write([]byte(id)); err != nil {
+			if _, err := f.Write([]byte(id)); err != nil {
 				return err
 			}
 		}
@@ -199,12 +250,12 @@ func writeIndexTmp(tmp string, h indexHeader, ids, docIDs []string, rows [][]flo
 		_ = f.Close()
 		return err
 	}
-	if err := writeIDs(f, ids); err != nil {
+	if err := writeIDs(ids); err != nil {
 		_ = f.Close()
 		return err
 	}
 	if h.kind == tableKindChunk {
-		if err := writeIDs(f, docIDs); err != nil {
+		if err := writeIDs(docIDs); err != nil {
 			_ = f.Close()
 			return err
 		}
@@ -215,8 +266,10 @@ func writeIndexTmp(tmp string, h indexHeader, ids, docIDs []string, rows [][]flo
 	for _, id := range ids {
 		written += 2 + int64(len(id))
 	}
-	for _, id := range docIDs {
-		written += 2 + int64(len(id))
+	if h.kind == tableKindChunk {
+		for _, id := range docIDs {
+			written += 2 + int64(len(id))
+		}
 	}
 	if pad := (4 - int(written%4)) % 4; pad > 0 {
 		if _, err := f.Write(make([]byte, pad)); err != nil {
@@ -224,37 +277,29 @@ func writeIndexTmp(tmp string, h indexHeader, ids, docIDs []string, rows [][]flo
 			return err
 		}
 	}
+	return f.Close()
+}
 
-	var elem [4]byte
-	for _, row := range rows {
-		if h.quant == QuantInt8 {
-			buf := make([]byte, len(row))
-			for j, v := range row {
-				q := int(math.Round(float64(v / h.scale * 127)))
-				if q > 127 {
-					q = 127
-				} else if q < -127 {
-					q = -127
-				}
-				buf[j] = byte(int8(q))
+// writeMatrixRow appends one normalized row to the matrix section.
+func writeMatrixRow(f *os.File, h indexHeader, row []float32) error {
+	if h.quant == QuantInt8 {
+		buf := make([]byte, len(row))
+		for j, v := range row {
+			q := int(math.Round(float64(v / h.scale * 127)))
+			if q > 127 {
+				q = 127
+			} else if q < -127 {
+				q = -127
 			}
-			if _, err := f.Write(buf); err != nil {
-				_ = f.Close()
-				return err
-			}
-			continue
+			buf[j] = byte(int8(q))
 		}
-		for _, v := range row {
-			binary.LittleEndian.PutUint32(elem[:], math.Float32bits(v))
-			if _, err := f.Write(elem[:]); err != nil {
-				_ = f.Close()
-				return err
-			}
-		}
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
+		_, err := f.Write(buf)
 		return err
 	}
-	return f.Close()
+	buf := make([]byte, len(row)*4)
+	for j, v := range row {
+		binary.LittleEndian.PutUint32(buf[j*4:], math.Float32bits(v))
+	}
+	_, err := f.Write(buf)
+	return err
 }

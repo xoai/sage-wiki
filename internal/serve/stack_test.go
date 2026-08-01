@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -195,4 +196,49 @@ func copyDir(t *testing.T, src, dst string) {
 			t.Fatal(err)
 		}
 	}
+}
+
+// F-034 witness: two concurrent first-time acquire(name) calls converge —
+// the loser's teardown must NOT close the Manager-shared workspace handle
+// out from under the winner.
+func TestStack_ConcurrentAcquireDoesNotCloseSharedWorkspace(t *testing.T) {
+	reg, _, _ := stackFixture(t, "ws-a")
+	ctx := context.Background()
+
+	const n = 8
+	var wg sync.WaitGroup
+	stacks := make([]*workspaceStack, n)
+	errs := make([]error, n)
+	barrier := make(chan struct{})
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-barrier
+			st, err := reg.acquire(ctx, "ws-a")
+			stacks[i] = st
+			errs[i] = err
+		}(i)
+	}
+	close(barrier)
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("acquire %d: %v", i, err)
+		}
+	}
+	// Release all but one ref, then serve on the survivor: the workspace
+	// must still be open (the loser's teardown must not have closed it).
+	for i := 1; i < n; i++ {
+		stacks[i].release()
+	}
+	w := httptest.NewRecorder()
+	stacks[0].handler.ServeHTTP(w, httptest.NewRequest("GET", "/healthz", nil))
+	if w.Code != 200 {
+		t.Errorf("survivor healthz = %d, want 200 (shared workspace was closed by a loser teardown)", w.Code)
+	}
+	if _, err := stacks[0].ws.Stats(ctx); err != nil {
+		t.Errorf("shared workspace closed by loser teardown: %v", err)
+	}
+	stacks[0].release()
 }

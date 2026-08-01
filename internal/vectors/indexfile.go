@@ -51,6 +51,11 @@ const (
 
 var errCorruptIndex = errors.New("vectors: corrupt index file")
 
+// maxIndexDim caps the row dimension a file may declare — far beyond any
+// embedding model (65,536) and small enough that count×dim×4 can never
+// overflow int64 within a memory-mappable file.
+const maxIndexDim = 1 << 16
+
 type indexHeader struct {
 	quant int
 	kind  int // tableKindDoc | tableKindChunk
@@ -160,6 +165,17 @@ func parseIndex(b []byte) (*parsedIndex, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Overflow-safe sanity bounds (F-036): corruption-chosen headers must
+	// be rejected BEFORE the ids loop allocates count strings or the
+	// extent check multiplies count×dim into wraparound.
+	if h.dim > maxIndexDim {
+		return nil, fmt.Errorf("%w: dim %d exceeds limit %d", errCorruptIndex, h.dim, maxIndexDim)
+	}
+	if h.count > uint64(len(b))/3 {
+		// Every row costs ≥ 2 id bytes + ≥ 1 matrix byte (dim ≥ 1 when
+		// count > 0): a count above len/3 cannot fit any valid layout.
+		return nil, fmt.Errorf("%w: count %d impossible for %d-byte file", errCorruptIndex, h.count, len(b))
+	}
 	p := &parsedIndex{header: h, data: b}
 	off := headerSize
 	readIDs := func() ([]string, error) {
@@ -195,8 +211,8 @@ func parseIndex(b []byte) (*parsedIndex, error) {
 		}
 		off += pad
 	}
-	matBytes := int(h.count) * h.dim * h.quantRowBytes()
-	if off+matBytes != len(b) {
+	matBytes := uint64(h.count) * uint64(h.dim) * uint64(h.quantRowBytes())
+	if uint64(off)+matBytes != uint64(len(b)) {
 		return nil, fmt.Errorf("%w: matrix extent mismatch (want %d bytes at %d, file %d)",
 			errCorruptIndex, matBytes, off, len(b))
 	}

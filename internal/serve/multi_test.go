@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/xoai/sage-wiki/pkg/engine"
 )
 
@@ -143,5 +145,33 @@ func TestServeMultiWorkspace_NameValidationInPath(t *testing.T) {
 func TestNewMulti_BadRoot(t *testing.T) {
 	if _, err := NewMulti(context.Background(), MultiConfig{Root: filepath.Join(t.TempDir(), "nope")}); err == nil {
 		t.Error("NewMulti on missing root must error")
+	}
+}
+
+// F-040 witness: the MCP half of the multi-workspace criterion — an MCP
+// handshake through /w/{name}/mcp reaches the stack's streamable mount.
+func TestServeMultiWorkspace_MCPThroughPrefix(t *testing.T) {
+	ms := multiFixture(t, nil)
+	httpSrv := httptest.NewServer(ms.Handler())
+	defer httpSrv.Close()
+
+	ctx := context.Background()
+	c, err := client.NewStreamableHttpClient(httpSrv.URL + "/w/ws-a/mcp")
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	defer c.Close()
+	initReq := mcp.InitializeRequest{}
+	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initReq.Params.ClientInfo = mcp.Implementation{Name: "multi-test", Version: "0.1"}
+	if _, err := c.Initialize(ctx, initReq); err != nil {
+		t.Fatalf("initialize through /w/ws-a/mcp: %v", err)
+	}
+	tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("list tools through prefix: %v", err)
+	}
+	if len(tools.Tools) == 0 {
+		t.Error("no tools through /w/ws-a/mcp — the prefix route did not reach the stack's MCP mount")
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/pathsafe"
 )
@@ -78,13 +79,16 @@ type managerHandle struct {
 // MaxOpen, optional idle close. Safe for concurrent use.
 //
 // Synchronization contract: one mutex serializes the handle map — lookups,
-// evictions, and the idle-close goroutine never interleave on the map.
-// Eviction of a handle with in-flight operations BLOCKS on the Workspace's
-// RWMutex until readers drain (uncancellable — stdlib RWMutex has no
-// ctx-aware acquisition); a perpetually hot workspace therefore cannot be
-// evicted, so MaxOpen bounds OPEN handles, not eviction promptness.
-// Callers MUST NOT retain handles across Manager calls that may evict; a
-// retained evicted handle reports "workspace is closed".
+// detaches, and the idle-close goroutine never interleave on the map.
+// Closes (eviction, idle) run OUTSIDE the mutex so a slow drain never
+// stalls unrelated operations. Eviction of a handle with in-flight
+// operations BLOCKS on the Workspace's RWMutex until readers drain
+// (uncancellable — stdlib RWMutex has no ctx-aware acquisition); a
+// perpetually hot workspace therefore cannot be evicted, so MaxOpen
+// bounds OPEN handles, not eviction promptness. Mutex acquisition itself
+// is uncancellable; ctx is honored inside engine.Open. Callers MUST NOT
+// retain handles across Manager calls that may evict; a retained evicted
+// handle reports "workspace is closed".
 type Manager struct {
 	root string
 	opts managerOptions
@@ -128,22 +132,25 @@ func OpenManager(ctx context.Context, root string, optFns ...ManagerOption) (*Ma
 // Workspace returns the open handle for name, opening it lazily on first
 // use. The handle is shared — do NOT retain it across Manager calls that
 // may evict (any Workspace call beyond MaxOpen, or idle close).
+//
+// Concurrency: concurrent first opens of the same name converge on ONE
+// handle — losers of the engine.Open race see ErrLocked, wait briefly,
+// and re-check the map for the winner. Mutex acquisition (like the
+// documented drain) is UNCANCELLABLE; ctx is honored inside engine.Open.
 func (m *Manager) Workspace(ctx context.Context, name string) (*Workspace, error) {
 	ctx = orBackground(ctx)
 	if err := ValidateWorkspaceName(name); err != nil {
 		return nil, err
 	}
 	m.mu.Lock()
-	if m.closed {
-		m.mu.Unlock()
+	closed := m.closed
+	m.mu.Unlock()
+	if closed {
 		return nil, ErrManagerClosed
 	}
-	if h, ok := m.handles[name]; ok {
-		h.lastUse = time.Now()
-		m.mu.Unlock()
-		return h.ws, nil
+	if h := m.cached(name); h != nil {
+		return h, nil
 	}
-	m.mu.Unlock()
 
 	// Registry + containment check outside the lock (filesystem work).
 	dir, err := m.registryDir(name)
@@ -154,29 +161,68 @@ func (m *Manager) Workspace(ctx context.Context, name string) (*Workspace, error
 	if m.opts.perWorkspaceOptions != nil {
 		optFns = m.opts.perWorkspaceOptions(name)
 	}
-	ws, err := Open(ctx, dir, optFns...)
-	if err != nil {
-		return nil, err
+
+	var ws *Workspace
+	for attempt := 0; ; attempt++ {
+		ws, err = Open(ctx, dir, optFns...)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, ErrLocked) || attempt >= 20 {
+			return nil, err
+		}
+		// A concurrent opener holds the lock: it may be a Manager caller
+		// about to insert the shared handle — re-check before retrying.
+		time.Sleep(25 * time.Millisecond)
+		if h := m.cached(name); h != nil {
+			return h, nil
+		}
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.closed {
+		m.mu.Unlock()
 		_ = ws.Close()
 		return nil, ErrManagerClosed
 	}
 	// A concurrent opener may have won the race; close our duplicate.
 	if h, ok := m.handles[name]; ok {
-		_ = ws.Close()
 		h.lastUse = time.Now()
+		m.mu.Unlock()
+		_ = ws.Close()
 		return h.ws, nil
 	}
-	if err := m.evictLocked(1); err != nil {
-		_ = ws.Close()
-		return nil, err
+	victimName, victim := m.evictCandidateLocked(1)
+	if victim != nil {
+		delete(m.handles, victimName)
 	}
 	m.handles[name] = &managerHandle{ws: ws, lastUse: time.Now()}
+	m.mu.Unlock()
+
+	// The eviction close runs OUTSIDE the mutex (F-043): a slow drain —
+	// or a serve hook waiting out request refcounts — must never stall
+	// unrelated Manager operations. The victim is already detached, so
+	// the open bound holds throughout the close.
+	if victim != nil {
+		if err := m.closeHandle(victimName, victim); err != nil {
+			log.Warn("engine: workspace eviction close failed", "name", victimName, "error", err)
+		}
+	}
 	return ws, nil
+}
+
+// cached returns the shared handle for name, refreshing recency.
+func (m *Manager) cached(name string) *Workspace {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil
+	}
+	if h, ok := m.handles[name]; ok {
+		h.lastUse = time.Now()
+		return h.ws
+	}
+	return nil
 }
 
 // registryDir verifies name is a valid workspace under root and returns
@@ -202,45 +248,30 @@ func (m *Manager) registryDir(name string) (string, error) {
 	return dir, nil
 }
 
-// evictLocked closes least-recently-used handles until opening need more
-// is within MaxOpen. Caller holds m.mu.
-func (m *Manager) evictLocked(need int) error {
-	if m.opts.maxOpen <= 0 {
-		return nil
+// evictCandidateLocked picks the handle to evict so that opening need
+// more stays within MaxOpen — WITHOUT closing it (the close runs outside
+// the mutex, F-043). Caller holds m.mu. Returns ("", nil) when no
+// eviction is needed.
+func (m *Manager) evictCandidateLocked(need int) (string, *managerHandle) {
+	if m.opts.maxOpen <= 0 || len(m.handles)+need <= m.opts.maxOpen {
+		return "", nil
 	}
-	for len(m.handles)+need > m.opts.maxOpen {
-		name, h := m.lruLocked()
-		if h == nil {
-			return nil
-		}
-		delete(m.handles, name)
-		if err := m.closeHandleLocked(name, h); err != nil {
-			return err
-		}
-	}
-	return nil
+	return m.lruLocked()
 }
 
-// lruLocked returns the least-recently-used handle. Caller holds m.mu.
+// lruLocked returns the least-recently-used handle, breaking ties by name
+// (deterministic — map iteration order is not, F-044). Caller holds m.mu.
 func (m *Manager) lruLocked() (string, *managerHandle) {
 	var oldestName string
 	var oldest *managerHandle
 	for name, h := range m.handles {
-		if oldest == nil || h.lastUse.Before(oldest.lastUse) {
+		if oldest == nil ||
+			h.lastUse.Before(oldest.lastUse) ||
+			(h.lastUse.Equal(oldest.lastUse) && name < oldestName) {
 			oldestName, oldest = name, h
 		}
 	}
 	return oldestName, oldest
-}
-
-// closeHandleLocked closes one handle via the eviction path. Caller holds
-// m.mu — the hook (or Workspace.Close) may block on in-flight readers;
-// see the synchronization contract on Manager.
-func (m *Manager) closeHandleLocked(name string, h *managerHandle) error {
-	if m.opts.onEvict != nil {
-		return m.opts.onEvict(name, h.ws)
-	}
-	return h.ws.Close()
 }
 
 // List scans the registry and reports every valid workspace under root.
@@ -304,17 +335,28 @@ func (m *Manager) idleLoop(ctx context.Context, d time.Duration) {
 		case <-m.idleStop:
 			return
 		case now := <-t.C:
+			// Detach under the lock, close outside it (F-043): the close
+			// drains in-flight readers and must not stall the Manager.
+			var evicted []struct {
+				name string
+				h    *managerHandle
+			}
 			m.mu.Lock()
 			for name, h := range m.handles {
 				if now.Sub(h.lastUse) > d {
 					delete(m.handles, name)
-					// Blocking close under the lock is the documented
-					// contract (see Manager): idle close never kills a
-					// handle mid-read — Workspace.Close drains first.
-					_ = m.closeHandleLocked(name, h)
+					evicted = append(evicted, struct {
+						name string
+						h    *managerHandle
+					}{name, h})
 				}
 			}
 			m.mu.Unlock()
+			for _, e := range evicted {
+				if err := m.closeHandle(e.name, e.h); err != nil {
+					log.Warn("engine: idle close failed", "name", e.name, "error", err)
+				}
+			}
 		}
 	}
 }

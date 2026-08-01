@@ -148,7 +148,9 @@ func (s *Store) closeMmap() {
 	defer s.mmMu.Unlock()
 	for _, t := range []*mmapTable{s.mmDoc, s.mmChunk} {
 		if t != nil && t.unmap != nil {
-			_ = t.unmap()
+			if err := t.unmap(); err != nil {
+				log.Warn("vectors: unmap failed", "error", err)
+			}
 			t.unmap = nil
 			t.idx = nil
 		}
