@@ -211,6 +211,7 @@ func init() {
 	serveCmd.Flags().String("transport", "stdio", "Transport: stdio or sse")
 	serveCmd.Flags().String("addr", "", "HTTP mode bind (REST+MCP+metrics, takes the workspace lock; bare serve defaults to 127.0.0.1:8484)")
 	serveCmd.Flags().String("workspace", "", "workspace dir for HTTP mode (default: --project)")
+	serveCmd.Flags().String("workspace-root", "", "multi-workspace mode (SPEC-06): serve every workspace under this root at /w/{name}/ (HTTP only; incompatible with --workspace, --ui, --transport)")
 	serveCmd.Flags().String("token-file", "", "bearer token file for HTTP mode (one per line)")
 	serveCmd.Flags().Int("max-concurrent-compiles", 2, "global cap on concurrent compiles (matters for SPEC-06 multi-workspace; single-workspace FIFO already serializes)")
 	serveCmd.Flags().Duration("drain-timeout", 30*time.Second, "graceful shutdown drain budget (min 10s, warns when clamped)")
@@ -627,6 +628,27 @@ func runCompile(cmd *cobra.Command, args []string) error {
 
 func runServe(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
+
+	// Multi-workspace mode (SPEC-06): --workspace-root is HTTP-only and
+	// mutually exclusive with the single-workspace surfaces — every
+	// exclusion is an explicit startup error, never a silent ignore.
+	wsRoot, _ := cmd.Flags().GetString("workspace-root")
+	if wsRoot != "" {
+		if cmd.Flags().Changed("transport") {
+			return fmt.Errorf("serve: --workspace-root is HTTP-only — it cannot be combined with --transport")
+		}
+		if uiFlag, _ := cmd.Flags().GetBool("ui"); uiFlag {
+			return fmt.Errorf("serve: --workspace-root cannot be combined with --ui (the web UI is a per-workspace surface)")
+		}
+		if cmd.Flags().Changed("workspace") {
+			return fmt.Errorf("serve: --workspace-root and --workspace are mutually exclusive")
+		}
+		addr, _ := cmd.Flags().GetString("addr")
+		if addr == "" {
+			addr = "127.0.0.1:8484"
+		}
+		return runServeMulti(cmd, wsRoot, addr)
+	}
 
 	// Heal any file<->DB drift once at server start, before either server is
 	// built (D5). Doing it here — not inside mcp.NewServer and web.NewWebServer —
@@ -1463,4 +1485,38 @@ func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
 	go srv.StartQueue(ctx)
 	<-ctx.Done()
 	return srv.Shutdown()
+}
+
+// runServeMulti is the SPEC-06 multi-workspace server: one root listener,
+// /v1/workspaces + /w/{name}/... routed to lazily assembled per-workspace
+// stacks behind the engine.Manager (LRU-bounded live workspaces).
+func runServeMulti(cmd *cobra.Command, root, addr string) error {
+	tokenFile, _ := cmd.Flags().GetString("token-file")
+	maxCompiles, _ := cmd.Flags().GetInt("max-concurrent-compiles")
+	drain, _ := cmd.Flags().GetDuration("drain-timeout")
+	insecure, _ := cmd.Flags().GetBool("insecure-no-auth")
+	tokenFlag, _ := cmd.Flags().GetString("token")
+
+	tokens, err := serve.LoadTokens(tokenFlag, tokenFile, os.Getenv("SAGE_WIKI_TOKEN"), "")
+	if err != nil {
+		return err
+	}
+	if err := serve.CheckRefusal(addr, tokens, insecure); err != nil {
+		return err
+	}
+
+	abs, _ := filepath.Abs(root)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ms, err := serve.NewMulti(ctx, serve.MultiConfig{
+		Root:                  abs,
+		Tokens:                tokens,
+		MaxConcurrentCompiles: maxCompiles,
+		DrainTimeout:          drain,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "sage-wiki serve (multi-workspace) listening on %s — root %s, workspaces at /w/{name}/, list at /v1/workspaces\n", addr, abs)
+	return ms.Serve(ctx, addr)
 }
