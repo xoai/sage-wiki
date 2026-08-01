@@ -30,6 +30,7 @@ func newShipFixture(t *testing.T) *shipFixture {
 	}
 	f := &shipFixture{dir: dir, fake: fake, m: m, now: time.Now().UTC()}
 	m.now = func() time.Time { return f.now }
+	m.src = NewDiffChangeSource(dir)
 	// Enable to bootstrap generation 1.
 	if err := m.Enable(context.Background()); err != nil {
 		t.Fatalf("Enable: %v", err)

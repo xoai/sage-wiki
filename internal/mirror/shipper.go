@@ -15,11 +15,13 @@ import (
 // shipResult reports one ship pass (best-effort; callers warn on error,
 // never fail the invoking command).
 type shipResult struct {
-	SealedSegments  int
-	Rotated         bool
-	PendingRotation bool
-	HashedDB        bool // the full db hash ran this pass (cost observability)
-	Warnings        []string
+	SealedSegments    int
+	Rotated           bool
+	PendingRotation   bool
+	HashedDB          bool // the full db hash ran this pass (cost observability)
+	ObjectsShipped    int
+	ObjectsTombstoned int
+	Warnings          []string
 }
 
 // Ship implements the pkg seam: a ChangeBatch is accepted for interface
@@ -99,6 +101,22 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 		}
 	}
 
+	// --- Object sync (objects → segments → state, per spec ordering) ---
+	objectsDirty := false
+	if m.src != nil {
+		changes, _, err := m.src.Changes(ctx, ChangeToken{
+			Committed:        st.Objects,
+			CommittedVectors: st.Vectors,
+		})
+		if err != nil {
+			return res, fmt.Errorf("ship: detect changes: %w", err)
+		}
+		if err := m.shipObjects(ctx, st, changes, &res); err != nil {
+			return res, err
+		}
+		objectsDirty = res.ObjectsShipped+res.ObjectsTombstoned > 0
+	}
+
 	// --- WAL adoption: unknown incarnation (post-bootstrap/rotation/fold)
 	// → adopt the current WAL's salt with offset 0 (its frames are
 	// generation-start content, sealed below from byte 0 incl. header).
@@ -128,6 +146,19 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 			if err := SaveLocalState(localStatePath(m.dir), local); err != nil {
 				return res, err
 			}
+		}
+	}
+
+	// State commit for docs-only passes (no segment sealed this pass but
+	// objects changed): the committed map is already updated in memory.
+	if objectsDirty && res.SealedSegments == 0 {
+		st.UpdatedAt = m.now().UTC()
+		sb, err := MarshalState(st)
+		if err != nil {
+			return res, err
+		}
+		if err := m.client.PutObject(ctx, m.cfg.Bucket, StateKey(NormalizePrefix(m.cfg.Prefix)), sb); err != nil {
+			return res, fmt.Errorf("ship: PUT state (objects): %w", err)
 		}
 	}
 

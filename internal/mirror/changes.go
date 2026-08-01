@@ -36,10 +36,11 @@ const (
 
 // Change is one detected workspace change.
 type Change struct {
-	Path    string // workspace-relative slash path
+	Path    string // workspace-relative slash path (vectors: basename)
 	Kind    ChangeKind
 	SHA256  string // content hash (upserts only)
 	ModUnix int64
+	Vector  bool // true for .sage/vectors*.idx entries (top-level vectors/ prefix)
 }
 
 // shipSetDirs are walked recursively (missing is fine — pre-init workspace).
@@ -168,7 +169,7 @@ func (d *diffChangeSource) Changes(ctx context.Context, since ChangeToken) ([]Ch
 	for name, sha := range vectorsPresent {
 		ref, ok := since.CommittedVectors[name]
 		if !ok || ref.Deleted || ref.SHA256 != sha {
-			changes = append(changes, Change{Path: name, Kind: ChangeUpsert, SHA256: sha})
+			changes = append(changes, Change{Path: name, Kind: ChangeUpsert, SHA256: sha, Vector: true})
 		}
 	}
 	for name, ref := range since.CommittedVectors {
@@ -176,7 +177,7 @@ func (d *diffChangeSource) Changes(ctx context.Context, since ChangeToken) ([]Ch
 			continue
 		}
 		if _, ok := vectorsPresent[name]; !ok {
-			changes = append(changes, Change{Path: name, Kind: ChangeDelete})
+			changes = append(changes, Change{Path: name, Kind: ChangeDelete, Vector: true})
 		}
 	}
 

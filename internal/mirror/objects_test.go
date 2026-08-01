@@ -1,0 +1,120 @@
+package mirror
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestShipObjects_UpsertAndCommit(t *testing.T) {
+	f := newShipFixture(t)
+	defer f.dbClose()
+	writeWS(t, f.dir, "wiki/concepts/Foo.md", "# Foo")
+	res := f.pass(t)
+	if res.ObjectsShipped != 1 {
+		t.Fatalf("ObjectsShipped = %d, want 1", res.ObjectsShipped)
+	}
+	sha := shaOf("# Foo")
+	key := "ws/objects/docs/" + sha[:2] + "/" + sha
+	if _, ok := f.fake.get(key); !ok {
+		t.Fatalf("object not PUT at content key %q", key)
+	}
+	st := f.remoteState(t)
+	ref, ok := st.Objects["wiki/concepts/Foo.md"]
+	if !ok || ref.Key != key || ref.SHA256 != sha {
+		t.Fatalf("state objects = %+v", st.Objects)
+	}
+}
+
+func TestShipObjects_UnchangedNotRePUT(t *testing.T) {
+	f := newShipFixture(t)
+	defer f.dbClose()
+	writeWS(t, f.dir, "wiki/concepts/Foo.md", "# Foo")
+	f.pass(t)
+	putsBefore := len(f.fake.putLog)
+	res := f.pass(t)
+	if res.ObjectsShipped != 0 {
+		t.Fatalf("re-shipped unchanged: %+v", res)
+	}
+	if len(f.fake.putLog) != putsBefore {
+		t.Fatal("no PUT expected on unchanged pass")
+	}
+}
+
+func TestShipObjects_Tombstone(t *testing.T) {
+	f := newShipFixture(t)
+	defer f.dbClose()
+	writeWS(t, f.dir, "wiki/concepts/Foo.md", "# Foo")
+	f.pass(t)
+	deleteWS(t, f.dir, "wiki/concepts/Foo.md")
+	res := f.pass(t)
+	if res.ObjectsTombstoned != 1 {
+		t.Fatalf("ObjectsTombstoned = %d", res.ObjectsTombstoned)
+	}
+	st := f.remoteState(t)
+	ref := st.Objects["wiki/concepts/Foo.md"]
+	if !ref.Deleted {
+		t.Fatalf("tombstone not recorded: %+v", ref)
+	}
+	// Object bytes REMAIN in the bucket (bucket versioning honored).
+	if _, ok := f.fake.get(ref.Key); !ok {
+		t.Fatal("tombstoned object physically deleted — versioning not honored")
+	}
+}
+
+func TestShipObjects_VectorsPrefix(t *testing.T) {
+	f := newShipFixture(t)
+	defer f.dbClose()
+	writeWS(t, f.dir, ".sage/vectors.idx", "SWVI-1")
+	f.pass(t)
+	sha := shaOf("SWVI-1")
+	if _, ok := f.fake.get("ws/vectors/" + sha); !ok {
+		t.Fatal("vector not under top-level vectors/ prefix (SPEC-03 layout)")
+	}
+	st := f.remoteState(t)
+	if _, ok := st.Vectors["vectors.idx"]; !ok {
+		t.Fatalf("vectors map = %+v", st.Vectors)
+	}
+}
+
+func TestShipObjects_StateCommitWithoutDBChanges(t *testing.T) {
+	f := newShipFixture(t)
+	defer f.dbClose()
+	writeWS(t, f.dir, "wiki/concepts/Foo.md", "# Foo")
+	f.pass(t)
+	st1 := f.remoteState(t)
+	// Docs-only change, no db writes: state must still commit.
+	writeWS(t, f.dir, "wiki/summaries/a.md", "sum")
+	res := f.pass(t)
+	if res.ObjectsShipped != 1 {
+		t.Fatalf("ObjectsShipped = %d", res.ObjectsShipped)
+	}
+	st2 := f.remoteState(t)
+	if !st2.UpdatedAt.After(st1.UpdatedAt) && st2.UpdatedAt != st1.UpdatedAt {
+		// equal is fine (same-second); the point is the new object is committed
+	}
+	if _, ok := st2.Objects["wiki/summaries/a.md"]; !ok {
+		t.Fatal("docs-only change never committed")
+	}
+}
+
+func TestShipObjects_NoSecretsShipped(t *testing.T) {
+	f := newShipFixture(t)
+	defer f.dbClose()
+	writeWS(t, f.dir, "config.yaml", "api:\n  api_key: sk-SECRET-BYTES\n")
+	writeWS(t, f.dir, "wiki/concepts/Foo.md", "# Foo")
+	f.pass(t)
+	for key, b := range f.fake.objects {
+		if strings.Contains(string(b), "sk-SECRET-BYTES") {
+			t.Fatalf("config secret shipped in object %s", key)
+		}
+	}
+}
+
+func deleteWS(t *testing.T, dir, rel string) {
+	t.Helper()
+	if err := os.Remove(filepath.Join(dir, filepath.FromSlash(rel))); err != nil {
+		t.Fatal(err)
+	}
+}
