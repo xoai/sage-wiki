@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "lighthouse decentralized lease model",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.4,
+            0.019,
+            0.638,
+            0.257,
+            0.876,
+            0.495,
+            0.114,
+            0.733
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

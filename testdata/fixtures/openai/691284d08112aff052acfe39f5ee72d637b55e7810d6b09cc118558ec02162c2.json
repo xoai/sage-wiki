@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "api gateway",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.523,
+            0.904,
+            0.761,
+            0.142,
+            0.999,
+            0.38,
+            0.237,
+            0.618
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

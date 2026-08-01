@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "wiki links cross-reference",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.896,
+            0.515,
+            0.134,
+            0.753,
+            0.372,
+            0.991,
+            0.61,
+            0.229
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

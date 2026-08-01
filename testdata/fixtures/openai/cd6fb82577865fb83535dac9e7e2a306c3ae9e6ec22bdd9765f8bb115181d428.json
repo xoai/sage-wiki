@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "container orchestration kubernetes",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.213,
+            0.594,
+            0.975,
+            0.356,
+            0.737,
+            0.118,
+            0.499,
+            0.88
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

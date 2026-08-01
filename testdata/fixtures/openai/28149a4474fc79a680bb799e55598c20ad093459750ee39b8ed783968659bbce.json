@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "etcd cluster state control plane",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.801,
+            0.182,
+            0.563,
+            0.944,
+            0.277,
+            0.658,
+            0.039,
+            0.42
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

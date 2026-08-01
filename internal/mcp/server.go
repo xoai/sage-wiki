@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
+	"strconv"
 	"path/filepath"
 	"strings"
 
@@ -138,6 +140,18 @@ func (s *Server) VecStore() store.VectorStore { return s.vec }
 func (s *Server) OntStore() store.OntologyStore { return s.ont }
 
 // CallTool invokes a tool handler by name. Used for testing.
+// sourceDateEpoch resolves the recency clock: SOURCE_DATE_EPOCH (the
+// reproducible-builds convention the compiler already honors) when set,
+// else the wall clock (search.Deps.Now zero value).
+func sourceDateEpoch() time.Time {
+	if v := os.Getenv("SOURCE_DATE_EPOCH"); v != "" {
+		if sec, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return time.Unix(sec, 0).UTC()
+		}
+	}
+	return time.Time{}
+}
+
 func (s *Server) CallTool(ctx context.Context, name string, req mcp.CallToolRequest) *mcp.CallToolResult {
 	handlers := map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error){
 		"wiki_search":         s.handleSearch,
@@ -324,6 +338,7 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 			GraphWeight:          s.cfg.Search.HybridWeightGraph,
 			GraphRelationWeights: s.cfg.Search.GraphRelationWeights,
 			IncludeDoc:           includeDoc,
+			Now:                 sourceDateEpoch(),
 		}, search.Request{
 			Query:             query,
 			Limit:             limit,
