@@ -31,14 +31,14 @@ func TestLayoutKeys(t *testing.T) {
 
 func TestNormalizePrefix(t *testing.T) {
 	cases := map[string]string{
-		"":         "",
-		"ws":       "ws/",
-		"ws/":      "ws/",
-		"/ws/":     "ws/",
-		"a/b/c":    "a/b/c/",
-		"ws//":     "ws/",
-		"   ":      "",
-		"ws/sub":   "ws/sub/",
+		"":       "",
+		"ws":     "ws/",
+		"ws/":    "ws/",
+		"/ws/":   "ws/",
+		"a/b/c":  "a/b/c/",
+		"ws//":   "ws/",
+		"   ":    "",
+		"ws/sub": "ws/sub/",
 	}
 	for in, want := range cases {
 		if got := NormalizePrefix(in); got != want {
@@ -62,10 +62,10 @@ func TestParseWALSegmentKey(t *testing.T) {
 		t.Fatalf("ParseWALSegmentKey = %d, %d, %v", gen, seq, err)
 	}
 	bad := []string{
-		"ws/db/generation-12/wal/42.zst",       // unpadded
-		"ws/db/generation-x/wal/000042.zst",    // bad gen
-		"ws/db/generation-12/snapshot.db.zst",  // not a segment
-		"ws/objects/docs/ab/cd",                // wrong subtree
+		"ws/db/generation-12/wal/42.zst",      // unpadded
+		"ws/db/generation-x/wal/000042.zst",   // bad gen
+		"ws/db/generation-12/snapshot.db.zst", // not a segment
+		"ws/objects/docs/ab/cd",               // wrong subtree
 	}
 	for _, k := range bad {
 		if _, _, err := ParseWALSegmentKey(k); err == nil {
