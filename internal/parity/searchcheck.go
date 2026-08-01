@@ -56,7 +56,10 @@ func (fnvEmbedder) Name() string { return "parity-fnv" }
 
 // searchDeps builds search.Deps directly from the workspace (harness is
 // in-module; engine's unexported app is not needed — F-013's mechanism).
-func searchDeps(wsDir string) (search.Deps, *storage.DB, error) {
+// vecOpts are extra vectors.Store options (SPEC-06: the mmap backend's
+// golden run passes WithVectorBackend/WithIndexDir; default callers pass
+// nothing and get byte-identical behavior).
+func searchDeps(wsDir string, vecOpts ...vectors.Option) (search.Deps, *storage.DB, error) {
 	cfg, err := config.Load(filepath.Join(wsDir, "config.yaml"))
 	if err != nil {
 		return search.Deps{}, nil, fmt.Errorf("load config: %w", err)
@@ -70,7 +73,7 @@ func searchDeps(wsDir string) (search.Deps, *storage.DB, error) {
 	deps := search.Deps{
 		Mem:          memory.NewStore(db),
 		Chunks:       memory.NewChunkStore(db),
-		Vec:          vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled())),
+		Vec:          vectors.NewStore(db, append([]vectors.Option{vectors.WithANN(cfg.Search.ANNEnabled())}, vecOpts...)...),
 		Embedder:     fnvEmbedder{},
 		Model:        cfg.Models.Query,
 		BM25Weight:   cfg.Search.HybridWeightBM25,
@@ -89,7 +92,13 @@ func searchDeps(wsDir string) (search.Deps, *storage.DB, error) {
 // RunSearchSet executes the committed queries against a workspace and
 // returns the comparable result rows.
 func RunSearchSet(wsDir string, queries []SearchQuery) ([][]Expect, error) {
-	deps, db, err := searchDeps(wsDir)
+	return RunSearchSetOpts(wsDir, queries)
+}
+
+// RunSearchSetOpts is RunSearchSet with extra vectors.Store options
+// (SPEC-06 golden mmap run).
+func RunSearchSetOpts(wsDir string, queries []SearchQuery, vecOpts ...vectors.Option) ([][]Expect, error) {
+	deps, db, err := searchDeps(wsDir, vecOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -124,6 +133,12 @@ func RunSearchSet(wsDir string, queries []SearchQuery) ([][]Expect, error) {
 
 // CheckSearchParity compares the search set against the golden.
 func CheckSearchParity(wsDir, goldenPath string) error {
+	return CheckSearchParityOpts(wsDir, goldenPath)
+}
+
+// CheckSearchParityOpts is CheckSearchParity with extra vectors.Store
+// options threaded into the search deps (SPEC-06: golden mmap run).
+func CheckSearchParityOpts(wsDir, goldenPath string, vecOpts ...vectors.Option) error {
 	raw, err := os.ReadFile(goldenPath)
 	if err != nil {
 		return fmt.Errorf("read search golden: %w", err)
@@ -137,11 +152,11 @@ func CheckSearchParity(wsDir, goldenPath string) error {
 	}
 
 	// Self-determinism: two runs must agree exactly.
-	got1, err := RunSearchSet(wsDir, golden.Queries)
+	got1, err := RunSearchSetOpts(wsDir, golden.Queries, vecOpts...)
 	if err != nil {
 		return err
 	}
-	got2, err := RunSearchSet(wsDir, golden.Queries)
+	got2, err := RunSearchSetOpts(wsDir, golden.Queries, vecOpts...)
 	if err != nil {
 		return err
 	}

@@ -6,10 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sync"
 
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/store"
+)
+
+// Vector backend kinds (WithVectorBackend).
+const (
+	backendMemory = "memory" // default: in-memory matrix cache (P1-5)
+	backendMmap   = "mmap"   // on-disk snapshot, mmap-served (SPEC-06)
 )
 
 // Store manages vector embeddings as BLOBs in SQLite.
@@ -18,6 +25,16 @@ type Store struct {
 	docCache   *vectorCache
 	chunkCache *vectorCache
 	ann        bool // P2-7: opt-in HNSW index backend (T6); brute-force default
+
+	// SPEC-06 mmap snapshot state (backendMmap only).
+	vecBackend string
+	indexDir   string
+	mmMu       sync.Mutex
+	mmDoc      *mmapTable
+	mmChunk    *mmapTable
+	// warn-once flags for the fallback/stale transitions.
+	mmWarnedFallback bool
+	mmWarnedStale    bool
 }
 
 // Option configures a Store (P2-7).
@@ -29,6 +46,20 @@ func WithANN(enabled bool) Option {
 	return func(s *Store) { s.ann = enabled }
 }
 
+// WithVectorBackend selects the query-time vector backend: "memory"
+// (default, full in-memory matrix cache) or "mmap" (on-disk snapshot
+// served via mmap; falls back to memory with a warning when the snapshot
+// is missing, corrupt, or stale). "mmap" requires WithIndexDir.
+func WithVectorBackend(kind string) Option {
+	return func(s *Store) { s.vecBackend = kind }
+}
+
+// WithIndexDir sets the directory holding vectors.idx / vectors-chunks.idx
+// (the workspace .sage dir).
+func WithIndexDir(dir string) Option {
+	return func(s *Store) { s.indexDir = dir }
+}
+
 // IndexKind reports the configured index backend ("brute-force" or
 // "hnsw") — makes the WithANN plumbing observable (T6 implements the
 // HNSW backend behind it).
@@ -37,6 +68,15 @@ func (s *Store) IndexKind() string {
 		return "hnsw"
 	}
 	return "brute-force"
+}
+
+// VectorBackend reports the configured query-time backend ("memory" or
+// "mmap") — makes the WithVectorBackend plumbing observable.
+func (s *Store) VectorBackend() string {
+	if s.vecBackend == "" {
+		return backendMemory
+	}
+	return s.vecBackend
 }
 
 // loadDocCache populates the doc-level cache from SQLite, single-flight:
@@ -59,7 +99,7 @@ func (s *Store) loadDocCache() error {
 	}
 	metrics.CounterNamed("vector_cache_misses_total", "cache", "doc").Inc() // actual reload (P2-2)
 
-	rows, err := s.db.ReadDB().Query("SELECT id, embedding, dimensions FROM vec_entries")
+	rows, err := s.db.ReadDB().Query("SELECT id, embedding, dimensions FROM vec_entries ORDER BY rowid")
 	if err != nil {
 		return fmt.Errorf("vectors.loadDocCache: %w", err)
 	}
@@ -126,7 +166,7 @@ func (s *Store) loadChunkCache() error {
 	}
 	metrics.CounterNamed("vector_cache_misses_total", "cache", "chunk").Inc() // actual reload (P2-2)
 
-	rows, err := s.db.ReadDB().Query("SELECT chunk_id, doc_id, embedding, dimensions FROM vec_chunks")
+	rows, err := s.db.ReadDB().Query("SELECT chunk_id, doc_id, embedding, dimensions FROM vec_chunks ORDER BY rowid")
 	if err != nil {
 		return fmt.Errorf("vectors.loadChunkCache: %w", err)
 	}
@@ -186,6 +226,7 @@ func (s *Store) loadChunkCache() error {
 // one reload at the next search.
 func (s *Store) InvalidateChunkCache() {
 	s.chunkCache.invalidate()
+	s.markStale(true)
 }
 
 // Upsert stores or replaces a vector.
@@ -203,6 +244,7 @@ func (s *Store) Upsert(id string, embedding []float32) error {
 		return err
 	}
 	s.docCache.upsert(id, "", embedding)
+	s.markStale(false)
 	return nil
 }
 
@@ -215,6 +257,14 @@ func NewStore(db store.DBHandle, opts ...Option) *Store {
 	}
 	for _, opt := range opts {
 		opt(s)
+	}
+	// ann+mmap precedence (SPEC-06): the mmap snapshot serves an exact scan;
+	// the HNSW graph builds only inside the in-memory loaders the snapshot
+	// path bypasses — keeping ann enabled would silently waste the graph
+	// build on every fallback load. Exact scan wins, loudly.
+	if s.ann && s.vecBackend == backendMmap {
+		log.Warn("search.ann.enabled is ignored with vectors.backend=mmap — the mmap snapshot serves an exact scan")
+		s.ann = false
 	}
 	return s
 }
@@ -252,6 +302,7 @@ func (s *Store) Delete(id string) error {
 		return err
 	}
 	s.docCache.remove(id)
+	s.markStale(false)
 	return nil
 }
 
@@ -265,6 +316,17 @@ type VectorResult = store.VectorResult
 func (s *Store) Search(query []float32, limit int) ([]VectorResult, error) {
 	if limit <= 0 {
 		limit = 10
+	}
+	if s.vecBackend == backendMmap {
+		if idx := s.mmapFor(false); idx != nil {
+			nq := normalizeCopy(query)
+			hits := searchMmap(idx, nq, limit, nil)
+			results := make([]VectorResult, len(hits))
+			for i, h := range hits {
+				results[i] = VectorResult{ID: h.id, Score: h.score, Rank: i + 1}
+			}
+			return results, nil
+		}
 	}
 	if err := s.loadDocCache(); err != nil {
 		return nil, err
@@ -302,6 +364,17 @@ func (s *Store) SearchChunks(query []float32, limit int) ([]ChunkVectorResult, e
 	if limit <= 0 {
 		limit = 20
 	}
+	if s.vecBackend == backendMmap {
+		if idx := s.mmapFor(true); idx != nil {
+			nq := normalizeCopy(query)
+			hits := searchMmap(idx, nq, limit, nil)
+			results := make([]ChunkVectorResult, len(hits))
+			for i, h := range hits {
+				results[i] = ChunkVectorResult{ChunkID: h.id, DocID: h.docID, Score: h.score, Rank: i + 1}
+			}
+			return results, nil
+		}
+	}
 	if err := s.loadChunkCache(); err != nil {
 		return nil, err
 	}
@@ -333,17 +406,27 @@ func (s *Store) SearchChunksFiltered(query []float32, docIDs []string, limit int
 		docIDs = docIDs[:100]
 	}
 
+	filter := make(map[string]bool, len(docIDs))
+	for _, id := range docIDs {
+		filter[id] = true
+	}
+	nq := normalizeCopy(query)
+	if s.vecBackend == backendMmap {
+		if idx := s.mmapFor(true); idx != nil {
+			hits := searchMmap(idx, nq, limit, filter)
+			results := make([]ChunkVectorResult, len(hits))
+			for i, h := range hits {
+				results[i] = ChunkVectorResult{ChunkID: h.id, DocID: h.docID, Score: h.score, Rank: i + 1}
+			}
+			return results, nil
+		}
+	}
 	if err := s.loadChunkCache(); err != nil {
 		return nil, err
 	}
 	if len(query) != s.chunkCache.dimVal() {
 		return nil, nil
 	}
-	filter := make(map[string]bool, len(docIDs))
-	for _, id := range docIDs {
-		filter[id] = true
-	}
-	nq := normalizeCopy(query)
 	hits := s.chunkCache.search(nq, limit, filter)
 	results := make([]ChunkVectorResult, len(hits))
 	for i, h := range hits {
@@ -362,6 +445,7 @@ func (s *Store) DeleteDocChunkVectors(docID string) error {
 		return err
 	}
 	s.chunkCache.removeDoc(docID)
+	s.markStale(true)
 	return nil
 }
 
