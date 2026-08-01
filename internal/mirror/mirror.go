@@ -2,6 +2,7 @@ package mirror
 
 import (
 	"context"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/mirror/s3"
 	pkmirror "github.com/xoai/sage-wiki/pkg/mirror"
@@ -36,7 +37,7 @@ type ops interface {
 	Ship(ctx context.Context, batch pkmirror.ChangeBatch) error
 	Snapshot(ctx context.Context) (pkmirror.SnapshotID, error)
 	Status(ctx context.Context) (Status, error)
-	Verify(ctx context.Context) (Report, error)
+	VerifyMode(ctx context.Context, fast bool) (Report, error)
 	Hydrate(ctx context.Context, dst string) error
 }
 
@@ -50,11 +51,49 @@ type Mirror struct {
 	client *s3.Client
 	local  *LocalState
 	ops    ops
+	now    func() time.Time // injected clock (status lag; tests)
+}
+
+// normalize applies spec defaults to a zero-value-constructed Config so a
+// Mirror built without internal/config still behaves per spec (direct
+// construction happens in tests and the hydrate path).
+func (c *Config) normalize() {
+	if c.Region == "" {
+		c.Region = "auto"
+	}
+	if c.AccessKeyEnv == "" {
+		c.AccessKeyEnv = "AWS_ACCESS_KEY_ID"
+	}
+	if c.SecretKeyEnv == "" {
+		c.SecretKeyEnv = "AWS_SECRET_ACCESS_KEY"
+	}
+	if c.RetainGenerations == 0 {
+		c.RetainGenerations = 2
+	}
+	if c.MaxConsecutiveDefers == 0 {
+		c.MaxConsecutiveDefers = 10
+	}
+	if c.ShipLockTimeout == 0 {
+		c.ShipLockTimeout = 5 * time.Second
+	}
+	if c.ShipInterval == 0 {
+		c.ShipInterval = time.Second
+	}
+	if c.SnapshotInterval == 0 {
+		c.SnapshotInterval = time.Hour
+	}
+	if c.MinRotationInterval == 0 {
+		c.MinRotationInterval = 60 * time.Second
+	}
+	if c.DrainTimeout == 0 {
+		c.DrainTimeout = 10 * time.Second
+	}
 }
 
 // Open builds a Mirror: resolves credentials, constructs the S3 client,
 // loads local ship-state. Never takes engine.lock.
 func Open(wsDir string, cfg Config, src ChangeSource) (*Mirror, error) {
+	cfg.normalize()
 	creds, err := ResolveCredentials(cfg.AccessKeyEnv, cfg.SecretKeyEnv, cfg.CredentialsFile)
 	if err != nil {
 		return nil, err
@@ -67,7 +106,7 @@ func Open(wsDir string, cfg Config, src ChangeSource) (*Mirror, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &Mirror{dir: wsDir, cfg: cfg, src: src, client: client, local: local}
+	m := &Mirror{dir: wsDir, cfg: cfg, src: src, client: client, local: local, now: time.Now}
 	// Wire the real ops (enable.go's init sets openWiresOps).
 	if openWiresOps != nil {
 		openWiresOps(m)
@@ -119,12 +158,21 @@ func (m *Mirror) Status(ctx context.Context) (Status, error) {
 	return m.ops.Status(ctx)
 }
 
-// Verify checks the remote invariant.
+// Verify checks the remote invariant (full re-hash).
 func (m *Mirror) Verify(ctx context.Context) (Report, error) {
 	if m.ops == nil {
 		return Report{}, m.notReady("verify")
 	}
-	return m.ops.Verify(ctx)
+	return m.ops.VerifyMode(ctx, false)
+}
+
+// VerifyFast checks existence only (HEAD pass over live + retained
+// generations) — spec's --fast mode.
+func (m *Mirror) VerifyFast(ctx context.Context) (Report, error) {
+	if m.ops == nil {
+		return Report{}, m.notReady("verify")
+	}
+	return m.ops.VerifyMode(ctx, true)
 }
 
 // Hydrate implements the pkg/mirror.Mirror seam (newest generation, full).

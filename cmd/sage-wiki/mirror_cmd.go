@@ -25,8 +25,29 @@ var mirrorEnableCmd = &cobra.Command{
 	RunE:  runMirrorEnable,
 }
 
+var mirrorVerifyFast bool
+
+var mirrorStatusCmd = &cobra.Command{
+	Use:   "status",
+	Short: "Show local + remote mirror state",
+	RunE:  runMirrorStatus,
+}
+
+var mirrorVerifyCmd = &cobra.Command{
+	Use:   "verify",
+	Short: "Check the remote invariant (full re-hash by default; --fast is HEAD-only)",
+	RunE:  runMirrorVerify,
+}
+
+var mirrorSnapshotCmd = &cobra.Command{
+	Use:   "snapshot",
+	Short: "Force a new generation (checkpoint + snapshot + commit)",
+	RunE:  runMirrorSnapshot,
+}
+
 func init() {
-	mirrorCmd.AddCommand(mirrorEnableCmd)
+	mirrorVerifyCmd.Flags().BoolVar(&mirrorVerifyFast, "fast", false, "HEAD-only existence check (skip full re-hash)")
+	mirrorCmd.AddCommand(mirrorEnableCmd, mirrorStatusCmd, mirrorVerifyCmd, mirrorSnapshotCmd)
 }
 
 // mirrorConfigFor loads the workspace config and resolves the mirror
@@ -72,6 +93,98 @@ func runMirrorEnable(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "mirror enabled: s3://%s/%s (generation 1 bootstrapped)\n", cfg.Mirror.Bucket, mirror.NormalizePrefix(mcfg.Prefix))
+	return nil
+}
+
+func runMirrorStatus(cmd *cobra.Command, args []string) error {
+	dir, _ := filepath.Abs(projectDir)
+	_, mcfg, err := mirrorConfigFor(dir)
+	if err != nil {
+		return err
+	}
+	m, err := mirror.Open(dir, mcfg, nil)
+	if err != nil {
+		return err
+	}
+	s, err := m.Status(orBackground(cmd))
+	if err != nil {
+		return err
+	}
+	if outputFormat == "json" {
+		fmt.Fprintln(cmd.OutOrStdout(), cli.FormatJSON(true, s, ""))
+		return nil
+	}
+	if !s.Enabled {
+		fmt.Fprintf(cmd.OutOrStdout(), "mirror: not enabled remotely (no mirror-state.json)\n")
+		return nil
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "mirror: generation %d, last commit %s\n", s.RemoteGeneration, s.LastCommit.Format("2006-01-02 15:04:05 UTC"))
+	fmt.Fprintf(cmd.OutOrStdout(), "pending: %d change(s), lag %ds\n", s.PendingChanges, s.LagSeconds)
+	if s.PendingRotation {
+		fmt.Fprintf(cmd.OutOrStdout(), "pending rotation (fold debounce) — ships next pass\n")
+	}
+	if s.RotationDeferred > 0 {
+		fmt.Fprintf(cmd.OutOrStdout(), "WARNING: rotation deferred %d times (busy writer) — WAL list grows unbounded\n", s.RotationDeferred)
+	}
+	if s.ServeRestartNote {
+		fmt.Fprintf(cmd.OutOrStdout(), "note: a serve holds this workspace — mirror takes effect in-process at serve restart\n")
+	}
+	return nil
+}
+
+func runMirrorVerify(cmd *cobra.Command, args []string) error {
+	dir, _ := filepath.Abs(projectDir)
+	_, mcfg, err := mirrorConfigFor(dir)
+	if err != nil {
+		return err
+	}
+	m, err := mirror.Open(dir, mcfg, nil)
+	if err != nil {
+		return err
+	}
+	var rep mirror.Report
+	if mirrorVerifyFast {
+		rep, err = m.VerifyFast(orBackground(cmd))
+	} else {
+		rep, err = m.Verify(orBackground(cmd))
+	}
+	if err != nil {
+		return err
+	}
+	if outputFormat == "json" {
+		fmt.Fprintln(cmd.OutOrStdout(), cli.FormatJSON(true, rep, ""))
+	} else {
+		for _, v := range rep.Violations {
+			fmt.Fprintf(cmd.OutOrStdout(), "VIOLATION: %s\n", v)
+		}
+		for _, a := range rep.Advisories {
+			fmt.Fprintf(cmd.OutOrStdout(), "advisory: %s\n", a)
+		}
+		if rep.Valid {
+			fmt.Fprintf(cmd.OutOrStdout(), "mirror verify: VALID (%d objects checked, generation %d)\n", rep.Checked, rep.Generation)
+		}
+	}
+	if !rep.Valid {
+		return fmt.Errorf("mirror verify: %d violation(s)", len(rep.Violations))
+	}
+	return nil
+}
+
+func runMirrorSnapshot(cmd *cobra.Command, args []string) error {
+	dir, _ := filepath.Abs(projectDir)
+	_, mcfg, err := mirrorConfigFor(dir)
+	if err != nil {
+		return err
+	}
+	m, err := mirror.Open(dir, mcfg, nil)
+	if err != nil {
+		return err
+	}
+	id, err := m.Snapshot(orBackground(cmd))
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "mirror snapshot committed: %s\n", id)
 	return nil
 }
 

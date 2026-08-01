@@ -31,6 +31,25 @@ func (f *cmdFakeS3) server() *httptest.Server {
 			b, _ := io.ReadAll(r.Body)
 			f.objects[key] = b
 			w.WriteHeader(http.StatusOK)
+		case http.MethodGet:
+			if r.URL.Query().Get("list-type") == "2" {
+				prefix := r.URL.Query().Get("prefix")
+				var b strings.Builder
+				b.WriteString(`<?xml version="1.0"?><ListBucketResult><IsTruncated>false</IsTruncated>`)
+				for k := range f.objects {
+					if strings.HasPrefix(k, prefix) {
+						b.WriteString("<Contents><Key>" + k + "</Key></Contents>")
+					}
+				}
+				b.WriteString(`</ListBucketResult>`)
+				w.Write([]byte(b.String()))
+				return
+			}
+			if b, ok := f.objects[key]; ok {
+				w.Write(b)
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+			}
 		case http.MethodHead:
 			if _, ok := f.objects[key]; ok {
 				w.WriteHeader(http.StatusOK)
@@ -118,6 +137,55 @@ func TestMirrorEnableCmd_BadCreds_ConfigUntouched(t *testing.T) {
 	cfgBytes, _ := os.ReadFile(filepath.Join(dir, "config.yaml"))
 	if strings.Contains(string(cfgBytes), "enabled: true") {
 		t.Fatal("config.yaml written despite failed enable")
+	}
+}
+
+func TestMirrorStatusCmd_JSON(t *testing.T) {
+	fake := newCmdFakeS3()
+	srv := fake.server()
+	defer srv.Close()
+	dir := writeMirrorWorkspace(t, srv.URL)
+	t.Setenv("AWS_ACCESS_KEY_ID", "ak")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "sk")
+	old := projectDir
+	projectDir = dir
+	defer func() { projectDir = old }()
+	oldFmt := outputFormat
+	outputFormat = "json"
+	defer func() { outputFormat = oldFmt }()
+
+	if err := mirrorEnableCmd.RunE(mirrorEnableCmd, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := mirrorStatusCmd.RunE(mirrorStatusCmd, nil); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+}
+
+func TestMirrorVerifyCmd_JSON(t *testing.T) {
+	fake := newCmdFakeS3()
+	srv := fake.server()
+	defer srv.Close()
+	dir := writeMirrorWorkspace(t, srv.URL)
+	t.Setenv("AWS_ACCESS_KEY_ID", "ak")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "sk")
+	old := projectDir
+	projectDir = dir
+	defer func() { projectDir = old }()
+	oldFmt := outputFormat
+	outputFormat = "json"
+	defer func() { outputFormat = oldFmt }()
+
+	if err := mirrorEnableCmd.RunE(mirrorEnableCmd, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := mirrorVerifyCmd.RunE(mirrorVerifyCmd, nil); err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	mirrorVerifyFast = true
+	defer func() { mirrorVerifyFast = false }()
+	if err := mirrorVerifyCmd.RunE(mirrorVerifyCmd, nil); err != nil {
+		t.Fatalf("verify --fast: %v", err)
 	}
 }
 

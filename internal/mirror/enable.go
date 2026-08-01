@@ -37,22 +37,14 @@ var ErrAlreadyEnabled = errors.New("mirror: already enabled (mirror-state.json e
 // hydrate Task 19).
 type mirrorOps struct{ m *Mirror }
 
-// Stubs for ops methods wired by later tasks (status/verify Task 9,
-// ship/snapshot Tasks 12/13, hydrate Task 19). Loud, never silent.
+// Stubs for ops methods wired by later tasks (ship/snapshot Tasks 12/13,
+// hydrate Task 19). Loud, never silent.
 func (o *mirrorOps) Ship(ctx context.Context, batch pkmirror.ChangeBatch) error {
 	return &NotReadyError{Op: "ship"}
 }
 
 func (o *mirrorOps) Snapshot(ctx context.Context) (pkmirror.SnapshotID, error) {
 	return "", &NotReadyError{Op: "snapshot"}
-}
-
-func (o *mirrorOps) Status(ctx context.Context) (Status, error) {
-	return Status{}, &NotReadyError{Op: "status"}
-}
-
-func (o *mirrorOps) Verify(ctx context.Context) (Report, error) {
-	return Report{}, &NotReadyError{Op: "verify"}
 }
 
 func (o *mirrorOps) Hydrate(ctx context.Context, dst string) error {

@@ -27,8 +27,10 @@ func (f *fakeOps) Ship(ctx context.Context, b pkmirror.ChangeBatch) error { retu
 func (f *fakeOps) Snapshot(ctx context.Context) (pkmirror.SnapshotID, error) {
 	return f.snapID, f.snapErr
 }
-func (f *fakeOps) Status(ctx context.Context) (Status, error)    { return f.statusOut, nil }
-func (f *fakeOps) Verify(ctx context.Context) (Report, error)    { return f.verReport, nil }
+func (f *fakeOps) Status(ctx context.Context) (Status, error) { return f.statusOut, nil }
+func (f *fakeOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
+	return f.verReport, nil
+}
 func (f *fakeOps) Hydrate(ctx context.Context, dst string) error { f.hydrateTo = dst; return nil }
 
 func TestMirrorFacade_Conformance(t *testing.T) {

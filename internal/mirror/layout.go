@@ -70,6 +70,26 @@ func GenerationDirPrefix(prefix string, gen int) string {
 	return fmt.Sprintf("%sdb/generation-%d/", prefix, gen)
 }
 
+// parseGenerationDirKey extracts the generation from ANY key under
+// db/generation-N/ (snapshot, meta, or wal segment) — used to discover
+// generation dirs during verification.
+func parseGenerationDirKey(key string) (int, bool) {
+	i := strings.Index(key, "db/generation-")
+	if i < 0 {
+		return 0, false
+	}
+	tail := key[i+len("db/generation-"):]
+	j := strings.IndexByte(tail, '/')
+	if j <= 0 {
+		return 0, false
+	}
+	gen, err := strconv.Atoi(tail[:j])
+	if err != nil {
+		return 0, false
+	}
+	return gen, true
+}
+
 // ParseWALSegmentKey extracts (generation, seq) from a segment key.
 func ParseWALSegmentKey(key string) (gen, seq int, err error) {
 	rest, ok := cutGeneration(key, "/wal/")
