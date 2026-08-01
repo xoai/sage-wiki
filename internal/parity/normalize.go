@@ -120,12 +120,12 @@ sources:
 output: wiki
 api:
   provider: openai
-  api_key: %s
+  api_key: %q
   base_url: %s
 models:
-  summarize: %s
-  extract: %s
-  write: %s
+  summarize: %q
+  extract: %q
+  write: %q
 compiler:
   auto_commit: false
   default_tier: 3
@@ -147,6 +147,7 @@ ontology:
 	if err := os.Setenv("SOURCE_DATE_EPOCH", fmt.Sprintf("%d", goldenEpoch.Unix())); err != nil {
 		return err
 	}
+	defer os.Unsetenv("SOURCE_DATE_EPOCH")
 	_, err = compiler.Compile(wsDir, compiler.CompileOpts{})
 	if err != nil {
 		return fmt.Errorf("compile: %w", err)

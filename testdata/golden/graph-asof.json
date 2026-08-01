@@ -234,5 +234,98 @@
       "SourceDoc": "raw/multihop/b-links-c.md",
       "Confidence": 0.9
     }
+  ],
+  "post_asof": "2025-06-01T00:00:00Z",
+  "post_relations": [
+    {
+      "ID": "distributed-systemstxt-cites-raw-text-distributed-systems-txt",
+      "SourceID": "distributed-systemstxt",
+      "TargetID": "raw/text/distributed-systems.txt",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
+      "ID": "dated-2024-cites-raw-dates-dated-2024-md",
+      "SourceID": "dated-2024",
+      "TargetID": "raw/dates/dated-2024.md",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
+      "ID": "examplejs-cites-raw-code-example-js",
+      "SourceID": "examplejs",
+      "TargetID": "raw/code/example.js",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
+      "ID": "api-gateway-cites-raw-alias-api-gateway-md",
+      "SourceID": "api-gateway",
+      "TargetID": "raw/alias/api-gateway.md",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
+      "ID": "system-prompt-bait-cites-raw-adversarial-system-prompt-bait-md",
+      "SourceID": "system-prompt-bait",
+      "TargetID": "raw/adversarial/system-prompt-bait.md",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
+      "ID": "instruction-lookalike-cites-raw-adversarial-instruction-lookalike-md",
+      "SourceID": "instruction-lookalike",
+      "TargetID": "raw/adversarial/instruction-lookalike.md",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
+      "ID": "triple:ecebeb8c3445db30",
+      "SourceID": "kubernetes",
+      "TargetID": "etcd",
+      "Relation": "implements",
+      "Evidence": "K8s uses etcd for cluster state.",
+      "SourceDoc": "raw/alias/kubernetes-k8s.md",
+      "Confidence": 0.85
+    },
+    {
+      "ID": "triple:a6312c106a726f9a",
+      "SourceID": "decentralized-lease",
+      "TargetID": "centralized-coordinator",
+      "Relation": "contradicts",
+      "Evidence": "the centralized coordinator was removed.",
+      "SourceDoc": "raw/contradiction/fact-v2.md",
+      "Confidence": 0.95
+    },
+    {
+      "ID": "triple:02ae6ab6a04e9c94",
+      "SourceID": "alpha-protocol",
+      "TargetID": "beta-handshake",
+      "Relation": "prerequisite_of",
+      "Evidence": "The Alpha protocol establishes sessions via the Beta Handshake.",
+      "SourceDoc": "raw/multihop/a-links-b.md",
+      "Confidence": 0.9
+    },
+    {
+      "ID": "triple:f17d8f1230e4aff8",
+      "SourceID": "beta-handshake",
+      "TargetID": "gamma-proof",
+      "Relation": "prerequisite_of",
+      "Evidence": "It delegates key confirmation to the Gamma Proof step.",
+      "SourceDoc": "raw/multihop/b-links-c.md",
+      "Confidence": 0.9
+    }
   ]
 }

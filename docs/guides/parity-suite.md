@@ -42,7 +42,7 @@ against the scripted origin (`internal/parity/origin.go`); a maintainer
 can re-record against a real vendor:
 
     SAGE_PARITY_FORCE=1 make record-fixtures                          # scripted origin
-    SAGE_PARITY_FORCE=1 ORIGIN=https://api.openai.com make record-fixtures  # real vendor
+    SAGE_PARITY_FORCE=1 ORIGIN=https://api.openai.com KEY=<api key> [MODEL=<model>] make record-fixtures  # real vendor
 
 CI never runs record mode. Record when prompts/pipeline legitimately
 change and review fixtures like code.

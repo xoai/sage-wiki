@@ -63,6 +63,9 @@ func goldenConfigPath() string { return goldenPath("config.yaml") }
 // TestParity is the CI flake-loop entry: all four checks in one name so
 // `-run TestParity` matches (plan F-014).
 func TestParity(t *testing.T) {
+	if suiteWS == "" {
+		t.Skip("shared workspace not built (SAGE_PARITY_FORCE=1 mode)")
+	}
 	t.Run("byte", func(t *testing.T) {
 		if err := CheckByteParity(suiteWS, goldenConfigPath(), goldenPath("byte-parity.json")); err != nil {
 			t.Error(err)
@@ -92,6 +95,9 @@ func TestParity(t *testing.T) {
 
 // TestParityCorruption is AC-P4's integrity proof.
 func TestParityCorruption(t *testing.T) {
+	if suiteWS == "" {
+		t.Skip("shared workspace not built (SAGE_PARITY_FORCE=1 mode)")
+	}
 	if err := CheckRoundTripCorruption(suiteWS, goldenConfigPath()); err != nil {
 		t.Error(err)
 	}

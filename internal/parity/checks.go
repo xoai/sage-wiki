@@ -296,6 +296,11 @@ type AsOfGolden struct {
 	AsOf                string            `json:"asof"`
 	Entities            []engine.Entity   `json:"entities"`
 	Relations           []engine.Relation `json:"relations"`
+	// Post relations: the same query at a LATER instant (post-instant of
+	// the corpus's contradiction), making the pinned temporal semantics
+	// explicit rather than invisible-by-construction (review N3).
+	PostAsOf    string            `json:"post_asof"`
+	PostRelations []engine.Relation `json:"post_relations"`
 }
 
 // CaptureAsOf snapshots the graph AsOf view at t.
@@ -308,11 +313,18 @@ func CaptureAsOf(w *engine.Workspace, t time.Time) (*AsOfGolden, error) {
 	if err != nil {
 		return nil, err
 	}
+	postT := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	postRels, err := w.Graph().AsOf(postT).Relations(context.Background(), engine.GraphFilter{})
+	if err != nil {
+		return nil, err
+	}
 	return &AsOfGolden{
 		GoldenFormatVersion: 1,
 		AsOf:                t.Format(time.RFC3339),
 		Entities:            ents,
 		Relations:           rels,
+		PostAsOf:            postT.Format(time.RFC3339),
+		PostRelations:       postRels,
 	}, nil
 }
 
@@ -355,6 +367,9 @@ func CheckAsOf(wsDir, goldenPath string) error {
 	}
 	if string(mustJSON(got.Relations)) != string(mustJSON(golden.Relations)) {
 		return fmt.Errorf("asof relations differ:\n  want %s\n  got  %s", mustJSON(golden.Relations), mustJSON(got.Relations))
+	}
+	if string(mustJSON(got.PostRelations)) != string(mustJSON(golden.PostRelations)) {
+		return fmt.Errorf("post-asof relations differ:\n  want %s\n  got  %s", mustJSON(golden.PostRelations), mustJSON(got.PostRelations))
 	}
 	return nil
 }
