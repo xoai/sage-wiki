@@ -224,9 +224,9 @@ func CheckRoundTripCorruption(wsDir, goldenConfigPath string) error {
 	w.Close()
 
 	data := buf.Bytes()
-	// Corrupt inside a wiki/ payload: walk the tar structure to the first
-	// entry whose NAME contains summaries/, then flip the payload midpoint
-	// — provably inside the payload regardless of size or PAX extensions.
+	// Corrupt inside a wiki/ payload: walk the tar structure (tar.Reader
+	// offsets, correct with PAX/GNU extension blocks) to the first entry
+	// whose NAME contains summaries/, then flip the payload midpoint.
 	flip := -1
 	{
 		off := 0

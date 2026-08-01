@@ -1,6 +1,6 @@
 # Golden Corpus (SPEC-09)
 
-25 source documents exercising the compile/search/graph surface. Every
+28 source documents exercising the compile/search/graph surface. Every
 file is original content written for this corpus. The suite builds
 these into a workspace from scratch and compares byte/graph/search
 output against committed goldens.

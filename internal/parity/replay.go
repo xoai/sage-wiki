@@ -51,7 +51,7 @@ func canonicalKey(method, path string, body []byte) (string, error) {
 		return "", err
 	}
 	h := sha256.Sum256(append([]byte(method+" "+path+"\n"), canon...))
-	return hex.EncodeToString(h[:])[:16], nil
+	return hex.EncodeToString(h[:]), nil
 }
 
 // canonicalJSON produces the stable form: parsed and re-marshaled (Go's

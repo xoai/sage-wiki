@@ -1,6 +1,7 @@
 package parity
 
 import (
+	"fmt"
 	"encoding/json"
 	"hash/fnv"
 	"net/http"
@@ -68,6 +69,9 @@ func handleOriginChat(w http.ResponseWriter, r *http.Request) {
 // input so golden content is corpus-derived, not constant.
 func originClassify(userMsg string) string {
 	marker := markerOf(userMsg)
+	if strings.Contains(userMsg, "## Relations") && strings.Contains(userMsg, "untrusted_source") {
+		return originTriples(userMsg)
+	}
 	switch {
 	case strings.Contains(userMsg, "concept extraction system"):
 		// One concept per source marker in the batch (up to 5) so the
@@ -214,6 +218,47 @@ func handleOriginEmbeddings(w http.ResponseWriter, r *http.Request) {
 		data[i] = map[string]any{"object": "embedding", "index": i, "embedding": fnvVec(text, 8)}
 	}
 	writeJSON(w, map[string]any{"object": "list", "data": data, "model": req.Model})
+}
+
+// originTriples produces evidenced graph output for the triples pass:
+// multihop chains, the contradiction pair (with a contradicts edge so the
+// golden exercises temporal/supersession semantics), and the k8s alias.
+func originTriples(userMsg string) string {
+	src := sourceOf(userMsg)
+	ent := func(name, typ, desc string) string {
+		return fmt.Sprintf(`{"name": %q, "type": %q, "description": %q}`, name, typ, desc)
+	}
+	rel := func(source, pred, target, evidence string, conf float64) string {
+		return fmt.Sprintf(`{"source": %q, "predicate": %q, "target": %q, "evidence": %q, "confidence": %.2f}`, source, pred, target, evidence, conf)
+	}
+	switch {
+	case strings.Contains(src, "a-links-b"):
+		return `{"entities": [` + ent("alpha-protocol", "concept", "A session protocol gated on the Beta Handshake.") + `,` +
+			ent("beta-handshake", "concept", "The cipher and session-key negotiation step Alpha requires.") + `],"relations": [` +
+			rel("alpha-protocol", "prerequisite", "beta-handshake", "The Alpha protocol establishes sessions via the Beta Handshake.", 0.90) + `]}`
+	case strings.Contains(src, "b-links-c"):
+		return `{"entities": [` + ent("beta-handshake", "concept", "The cipher and session-key negotiation step.") + `,` +
+			ent("gamma-proof", "concept", "The zero-knowledge key confirmation completing the handshake.") + `],"relations": [` +
+			rel("beta-handshake", "prerequisite", "gamma-proof", "It delegates key confirmation to the Gamma Proof step.", 0.90) + `]}`
+	case strings.Contains(src, "c-terminal"):
+		return `{"entities": [` + ent("gamma-proof", "concept", "The terminal zero-knowledge confirmation of the chain.") + `],"relations": []}`
+	case strings.Contains(src, "fact-v1"):
+		return `{"entities": [` + ent("project-lighthouse", "concept", "The compile-job orchestration project.") + `,` +
+			ent("centralized-coordinator", "concept", "The mid-2024 centralized job coordinator.") + `],"relations": [` +
+			rel("project-lighthouse", "implements", "centralized-coordinator", "Project Lighthouse uses a centralized coordinator for all compile jobs.", 0.90) + `]}`
+	case strings.Contains(src, "fact-v2"):
+		return `{"entities": [` + ent("project-lighthouse", "concept", "The compile-job orchestration project.") + `,` +
+			ent("decentralized-lease", "concept", "The early-2025 decentralized lease claiming model.") + `,` +
+			ent("centralized-coordinator", "concept", "The removed mid-2024 coordinator.") + `],"relations": [` +
+			rel("project-lighthouse", "implements", "decentralized-lease", "Project Lighthouse moved to a decentralized lease model in early 2025.", 0.95) + `,` +
+			rel("decentralized-lease", "contradicts", "centralized-coordinator", "the centralized coordinator was removed.", 0.95) + `]}`
+	case strings.Contains(src, "kubernetes-k8s"):
+		return `{"entities": [` + ent("kubernetes", "concept", "The container orchestration system (alias K8s).") + `,` +
+			ent("etcd", "concept", "The cluster-state store Kubernetes uses.") + `],"relations": [` +
+			rel("kubernetes", "implements", "etcd", "K8s uses etcd for cluster state.", 0.85) + `]}`
+	default:
+		return `{"entities": [], "relations": []}`
+	}
 }
 
 // fnvVec is the deterministic content-hash embedding (providerfake scheme).

@@ -72,8 +72,8 @@
   "counts": {
     "chunks": 34,
     "fts": 62,
-    "ontology": 12,
-    "relations": 6,
+    "ontology": 20,
+    "relations": 12,
     "vec": 34
   }
 }

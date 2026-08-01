@@ -3,11 +3,32 @@
   "asof": "2025-01-01T00:00:00Z",
   "entities": [
     {
+      "ID": "alpha-protocol",
+      "Type": "concept",
+      "Name": "Alpha Protocol",
+      "Definition": "A session protocol gated on the Beta Handshake.",
+      "ArticlePath": ""
+    },
+    {
       "ID": "api-gateway",
       "Type": "concept",
       "Name": "Api Gateway",
       "Definition": "",
       "ArticlePath": "wiki/concepts/api-gateway.md"
+    },
+    {
+      "ID": "beta-handshake",
+      "Type": "concept",
+      "Name": "Beta Handshake",
+      "Definition": "The cipher and session-key negotiation step.",
+      "ArticlePath": ""
+    },
+    {
+      "ID": "centralized-coordinator",
+      "Type": "concept",
+      "Name": "Centralized Coordinator",
+      "Definition": "The removed mid-2024 coordinator.",
+      "ArticlePath": ""
     },
     {
       "ID": "dated-2024",
@@ -17,11 +38,25 @@
       "ArticlePath": "wiki/concepts/dated-2024.md"
     },
     {
+      "ID": "decentralized-lease",
+      "Type": "concept",
+      "Name": "Decentralized Lease",
+      "Definition": "The early-2025 decentralized lease claiming model.",
+      "ArticlePath": ""
+    },
+    {
       "ID": "distributed-systemstxt",
       "Type": "concept",
       "Name": "Distributed Systemstxt",
       "Definition": "",
       "ArticlePath": "wiki/concepts/distributed-systemstxt.md"
+    },
+    {
+      "ID": "etcd",
+      "Type": "concept",
+      "Name": "Etcd",
+      "Definition": "The cluster-state store Kubernetes uses.",
+      "ArticlePath": ""
     },
     {
       "ID": "examplejs",
@@ -31,11 +66,32 @@
       "ArticlePath": "wiki/concepts/examplejs.md"
     },
     {
+      "ID": "gamma-proof",
+      "Type": "concept",
+      "Name": "Gamma Proof",
+      "Definition": "The zero-knowledge key confirmation completing the handshake.",
+      "ArticlePath": ""
+    },
+    {
       "ID": "instruction-lookalike",
       "Type": "concept",
       "Name": "Instruction Lookalike",
       "Definition": "",
       "ArticlePath": "wiki/concepts/instruction-lookalike.md"
+    },
+    {
+      "ID": "kubernetes",
+      "Type": "concept",
+      "Name": "Kubernetes",
+      "Definition": "The container orchestration system (alias K8s).",
+      "ArticlePath": ""
+    },
+    {
+      "ID": "project-lighthouse",
+      "Type": "concept",
+      "Name": "Project Lighthouse",
+      "Definition": "The compile-job orchestration project.",
+      "ArticlePath": ""
     },
     {
       "ID": "system-prompt-bait",
@@ -141,6 +197,42 @@
       "Evidence": "",
       "SourceDoc": "",
       "Confidence": 0
+    },
+    {
+      "ID": "triple:ecebeb8c3445db30",
+      "SourceID": "kubernetes",
+      "TargetID": "etcd",
+      "Relation": "implements",
+      "Evidence": "K8s uses etcd for cluster state.",
+      "SourceDoc": "raw/alias/kubernetes-k8s.md",
+      "Confidence": 0.85
+    },
+    {
+      "ID": "triple:ffa8696fcd816e1c",
+      "SourceID": "project-lighthouse",
+      "TargetID": "centralized-coordinator",
+      "Relation": "implements",
+      "Evidence": "Project Lighthouse uses a centralized coordinator for all compile jobs.",
+      "SourceDoc": "raw/contradiction/fact-v1.md",
+      "Confidence": 0.9
+    },
+    {
+      "ID": "triple:02ae6ab6a04e9c94",
+      "SourceID": "alpha-protocol",
+      "TargetID": "beta-handshake",
+      "Relation": "prerequisite_of",
+      "Evidence": "The Alpha protocol establishes sessions via the Beta Handshake.",
+      "SourceDoc": "raw/multihop/a-links-b.md",
+      "Confidence": 0.9
+    },
+    {
+      "ID": "triple:f17d8f1230e4aff8",
+      "SourceID": "beta-handshake",
+      "TargetID": "gamma-proof",
+      "Relation": "prerequisite_of",
+      "Evidence": "It delegates key confirmation to the Gamma Proof step.",
+      "SourceDoc": "raw/multihop/b-links-c.md",
+      "Confidence": 0.9
     }
   ]
 }
