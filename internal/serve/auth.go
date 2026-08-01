@@ -91,14 +91,13 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			presented = q
 		}
 		pd := tokenDigest(presented)
-		ok := false
+		ok := 0
 		for _, d := range digests {
-			if subtle.ConstantTimeCompare(pd, d) == 1 {
-				ok = true
-				break
-			}
+			// No early exit: every candidate is compared, so timing does
+			// not leak the match position (spec §4 structural property).
+			ok |= subtle.ConstantTimeCompare(pd, d)
 		}
-		if !ok {
+		if ok != 1 {
 			writeErr(w, http.StatusUnauthorized, "unauthenticated", "invalid token")
 			return
 		}
@@ -106,7 +105,8 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// execCompile runs one queued compile through the coordinator fence.
+// execCompile runs one queued compile through the SHARED serveJobRunner
+// (F-051 — the coordinator fence + progress wiring live once, in deps.go).
 func (s *Server) execCompile(ctx context.Context, j *Job) (json.RawMessage, error) {
 	opts := compiler.CompileOpts{Ctx: ctx}
 	if j.Request.Tier != nil {
@@ -115,36 +115,15 @@ func (s *Server) execCompile(ctx context.Context, j *Job) (json.RawMessage, erro
 	opts.Model = j.Request.Model
 	opts.MaxDocs = j.Request.MaxDocs
 	if j.Request.MaxCost != nil {
-		// decimal string → *decimal.Decimal
 		cost, err := parseDecimal(*j.Request.MaxCost)
 		if err != nil {
 			return nil, fmt.Errorf("max_cost %q: %w", *j.Request.MaxCost, err)
 		}
 		opts.MaxCost = cost
 	}
-	result, err := s.deps.jobRunnerRunCompile(ctx, s.cfg.Workspace, opts)
+	result, err := NewJobRunner(s.deps, nil).RunCompile(ctx, s.cfg.Workspace, opts)
 	if err != nil {
 		return nil, err
 	}
 	return json.Marshal(result)
-}
-
-// jobRunnerRunCompile routes through the deps' job runner (serveJobRunner
-// at deps.go — TryCompile fence + progress wiring).
-func (d *Deps) jobRunnerRunCompile(ctx context.Context, dir string, opts compiler.CompileOpts) (*compiler.CompileResult, error) {
-	opts.Ctx = ctx
-	opts.Progress = d.progress
-	if d.workerApp != nil {
-		opts.Backend = d.workerApp.Backend
-	}
-	var result *compiler.CompileResult
-	var err error
-	acquired, _ := d.coord.TryCompile(func() error {
-		result, err = compiler.Compile(dir, opts)
-		return err
-	})
-	if !acquired {
-		return nil, fmt.Errorf("compile already in progress — another compile holds the coordinator lock")
-	}
-	return result, err
 }

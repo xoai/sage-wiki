@@ -57,6 +57,13 @@ func (tb *TokenBucket) Middleware(next http.Handler) http.Handler {
 func (tb *TokenBucket) allow(ip string) bool {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
+	// Evict buckets idle >10m — an internet-facing example must not grow
+	// one map entry per client IP forever (F-056).
+	for k, v := range tb.toks {
+		if time.Since(v.at) > 10*time.Minute {
+			delete(tb.toks, k)
+		}
+	}
 	b, ok := tb.toks[ip]
 	if !ok {
 		b = &bucket{tokens: tb.burst, at: time.Now()}

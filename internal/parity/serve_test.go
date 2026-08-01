@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
-	serveserve "github.com/xoai/sage-wiki/internal/serve"
+	"github.com/xoai/sage-wiki/internal/serve"
 )
 
 // TestServeSearchParity is AC-S2: REST /search returns identical ranked
@@ -23,7 +23,7 @@ func TestServeSearchParity(t *testing.T) {
 	// the serve path (SOURCE_DATE_EPOCH, honored by mcp search).
 	t.Setenv("SOURCE_DATE_EPOCH", "32503680000") // year 3000
 
-	deps, err := serveserve.AssembleDeps(suiteWS)
+	deps, err := serve.AssembleDeps(suiteWS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestServeSearchParity(t *testing.T) {
 	}
 	defer mcpSrv.Close()
 
-	srv, err := serveserve.New(deps, mcpSrv, serveserve.Config{
+	srv, err := serve.New(deps, mcpSrv, serve.Config{
 		Workspace: suiteWS,
 		ReadyFn:   func() bool { return true },
 	})

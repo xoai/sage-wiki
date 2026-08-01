@@ -66,9 +66,10 @@ var ErrBacklog = fmt.Errorf("job backlog full (max %d)", maxBacklog)
 // Ledger is the restart-proof job record (.sage/jobs.jsonl). One writer
 // process at a time (the workspace lock guarantees it).
 type Ledger struct {
-	path string
-	mu   sync.Mutex
-	jobs map[string]*Job
+	path    string
+	mu      sync.Mutex
+	jobs    map[string]*Job
+	counter uint64 // collision-proof ID suffix (coarse clocks, F-038)
 }
 
 // OpenLedger loads (or creates) the ledger, applying restart recovery:
@@ -93,13 +94,34 @@ func OpenLedger(wsDir string) (*Ledger, error) {
 		l.jobs[ev.Job.ID] = ev.Job
 	}
 	// Restart recovery: a job left running when the process died is
-	// marked interrupted — never silently "running" forever.
+	// marked interrupted — never silently "running" forever. The
+	// transition IS appended (F-042): the file is the restart-proof
+	// record, and it must not claim a job is still running.
+	now := time.Now
 	for _, j := range l.jobs {
 		if j.Status == JobRunning {
 			j.Status = JobInterrupted
+			j.FinishedAt = now().UTC().Format(time.RFC3339Nano)
+			if err := l.appendLocked(ledgerEvent{Op: "transition", Job: j, Error: "process died mid-job"}); err != nil {
+				return nil, err
+			}
+		}
+		if n := parseJobCounter(j.ID); n > l.counter {
+			l.counter = n
 		}
 	}
 	return l, nil
+}
+
+// parseJobCounter extracts the -N suffix of a job ID.
+func parseJobCounter(id string) uint64 {
+	i := strings.LastIndex(id, "-")
+	if i == -1 {
+		return 0
+	}
+	var n uint64
+	fmt.Sscanf(id[i+1:], "%d", &n)
+	return n
 }
 
 // Submit records a new job (202), or ErrBacklog (409) when full.
@@ -115,8 +137,9 @@ func (l *Ledger) Submit(req CompileJobRequest, now func() time.Time) (*Job, erro
 	if backlog >= maxBacklog {
 		return nil, ErrBacklog
 	}
+	l.counter++
 	j := &Job{
-		ID:        fmt.Sprintf("job-%d", now().UnixNano()),
+		ID:        fmt.Sprintf("job-%d-%d", now().UnixNano(), l.counter),
 		Kind:      "compile",
 		Status:    JobPending,
 		Request:   req,
@@ -173,7 +196,12 @@ func (l *Ledger) List(limit int) []*Job {
 		cp := *j
 		out = append(out, &cp)
 	}
-	sort.Slice(out, func(i, k int) bool { return out[i].CreatedAt > out[k].CreatedAt })
+	sort.Slice(out, func(i, k int) bool {
+		if out[i].CreatedAt != out[k].CreatedAt {
+			return out[i].CreatedAt > out[k].CreatedAt
+		}
+		return out[i].ID < out[k].ID
+	})
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
@@ -190,7 +218,12 @@ func (l *Ledger) PendingIDs() []string {
 			out = append(out, j)
 		}
 	}
-	sort.Slice(out, func(i, k int) bool { return out[i].CreatedAt < out[k].CreatedAt })
+	sort.Slice(out, func(i, k int) bool {
+		if out[i].CreatedAt != out[k].CreatedAt {
+			return out[i].CreatedAt < out[k].CreatedAt
+		}
+		return out[i].ID < out[k].ID
+	})
 	ids := make([]string, 0, len(out))
 	for _, j := range out {
 		ids = append(ids, j.ID)
@@ -230,7 +263,8 @@ type Queue struct {
 	stopCh chan struct{}
 	doneCh chan struct{}
 	once   sync.Once
-	cancel context.CancelFunc // cancels in-flight execs on Stop
+	mu     sync.Mutex        // guards cancel
+	cancel context.CancelFunc
 }
 
 // NewQueue builds a queue over the ledger. exec runs one job (the real
@@ -266,14 +300,17 @@ func (q *Queue) Submit(req CompileJobRequest) (*Job, error) {
 	return j, nil
 }
 
-// Run processes jobs FIFO until Stop. Restart-pending jobs run first.
-// Stop means "finish the backlog, then halt" (graceful drain); ctx is
-// the hard cancel (the server's drain timeout), and Stop itself cancels
-// in-flight execs so blocked jobs mark interrupted instead of hanging.
+// Run processes jobs FIFO until Stop. Restart-pending jobs run first
+// (initial drain). Stop means "finish in-flight work up to the budget,
+// then halt" — see Stop for the exact contract.
 func (q *Queue) Run(ctx context.Context) {
 	var runCtx context.Context
-	runCtx, q.cancel = context.WithCancel(ctx)
+	runCtx, cancel := context.WithCancel(ctx)
+	q.mu.Lock()
+	q.cancel = cancel
+	q.mu.Unlock()
 	defer close(q.doneCh)
+	q.drainOnce(runCtx) // restart-resumed pending jobs run first (F-033)
 	for {
 		select {
 		case <-runCtx.Done():
@@ -304,6 +341,11 @@ func (q *Queue) drainOnce(ctx context.Context) {
 }
 
 func (q *Queue) runOne(ctx context.Context, id string) {
+	defer func() {
+		if r := recover(); r != nil {
+			q.ledger.transition(id, JobFailed, fmt.Sprintf("panic: %v", r), q.now)
+		}
+	}()
 	j, err := q.ledger.transition(id, JobRunning, "", q.now)
 	if err != nil {
 		return
@@ -325,17 +367,27 @@ func (q *Queue) runOne(ctx context.Context, id string) {
 	q.ledger.transition(id, JobDone, "", q.now)
 }
 
-// Stop cancels in-flight execs, then signals the worker to halt and
-// waits for it (or ctx).
+// Stop signals the worker to halt and waits for in-flight work to
+// finish UP TO ctx (the drain budget — "finish current job", spec §2.7).
+// Only on budget expiry does it cancel in-flight execs (they mark
+// interrupted). Safe to call before Run starts.
 func (q *Queue) Stop(ctx context.Context) error {
-	if q.cancel != nil {
-		q.cancel()
-	}
 	q.once.Do(func() { close(q.stopCh) })
 	select {
 	case <-q.doneCh:
 		return nil
 	case <-ctx.Done():
+	}
+	q.mu.Lock()
+	cancel := q.cancel
+	q.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	select {
+	case <-q.doneCh:
+		return nil
+	case <-time.After(2 * time.Second):
 		return ctx.Err()
 	}
 }

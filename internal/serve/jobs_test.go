@@ -153,7 +153,6 @@ func TestQueueSerializesPerWorkspace(t *testing.T) {
 func TestQueueStopMarksInterrupted(t *testing.T) {
 	dir := t.TempDir()
 	l, _ := OpenLedger(dir)
-	block := make(chan struct{})
 	exec := func(ctx context.Context, j *Job) (json.RawMessage, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
@@ -167,7 +166,6 @@ func TestQueueStopMarksInterrupted(t *testing.T) {
 	if err := q.Stop(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	close(block)
 	s, _ := l.Get(j.ID)
 	if s.Status != JobInterrupted {
 		t.Errorf("status = %q, want interrupted after stop", s.Status)

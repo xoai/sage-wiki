@@ -8,7 +8,7 @@ import (
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
-	serveserve "github.com/xoai/sage-wiki/internal/serve"
+	"github.com/xoai/sage-wiki/internal/serve"
 )
 
 // TestMCPStreamableHTTP is AC-S3: an MCP client over streamable HTTP
@@ -17,7 +17,7 @@ func TestMCPStreamableHTTP(t *testing.T) {
 	if suiteWS == "" {
 		t.Skip("shared workspace not built (SAGE_PARITY_FORCE=1 mode)")
 	}
-	deps, err := serveserve.AssembleDeps(suiteWS)
+	deps, err := serve.AssembleDeps(suiteWS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestMCPStreamableHTTP(t *testing.T) {
 	}
 	defer mcpSrv.Close()
 
-	srv, err := serveserve.New(deps, mcpSrv, serveserve.Config{
+	srv, err := serve.New(deps, mcpSrv, serve.Config{
 		Workspace: suiteWS,
 		ReadyFn:   func() bool { return true },
 	})

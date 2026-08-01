@@ -70,6 +70,31 @@ func toolRequest(tool string, args map[string]any) mcp.CallToolRequest {
 // IsError results map to 500 internal — edge validation produces precise
 // codes before dispatch, so anything reaching here is unclassified. Error
 // text is never string-matched to pick a code.
+// TranslateToolResult is the ONE result translation (spec adaptation #2):
+// tool text that parses as a JSON object/array passes through verbatim;
+// anything else wraps as {"result": text}. Used by /v1 and internal/serve
+// so the two route surfaces cannot drift.
+func TranslateToolResult(res *mcp.CallToolResult) (isErr bool, body json.RawMessage) {
+	if res == nil {
+		return true, json.RawMessage(`{"error":{"code":"internal","message":"tool returned no result"}}`)
+	}
+	text := resultText(res)
+	if res.IsError {
+		wrapped, _ := json.Marshal(map[string]string{"error": text})
+		return true, wrapped
+	}
+	var parsed any
+	if err := json.Unmarshal([]byte(text), &parsed); err == nil {
+		switch parsed.(type) {
+		case map[string]any, []any:
+			out, _ := json.Marshal(parsed)
+			return false, out
+		}
+	}
+	out, _ := json.Marshal(map[string]string{"result": text})
+	return false, out
+}
+
 func dispatch(ctx context.Context, w http.ResponseWriter, d Dispatcher, tool string, args map[string]any, envelopeKey string) {
 	res := d.CallTool(ctx, tool, toolRequest(tool, args))
 	if res == nil {

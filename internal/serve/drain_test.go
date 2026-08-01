@@ -58,8 +58,11 @@ func TestShutdownDrainPortable(t *testing.T) {
 		t.Fatalf("Shutdown: %v", err)
 	}
 	close(blockCh)
-	if elapsed := time.Since(start); elapsed > 3*time.Second {
-		t.Errorf("drain took %v, want < drain-timeout+cushion", elapsed)
+	// Budget floor is 10s (clamped) — a never-finishing job consumes the
+	// full budget before being cancelled and interrupted (F-040: Stop
+	// waits up to the budget, then cancels).
+	if elapsed := time.Since(start); elapsed > 11*time.Second {
+		t.Errorf("drain took %v, want <= drain-timeout+cushion", elapsed)
 	}
 
 	got, _ := srv.ledger.Get(j.ID)
@@ -81,6 +84,36 @@ func TestShutdownDrainPortable(t *testing.T) {
 	}
 	if _, ok := l3.Get(j.ID); !ok {
 		t.Error("job lost from ledger after restart")
+	}
+}
+
+// TestQueueStopGracefulFinish: a job that finishes within the budget
+// completes as done (the "finish current job" half of Stop's contract).
+func TestQueueStopGracefulFinish(t *testing.T) {
+	dir := t.TempDir()
+	l, _ := OpenLedger(dir)
+	release := make(chan struct{})
+	exec := func(ctx context.Context, j *Job) (json.RawMessage, error) {
+		<-release
+		return json.RawMessage(`{}`), nil
+	}
+	q := NewQueue(l, 1, exec, clockSeq(time.Millisecond))
+	ctx := context.Background()
+	go q.Run(ctx)
+	j, _ := q.Submit(CompileJobRequest{})
+	time.Sleep(50 * time.Millisecond)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		close(release)
+	}()
+	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := q.Stop(stopCtx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	got, _ := l.Get(j.ID)
+	if got.Status != JobDone {
+		t.Errorf("status = %q, want done (graceful finish within budget)", got.Status)
 	}
 }
 

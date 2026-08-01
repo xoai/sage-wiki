@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	serveserve "github.com/xoai/sage-wiki/internal/serve"
+	"github.com/xoai/sage-wiki/internal/serve"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
 
@@ -13,7 +13,7 @@ func TestAssembleServeDeps_WorkerStartedWhenEnabled(t *testing.T) {
 	dir := t.TempDir()
 	wiki.InitGreenfield(dir, "test", "gpt-4o-mini")
 
-	deps, err := serveserve.AssembleDeps(dir)
+	deps, err := serve.AssembleDeps(dir)
 	if err != nil {
 		t.Fatalf("assembleServeDeps: %v", err)
 	}
@@ -49,7 +49,7 @@ serve:
 		t.Fatal(err)
 	}
 
-	deps, err := serveserve.AssembleDeps(dir)
+	deps, err := serve.AssembleDeps(dir)
 	if err != nil {
 		t.Fatalf("assembleServeDeps: %v", err)
 	}

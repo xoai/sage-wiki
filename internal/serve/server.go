@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -17,6 +18,7 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
+	"github.com/xoai/sage-wiki/internal/api"
 	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/pkg/engine"
@@ -54,6 +56,7 @@ func New(deps *Deps, mcpSrv *mcppkg.Server, cfg Config) (*Server, error) {
 		cfg.MaxConcurrentCompiles = 2
 	}
 	if cfg.DrainTimeout < 10*time.Second {
+		fmt.Fprintf(os.Stderr, "warning: --drain-timeout %v clamped to 10s (minimum)\n", cfg.DrainTimeout)
 		cfg.DrainTimeout = 10 * time.Second
 	}
 	if cfg.RateLimit == nil {
@@ -163,6 +166,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /docs/{path...}", s.handleDoc)
 	s.mux.HandleFunc("GET /export", s.handleExport)
 	s.mux.Handle("GET /metrics", metrics.Handler())
+	// Envelope 404 for unmatched paths (spec §2.2 error contract).
+	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		writeErr(w, http.StatusNotFound, "not_found", r.Method+" "+r.URL.Path+": no such route")
+	})
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -181,9 +188,10 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"starting"}`))
 }
 
-// writeJSON emits v with the api envelope conventions.
+// writeJSON emits v with the api envelope conventions (same content type
+// as internal/api — F-063).
 func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
 }
@@ -192,41 +200,32 @@ func writeErr(w http.ResponseWriter, status int, code, msg string) {
 	writeJSON(w, status, map[string]any{"error": map[string]any{"code": code, "message": msg}})
 }
 
-// callTool executes one MCP tool and re-emits its result: text that
-// parses as JSON is passed through verbatim; other text wraps.
+// callTool executes one MCP tool and translates the result through the
+// SHARED api translation (F-036 — one translator, two route tables).
 func (s *Server) callTool(ctx context.Context, name string, args map[string]any) (int, json.RawMessage, error) {
 	req := mcpgo.CallToolRequest{}
 	req.Params.Name = name
 	req.Params.Arguments = args
 	res := s.mcp.CallTool(ctx, name, req)
-	if res == nil {
-		return http.StatusInternalServerError, nil, fmt.Errorf("tool %s returned no result", name)
-	}
-	if res.IsError {
-		msg := "tool error"
-		for _, c := range res.Content {
-			if t, ok := c.(mcpgo.TextContent); ok {
-				msg = t.Text
-				break
-			}
+	isErr, body := api.TranslateToolResult(res)
+	if isErr {
+		var envelope struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(body, &envelope)
+		msg := envelope.Error
+		if msg == "" {
+			msg = "tool error"
 		}
 		return http.StatusInternalServerError, nil, fmt.Errorf("%s", msg)
 	}
-	for _, c := range res.Content {
-		if t, ok := c.(mcpgo.TextContent); ok {
-			raw := json.RawMessage(t.Text)
-			var probe any
-			if json.Unmarshal(raw, &probe) == nil {
-				return http.StatusOK, raw, nil
-			}
-			wrapped, _ := json.Marshal(map[string]string{"result": t.Text})
-			return http.StatusOK, wrapped, nil
-		}
-	}
-	return http.StatusOK, json.RawMessage(`{}`), nil
+	return http.StatusOK, body, nil
 }
 
+const maxJSONBody = 1 << 20 // 1 MiB, matching the /v1 dispatch cap
+
 func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBody)
 	var body struct {
 		Content string `json:"content"`
 		Context string `json:"context,omitempty"`
@@ -248,6 +247,7 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBody)
 	var body struct {
 		Query    string   `json:"query"`
 		Limit    int      `json:"limit,omitempty"`
@@ -282,6 +282,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCompile(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBody)
 	var req CompileJobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_argument", "compile body must be JSON")
@@ -289,7 +290,11 @@ func (s *Server) handleCompile(w http.ResponseWriter, r *http.Request) {
 	}
 	j, err := s.queue.Submit(req)
 	if err != nil {
-		writeErr(w, http.StatusConflict, "conflict", err.Error())
+		if errors.Is(err, ErrBacklog) {
+			writeErr(w, http.StatusConflict, "conflict", err.Error())
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"job_id": j.ID})
@@ -340,9 +345,15 @@ func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_found", path+" is not an article id (only article DocIDs are served)")
 		return
 	}
-	status, raw, err := s.callTool(r.Context(), "wiki_read", map[string]any{"path": path})
+	_, raw, err := s.callTool(r.Context(), "wiki_read", map[string]any{"path": path})
 	if err != nil {
-		writeErr(w, status, "not_found", err.Error())
+		code := "internal"
+		httpStatus := http.StatusInternalServerError
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			code = "not_found"
+			httpStatus = http.StatusNotFound
+		}
+		writeErr(w, httpStatus, code, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -375,6 +386,12 @@ func exportTar(ctx context.Context, dir string, dst io.Writer) error {
 		rel, err := filepath.Rel(dir, path)
 		if err != nil {
 			return err
+		}
+		// The lock artifact is not workspace content (F-050). The live
+		// SQLite DB is copied as-is — a concurrent compile may leave it
+		// inconsistent (documented caveat; backup-API snapshot is out of scope).
+		if rel == ".sage/engine.lock" {
+			return nil
 		}
 		info, err := d.Info()
 		if err != nil {

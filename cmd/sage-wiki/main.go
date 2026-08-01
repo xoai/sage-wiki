@@ -17,6 +17,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"strings"
 	"time"
+	"sync/atomic"
 
 	"github.com/xoai/sage-wiki/internal/api"
 	"github.com/xoai/sage-wiki/internal/auth"
@@ -35,7 +36,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/query"
 	"github.com/xoai/sage-wiki/internal/scribe"
-	serveserve "github.com/xoai/sage-wiki/internal/serve"
+	"github.com/xoai/sage-wiki/internal/serve"
 	"github.com/xoai/sage-wiki/internal/skill"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/storedial"
@@ -644,7 +645,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Shared serve-mode compile state (P2-3): one coordinator + one progress
 	// hub + the queue worker (nil when serve.worker.enabled: false).
-	deps, err := serveserve.AssembleDeps(dir)
+	deps, err := serve.AssembleDeps(dir)
 	if err != nil {
 		return err
 	}
@@ -688,7 +689,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		defer mcpSrv.Close()
-		webSrv.SetV1Handler(api.New(mcpSrv, webSrv.Config(), dir, serveserve.NewJobRunner(deps, mcpSrv), deps.Progress()).Handler())
+		webSrv.SetV1Handler(api.New(mcpSrv, webSrv.Config(), dir, serve.NewJobRunner(deps, mcpSrv), deps.Progress()).Handler())
 
 		// Refuse to expose beyond loopback without a token (invariant: loopback
 		// stays zero-config; anything wider must be authenticated).
@@ -1348,11 +1349,15 @@ func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
 	insecure, _ := cmd.Flags().GetBool("insecure-no-auth")
 	tokenFlag, _ := cmd.Flags().GetString("token")
 
-	tokens, err := serveserve.LoadTokens(tokenFlag, tokenFile, os.Getenv("SAGE_WIKI_TOKEN"), "")
+	var configToken string
+	if cfg, cfgErr := config.Load(resolveConfigPath(dir)); cfgErr == nil {
+		configToken = cfg.Serve.Token
+	}
+	tokens, err := serve.LoadTokens(tokenFlag, tokenFile, os.Getenv("SAGE_WIKI_TOKEN"), configToken)
 	if err != nil {
 		return err
 	}
-	if err := serveserve.CheckRefusal(addr, tokens, insecure); err != nil {
+	if err := serve.CheckRefusal(addr, tokens, insecure); err != nil {
 		return err
 	}
 
@@ -1364,30 +1369,34 @@ func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
 	}
 	fmt.Fprintf(os.Stderr, "sage-wiki serve (HTTP) — workspace %s locked for exclusive use\n", dir)
 
-	deps, err := serveserve.AssembleDeps(dir)
+	deps, err := serve.AssembleDeps(dir)
 	if err != nil {
 		w.Close()
 		return err
 	}
+	defer deps.Close()
 	mcpSrv, err := mcppkg.NewServer(dir, deps.Coordinator())
 	if err != nil {
 		w.Close()
 		return err
 	}
+	defer mcpSrv.Close()
 
-	srv, err := serveserve.New(deps, mcpSrv, serveserve.Config{
+	var ready atomic.Bool
+	srv, err := serve.New(deps, mcpSrv, serve.Config{
 		Workspace:             dir,
 		Tokens:                tokens,
 		MaxConcurrentCompiles: maxCompiles,
 		DrainTimeout:          drain,
 		Addr:                  addr,
-		ReadyFn:               func() bool { return true }, // open completed by construction
+		ReadyFn:               ready.Load,
 	})
 	if err != nil {
 		w.Close()
 		return err
 	}
 	srv.SetWorkspace(w)
+	ready.Store(true) // stores + server built: readyz flips from 503 to 200
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
