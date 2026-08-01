@@ -2,6 +2,7 @@ package mirror
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -40,9 +41,19 @@ func (o *mirrorOps) Hydrate(ctx context.Context, dst string) error {
 func hydrateWithClient(ctx context.Context, client *s3.Client, prefix, bucket, dst string, opts HydrateOpts) (*Report, error) {
 	rep := &Report{}
 
-	// Empty-dir rule (no merge semantics).
+	// Empty-dir rule (no merge semantics). A --partial resume into a dir
+	// with a progress marker is the one exception (spec: a follow-up
+	// hydrate --partial resumes incomplete phases).
 	if entries, err := os.ReadDir(dst); err == nil && len(entries) > 0 {
-		return nil, fmt.Errorf("hydrate: %s is not empty (restore requires an empty dir)", dst)
+		resume := opts.Partial
+		if resume {
+			if _, serr := os.Stat(filepath.Join(dst, ".sage", "hydrate-state.json")); serr != nil {
+				resume = false
+			}
+		}
+		if !resume {
+			return nil, fmt.Errorf("hydrate: %s is not empty (restore requires an empty dir)", dst)
+		}
 	} else if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("hydrate: read dst: %w", err)
 	}
@@ -56,6 +67,16 @@ func hydrateWithClient(ctx context.Context, client *s3.Client, prefix, bucket, d
 		return nil, fmt.Errorf("hydrate: %w", err)
 	}
 	defer mutex.Release()
+
+	// Manifest gate: encrypted mirrors require a key (Task 21 wires the
+	// decryptor; the gate itself is loud NOW).
+	manifest, manErr := loadMirrorManifest(ctx, client, bucket, prefix)
+	if manErr != nil {
+		return nil, manErr
+	}
+	if manifest.Encrypted && opts.KeyFile == "" {
+		return nil, fmt.Errorf("hydrate: mirror is encrypted — pass --key-file")
+	}
 
 	// Load the commit pointer.
 	sb, err := client.GetObject(ctx, bucket, StateKey(prefix))
@@ -86,91 +107,196 @@ func hydrateWithClient(ctx context.Context, client *s3.Client, prefix, bucket, d
 	if err := os.MkdirAll(filepath.Join(dst, ".sage"), 0o755); err != nil {
 		return nil, err
 	}
-
-	// --- Phase: db (snapshot + WAL replay) ---
-	dbBytes, err := downloadVerified(ctx, client, bucket, sel.snapshot, sel.snapshotSHA)
-	if err != nil {
+	phases := newHydrateProgress(dst, opts)
+	if err := phases.load(); err != nil {
 		return nil, err
 	}
-	dbRaw, err := zstdDecode(dbBytes)
-	if err != nil {
-		return nil, fmt.Errorf("hydrate: decompress snapshot: %w", err)
-	}
+
+	// --- Phase: db (snapshot + WAL replay) ---
 	dbPath := filepath.Join(dst, ".sage", "wiki.db")
-	if err := os.WriteFile(dbPath, dbRaw, 0o644); err != nil {
-		return nil, fmt.Errorf("hydrate: write db: %w", err)
+	if !phases.alreadyDone("db") {
+		dbBytes, err := downloadVerified(ctx, client, bucket, sel.snapshot, sel.snapshotSHA)
+		if err != nil {
+			return nil, err
+		}
+		dbRaw, err := zstdDecode(dbBytes)
+		if err != nil {
+			return nil, fmt.Errorf("hydrate: decompress snapshot: %w", err)
+		}
+		if err := os.WriteFile(dbPath, dbRaw, 0o644); err != nil {
+			return nil, fmt.Errorf("hydrate: write db: %w", err)
+		}
+		// WAL replay: concatenate segment bytes (seq order; seq 1 carries the
+		// 32-byte header; later segments are frame ranges).
+		if len(sel.wal) > 0 {
+			var walBytes []byte
+			for _, seg := range sel.wal {
+				b, err := downloadVerified(ctx, client, bucket, seg.Key, seg.SHA256)
+				if err != nil {
+					return nil, err
+				}
+				raw, err := zstdDecode(b)
+				if err != nil {
+					return nil, fmt.Errorf("hydrate: decompress %s: %w", seg.Key, err)
+				}
+				walBytes = append(walBytes, raw...)
+			}
+			if err := os.WriteFile(dbPath+"-wal", walBytes, 0o644); err != nil {
+				return nil, fmt.Errorf("hydrate: write wal: %w", err)
+			}
+		}
 	}
-	// WAL replay: concatenate segment bytes (seq order; seq 1 carries the
-	// 32-byte header; later segments are frame ranges).
-	if len(sel.wal) > 0 {
-		var walBytes []byte
-		for _, seg := range sel.wal {
-			b, err := downloadVerified(ctx, client, bucket, seg.Key, seg.SHA256)
-			if err != nil {
-				return nil, err
-			}
-			raw, err := zstdDecode(b)
-			if err != nil {
-				return nil, fmt.Errorf("hydrate: decompress %s: %w", seg.Key, err)
-			}
-			walBytes = append(walBytes, raw...)
-		}
-		if err := os.WriteFile(dbPath+"-wal", walBytes, 0o644); err != nil {
-			return nil, fmt.Errorf("hydrate: write wal: %w", err)
-		}
+
+	if err := phases.complete("db"); err != nil {
+		return nil, err
 	}
 
 	// --- Phase: markdown/docs (skip tombstones; per-class rule: abort on
 	// mismatch naming the object) ---
-	paths := make([]string, 0, len(sel.objects))
-	for p := range sel.objects {
-		paths = append(paths, p)
+	if !phases.alreadyDone("markdown") {
+		paths := make([]string, 0, len(sel.objects))
+		for p := range sel.objects {
+			paths = append(paths, p)
+		}
+		sort.Strings(paths)
+		for _, p := range paths {
+			ref := sel.objects[p]
+			if ref.Deleted {
+				continue
+			}
+			b, err := downloadVerified(ctx, client, bucket, ref.Key, ref.SHA256)
+			if err != nil {
+				return nil, fmt.Errorf("hydrate: %w", err)
+			}
+			dstPath := filepath.Join(dst, filepath.FromSlash(p))
+			if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
+				return nil, err
+			}
+			if err := os.WriteFile(dstPath, b, 0o644); err != nil {
+				return nil, fmt.Errorf("hydrate: write %s: %w", p, err)
+			}
+			rep.Checked++
+		}
 	}
-	sort.Strings(paths)
-	for _, p := range paths {
-		ref := sel.objects[p]
-		if ref.Deleted {
-			continue
-		}
-		b, err := downloadVerified(ctx, client, bucket, ref.Key, ref.SHA256)
-		if err != nil {
-			return nil, fmt.Errorf("hydrate: %w", err)
-		}
-		dstPath := filepath.Join(dst, filepath.FromSlash(p))
-		if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(dstPath, b, 0o644); err != nil {
-			return nil, fmt.Errorf("hydrate: write %s: %w", p, err)
-		}
-		rep.Checked++
+
+	if err := phases.complete("markdown"); err != nil {
+		return nil, err
+	}
+	// Ordered availability: lexical/graph serve from here (spec AC-4).
+	if opts.Partial {
+		rep.Advisories = append(rep.Advisories, "lexical/graph available — vectors phase follows")
 	}
 
 	// --- Phase: vectors (warn + continue — rebuildable) ---
-	vecNames := make([]string, 0, len(sel.vectors))
-	for n := range sel.vectors {
-		vecNames = append(vecNames, n)
-	}
-	sort.Strings(vecNames)
-	for _, name := range vecNames {
-		ref := sel.vectors[name]
-		if ref.Deleted {
-			continue
+	if !phases.alreadyDone("vectors") {
+		vecNames := make([]string, 0, len(sel.vectors))
+		for n := range sel.vectors {
+			vecNames = append(vecNames, n)
 		}
-		b, err := downloadVerified(ctx, client, bucket, ref.Key, ref.SHA256)
-		if err != nil {
-			rep.Advisories = append(rep.Advisories, fmt.Sprintf("vector %s not restored (rebuild with `index rebuild-vectors`): %v", name, err))
-			continue
+		sort.Strings(vecNames)
+		for _, name := range vecNames {
+			ref := sel.vectors[name]
+			if ref.Deleted {
+				continue
+			}
+			b, err := downloadVerified(ctx, client, bucket, ref.Key, ref.SHA256)
+			if err != nil {
+				rep.Advisories = append(rep.Advisories, fmt.Sprintf("vector %s not restored (rebuild with `index rebuild-vectors`): %v", name, err))
+				continue
+			}
+			if err := os.WriteFile(filepath.Join(dst, ".sage", name), b, 0o644); err != nil {
+				return nil, fmt.Errorf("hydrate: write vector %s: %w", name, err)
+			}
+			rep.Checked++
 		}
-		if err := os.WriteFile(filepath.Join(dst, ".sage", name), b, 0o644); err != nil {
-			return nil, fmt.Errorf("hydrate: write vector %s: %w", name, err)
-		}
-		rep.Checked++
 	}
 
+	if err := phases.complete("vectors"); err != nil {
+		return nil, err
+	}
 	rep.Valid = true
 	rep.RestoredTo = dst
 	return rep, nil
+}
+
+// loadMirrorManifest reads <prefix>manifest.json (absent = pre-format
+// mirror, treated as unencrypted).
+func loadMirrorManifest(ctx context.Context, client *s3.Client, bucket, prefix string) (*MirrorManifest, error) {
+	mb, err := client.GetObject(ctx, bucket, ManifestKey(prefix))
+	if err != nil {
+		if errors.Is(err, s3.ErrNotFound) {
+			return &MirrorManifest{FormatVersion: FormatVersion}, nil
+		}
+		return nil, fmt.Errorf("hydrate: read manifest.json: %w", err)
+	}
+	var man MirrorManifest
+	if err := json.Unmarshal(mb, &man); err != nil {
+		return nil, fmt.Errorf("hydrate: parse manifest.json: %w", err)
+	}
+	return &man, nil
+}
+
+// hydrateProgress tracks --partial phase completion in
+// .sage/hydrate-state.json; resume skips completed phases.
+type hydrateProgress struct {
+	path    string
+	enabled bool
+	Done    map[string]bool
+}
+
+func newHydrateProgress(dst string, opts HydrateOpts) *hydrateProgress {
+	return &hydrateProgress{
+		path:    filepath.Join(dst, ".sage", "hydrate-state.json"),
+		enabled: opts.Partial,
+		Done:    map[string]bool{},
+	}
+}
+
+func (p *hydrateProgress) load() error {
+	if !p.enabled {
+		return nil
+	}
+	b, err := os.ReadFile(p.path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("hydrate: read progress: %w", err)
+	}
+	var phases []string
+	if err := json.Unmarshal(b, &phases); err != nil {
+		return fmt.Errorf("hydrate: parse progress: %w", err)
+	}
+	for _, ph := range phases {
+		p.Done[ph] = true
+	}
+	return nil
+}
+
+func (p *hydrateProgress) complete(phase string) error {
+	p.Done[phase] = true
+	if !p.enabled {
+		return nil
+	}
+	var phases []string
+	for ph := range p.Done {
+		phases = append(phases, ph)
+	}
+	sort.Strings(phases)
+	b, err := json.MarshalIndent(phases, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := p.path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return fmt.Errorf("hydrate: write progress: %w", err)
+	}
+	return os.Rename(tmp, p.path)
+}
+
+// doneBefore short-circuits a completed phase on resume.
+func (p *hydrateProgress) alreadyDone(phase string) bool {
+	return p.Done[phase]
 }
 
 // downloadVerified GETs key and checks its sha256 (per-class mismatch rule
