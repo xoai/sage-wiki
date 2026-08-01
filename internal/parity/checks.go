@@ -292,14 +292,14 @@ func RegenGoldens(wsDir, goldenConfigPath, goldenDir string) error {
 
 // AsOfGolden is the graph-asof golden schema.
 type AsOfGolden struct {
-	GoldenFormatVersion int              `json:"golden_format_version"`
+	GoldenFormatVersion int               `json:"golden_format_version"`
 	AsOf                string            `json:"asof"`
 	Entities            []engine.Entity   `json:"entities"`
 	Relations           []engine.Relation `json:"relations"`
 	// Post relations: the same query at a LATER instant (post-instant of
 	// the corpus's contradiction), making the pinned temporal semantics
 	// explicit rather than invisible-by-construction (review N3).
-	PostAsOf    string            `json:"post_asof"`
+	PostAsOf      string            `json:"post_asof"`
 	PostRelations []engine.Relation `json:"post_relations"`
 }
 

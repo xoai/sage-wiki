@@ -2,9 +2,17 @@ package parity
 
 import (
 	"encoding/json"
+	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/embed"
 	"os"
 	"path/filepath"
 	"testing"
+
+	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
+
+	mcpgo "github.com/mark3labs/mcp-go/mcp"
+
+	"context"
 )
 
 // TestRecordFixtures records LLM fixtures via the scripted origin (or
@@ -48,6 +56,47 @@ func TestRecordFixtures(t *testing.T) {
 	if err := BuildWorkspaceAuth(corpus, ws, rec.URL(), goldenCfg, apiKey, model); err != nil {
 		t.Fatalf("record build: %v", err)
 	}
+
+	// Warm the query fixtures: record /embeddings for every golden query
+	// text so the serve-mode REST path (which embeds via config, not the
+	// in-process fnvEmbedder) replays them too (AC-S2).
+	searchGoldenPath := filepath.Join("..", "..", "testdata", "golden", "search.json")
+	raw, err := os.ReadFile(searchGoldenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sg SearchGolden
+	if err := json.Unmarshal(raw, &sg); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(filepath.Join(ws, "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	emb := embed.NewFromConfig(cfg)
+	for _, q := range sg.Queries {
+		if _, err := emb.Embed(q.Q); err != nil {
+			t.Fatalf("record query embedding %q: %v", q.Q, err)
+		}
+	}
+
+	// Warm the graph-QA fixture for the MCP streamable test (AC-S3):
+	// wiki_graph_query synthesizes via LLM — record that prompt too.
+	mcpSrv, err := mcppkg.NewServer(ws, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mcpSrv.Close()
+	res := mcpSrv.CallTool(context.Background(), "wiki_graph_query", mcpgo.CallToolRequest{
+		Params: mcpgo.CallToolParams{
+			Name:      "wiki_graph_query",
+			Arguments: map[string]any{"question": "api gateway", "mode": "local"},
+		},
+	})
+	if res != nil && res.IsError {
+		t.Fatalf("warm graph QA fixture: %+v", res.Content)
+	}
+
 	entries, _ := os.ReadDir(fixtureDir)
 	t.Logf("recorded %d fixtures into %s", len(entries), fixtureDir)
 }

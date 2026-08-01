@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/xoai/sage-wiki/internal/serve"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
 
@@ -12,15 +13,15 @@ func TestAssembleServeDeps_WorkerStartedWhenEnabled(t *testing.T) {
 	dir := t.TempDir()
 	wiki.InitGreenfield(dir, "test", "gpt-4o-mini")
 
-	deps, err := assembleServeDeps(dir)
+	deps, err := serve.AssembleDeps(dir)
 	if err != nil {
 		t.Fatalf("assembleServeDeps: %v", err)
 	}
 	defer deps.Close()
-	if deps.worker == nil {
+	if !deps.WorkerEnabled() {
 		t.Error("worker nil with default config — serve.worker defaults to enabled")
 	}
-	if deps.coord == nil || deps.progress == nil {
+	if deps.Coordinator() == nil || deps.Progress() == nil {
 		t.Error("shared coordinator/progress not constructed")
 	}
 }
@@ -48,12 +49,12 @@ serve:
 		t.Fatal(err)
 	}
 
-	deps, err := assembleServeDeps(dir)
+	deps, err := serve.AssembleDeps(dir)
 	if err != nil {
 		t.Fatalf("assembleServeDeps: %v", err)
 	}
 	defer deps.Close()
-	if deps.worker != nil {
+	if deps.WorkerEnabled() {
 		t.Error("worker constructed despite serve.worker.enabled: false")
 	}
 }

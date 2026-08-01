@@ -249,7 +249,7 @@ sage-wiki serve --ui        # http://127.0.0.1:3333, требуется сбор
   "mcpServers": {
     "sage-wiki": {
       "command": "sage-wiki",
-      "args": ["serve", "--project", "/path/to/wiki"]
+      "args": ["serve", "--transport", "stdio", "--project", "/path/to/wiki"]
     }
   }
 }

@@ -246,7 +246,7 @@ Preact + Tailwind로 구축되어 `go:embed`로 임베딩됩니다 (~1.2 MB, gzi
   "mcpServers": {
     "sage-wiki": {
       "command": "sage-wiki",
-      "args": ["serve", "--project", "/path/to/wiki"]
+      "args": ["serve", "--transport", "stdio", "--project", "/path/to/wiki"]
     }
   }
 }

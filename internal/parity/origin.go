@@ -1,8 +1,8 @@
 package parity
 
 import (
-	"fmt"
 	"encoding/json"
+	"fmt"
 	"hash/fnv"
 	"net/http"
 	"net/http/httptest"
@@ -69,6 +69,10 @@ func handleOriginChat(w http.ResponseWriter, r *http.Request) {
 // input so golden content is corpus-derived, not constant.
 func originClassify(userMsg string) string {
 	marker := markerOf(userMsg)
+	if strings.Contains(userMsg, "Graph edges:") {
+		// graphqa structured output (schema: answer + cited edge indices).
+		return `{"answer": "The graph shows the documented relationships for this topic, grounded in the compiled articles.", "cited": [1]}`
+	}
 	if strings.Contains(userMsg, "## Relations") && strings.Contains(userMsg, "untrusted_source") {
 		return originTriples(userMsg)
 	}

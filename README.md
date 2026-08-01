@@ -203,7 +203,7 @@ The core surface; run `sage-wiki <command> --help` for flags.
 | ------- | ----------- |
 | `sage-wiki init [dir] [--vault] [--skill <agent>] [--pack <name>] [--prompts] [--force]` | Initialize project (greenfield or vault overlay); preserves existing config/manifest/gitignore unless `--force` |
 | `sage-wiki compile [--watch] [--batch] [--estimate] [--dry-run] [--no-cache] [--fresh] [--re-embed] [--re-extract] [--prune]` | Compile sources into wiki articles |
-| `sage-wiki serve [--transport stdio\|sse] [--ui] [--port 3333]` | MCP server / web UI |
+| `sage-wiki serve [--addr 127.0.0.1:8484] [--transport stdio\|sse] [--ui]` | HTTP REST + MCP server / web UI |
 | `sage-wiki reindex [--drop-chunk-vectors]` | Rebuild the chunk index from documents on disk with the current `chunk_size`/`chunk_overlap_tokens` |
 | `sage-wiki search "query" [--tags ...] [--boost-tags ...] [--limit N] [--channels bm25,vector,graph] [--expand] [--rerank]` | Hybrid search (BM25 + vector + ontology graph) |
 | `sage-wiki query "question"` | Q&A against the wiki with citations |
@@ -263,7 +263,7 @@ Add to `.mcp.json` (Claude Code; other agents in the [Agent Memory Layer guide](
   "mcpServers": {
     "sage-wiki": {
       "command": "sage-wiki",
-      "args": ["serve", "--project", "/path/to/wiki"]
+      "args": ["serve", "--transport", "stdio", "--project", "/path/to/wiki"]
     }
   }
 }

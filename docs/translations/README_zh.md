@@ -229,7 +229,7 @@ sage-wiki serve --ui        # http://127.0.0.1:3333，需要 -tags webui 构建
   "mcpServers": {
     "sage-wiki": {
       "command": "sage-wiki",
-      "args": ["serve", "--project", "/path/to/wiki"]
+      "args": ["serve", "--transport", "stdio", "--project", "/path/to/wiki"]
     }
   }
 }

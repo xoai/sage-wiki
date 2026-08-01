@@ -58,7 +58,7 @@ Add to the project's MCP config:
   "mcpServers": {
     "sage-wiki": {
       "command": "sage-wiki",
-      "args": ["serve", "--project", "."]
+      "args": ["serve", "--transport", "stdio", "--project", "."]
     }
   }
 }
