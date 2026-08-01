@@ -34,9 +34,9 @@ type IndexStats struct {
 // tableSpec parameterizes the two rebuild shapes. Column names are compile-
 // time constants — no user input reaches the query text.
 type tableSpec struct {
-	kind     int
+	kind      int
 	selectSQL string
-	probeSQL string
+	probeSQL  string
 }
 
 var docTable = tableSpec{

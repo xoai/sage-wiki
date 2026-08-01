@@ -97,14 +97,14 @@ func newBackend(db *storage.DB, path string, mode store.Mode, o Options) *backen
 		mode:    mode,
 		entries: memory.NewStore(db),
 		chunks:  memory.NewChunkStore(db),
-		vec:     vectors.NewStore(db, vectors.WithANN(o.ANN),
+		vec: vectors.NewStore(db, vectors.WithANN(o.ANN),
 			vectors.WithVectorBackend(o.VectorBackend),
 			vectors.WithIndexDir(filepath.Dir(path))),
-		ont:     ontology.NewStore(db, o.ValidRelations, o.ValidEntityTypes, ontology.WithTemporalEnabled(temporalEnabledOrDefault(o.TemporalEnabled))),
-		trustS:  trust.NewStore(db),
-		items:   compiler.NewCompileItemStore(db),
-		outIdx:  storage.NewOutputIndex(db),
-		learn:   &learningStore{db: db},
+		ont:    ontology.NewStore(db, o.ValidRelations, o.ValidEntityTypes, ontology.WithTemporalEnabled(temporalEnabledOrDefault(o.TemporalEnabled))),
+		trustS: trust.NewStore(db),
+		items:  compiler.NewCompileItemStore(db),
+		outIdx: storage.NewOutputIndex(db),
+		learn:  &learningStore{db: db},
 	}
 }
 

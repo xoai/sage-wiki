@@ -98,7 +98,6 @@ func TestOpenProjectReaderOnFreshProjectFails(t *testing.T) {
 	}
 }
 
-
 func TestStoreDial_ThreadsVectorBackend(t *testing.T) {
 	dir := t.TempDir()
 	b, err := Open(config.StorageConfig{Backend: "sqlite"}, store.OpenOptions{

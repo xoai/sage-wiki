@@ -152,17 +152,17 @@ type CompilerConfig struct {
 	ArticleFields []string `yaml:"article_fields,omitempty"` // custom frontmatter fields extracted from LLM response
 
 	// Tiered compilation
-	DefaultTier    int            `yaml:"default_tier,omitempty"`  // default tier for sources (default: 3)
-	TierDefaults   map[string]int `yaml:"tier_defaults,omitempty"` // file extension → default tier
+	DefaultTier  int            `yaml:"default_tier,omitempty"`  // default tier for sources (default: 3)
+	TierDefaults map[string]int `yaml:"tier_defaults,omitempty"` // file extension → default tier
 	// MinConceptSources is the minimum declared sources a concept needs
 	// before an article is written for it (issue #128). *int so "unset"
 	// (nil → 1, skip only truly source-less concepts) is distinguishable
 	// from an explicit 0 (gate disabled).
-	MinConceptSources *int         `yaml:"min_concept_sources,omitempty"`
-	AutoPromote    *bool          `yaml:"auto_promote,omitempty"`  // auto-promote based on signals (default: true)
-	PromoteSignals PromoteSignals `yaml:"promote_signals,omitempty"`
-	AutoDemote     *bool          `yaml:"auto_demote,omitempty"` // auto-demote stale articles (default: true)
-	DemoteSignals  DemoteSignals  `yaml:"demote_signals,omitempty"`
+	MinConceptSources *int           `yaml:"min_concept_sources,omitempty"`
+	AutoPromote       *bool          `yaml:"auto_promote,omitempty"` // auto-promote based on signals (default: true)
+	PromoteSignals    PromoteSignals `yaml:"promote_signals,omitempty"`
+	AutoDemote        *bool          `yaml:"auto_demote,omitempty"` // auto-demote stale articles (default: true)
+	DemoteSignals     DemoteSignals  `yaml:"demote_signals,omitempty"`
 
 	// Document splitting (Phase B)
 	SplitThreshold int    `yaml:"split_threshold,omitempty"` // chars, enable section-aware writing above this (default: 15000)
