@@ -37,6 +37,35 @@ type Config struct {
 	Parsers     ParsersConfig  `yaml:"parsers,omitempty"`
 	TypeSignals []TypeSignal   `yaml:"type_signals,omitempty"`
 	Storage     StorageConfig  `yaml:"storage,omitempty"`
+	Vectors     VectorsConfig  `yaml:"vectors,omitempty"`
+}
+
+// VectorsConfig tunes the vector query backend (SPEC-06).
+type VectorsConfig struct {
+	// Backend selects the query-time vector index: "memory" (default — full
+	// in-memory matrix cache) or "mmap" (on-disk snapshot served via mmap,
+	// falling back to memory with a warning when missing/corrupt/stale).
+	Backend string `yaml:"backend,omitempty"`
+	// Quantization selects the on-disk matrix encoding written by
+	// `index rebuild-vectors`: "none" (default — fp32, exact) or "int8"
+	// (4x smaller, measured recall trade-off).
+	Quantization string `yaml:"quantization,omitempty"`
+}
+
+// VectorBackend resolves the backend (default: memory).
+func (c *Config) VectorBackend() string {
+	if c.Vectors.Backend == "" {
+		return "memory"
+	}
+	return c.Vectors.Backend
+}
+
+// VectorQuantization resolves the quantization (default: none).
+func (c *Config) VectorQuantization() string {
+	if c.Vectors.Quantization == "" {
+		return "none"
+	}
+	return c.Vectors.Quantization
 }
 
 // StorageConfig selects the storage backend. SQLite is the zero-config default;
@@ -999,6 +1028,12 @@ func (c *Config) validateStorage() error {
 func (c *Config) Validate() error {
 	if c.Project == "" {
 		return fmt.Errorf("config: 'project' is required")
+	}
+	if b := c.Vectors.Backend; b != "" && b != "memory" && b != "mmap" {
+		return fmt.Errorf("config: invalid vectors.backend %q (valid: memory, mmap)", b)
+	}
+	if q := c.Vectors.Quantization; q != "" && q != "none" && q != "int8" {
+		return fmt.Errorf("config: invalid vectors.quantization %q (valid: none, int8)", q)
 	}
 	if c.Output == "" {
 		return fmt.Errorf("config: 'output' is required")

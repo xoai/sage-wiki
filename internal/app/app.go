@@ -82,6 +82,7 @@ func OpenWithOptions(projectDir, configPath string, mode store.Mode) (*App, erro
 		ValidEntityTypes: ontology.ValidEntityTypeNames(mergedTypes),
 		ANN:              cfg.Search.ANNEnabled(),
 		TemporalEnabled:  cfg.Ontology.Temporal.Enabled,
+		VectorBackend:    cfg.VectorBackend(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)

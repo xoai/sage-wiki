@@ -31,6 +31,7 @@ func Open(cfg config.StorageConfig, opts store.OpenOptions) (store.Backend, erro
 			ValidEntityTypes: opts.ValidEntityTypes,
 			ANN:              opts.ANN,
 			TemporalEnabled:  opts.TemporalEnabled, // P3-6: nil = enabled
+			VectorBackend:    opts.VectorBackend,
 		})
 	case "postgres":
 		return postgres.Open(cfg.DSN, opts)

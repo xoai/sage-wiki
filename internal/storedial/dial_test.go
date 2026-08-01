@@ -98,3 +98,36 @@ func TestOpenProjectReaderOnFreshProjectFails(t *testing.T) {
 	}
 }
 
+
+func TestStoreDial_ThreadsVectorBackend(t *testing.T) {
+	dir := t.TempDir()
+	b, err := Open(config.StorageConfig{Backend: "sqlite"}, store.OpenOptions{
+		Mode:          store.ModeWriter,
+		ProjectDir:    dir,
+		VectorBackend: "mmap",
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer b.Close()
+	vs, ok := b.Vectors().(interface{ VectorBackend() string })
+	if !ok {
+		t.Fatal("backend Vectors() must expose VectorBackend()")
+	}
+	if got := vs.VectorBackend(); got != "mmap" {
+		t.Errorf("VectorBackend = %q, want mmap (threaded through OpenOptions)", got)
+	}
+
+	// Default (unset) stays memory.
+	b2, err := Open(config.StorageConfig{Backend: "sqlite"}, store.OpenOptions{
+		Mode:       store.ModeWriter,
+		ProjectDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Open default: %v", err)
+	}
+	defer b2.Close()
+	if got := b2.Vectors().(interface{ VectorBackend() string }).VectorBackend(); got != "memory" {
+		t.Errorf("default VectorBackend = %q, want memory", got)
+	}
+}
