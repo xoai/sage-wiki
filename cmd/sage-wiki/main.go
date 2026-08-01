@@ -71,6 +71,7 @@ func main() {
 	rootCmd.SilenceUsage = true
 
 	if err := rootCmd.Execute(); err != nil {
+		maybeShipAfterCommand() // ship pass fires on the error path too (AC-9(c-i))
 		if outputFormat == "json" {
 			fmt.Println(cli.FormatJSON(false, nil, err.Error()))
 		} else {
@@ -78,6 +79,7 @@ func main() {
 		}
 		os.Exit(1)
 	}
+	maybeShipAfterCommand()
 }
 
 var rootCmd = &cobra.Command{
