@@ -133,7 +133,11 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 func replayMissError(key, method, path string, body []byte, dir string) string {
 	canon, _ := canonicalJSON(body)
 	var known []string
-	entries, _ := os.ReadDir(dir)
+	entries, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		return fmt.Sprintf("replay cache miss: %s %s\nkey: %s\n(request canonicalization ok; fixture dir unreadable: %v)\n",
+			method, path, key, readErr)
+	}
 	for _, e := range entries {
 		if strings.HasSuffix(e.Name(), ".json") {
 			known = append(known, strings.TrimSuffix(e.Name(), ".json"))
@@ -195,8 +199,15 @@ func (s *Server) handleRecord(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := os.MkdirAll(s.dir, 0o755); err == nil {
-			if werr := os.WriteFile(filepath.Join(s.dir, key+".json"), out, 0o644); werr != nil {
+			// tmp+rename: a crash mid-write must not leave a truncated
+			// fixture that later reads as checked-in corruption.
+			tmp := filepath.Join(s.dir, key+".json.tmp")
+			if werr := os.WriteFile(tmp, out, 0o644); werr != nil {
 				http.Error(w, "write fixture: "+werr.Error(), http.StatusInternalServerError)
+				return
+			}
+			if werr := os.Rename(tmp, filepath.Join(s.dir, key+".json")); werr != nil {
+				http.Error(w, "commit fixture: "+werr.Error(), http.StatusInternalServerError)
 				return
 			}
 		}

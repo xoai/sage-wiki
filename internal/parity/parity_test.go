@@ -16,8 +16,12 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	ws := filepath.Join(os.TempDir(), "parity-suite-ws")
-	os.RemoveAll(ws)
+	// Unique per process — concurrent `go test` runs must never remove
+	// each other's workspace.
+	ws, err := os.MkdirTemp("", "parity-suite-ws-")
+	if err != nil {
+		panic(err)
+	}
 	if err := BuildWorkspace(filepath.Join(root, "golden-corpus"), ws, replay.URL(), readGoldenConfigForMain(root)); err != nil {
 		panic(err)
 	}
@@ -62,6 +66,11 @@ func TestParity(t *testing.T) {
 	})
 	t.Run("roundtrip", func(t *testing.T) {
 		if err := CheckRoundTrip(suiteWS, goldenPath("search.json")); err != nil {
+			t.Error(err)
+		}
+	})
+	t.Run("asof", func(t *testing.T) {
+		if err := CheckAsOf(suiteWS, goldenPath("graph-asof.json")); err != nil {
 			t.Error(err)
 		}
 	})

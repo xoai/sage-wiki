@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/sqlitestore"
@@ -271,32 +272,83 @@ func RegenGoldens(wsDir, goldenConfigPath, goldenDir string) error {
 		return err
 	}
 
-	// graph-asof.json: the AsOf view at the golden epoch (entities +
-	// relations live at that instant).
-	asof := map[string]any{
-		"golden_format_version": 1,
-		"asof":                  goldenEpoch.Format("2006-01-02T15:04:05Z07:00"),
+	// graph-asof.json: the AsOf view at the golden epoch — entities and
+	// the relations live at that instant.
+	w, err := engine.Open(context.Background(), wsDir, engine.WithReadOnly())
+	if err != nil {
+		return err
+	}
+	defer w.Close()
+	asof, err := CaptureAsOf(w, goldenEpoch)
+	if err != nil {
+		return err
+	}
+	raw, err = json.MarshalIndent(asof, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(goldenDir, "graph-asof.json"), append(raw, '\n'), 0o644)
+}
+
+// AsOfGolden is the graph-asof golden schema.
+type AsOfGolden struct {
+	GoldenFormatVersion int              `json:"golden_format_version"`
+	AsOf                string            `json:"asof"`
+	Entities            []engine.Entity   `json:"entities"`
+	Relations           []engine.Relation `json:"relations"`
+}
+
+// CaptureAsOf snapshots the graph AsOf view at t.
+func CaptureAsOf(w *engine.Workspace, t time.Time) (*AsOfGolden, error) {
+	ents, err := w.Graph().Entities(context.Background(), engine.GraphFilter{})
+	if err != nil {
+		return nil, err
+	}
+	rels, err := w.Graph().AsOf(t).Relations(context.Background(), engine.GraphFilter{})
+	if err != nil {
+		return nil, err
+	}
+	return &AsOfGolden{
+		GoldenFormatVersion: 1,
+		AsOf:                t.Format(time.RFC3339),
+		Entities:            ents,
+		Relations:           rels,
+	}, nil
+}
+
+// CheckAsOf compares the workspace's AsOf view against the golden.
+func CheckAsOf(wsDir, goldenPath string) error {
+	raw, err := os.ReadFile(goldenPath)
+	if err != nil {
+		return fmt.Errorf("read asof golden: %w", err)
+	}
+	var golden AsOfGolden
+	if err := json.Unmarshal(raw, &golden); err != nil {
+		return fmt.Errorf("parse asof golden: %w", err)
+	}
+	if golden.GoldenFormatVersion != 1 {
+		return fmt.Errorf("asof golden_format_version %d, want 1", golden.GoldenFormatVersion)
+	}
+	asOfTime, err := time.Parse(time.RFC3339, golden.AsOf)
+	if err != nil {
+		return fmt.Errorf("parse golden asof: %w", err)
 	}
 	w, err := engine.Open(context.Background(), wsDir, engine.WithReadOnly())
 	if err != nil {
 		return err
 	}
 	defer w.Close()
-	ents, err := w.Graph().AsOf(goldenEpoch).Neighbors(context.Background(), "", 5)
+	got, err := CaptureAsOf(w, asOfTime)
 	if err != nil {
 		return err
 	}
-	asof["neighbors"] = ents
-	rels, err := w.Graph().Relations(context.Background(), engine.GraphFilter{})
-	if err != nil {
-		return err
+	if string(mustJSON(got.Entities)) != string(mustJSON(golden.Entities)) {
+		return fmt.Errorf("asof entities differ:\n  want %s\n  got  %s", mustJSON(golden.Entities), mustJSON(got.Entities))
 	}
-	asof["relations"] = rels
-	raw, err = json.MarshalIndent(asof, "", "  ")
-	if err != nil {
-		return err
+	if string(mustJSON(got.Relations)) != string(mustJSON(golden.Relations)) {
+		return fmt.Errorf("asof relations differ:\n  want %s\n  got  %s", mustJSON(golden.Relations), mustJSON(got.Relations))
 	}
-	return os.WriteFile(filepath.Join(goldenDir, "graph-asof.json"), append(raw, '\n'), 0o644)
+	return nil
 }
 
 // mustJSON marshals v, panicking on error (test harness convenience).

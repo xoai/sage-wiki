@@ -224,16 +224,31 @@ func CheckRoundTripCorruption(wsDir, goldenConfigPath string) error {
 	w.Close()
 
 	data := buf.Bytes()
-	// Corrupt inside a wiki/ payload: find the first occurrence of a
-	// summary filename header, then flip a byte well after it.
-	marker := []byte("summaries/")
-	idx := bytes.Index(data, marker)
-	if idx == -1 {
-		return fmt.Errorf("no wiki payload found in export")
+	// Corrupt inside a wiki/ payload: walk the tar structure to the first
+	// entry whose NAME contains summaries/, then flip the payload midpoint
+	// — provably inside the payload regardless of size or PAX extensions.
+	flip := -1
+	{
+		off := 0
+		tr := tar.NewReader(bytes.NewReader(data))
+		for {
+			hdr, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return fmt.Errorf("walk tar: %w", err)
+			}
+			hdrEnd := off + 512
+			if strings.Contains(hdr.Name, "summaries/") && hdr.Size > 0 {
+				flip = hdrEnd + int(hdr.Size)/2
+				break
+			}
+			off = hdrEnd + (int(hdr.Size)+511)/512*512
+		}
 	}
-	flip := idx + 600 // past the 512-byte header into the file payload
-	if flip >= len(data) {
-		flip = len(data) - 1
+	if flip < 0 || flip >= len(data) {
+		return fmt.Errorf("no summaries payload found in export")
 	}
 	data[flip] ^= 0xFF
 
@@ -251,6 +266,9 @@ func CheckRoundTripCorruption(wsDir, goldenConfigPath string) error {
 	err = CheckByteParity(fresh, goldenConfigPath, filepath.Join(filepath.Dir(goldenConfigPath), "byte-parity.json"))
 	if err == nil {
 		return fmt.Errorf("corrupted byte inside a wiki/ file was NOT detected")
+	}
+	if !strings.Contains(err.Error(), "summaries/") {
+		return fmt.Errorf("byte-parity failure must name the corrupted file, got: %v", err)
 	}
 	return nil
 }

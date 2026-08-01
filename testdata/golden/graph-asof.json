@@ -1,7 +1,92 @@
 {
-  "asof": "2025-01-01T00:00:00Z",
   "golden_format_version": 1,
-  "neighbors": [],
+  "asof": "2025-01-01T00:00:00Z",
+  "entities": [
+    {
+      "ID": "api-gateway",
+      "Type": "concept",
+      "Name": "Api Gateway",
+      "Definition": "",
+      "ArticlePath": "wiki/concepts/api-gateway.md"
+    },
+    {
+      "ID": "dated-2024",
+      "Type": "concept",
+      "Name": "Dated 2024",
+      "Definition": "",
+      "ArticlePath": "wiki/concepts/dated-2024.md"
+    },
+    {
+      "ID": "distributed-systemstxt",
+      "Type": "concept",
+      "Name": "Distributed Systemstxt",
+      "Definition": "",
+      "ArticlePath": "wiki/concepts/distributed-systemstxt.md"
+    },
+    {
+      "ID": "examplejs",
+      "Type": "concept",
+      "Name": "Examplejs",
+      "Definition": "",
+      "ArticlePath": "wiki/concepts/examplejs.md"
+    },
+    {
+      "ID": "instruction-lookalike",
+      "Type": "concept",
+      "Name": "Instruction Lookalike",
+      "Definition": "",
+      "ArticlePath": "wiki/concepts/instruction-lookalike.md"
+    },
+    {
+      "ID": "system-prompt-bait",
+      "Type": "concept",
+      "Name": "System Prompt Bait",
+      "Definition": "",
+      "ArticlePath": "wiki/concepts/system-prompt-bait.md"
+    },
+    {
+      "ID": "raw/alias/api-gateway.md",
+      "Type": "source",
+      "Name": "api-gateway.md",
+      "Definition": "",
+      "ArticlePath": ""
+    },
+    {
+      "ID": "raw/dates/dated-2024.md",
+      "Type": "source",
+      "Name": "dated-2024.md",
+      "Definition": "",
+      "ArticlePath": ""
+    },
+    {
+      "ID": "raw/text/distributed-systems.txt",
+      "Type": "source",
+      "Name": "distributed-systems.txt",
+      "Definition": "",
+      "ArticlePath": ""
+    },
+    {
+      "ID": "raw/code/example.js",
+      "Type": "source",
+      "Name": "example.js",
+      "Definition": "",
+      "ArticlePath": ""
+    },
+    {
+      "ID": "raw/adversarial/instruction-lookalike.md",
+      "Type": "source",
+      "Name": "instruction-lookalike.md",
+      "Definition": "",
+      "ArticlePath": ""
+    },
+    {
+      "ID": "raw/adversarial/system-prompt-bait.md",
+      "Type": "source",
+      "Name": "system-prompt-bait.md",
+      "Definition": "",
+      "ArticlePath": ""
+    }
+  ],
   "relations": [
     {
       "ID": "distributed-systemstxt-cites-raw-text-distributed-systems-txt",

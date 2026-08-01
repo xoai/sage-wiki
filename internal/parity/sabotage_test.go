@@ -3,6 +3,7 @@ package parity
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/xoai/sage-wiki/internal/compiler"
@@ -35,6 +36,10 @@ func TestSabotage_MapOrderFailsByteParity(t *testing.T) {
 	err = CheckByteParity(ws, goldenConfigPath(), goldenPath("byte-parity.json"))
 	if err == nil {
 		t.Fatal("sabotaged source order must fail byte parity")
+	}
+	// AC-P2 verbatim: the failure must name a concrete file.
+	if !strings.Contains(err.Error(), ".md") {
+		t.Fatalf("failure must name a concrete file: %v", err)
 	}
 	t.Logf("byte parity caught the sabotage:\n%v", err)
 

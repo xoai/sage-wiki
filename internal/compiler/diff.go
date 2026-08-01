@@ -139,6 +139,7 @@ func Diff(projectDir string, cfg *config.Config, mf *manifest.Manifest) (*DiffRe
 			result.Removed = append(result.Removed, path)
 		}
 	}
+	sort.Strings(result.Removed) // rule 6: no map-order iteration in output
 
 	log.Info("diff complete",
 		"added", len(result.Added),

@@ -1,6 +1,7 @@
 package parity
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,6 +44,27 @@ func TestCorpusLint(t *testing.T) {
 	}
 	if !strings.Contains(read("alias/kubernetes-k8s.md"), "K8s") {
 		t.Error("alias doc must contain the alias")
+	}
+
+	// Replay canonicalization sentinel-replaces RFC3339 timestamps, so
+	// corpus content must not QUOTE them (two docs differing only in a
+	// quoted timestamp would collide to one fixture — accepted collision
+	// class, guarded here).
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if rfc3339Re.Match(data) {
+			return fmt.Errorf("corpus file %s contains an RFC3339 timestamp (replay-key collision class)", info.Name())
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
