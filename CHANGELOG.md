@@ -4,6 +4,25 @@
 
 ### Added
 
+- **Multi-workspace + bounded vector memory (SPEC-06).**
+  `pkg/engine.OpenManager` manages many workspaces in one process: a
+  registry of root subdirectories, lazy open, LRU close beyond
+  `WithMaxOpen`, optional `WithIdleClose`, per-workspace SPEC-01 locks,
+  traversal-proof name validation, and a `WithOnEvict` seam for
+  refcounted consumers. `serve --workspace-root <dir>` serves every
+  workspace under a root at `/w/{name}/...` (REST + MCP) with
+  `/v1/workspaces`, one root token guarding all `/w/*`, and one shared
+  compile-concurrency gate across stacks. `vectors.backend: mmap` moves
+  the vector index to an on-disk mmap-served snapshot (fp32 exact —
+  golden-parity identical — or int8 at measured recall@10 = 0.994),
+  rebuilt via `sage-wiki index rebuild-vectors`; missing/stale snapshots
+  fall back to the in-memory cache with a warning. Measured on a
+  50K×384 fixture: search heap ~2% of the in-memory backend, warm
+  latency within 1.1x, cold search ~6x faster. The memory ceiling is
+  unix-only; other platforms serve the index from memory and warn.
+
+### Added
+
 - **Serve mode (SPEC-02).** `serve --addr` (or bare `serve`) runs the
   engine as a persistent process: REST surface (healthz/readyz, capture,
   search, async compile jobs with a persistent `.sage/jobs.jsonl`
