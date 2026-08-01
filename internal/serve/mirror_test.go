@@ -212,3 +212,38 @@ func TestShipper_ScheduledRotation(t *testing.T) {
 	}
 	t.Fatal("scheduled rotation did not fire")
 }
+
+// TestShipper_WALSegmentWithin2xInterval (AC-9(a)): a db write through a
+// served workspace produces a new WAL-SEGMENT object (not just a docs
+// object) within 2×ship_interval.
+func TestShipper_WALSegmentWithin2xInterval(t *testing.T) {
+	interval := 25 * time.Millisecond
+	fake, shipper, dir := shipperFixture(t, shipperFixtureOpts{
+		interval:         interval,
+		snapshotInterval: time.Hour,
+		drainTimeout:     300 * time.Millisecond,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	shipper.Start(ctx)
+	defer shipper.Stop()
+
+	// db write with the connection held open (WAL persists for sealing).
+	db, err := sql.Open("sqlite", filepath.Join(dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("INSERT INTO t (v) VALUES ('serve-row')"); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(2 * interval)
+	for time.Now().Before(deadline) {
+		if fake.hasPrefix("ws/db/generation-1/wal/") {
+			return // a WAL segment object shipped within 2×ship_interval
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("no WAL segment shipped within 2×ship_interval of a db write")
+}

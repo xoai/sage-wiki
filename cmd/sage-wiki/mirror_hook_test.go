@@ -3,11 +3,14 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	_ "modernc.org/sqlite"
 )
@@ -164,5 +167,38 @@ func TestMirrorHook_DisabledNoOp(t *testing.T) {
 	maybeShipAfterCommand()
 	if len(fake.objects) != requestsBefore {
 		t.Fatal("disabled mirror performed network I/O")
+	}
+}
+
+// TestMirrorHook_MutationThenErrorCommand (AC-9(c-i)): a command that
+// mutates THEN returns an error still ships its mutation — the wrapper
+// fires on the error path by construction.
+func TestMirrorHook_MutationThenErrorCommand(t *testing.T) {
+	f := newHookFixture(t)
+	// Substitute rootCmd with a command that mutates then errors.
+	oldRoot := rootCmd
+	rootCmd = &cobra.Command{
+		Use: "fail-after-mutate",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			os.MkdirAll(filepath.Join(f.dir, "wiki", "concepts"), 0o755)
+			os.WriteFile(filepath.Join(f.dir, "wiki", "concepts", "Err.md"), []byte("# Err"), 0o644)
+			return fmt.Errorf("deliberate failure")
+		},
+	}
+	defer func() { rootCmd = oldRoot }()
+
+	err := executeWithShipPass()
+	if err == nil {
+		t.Fatal("command error must propagate")
+	}
+	// The mutation shipped despite the error.
+	found := false
+	for k := range f.fake.objects {
+		if strings.HasPrefix(k, "ws/objects/docs/") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("mutation-then-error: change never shipped")
 	}
 }

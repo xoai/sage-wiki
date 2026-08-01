@@ -11,6 +11,15 @@ import (
 	pkmirror "github.com/xoai/sage-wiki/pkg/mirror"
 )
 
+// executeWithShipPass runs the root command and ALWAYS fires the ship pass
+// afterward — success or error (AC-9(c-i): the mutation-then-error path
+// ships too). main() calls this; tests substitute rootCmd.
+func executeWithShipPass() error {
+	err := rootCmd.Execute()
+	maybeShipAfterCommand()
+	return err
+}
+
 // maybeShipAfterCommand is the CLI ship pass (spec.md §Components): after
 // EVERY command — success or error — if mirror.enabled, run a best-effort
 // ship pass. No mutation registry and no cobra hooks: detection is by diff,
