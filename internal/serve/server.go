@@ -18,6 +18,7 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
 	"github.com/xoai/sage-wiki/internal/metrics"
+	"github.com/xoai/sage-wiki/pkg/engine"
 )
 
 // Config is the server's construction surface (spec §2.2).
@@ -41,6 +42,8 @@ type Server struct {
 	ledger    *Ledger
 	mux       *http.ServeMux
 	mcpStream *mcpserver.StreamableHTTPServer
+	ws        *engine.Workspace // held for the workspace lock (§2.0)
+	httpSrv   *http.Server
 }
 
 // New builds the server: job ledger + queue, routes, MCP mount.
@@ -67,6 +70,68 @@ func New(deps *Deps, mcpSrv *mcppkg.Server, cfg Config) (*Server, error) {
 
 // Queue exposes the job queue (the drain sequence stops it).
 func (s *Server) Queue() *Queue { return s.queue }
+
+// SetWorkspace attaches the engine workspace held for the lock (§2.0).
+func (s *Server) SetWorkspace(w *engine.Workspace) { s.ws = w }
+
+// Serve binds addr and blocks until ctx is cancelled (SIGTERM path),
+// then drains per spec §2.7.
+func (s *Server) Serve(ctx context.Context, addr string) error {
+	s.httpSrv = &http.Server{
+		Addr:              addr,
+		Handler:           s.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		if err := s.httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+			return
+		}
+		errCh <- nil
+	}()
+	s.StartQueue(ctx)
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		return s.Shutdown()
+	}
+}
+
+// Shutdown executes the drain sequence (spec §2.7): stop accepting →
+// http drain → job queue drain → MCP shutdown → metrics snapshot →
+// deps close → lock released LAST.
+func (s *Server) Shutdown() error {
+	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.DrainTimeout)
+	defer cancel()
+	var firstErr error
+	if s.httpSrv != nil {
+		if err := s.httpSrv.Shutdown(ctx); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if err := s.queue.Stop(ctx); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	if s.mcpStream != nil {
+		if err := s.mcpStream.Shutdown(ctx); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	metrics.LogSnapshot()
+	if s.deps != nil {
+		s.deps.Close()
+	}
+	if s.ws != nil {
+		if err := s.ws.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
 
 // Handler returns the root handler (rate-limit slot → auth → mux).
 func (s *Server) Handler() http.Handler {

@@ -230,6 +230,7 @@ type Queue struct {
 	stopCh chan struct{}
 	doneCh chan struct{}
 	once   sync.Once
+	cancel context.CancelFunc // cancels in-flight execs on Stop
 }
 
 // NewQueue builds a queue over the ledger. exec runs one job (the real
@@ -267,18 +268,21 @@ func (q *Queue) Submit(req CompileJobRequest) (*Job, error) {
 
 // Run processes jobs FIFO until Stop. Restart-pending jobs run first.
 // Stop means "finish the backlog, then halt" (graceful drain); ctx is
-// the hard cancel (the server's drain timeout).
+// the hard cancel (the server's drain timeout), and Stop itself cancels
+// in-flight execs so blocked jobs mark interrupted instead of hanging.
 func (q *Queue) Run(ctx context.Context) {
+	var runCtx context.Context
+	runCtx, q.cancel = context.WithCancel(ctx)
 	defer close(q.doneCh)
 	for {
 		select {
-		case <-ctx.Done():
+		case <-runCtx.Done():
 			return
 		case <-q.stopCh:
-			q.drainOnce(ctx) // final drain of the backlog
+			q.drainOnce(runCtx) // final drain of the backlog
 			return
 		case <-q.wake:
-			q.drainOnce(ctx)
+			q.drainOnce(runCtx)
 		}
 	}
 }
@@ -321,8 +325,12 @@ func (q *Queue) runOne(ctx context.Context, id string) {
 	q.ledger.transition(id, JobDone, "", q.now)
 }
 
-// Stop signals the worker to halt and waits for it (or ctx).
+// Stop cancels in-flight execs, then signals the worker to halt and
+// waits for it (or ctx).
 func (q *Queue) Stop(ctx context.Context) error {
+	if q.cancel != nil {
+		q.cancel()
+	}
 	q.once.Do(func() { close(q.stopCh) })
 	select {
 	case <-q.doneCh:
