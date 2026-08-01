@@ -160,10 +160,77 @@ func (o *mirrorOps) Enable(ctx context.Context) error {
 	return nil
 }
 
+// DeferredError signals a rotation deferred under a busy writer (spec.md:
+// VACUUM-fallback busy policy). The caller reports defers via status.
+type DeferredError struct{ Reason string }
+
+func (e *DeferredError) Error() string { return "mirror: rotation deferred: " + e.Reason }
+
+// snapOptions tunes snapshotForRotation (tests force the fallback + shorten
+// the busy policy).
+type snapOptions struct {
+	forceFallback bool
+	busyTimeout   time.Duration
+	maxRetries    int
+	vacuumDestDir string // override for failure injection (default: os.TempDir)
+	local         *LocalState
+	localPath     string
+}
+
 // snapshotDatabase produces a consistent copy of the db at path via the
-// online backup API (Task 11 adds the VACUUM INTO fallback).
+// online backup API (primary path, Task 1 probe).
 func snapshotDatabase(ctx context.Context, path string) ([]byte, error) {
-	db, err := sql.Open("sqlite", path+"?mode=ro")
+	return snapshotForRotation(ctx, path, snapOptions{
+		busyTimeout: 5 * time.Second,
+		maxRetries:  3,
+	})
+}
+
+// snapshotForRotation is the rotation-facing snapshot: backup API first,
+// VACUUM INTO fallback with busy_timeout + bounded retries, then a typed
+// DeferredError — incrementing consecutive_defers BEFORE abandoning
+// (spec.md: a crash in that window can only over-count, never silently
+// under-count).
+func snapshotForRotation(ctx context.Context, dbPath string, opts snapOptions) ([]byte, error) {
+	if opts.maxRetries < 1 {
+		opts.maxRetries = 1
+	}
+	if !opts.forceFallback {
+		b, err := snapshotViaBackup(ctx, dbPath)
+		if err == nil {
+			return b, nil
+		}
+		// Fall through to VACUUM INTO on any backup-API failure.
+	}
+	err := snapshotViaVacuum(ctx, dbPath, opts)
+	if err == nil {
+		return readTempSnapshot()
+	}
+	if opts.local != nil && opts.localPath != "" {
+		opts.local.ConsecutiveDefers++
+		if serr := SaveLocalState(opts.localPath, opts.local); serr != nil {
+			return nil, fmt.Errorf("mirror: persist defer counter: %w", serr)
+		}
+	}
+	return nil, &DeferredError{Reason: err.Error()}
+}
+
+// lastVacuumPath tracks the temp file snapshotViaVacuum wrote (single-flight
+// per process — the ship-mutex serializes callers).
+var lastVacuumPath string
+
+func readTempSnapshot() ([]byte, error) {
+	b, err := os.ReadFile(lastVacuumPath)
+	os.Remove(lastVacuumPath)
+	if err != nil {
+		return nil, fmt.Errorf("read snapshot: %w", err)
+	}
+	return b, nil
+}
+
+// snapshotViaBackup is the Task-1 backup-API path into a temp file.
+func snapshotViaBackup(ctx context.Context, dbPath string) ([]byte, error) {
+	db, err := sql.Open("sqlite", dbPath+"?mode=ro")
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
@@ -178,6 +245,35 @@ func snapshotDatabase(ctx context.Context, path string) ([]byte, error) {
 		return nil, fmt.Errorf("read snapshot: %w", err)
 	}
 	return b, nil
+}
+
+// snapshotViaVacuum runs VACUUM INTO under busy_timeout with bounded retries
+// (spec.md fallback semantics: single read transaction, consistent).
+func snapshotViaVacuum(ctx context.Context, dbPath string, opts snapOptions) error {
+	db, err := sql.Open("sqlite", dbPath+"?mode=ro")
+	if err != nil {
+		return fmt.Errorf("open db: %w", err)
+	}
+	defer db.Close()
+	tmpDir := opts.vacuumDestDir
+	if tmpDir == "" {
+		tmpDir = os.TempDir()
+	}
+	tmp := filepath.Join(tmpDir, fmt.Sprintf("sage-mirror-vacuum-%d.db", time.Now().UnixNano()))
+	lastVacuumPath = tmp
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d", opts.busyTimeout.Milliseconds())); err != nil {
+		return fmt.Errorf("set busy_timeout: %w", err)
+	}
+	var lastErr error
+	for attempt := 0; attempt < opts.maxRetries; attempt++ {
+		if _, err := db.ExecContext(ctx, "VACUUM INTO '"+tmp+"'"); err != nil {
+			lastErr = err
+			continue
+		}
+		return nil
+	}
+	os.Remove(tmp)
+	return fmt.Errorf("VACUUM INTO busy after %d attempt(s): %w", opts.maxRetries, lastErr)
 }
 
 // hashFile streams a file's SHA-256 and size.
