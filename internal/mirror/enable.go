@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/zstd"
-	pkmirror "github.com/xoai/sage-wiki/pkg/mirror"
 	_ "modernc.org/sqlite"
 )
 
@@ -37,16 +36,8 @@ var ErrAlreadyEnabled = errors.New("mirror: already enabled (mirror-state.json e
 // hydrate Task 19).
 type mirrorOps struct{ m *Mirror }
 
-// Stubs for ops methods wired by later tasks (ship/snapshot Tasks 12/13,
-// hydrate Task 19). Loud, never silent.
-func (o *mirrorOps) Ship(ctx context.Context, batch pkmirror.ChangeBatch) error {
-	return &NotReadyError{Op: "ship"}
-}
-
-func (o *mirrorOps) Snapshot(ctx context.Context) (pkmirror.SnapshotID, error) {
-	return "", &NotReadyError{Op: "snapshot"}
-}
-
+// Stubs for ops methods wired by later tasks (hydrate Task 19). Loud,
+// never silent. (Ship/Snapshot are real in shipper.go since Task 12.)
 func (o *mirrorOps) Hydrate(ctx context.Context, dst string) error {
 	return &NotReadyError{Op: "hydrate"}
 }
