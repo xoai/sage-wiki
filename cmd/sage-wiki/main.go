@@ -16,6 +16,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"strings"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/api"
 	"github.com/xoai/sage-wiki/internal/auth"
@@ -34,6 +35,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/query"
 	"github.com/xoai/sage-wiki/internal/scribe"
+	serveserve "github.com/xoai/sage-wiki/internal/serve"
 	"github.com/xoai/sage-wiki/internal/skill"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/storedial"
@@ -202,6 +204,12 @@ func init() {
 
 	// Serve flags
 	serveCmd.Flags().String("transport", "stdio", "Transport: stdio or sse")
+	serveCmd.Flags().String("addr", "", "HTTP mode bind (REST+MCP+metrics, takes the workspace lock; bare serve defaults to 127.0.0.1:8484)")
+	serveCmd.Flags().String("workspace", "", "workspace dir for HTTP mode (default: --project)")
+	serveCmd.Flags().String("token-file", "", "bearer token file for HTTP mode (one per line)")
+	serveCmd.Flags().Int("max-concurrent-compiles", 2, "global cap on concurrent compiles in HTTP mode")
+	serveCmd.Flags().Duration("drain-timeout", 30*time.Second, "graceful shutdown drain budget (min 10s, warns when clamped)")
+	serveCmd.Flags().Bool("insecure-no-auth", false, "allow non-loopback bind without tokens in HTTP mode")
 	serveCmd.Flags().Int("port", 3333, "SSE/UI port")
 	serveCmd.Flags().Bool("ui", false, "Start web UI viewer")
 	serveCmd.Flags().String("bind", "127.0.0.1", "Bind address (default localhost only)")
@@ -620,9 +628,23 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// means `serve --ui` (which builds both) still reconciles exactly once.
 	reconcileStartup(context.Background(), dir)
 
+	// HTTP mode (SPEC-02): --addr set, OR bare `serve` with no --transport
+	// and no --ui. Takes the workspace lock; REST + streamable MCP +
+	// metrics on one listener. --transport stdio|sse and --ui keep the
+	// pre-existing lock-free behavior.
+	addr, _ := cmd.Flags().GetString("addr")
+	transportEarly, _ := cmd.Flags().GetString("transport")
+	uiEarly, _ := cmd.Flags().GetBool("ui")
+	if addr != "" || (transportEarly == "" && !uiEarly) {
+		if addr == "" {
+			addr = "127.0.0.1:8484"
+		}
+		return runServeHTTP(cmd, dir, addr)
+	}
+
 	// Shared serve-mode compile state (P2-3): one coordinator + one progress
 	// hub + the queue worker (nil when serve.worker.enabled: false).
-	deps, err := assembleServeDeps(dir)
+	deps, err := serveserve.AssembleDeps(dir)
 	if err != nil {
 		return err
 	}
@@ -634,7 +656,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		port, _ := cmd.Flags().GetInt("port")
 		bind, _ := cmd.Flags().GetString("bind")
 
-		webSrv, err := web.NewWebServer(dir, deps.progress)
+		webSrv, err := web.NewWebServer(dir, deps.Progress())
 		if err != nil {
 			return err
 		}
@@ -661,12 +683,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// Public REST facade (P4-1): an MCP server sharing the serve-mode
 		// coordinator (compile serialization), mounted on the web mux inside
 		// the existing security middleware.
-		mcpSrv, err := mcppkg.NewServer(dir, deps.coord)
+		mcpSrv, err := mcppkg.NewServer(dir, deps.Coordinator())
 		if err != nil {
 			return err
 		}
 		defer mcpSrv.Close()
-		webSrv.SetV1Handler(api.New(mcpSrv, webSrv.Config(), dir, newJobRunner(deps, mcpSrv), deps.progress).Handler())
+		webSrv.SetV1Handler(api.New(mcpSrv, webSrv.Config(), dir, serveserve.NewJobRunner(deps, mcpSrv), deps.Progress()).Handler())
 
 		// Refuse to expose beyond loopback without a token (invariant: loopback
 		// stays zero-config; anything wider must be authenticated).
@@ -685,7 +707,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// Graceful shutdown on SIGINT/SIGTERM.
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		if deps.worker != nil {
+		if deps.WorkerEnabled() {
 			deps.StartWorker(ctx)
 			fmt.Fprintln(os.Stderr, "⚙️  compile worker started (serve.worker).")
 		}
@@ -693,7 +715,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// MCP server mode
-	srv, err := mcppkg.NewServer(dir, deps.coord)
+	srv, err := mcppkg.NewServer(dir, deps.Coordinator())
 	if err != nil {
 		return err
 	}
@@ -701,7 +723,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if deps.worker != nil {
+	if deps.WorkerEnabled() {
 		deps.StartWorker(ctx)
 		fmt.Fprintln(os.Stderr, "⚙️  compile worker started (serve.worker).")
 	}
@@ -1311,4 +1333,67 @@ func runScribe(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// runServeHTTP is the SPEC-02 unified server: workspace lock + REST +
+// streamable MCP + metrics + graceful drain on one listener.
+func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
+	workspace, _ := cmd.Flags().GetString("workspace")
+	if workspace != "" {
+		dir, _ = filepath.Abs(workspace)
+	}
+	tokenFile, _ := cmd.Flags().GetString("token-file")
+	maxCompiles, _ := cmd.Flags().GetInt("max-concurrent-compiles")
+	drain, _ := cmd.Flags().GetDuration("drain-timeout")
+	insecure, _ := cmd.Flags().GetBool("insecure-no-auth")
+	tokenFlag, _ := cmd.Flags().GetString("token")
+
+	tokens, err := serveserve.LoadTokens(tokenFlag, tokenFile, os.Getenv("SAGE_WIKI_TOKEN"), "")
+	if err != nil {
+		return err
+	}
+	if err := serveserve.CheckRefusal(addr, tokens, insecure); err != nil {
+		return err
+	}
+
+	// Workspace lock (§2.0): the read-write open acquires engine.lock and
+	// fails fast when another process holds it.
+	w, err := engine.Open(cmd.Context(), dir)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "sage-wiki serve (HTTP) — workspace %s locked for exclusive use\n", dir)
+
+	deps, err := serveserve.AssembleDeps(dir)
+	if err != nil {
+		w.Close()
+		return err
+	}
+	mcpSrv, err := mcppkg.NewServer(dir, deps.Coordinator())
+	if err != nil {
+		w.Close()
+		return err
+	}
+
+	srv, err := serveserve.New(deps, mcpSrv, serveserve.Config{
+		Workspace:             dir,
+		Tokens:                tokens,
+		MaxConcurrentCompiles: maxCompiles,
+		DrainTimeout:          drain,
+		Addr:                  addr,
+		ReadyFn:               func() bool { return true }, // open completed by construction
+	})
+	if err != nil {
+		w.Close()
+		return err
+	}
+	srv.SetWorkspace(w)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if deps.WorkerEnabled() {
+		deps.StartWorker(ctx)
+	}
+	fmt.Fprintf(os.Stderr, "sage-wiki serve (HTTP) listening on %s — REST at /, MCP at /mcp, metrics at /metrics\n", addr)
+	return srv.Serve(ctx, addr)
 }

@@ -25,6 +25,15 @@ type Deps struct {
 	workerWG  sync.WaitGroup
 }
 
+// Progress returns the shared progress hub.
+func (d *Deps) Progress() *compiler.Progress { return d.progress }
+
+// WorkerEnabled reports whether a queue worker is present.
+func (d *Deps) WorkerEnabled() bool { return d.worker != nil }
+
+// Coordinator returns the shared compile coordinator.
+func (d *Deps) Coordinator() *compiler.CompileCoordinator { return d.coord }
+
 // StartWorker launches the worker goroutine; Close waits for it.
 func (d *Deps) StartWorker(ctx context.Context) {
 	if d.worker == nil {
