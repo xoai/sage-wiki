@@ -203,6 +203,9 @@ func init() {
 
 	// Reindex flags
 	reindexCmd.Flags().Bool("drop-chunk-vectors", false, "Rebuild the text index without an embedder — chunk vectors are deleted, not rebuilt")
+	rebuildVectorsCmd.Flags().String("quantize", "", "Index quantization: none (default, from vectors.quantization) or int8")
+	rebuildVectorsCmd.Flags().Bool("upgrade", false, "Adopt a pre-format (v0.2.x) workspace before rebuilding")
+	indexCmd.AddCommand(rebuildVectorsCmd)
 
 	// Serve flags
 	serveCmd.Flags().String("transport", "stdio", "Transport: stdio or sse")
@@ -236,7 +239,7 @@ func init() {
 	queryCmd.Flags().Bool("upgrade", false, "Adopt a pre-format (v0.2.x) workspace (one-way)")
 	ingestCmd.Flags().Bool("upgrade", false, "Adopt a pre-format (v0.2.x) workspace (one-way)")
 
-	rootCmd.AddCommand(initCmd, compileCmd, reindexCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, scribeCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, sourceCmd, hubCmd, skillCmd, packCmd, costCmd, versionCmd)
+	rootCmd.AddCommand(initCmd, compileCmd, reindexCmd, indexCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, scribeCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, sourceCmd, hubCmd, skillCmd, packCmd, costCmd, versionCmd)
 
 	// Enables `sage-wiki --version` in addition to the `version` subcommand.
 	rootCmd.Version = version
