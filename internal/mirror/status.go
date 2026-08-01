@@ -28,7 +28,10 @@ func (o *mirrorOps) Status(ctx context.Context) (Status, error) {
 
 	pending := 0
 	if m.src != nil {
-		changes, _, err := m.src.Changes(ctx, ChangeToken{})
+		changes, _, err := m.src.Changes(ctx, ChangeToken{
+			Committed:        st.Objects,
+			CommittedVectors: st.Vectors,
+		})
 		if err != nil {
 			return Status{}, fmt.Errorf("mirror status: detect changes: %w", err)
 		}
