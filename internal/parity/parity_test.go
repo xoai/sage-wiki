@@ -9,26 +9,40 @@ import (
 var suiteWS string
 
 // TestMain builds the shared workspace once (replay mode) for all parity
-// checks — the flake guard's double-run lives inside each check.
+// checks — the flake guard's double-run lives inside each check. Under
+// SAGE_PARITY_FORCE=1 (record/regen invocations) the build is SKIPPED:
+// gen tests build their own workspaces, and a build here would
+// replay-miss after any prompt change, deadlocking the documented
+// maintainer flow (review R-01).
 func TestMain(m *testing.M) {
-	root := filepath.Join("..", "..", "testdata")
-	replay, err := NewReplayServer(filepath.Join(root, "fixtures", "openai"))
-	if err != nil {
-		panic(err)
+	force := os.Getenv("SAGE_PARITY_FORCE") == "1"
+	var replay *Server
+	var ws string
+	if !force {
+		root := filepath.Join("..", "..", "testdata")
+		var err error
+		replay, err = NewReplayServer(filepath.Join(root, "fixtures", "openai"))
+		if err != nil {
+			panic(err)
+		}
+		// Unique per process — concurrent `go test` runs must never remove
+		// each other's workspace.
+		ws, err = os.MkdirTemp("", "parity-suite-ws-")
+		if err != nil {
+			panic(err)
+		}
+		if err := BuildWorkspace(filepath.Join(root, "golden-corpus"), ws, replay.URL(), readGoldenConfigForMain(root)); err != nil {
+			panic(err)
+		}
+		suiteWS = ws
 	}
-	// Unique per process — concurrent `go test` runs must never remove
-	// each other's workspace.
-	ws, err := os.MkdirTemp("", "parity-suite-ws-")
-	if err != nil {
-		panic(err)
-	}
-	if err := BuildWorkspace(filepath.Join(root, "golden-corpus"), ws, replay.URL(), readGoldenConfigForMain(root)); err != nil {
-		panic(err)
-	}
-	suiteWS = ws
 	code := m.Run()
-	replay.Close()
-	os.RemoveAll(ws)
+	if replay != nil {
+		replay.Close()
+	}
+	if ws != "" {
+		os.RemoveAll(ws)
+	}
 	os.Exit(code)
 }
 

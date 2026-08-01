@@ -342,6 +342,14 @@ func CheckAsOf(wsDir, goldenPath string) error {
 	if err != nil {
 		return err
 	}
+	// Self-determinism guard, same as the other checks (review R-04).
+	got2, err := CaptureAsOf(w, asOfTime)
+	if err != nil {
+		return err
+	}
+	if string(mustJSON(got)) != string(mustJSON(got2)) {
+		return fmt.Errorf("asof view not self-deterministic")
+	}
 	if string(mustJSON(got.Entities)) != string(mustJSON(golden.Entities)) {
 		return fmt.Errorf("asof entities differ:\n  want %s\n  got  %s", mustJSON(golden.Entities), mustJSON(got.Entities))
 	}

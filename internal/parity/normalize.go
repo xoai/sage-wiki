@@ -91,6 +91,12 @@ func NormalizeManifestJSON(path string) ([]byte, error) {
 // BuildWorkspace materializes a corpus into a compiled workspace:
 // copy → pin mtimes → write config → full compile (SPEC-09 §2.4).
 func BuildWorkspace(corpusDir, wsDir, replayURL, goldenConfig string) error {
+	return BuildWorkspaceAuth(corpusDir, wsDir, replayURL, goldenConfig, "sk-replay", "gpt-4o-mini")
+}
+
+// BuildWorkspaceAuth is BuildWorkspace with an explicit API key + model —
+// the real-vendor record path (make record-fixtures ORIGIN=... KEY=... MODEL=...).
+func BuildWorkspaceAuth(corpusDir, wsDir, replayURL, goldenConfig, apiKey, model string) error {
 	if err := copyTree(corpusDir, wsDir); err != nil {
 		return fmt.Errorf("copy corpus: %w", err)
 	}
@@ -114,12 +120,12 @@ sources:
 output: wiki
 api:
   provider: openai
-  api_key: sk-replay
+  api_key: %s
   base_url: %s
 models:
-  summarize: gpt-4o-mini
-  extract: gpt-4o-mini
-  write: gpt-4o-mini
+  summarize: %s
+  extract: %s
+  write: %s
 compiler:
   auto_commit: false
   default_tier: 3
@@ -128,7 +134,10 @@ compiler:
 ontology:
   triples:
     enabled: true
-%s`, replayURL, goldenConfig)
+  relations:
+    - name: implements
+      functional: true
+%s`, apiKey, replayURL, model, model, model, goldenConfig)
 	if err := os.WriteFile(filepath.Join(wsDir, "config.yaml"), []byte(configBody), 0o644); err != nil {
 		return err
 	}

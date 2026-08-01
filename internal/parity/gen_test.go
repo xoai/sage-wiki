@@ -15,12 +15,27 @@ func TestRecordFixtures(t *testing.T) {
 		t.Skip("record-fixtures requires SAGE_PARITY_FORCE=1")
 	}
 	originURL := os.Getenv("ORIGIN")
+	apiKey, model := "sk-replay", "gpt-4o-mini"
 	if originURL == "" {
 		origin := NewOriginServer()
 		defer origin.Close()
 		originURL = origin.URL
+	} else {
+		// Real-vendor record: KEY and MODEL are required and used.
+		apiKey = os.Getenv("KEY")
+		if apiKey == "" {
+			t.Fatal("real-vendor record requires KEY=<api key>")
+		}
+		if m := os.Getenv("MODEL"); m != "" {
+			model = m
+		}
 	}
 	fixtureDir := filepath.Join("..", "..", "testdata", "fixtures", "openai")
+	// Clear stale fixtures: a new record run replaces the fixture set
+	// wholesale (orphans from older prompts must not linger).
+	if err := os.RemoveAll(fixtureDir); err != nil {
+		t.Fatal(err)
+	}
 	rec, err := NewRecordServer(originURL, fixtureDir)
 	if err != nil {
 		t.Fatal(err)
@@ -30,7 +45,7 @@ func TestRecordFixtures(t *testing.T) {
 	corpus := filepath.Join("..", "..", "testdata", "golden-corpus")
 	ws := filepath.Join(t.TempDir(), "ws")
 	goldenCfg := readGoldenConfig(t)
-	if err := BuildWorkspace(corpus, ws, rec.URL(), goldenCfg); err != nil {
+	if err := BuildWorkspaceAuth(corpus, ws, rec.URL(), goldenCfg, apiKey, model); err != nil {
 		t.Fatalf("record build: %v", err)
 	}
 	entries, _ := os.ReadDir(fixtureDir)

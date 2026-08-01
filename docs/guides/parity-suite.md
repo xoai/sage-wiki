@@ -13,8 +13,10 @@ into a workspace against a record/replay HTTP stub
   compile_items/counts + config hash (`byte-parity.json`)
 - **graph parity** — canonical edge dump incl. evidence/confidence/validity
   (`graph.jsonl`), plus the AsOf view (`graph-asof.json`)
-- **search parity** — 30 committed queries (lexical/semantic/graph-hop/
-  as_of/coverage-gap classes) with exact doc+rank+score (`search.json`)
+- **search parity** — 33 committed queries (lexical/semantic/graph-hop/
+  coverage-gap classes, plus bm25/vector/graph channel scoping) with
+  exact doc+rank+score (`search.json`); temporal as_of parity lives in
+  `graph-asof.json`
 - **round-trip** — export → untar → read-only open → identical answers;
   a corrupted byte inside a wiki/ file must fail byte parity
 

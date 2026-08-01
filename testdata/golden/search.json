@@ -1748,11 +1748,17 @@
       ]
     },
     {
-      "q": "alpha protocol",
+      "q": "api gateway",
       "channels": [
         "graph"
       ],
-      "expect": []
+      "expect": [
+        {
+          "doc": "wiki/concepts/api-gateway.md",
+          "rank": 1,
+          "score": 1
+        }
+      ]
     }
   ]
 }
