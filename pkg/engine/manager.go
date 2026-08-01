@@ -182,14 +182,18 @@ func (m *Manager) Workspace(ctx context.Context, name string) (*Workspace, error
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		_ = ws.Close()
+		if err := ws.Close(); err != nil {
+			log.Warn("engine: close of racing workspace open failed", "name", name, "error", err)
+		}
 		return nil, ErrManagerClosed
 	}
 	// A concurrent opener may have won the race; close our duplicate.
 	if h, ok := m.handles[name]; ok {
 		h.lastUse = time.Now()
 		m.mu.Unlock()
-		_ = ws.Close()
+		if err := ws.Close(); err != nil {
+			log.Warn("engine: close of duplicate workspace open failed", "name", name, "error", err)
+		}
 		return h.ws, nil
 	}
 	victimName, victim := m.evictCandidateLocked(1)
