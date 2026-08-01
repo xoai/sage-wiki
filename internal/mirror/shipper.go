@@ -40,6 +40,11 @@ func (o *mirrorOps) Snapshot(ctx context.Context) (pkmirror.SnapshotID, error) {
 		return "", err
 	}
 	defer mutex.Release()
+	local, err := LoadLocalState(localStatePath(m.dir))
+	if err != nil {
+		return "", err
+	}
+	m.local = local
 	st, err := m.remoteState(ctx)
 	if err != nil {
 		return "", err
@@ -52,7 +57,9 @@ func (o *mirrorOps) Snapshot(ctx context.Context) (pkmirror.SnapshotID, error) {
 
 // shipPass is the single-leader ship cycle (spec.md §Close-fold handling,
 // steps in order): reconcile → seal → short-circuit → fold rules →
-// debounce/rotation → atomic local commit.
+// debounce/rotation → atomic local commit. Local state is RELOADED under
+// the mutex: concurrent processes share it through the file, and the mutex
+// is what serializes both the remote and that file.
 func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 	var res shipResult
 	mutex, err := AcquireShipMutex(m.dir, m.cfg.ShipLockTimeout)
@@ -61,11 +68,16 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 	}
 	defer mutex.Release()
 
+	local, err := LoadLocalState(localStatePath(m.dir))
+	if err != nil {
+		return res, err
+	}
+	m.local = local
+
 	st, err := m.remoteState(ctx)
 	if err != nil {
 		return res, err
 	}
-	local := m.local
 
 	// --- Step 2: reconcile pending_rotation (spec §Close-fold (5)) ---
 	if local.PendingRotation {
