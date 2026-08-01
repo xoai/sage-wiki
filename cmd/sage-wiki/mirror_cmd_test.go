@@ -208,3 +208,36 @@ func TestMirrorEnableCmd_AlreadyEnabled(t *testing.T) {
 		t.Fatalf("second enable should be a no-op message: %v", err)
 	}
 }
+
+func TestMirrorSnapshotCmd(t *testing.T) {
+	fake := newCmdFakeS3()
+	srv := fake.server()
+	defer srv.Close()
+	dir := writeMirrorWorkspace(t, srv.URL)
+	t.Setenv("AWS_ACCESS_KEY_ID", "ak")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "sk")
+	old := projectDir
+	projectDir = dir
+	defer func() { projectDir = old }()
+
+	if err := mirrorEnableCmd.RunE(mirrorEnableCmd, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := mirrorSnapshotCmd.RunE(mirrorSnapshotCmd, nil); err != nil {
+		t.Fatalf("mirror snapshot: %v", err)
+	}
+	// Gen-2 snapshot committed.
+	found := false
+	for k := range fake.objects {
+		if strings.HasPrefix(k, "ws/db/generation-2/snapshot.db.zst") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("gen-2 snapshot not committed by mirror snapshot")
+	}
+	// meta.json for gen 1 written.
+	if !fake.has("ws/db/generation-1/meta.json") {
+		t.Fatal("gen-1 meta.json missing after forced rotation")
+	}
+}

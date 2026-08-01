@@ -45,13 +45,16 @@ type ops interface {
 // implements the pkg/mirror.Mirror seam and adds Enable/Status/Verify for
 // the CLI. Lock-free: a read-only SQLite participant.
 type Mirror struct {
-	dir    string
-	cfg    Config
-	src    ChangeSource
-	client *s3.Client
-	local  *LocalState
-	ops    ops
-	now    func() time.Time // injected clock (status lag; tests)
+	dir         string
+	cfg         Config
+	src         ChangeSource
+	client      *s3.Client
+	local       *LocalState
+	ops         ops
+	now         func() time.Time // injected clock (status lag; tests)
+	pruneDelete func(ctx context.Context, bucket, key string) error
+
+	lastPruneWarnings []string
 }
 
 // normalize applies spec defaults to a zero-value-constructed Config so a
@@ -107,6 +110,7 @@ func Open(wsDir string, cfg Config, src ChangeSource) (*Mirror, error) {
 		return nil, err
 	}
 	m := &Mirror{dir: wsDir, cfg: cfg, src: src, client: client, local: local, now: time.Now}
+	m.pruneDelete = m.pruneDeleteDefault
 	// Wire the real ops (enable.go's init sets openWiresOps).
 	if openWiresOps != nil {
 		openWiresOps(m)

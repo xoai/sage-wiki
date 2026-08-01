@@ -19,6 +19,7 @@ type shipResult struct {
 	Rotated         bool
 	PendingRotation bool
 	HashedDB        bool // the full db hash ran this pass (cost observability)
+	Warnings        []string
 }
 
 // Ship implements the pkg seam: a ChangeBatch is accepted for interface
@@ -89,6 +90,7 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 				return res, err
 			}
 			res.Rotated = true
+			res.Warnings = m.lastPruneWarnings
 			return res, nil
 		} else {
 			// Still debouncing — nothing else to do this pass.
@@ -131,14 +133,20 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 
 	// --- Branches (2)/(3): idle short-circuit + fold rules. Content can
 	// ONLY change via the WAL in WAL mode (a checkpoint preserves page
-	// content — measured: benign folds leave the db hash identical), so:
-	// pure-idle passes (identity same, no seal) read nothing; the db hash
-	// runs ONLY on identity change or after a seal. No stat signal exists
-	// for a checkpoint (db size/mtime, -shm mtime, and the header change
-	// counter all stay constant — measured), so none is consulted. ---
+	// content — measured: benign folds leave the db hash identical), so a
+	// pass is certain-idle ONLY when the WAL is present with the recorded
+	// identity and no growth. Every other case hashes: identity change,
+	// post-seal refresh, and the WAL-absent-unknown case (a CLI command's
+	// write+close fold leaves no WAL trace — only the hash sees it; that
+	// per-command hash is the accepted cost of fold detection on the CLI
+	// path). No stat signal observes a checkpoint (db size/mtime, -shm
+	// mtime, and the header change counter all stay constant — measured),
+	// so none is consulted. ---
 	identityChanged := (!walPresent && local.WALSalt != 0) ||
 		(walPresent && local.WALSalt != 0 && walHdr.SaltID() != local.WALSalt)
-	if !identityChanged && res.SealedSegments == 0 {
+	certainIdle := walPresent && local.WALSalt != 0 && walHdr.SaltID() == local.WALSalt &&
+		walSize == local.WALOffset && res.SealedSegments == 0
+	if certainIdle {
 		return res, nil
 	}
 
@@ -150,15 +158,17 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 	hashDiverged := hash != local.LastDBSHA256
 
 	switch {
-	case identityChanged && hashDiverged:
-		// (a) checkpoint-on-close folded frames with content beyond the
-		// committed state (unsealed loss, or sealed-then-folded drift) →
-		// force rotation, debounced by min_rotation_interval.
+	case hashDiverged && (identityChanged || !walPresent):
+		// (a) content beyond the committed state with NO WAL chain covering
+		// it: checkpoint-on-close folded unsealed frames (identity change)
+		// or a write+close fold before any WAL adoption (WAL absent — the
+		// normal post-command CLI case) → force rotation, debounced.
 		if m.now().Sub(local.LastRotationAt) >= m.cfg.MinRotationInterval {
 			if err := m.rotate(ctx, st); err != nil {
 				return res, err
 			}
 			res.Rotated = true
+			res.Warnings = m.lastPruneWarnings
 			return res, nil
 		}
 		// Defer: persist pending_rotation, KEEP pre-fold bookkeeping so the
@@ -176,13 +186,15 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 			return res, err
 		}
 		return res, nil
-	default:
-		// (c) identity intact: post-seal refresh or drift via an attached
-		// path — update the reference bookkeeping only, no rotation.
+	case hashDiverged:
+		// (c) identity intact, WAL chain covers the content (post-seal
+		// refresh or attach-path drift) — update reference bookkeeping.
 		local.LastDBSHA256 = hash
 		if err := SaveLocalState(localStatePath(m.dir), local); err != nil {
 			return res, err
 		}
+		return res, nil
+	default:
 		return res, nil
 	}
 }
@@ -289,6 +301,7 @@ func (m *Mirror) rotate(ctx context.Context, st *State) error {
 	if err := SaveLocalState(localStatePath(m.dir), local); err != nil {
 		return fmt.Errorf("rotate: local commit: %w", err)
 	}
+	m.lastPruneWarnings = m.pruneGenerations(ctx, gen+1)
 	return nil
 }
 
