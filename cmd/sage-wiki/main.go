@@ -741,6 +741,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			deps.StartWorker(ctx)
 			fmt.Fprintln(os.Stderr, "⚙️  compile worker started (serve.worker).")
 		}
+		deps.StartMirror(ctx)
 		return webSrv.Serve(ctx, addr)
 	}
 
@@ -757,6 +758,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.StartWorker(ctx)
 		fmt.Fprintln(os.Stderr, "⚙️  compile worker started (serve.worker).")
 	}
+	deps.StartMirror(ctx)
 
 	transport, _ := cmd.Flags().GetString("transport")
 	if transport == "sse" {
@@ -1485,6 +1487,7 @@ func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
 	if deps.WorkerEnabled() {
 		deps.StartWorker(ctx)
 	}
+	deps.StartMirror(ctx)
 	fmt.Fprintf(os.Stderr, "sage-wiki serve (HTTP) listening on %s — REST at /, MCP at /mcp, metrics at /metrics\n", addr)
 	go srv.StartQueue(ctx)
 	<-ctx.Done()

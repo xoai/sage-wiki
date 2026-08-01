@@ -122,6 +122,13 @@ func Open(wsDir string, cfg Config, src ChangeSource) (*Mirror, error) {
 // facade (kept a var so the facade file stays free of implementation deps).
 var openWiresOps func(*Mirror)
 
+// ScheduledRotationDue reports whether the scheduled rotation cadence
+// (snapshot_interval) has elapsed since the last generation commit of ANY
+// kind — used by the serve shipper ticker.
+func (m *Mirror) ScheduledRotationDue() bool {
+	return m.now().Sub(m.local.LastRotationAt) >= m.cfg.SnapshotInterval
+}
+
 func localStatePath(dir string) string {
 	return dir + "/.sage/mirror-local.json"
 }
