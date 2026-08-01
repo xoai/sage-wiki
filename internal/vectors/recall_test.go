@@ -43,7 +43,7 @@ func TestInt8RecallAt10(t *testing.T) {
 	const n, dim, queries = 2000, 128, 50
 	s, db, dir := recallFixture(t, n, dim)
 
-	if _, err := WriteIndexFile(db.ReadDB(), IndexTableDocs, filepath.Join(dir, docIndexFile), QuantInt8); err != nil {
+	if _, err := WriteIndexFile(db, IndexTableDocs, filepath.Join(dir, docIndexFile), QuantInt8); err != nil {
 		t.Fatal(err)
 	}
 	mm := mmapStore(db, dir)

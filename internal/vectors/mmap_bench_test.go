@@ -42,10 +42,10 @@ func mmapBenchFixture(b *testing.B) (*Store, string) {
 			b.Fatal(err)
 		}
 	}
-	if _, err := WriteIndexFile(db.ReadDB(), IndexTableDocs, filepath.Join(dir, docIndexFile), QuantNone); err != nil {
+	if _, err := WriteIndexFile(db, IndexTableDocs, filepath.Join(dir, docIndexFile), QuantNone); err != nil {
 		b.Fatal(err)
 	}
-	if _, err := WriteIndexFile(db.ReadDB(), IndexTableChunks, filepath.Join(dir, chunkIndexFile), QuantNone); err != nil {
+	if _, err := WriteIndexFile(db, IndexTableChunks, filepath.Join(dir, chunkIndexFile), QuantNone); err != nil {
 		b.Fatal(err)
 	}
 	return s, dir

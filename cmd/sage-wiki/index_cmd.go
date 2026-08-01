@@ -85,7 +85,7 @@ func runIndexRebuildVectors(cmd *cobra.Command, args []string) error {
 		{"documents", vectors.IndexTableDocs, "vectors.idx"},
 		{"chunks", vectors.IndexTableChunks, "vectors-chunks.idx"},
 	} {
-		stats, err := vectors.WriteIndexFile(db.ReadDB(), job.table, filepath.Join(sageDir, job.file), quant)
+		stats, err := vectors.WriteIndexFile(db, job.table, filepath.Join(sageDir, job.file), quant)
 		if err != nil {
 			return cli.CLIError(outputFormat, fmt.Errorf("rebuilding %s index: %w", job.name, err))
 		}

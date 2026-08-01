@@ -68,6 +68,7 @@ func (st *workspaceStack) close() error {
 type stackRegistry struct {
 	rootCtx     context.Context // queue workers live this long
 	maxCompiles int
+	compileSem  chan struct{} // root-shared compile gate (SPEC-06 Task 10)
 
 	mgr    *engine.Manager // set after OpenManager (hook needs the registry first)
 	mu     sync.Mutex
@@ -135,6 +136,7 @@ func (r *stackRegistry) assemble(ctx context.Context, name string) (*workspaceSt
 	srv, err := New(deps, mcpSrv, Config{
 		Workspace:             dir,
 		MaxConcurrentCompiles: r.maxCompiles,
+		CompileSem:            r.compileSem,
 		ReadyFn:               func() bool { return true }, // assembled = ready
 	})
 	if err != nil {

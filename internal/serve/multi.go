@@ -34,6 +34,7 @@ type MultiServer struct {
 	cfg MultiConfig
 	mgr *engine.Manager
 	reg *stackRegistry
+	sem chan struct{} // root compile gate shared by every stack
 
 	srvMu   sync.Mutex
 	httpSrv *http.Server
@@ -64,7 +65,13 @@ func NewMulti(ctx context.Context, cfg MultiConfig) (*MultiServer, error) {
 		return nil, err
 	}
 	reg.mgr = mgr
-	return &MultiServer{cfg: cfg, mgr: mgr, reg: reg}, nil
+	// ONE root-level compile gate (SPEC-06 §5): every stack's queue exec
+	// acquires it, so --max-concurrent-compiles bounds compiles ACROSS
+	// workspaces. Per-stack queues/ledgers stay per-workspace (recovery
+	// semantics unchanged).
+	sem := make(chan struct{}, cfg.MaxConcurrentCompiles)
+	reg.compileSem = sem
+	return &MultiServer{cfg: cfg, mgr: mgr, reg: reg, sem: sem}, nil
 }
 
 // Handler returns the root handler (rate-limit slot → root auth → router).

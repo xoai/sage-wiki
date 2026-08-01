@@ -49,7 +49,7 @@ func TestResidentCeiling(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := WriteIndexFile(db.ReadDB(), IndexTableDocs, filepath.Join(dir, docIndexFile), QuantNone); err != nil {
+	if _, err := WriteIndexFile(db, IndexTableDocs, filepath.Join(dir, docIndexFile), QuantNone); err != nil {
 		t.Fatal(err)
 	}
 

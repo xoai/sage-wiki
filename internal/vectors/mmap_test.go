@@ -28,10 +28,10 @@ func setupMmapFixture(t *testing.T) (*storage.DB, string) {
 
 func rebuildBoth(t *testing.T, db *storage.DB, dir string, quant int) {
 	t.Helper()
-	if _, err := WriteIndexFile(db.ReadDB(), IndexTableDocs, filepath.Join(dir, docIndexFile), quant); err != nil {
+	if _, err := WriteIndexFile(db, IndexTableDocs, filepath.Join(dir, docIndexFile), quant); err != nil {
 		t.Fatalf("rebuild docs: %v", err)
 	}
-	if _, err := WriteIndexFile(db.ReadDB(), IndexTableChunks, filepath.Join(dir, chunkIndexFile), quant); err != nil {
+	if _, err := WriteIndexFile(db, IndexTableChunks, filepath.Join(dir, chunkIndexFile), quant); err != nil {
 		t.Fatalf("rebuild chunks: %v", err)
 	}
 }

@@ -1,10 +1,10 @@
 package parity
 
 import (
-	"database/sql"
 	"path/filepath"
 	"testing"
 
+	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -18,7 +18,7 @@ func TestMmapParity_GoldenCorpus(t *testing.T) {
 		t.Skip("parity suite workspace unavailable (SAGE_PARITY_FORCE?)")
 	}
 	sageDir := filepath.Join(suiteWS, ".sage")
-	db, err := sql.Open("sqlite", filepath.Join(sageDir, "wiki.db"))
+	db, err := storage.Open(filepath.Join(sageDir, "wiki.db"))
 	if err != nil {
 		t.Fatalf("open suite db: %v", err)
 	}

@@ -34,6 +34,10 @@ type Config struct {
 	DrainTimeout          time.Duration
 	RateLimit             func(next http.Handler) http.Handler
 	Addr                  string
+	// CompileSem, when non-nil, is a SHARED cross-server compile gate
+	// (SPEC-06 multi-workspace): the queue exec acquires it around every
+	// compile, bounding concurrency across all stacks, not just this one.
+	CompileSem chan struct{}
 	// ReadyFn reports store-open completion for /readyz. Required.
 	ReadyFn func() bool
 }
@@ -71,7 +75,7 @@ func New(deps *Deps, mcpSrv *mcppkg.Server, cfg Config) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{cfg: cfg, mcp: mcpSrv, deps: deps, ledger: ledger}
-	s.queue = NewQueue(ledger, cfg.MaxConcurrentCompiles, s.execCompile, nil)
+	s.queue = NewQueue(ledger, cfg.MaxConcurrentCompiles, semaphoreWrap(cfg.CompileSem, s.execCompile), nil)
 	s.routes()
 	s.mcpStream = s.mountMCP()
 	// /v1 stays live on this listener too (Q-3): the existing facade over

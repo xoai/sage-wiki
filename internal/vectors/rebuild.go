@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 // IndexTable selects the source vec table for a rebuild.
@@ -70,7 +71,7 @@ func specFor(t IndexTable) tableSpec {
 // Deliberate divergence (spec §2): a first-row empty blob (dim=0 with rows
 // present) ERRORS — corrupt embeddings must not silently produce an
 // all-skipped index.
-func WriteIndexFile(db *sql.DB, table IndexTable, path string, quant int) (IndexStats, error) {
+func WriteIndexFile(db store.DBHandle, table IndexTable, path string, quant int) (IndexStats, error) {
 	var stats IndexStats
 	spec := specFor(table)
 	if quant != QuantNone && quant != QuantInt8 {
@@ -78,7 +79,7 @@ func WriteIndexFile(db *sql.DB, table IndexTable, path string, quant int) (Index
 	}
 	stats.Quantization = quant
 
-	ids, docIDs, rows, err := scanRows(db, spec, &stats)
+	ids, docIDs, rows, err := scanRows(db.ReadDB(), spec, &stats)
 	if err != nil {
 		return stats, err
 	}

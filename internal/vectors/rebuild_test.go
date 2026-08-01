@@ -9,54 +9,56 @@ import (
 	"path/filepath"
 	"testing"
 
-	_ "modernc.org/sqlite"
+	"github.com/xoai/sage-wiki/internal/storage"
 )
 
-// setupVecDB creates a temp SQLite DB with vec_entries/vec_chunks tables and
-// returns it plus a handle for seeding.
-func setupVecDB(t *testing.T) *sql.DB {
+// setupVecDB creates a temp workspace DB (full schema via storage.Open)
+// and returns the handle.
+func setupVecDB(t *testing.T) *storage.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "test.db"))
+	db, err := storage.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	for _, ddl := range []string{
-		`CREATE TABLE vec_entries (id TEXT PRIMARY KEY, embedding BLOB, dimensions INTEGER)`,
-		`CREATE TABLE vec_chunks (chunk_id TEXT PRIMARY KEY, doc_id TEXT, embedding BLOB, dimensions INTEGER)`,
-	} {
-		if _, err := db.Exec(ddl); err != nil {
-			t.Fatal(err)
-		}
-	}
 	return db
 }
 
-func seedVecEntries(t *testing.T, db *sql.DB, rows map[string][]float32) {
+func seedVecEntries(t *testing.T, db *storage.DB, rows map[string][]float32) {
 	t.Helper()
 	// Insert in id-sorted order so rowid order is deterministic.
 	ids := sortedKeys(rows)
-	for _, id := range ids {
-		v := rows[id]
-		if _, err := db.Exec(
-			"INSERT INTO vec_entries (id, embedding, dimensions) VALUES (?, ?, ?)",
-			id, encodeFloat32s(v), len(v),
-		); err != nil {
-			t.Fatal(err)
+	if err := db.WriteTx(func(tx *sql.Tx) error {
+		for _, id := range ids {
+			v := rows[id]
+			if _, err := tx.Exec(
+				"INSERT INTO vec_entries (id, embedding, dimensions) VALUES (?, ?, ?)",
+				id, encodeFloat32s(v), len(v),
+			); err != nil {
+				return err
+			}
 		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func seedVecChunks(t *testing.T, db *sql.DB, rows [][3]any) {
+func seedVecChunks(t *testing.T, db *storage.DB, rows [][3]any) {
 	t.Helper()
-	for _, r := range rows {
-		cid, did, v := r[0].(string), r[1].(string), r[2].([]float32)
-		if _, err := db.Exec(
-			"INSERT INTO vec_chunks (chunk_id, doc_id, embedding, dimensions) VALUES (?, ?, ?, ?)",
-			cid, did, encodeFloat32s(v), len(v),
-		); err != nil {
-			t.Fatal(err)
+	if err := db.WriteTx(func(tx *sql.Tx) error {
+		for _, r := range rows {
+			cid, did, v := r[0].(string), r[1].(string), r[2].([]float32)
+			if _, err := tx.Exec(
+				"INSERT INTO vec_chunks (chunk_id, doc_id, embedding, dimensions) VALUES (?, ?, ?, ?)",
+				cid, did, encodeFloat32s(v), len(v),
+			); err != nil {
+				return err
+			}
 		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -140,13 +142,19 @@ func TestRebuild_DimSkipMirrorsLoader(t *testing.T) {
 	db := setupVecDB(t)
 	// First row sets dim=2; the 3-dim row is skipped (loader behavior:
 	// len(vec) != dim). A later valid 2-dim row is included.
-	if _, err := db.Exec("INSERT INTO vec_entries VALUES ('a', ?, 2)", encodeFloat32s([]float32{1, 0})); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec("INSERT INTO vec_entries VALUES ('b', ?, 3)", encodeFloat32s([]float32{1, 0, 0})); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec("INSERT INTO vec_entries VALUES ('c', ?, 2)", encodeFloat32s([]float32{0, 1})); err != nil {
+	err := db.WriteTx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec("INSERT INTO vec_entries VALUES ('a', ?, 2)", encodeFloat32s([]float32{1, 0})); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("INSERT INTO vec_entries VALUES ('b', ?, 3)", encodeFloat32s([]float32{1, 0, 0})); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("INSERT INTO vec_entries VALUES ('c', ?, 2)", encodeFloat32s([]float32{0, 1})); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "v.idx")
@@ -169,10 +177,16 @@ func TestRebuild_DimSkipMirrorsLoader(t *testing.T) {
 
 func TestRebuild_FirstRowEmpty_Errors(t *testing.T) {
 	db := setupVecDB(t)
-	if _, err := db.Exec("INSERT INTO vec_entries VALUES ('a', ?, 0)", []byte{}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec("INSERT INTO vec_entries VALUES ('b', ?, 2)", encodeFloat32s([]float32{1, 0})); err != nil {
+	err := db.WriteTx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec("INSERT INTO vec_entries VALUES ('a', ?, 0)", []byte{}); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("INSERT INTO vec_entries VALUES ('b', ?, 2)", encodeFloat32s([]float32{1, 0})); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "v.idx")
