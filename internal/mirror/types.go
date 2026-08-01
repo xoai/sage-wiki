@@ -27,13 +27,13 @@ type Status struct {
 
 // Report is `mirror verify` / hydrate output.
 type Report struct {
-	Valid       bool     `json:"valid"`
-	Checked     int      `json:"checked"`
-	Violations  []string `json:"violations,omitempty"`
-	Advisories  []string `json:"advisories,omitempty"`
-	Generation  int      `json:"generation,omitempty"`
-	RestoredTo  string   `json:"restored_to,omitempty"`
-	Overshoot   string   `json:"overshoot,omitempty"`
+	Valid      bool     `json:"valid"`
+	Checked    int      `json:"checked"`
+	Violations []string `json:"violations,omitempty"`
+	Advisories []string `json:"advisories,omitempty"`
+	Generation int      `json:"generation,omitempty"`
+	RestoredTo string   `json:"restored_to,omitempty"`
+	Overshoot  string   `json:"overshoot,omitempty"`
 }
 
 // HydrateOpts tunes a hydrate (spec.md §APIs).
