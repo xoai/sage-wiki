@@ -35,6 +35,10 @@ type Store struct {
 	// warn-once flags for the fallback/stale transitions.
 	mmWarnedFallback bool
 	mmWarnedStale    bool
+	// mmServed counts searches served by the mmap snapshot — the
+	// anti-vacuity signal: parity/recall gates assert it is non-zero so a
+	// silent fallback can never pass them.
+	mmServed int
 }
 
 // Option configures a Store (P2-7).
@@ -77,6 +81,14 @@ func (s *Store) VectorBackend() string {
 		return backendMemory
 	}
 	return s.vecBackend
+}
+
+// MmapServedCount reports how many searches the mmap snapshot has served
+// (anti-vacuity observability for the SPEC-06 gates).
+func (s *Store) MmapServedCount() int {
+	s.mmMu.Lock()
+	defer s.mmMu.Unlock()
+	return s.mmServed
 }
 
 // loadDocCache populates the doc-level cache from SQLite, single-flight:

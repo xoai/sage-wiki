@@ -212,6 +212,8 @@ func init() {
 	serveCmd.Flags().String("addr", "", "HTTP mode bind (REST+MCP+metrics, takes the workspace lock; bare serve defaults to 127.0.0.1:8484)")
 	serveCmd.Flags().String("workspace", "", "workspace dir for HTTP mode (default: --project)")
 	serveCmd.Flags().String("workspace-root", "", "multi-workspace mode (SPEC-06): serve every workspace under this root at /w/{name}/ (HTTP only; incompatible with --workspace, --ui, --transport)")
+	serveCmd.Flags().Int("max-open", 0, "multi-workspace: max workspaces held open (LRU closes beyond this; 0 = unlimited)")
+	serveCmd.Flags().Duration("idle-close", 0, "multi-workspace: close workspaces idle longer than this (e.g. 10m; 0 = off)")
 	serveCmd.Flags().String("token-file", "", "bearer token file for HTTP mode (one per line)")
 	serveCmd.Flags().Int("max-concurrent-compiles", 2, "global cap on concurrent compiles (matters for SPEC-06 multi-workspace; single-workspace FIFO already serializes)")
 	serveCmd.Flags().Duration("drain-timeout", 30*time.Second, "graceful shutdown drain budget (min 10s, warns when clamped)")
@@ -635,7 +637,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	wsRoot, _ := cmd.Flags().GetString("workspace-root")
 	if wsRoot != "" {
 		if cmd.Flags().Changed("transport") {
-			return fmt.Errorf("serve: --workspace-root is HTTP-only — it cannot be combined with --transport")
+			return fmt.Errorf("serve: --workspace-root runs its own HTTP server — it cannot be combined with --transport (stdio/sse are single-workspace transports)")
 		}
 		if uiFlag, _ := cmd.Flags().GetBool("ui"); uiFlag {
 			return fmt.Errorf("serve: --workspace-root cannot be combined with --ui (the web UI is a per-workspace surface)")
@@ -859,7 +861,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	memStore := memory.NewStore(db)
 	var vecStore *vectors.Store
 	if cfgErr == nil {
-		vecStore = vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled()))
+		vecStore = vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled()), vectors.WithVectorBackend(cfg.VectorBackend()), vectors.WithIndexDir(filepath.Join(dir, ".sage")))
 		if cfg.Search.ANNEnabled() {
 			log.Debug("vector search: ANN (HNSW) index enabled") // F-044 observability
 		}
@@ -1506,11 +1508,15 @@ func runServeMulti(cmd *cobra.Command, root, addr string) error {
 	}
 
 	abs, _ := filepath.Abs(root)
+	maxOpen, _ := cmd.Flags().GetInt("max-open")
+	idleClose, _ := cmd.Flags().GetDuration("idle-close")
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ms, err := serve.NewMulti(ctx, serve.MultiConfig{
 		Root:                  abs,
 		Tokens:                tokens,
+		MaxOpen:               maxOpen,
+		IdleClose:             idleClose,
 		MaxConcurrentCompiles: maxCompiles,
 		DrainTimeout:          drain,
 	})

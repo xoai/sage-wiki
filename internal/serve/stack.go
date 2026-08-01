@@ -20,6 +20,7 @@ type workspaceStack struct {
 	name    string
 	ws      *engine.Workspace
 	deps    *Deps
+	mcp     *mcppkg.Server
 	srv     *Server
 	handler http.Handler
 
@@ -50,8 +51,9 @@ func (st *workspaceStack) release() {
 
 // close marks the stack closing, waits for in-flight requests to drain
 // (uncancellable — requests are short), then runs the full drain
-// sequence: queue stop → MCP shutdown → deps close → workspace lock LAST
-// (Server.Shutdown's documented order).
+// sequence: queue stop → MCP stream + MCP server close (its app handle —
+// F-049) → deps close → workspace lock LAST (Server.Shutdown's
+// documented order).
 func (st *workspaceStack) close() error {
 	st.mu.Lock()
 	st.closing = true
@@ -59,7 +61,16 @@ func (st *workspaceStack) close() error {
 		st.drained.Wait()
 	}
 	st.mu.Unlock()
-	return st.srv.Shutdown()
+	var firstErr error
+	if err := st.srv.Shutdown(); err != nil {
+		firstErr = err
+	}
+	if st.mcp != nil {
+		if err := st.mcp.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // stackRegistry owns the live stacks and bridges Manager eviction to
@@ -97,6 +108,22 @@ func (r *stackRegistry) acquire(ctx context.Context, name string) (*workspaceSta
 	st, err := r.assemble(ctx, name)
 	if err != nil {
 		return nil, err
+	}
+	// F-050: an LRU/idle eviction may have closed our engine handle
+	// mid-assembly (the hook finds no registered stack and closes
+	// directly). Re-fetch: if the Manager hands back a DIFFERENT handle,
+	// ours was evicted — swap in the fresh one (only ws/SetWorkspace
+	// reference it; deps and the MCP server hold their own app handles).
+	// Without this the registry would serve a dead stack until restart.
+	ws2, err := r.mgr.Workspace(ctx, name)
+	if err != nil {
+		st.srv.ClearWorkspace() // ws1 is already closed by the hook; never double-close
+		_ = st.close()
+		return nil, err
+	}
+	if ws2 != st.ws {
+		st.ws = ws2
+		st.srv.SetWorkspace(ws2)
 	}
 	r.mu.Lock()
 	// Lost an assembly race: adopt the winner, tear our duplicate down.
@@ -158,6 +185,7 @@ func (r *stackRegistry) assemble(ctx context.Context, name string) (*workspaceSt
 		name:    name,
 		ws:      ws,
 		deps:    deps,
+		mcp:     mcpSrv,
 		srv:     srv,
 		handler: srv.Handler(),
 	}
@@ -167,9 +195,10 @@ func (r *stackRegistry) assemble(ctx context.Context, name string) (*workspaceSt
 
 // evict is the Manager's WithOnEvict hook: remove the stack from the
 // registry, then close it (waiting out refs). Called INSTEAD of
-// ws.Close — the stack's Shutdown closes the workspace itself. Runs under
-// the Manager mutex: the wait is stack-local (release never needs the
-// Manager), so this blocks but cannot deadlock.
+// ws.Close — the stack's Shutdown closes the workspace itself. It runs
+// OUTSIDE the Manager mutex (F-043), so the wait blocks only this
+// eviction, never unrelated Manager operations; it cannot deadlock
+// because refcount release is stack-local.
 func (r *stackRegistry) evict(name string, ws *engine.Workspace) error {
 	r.mu.Lock()
 	st, ok := r.stacks[name]

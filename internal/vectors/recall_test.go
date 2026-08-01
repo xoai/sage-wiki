@@ -85,4 +85,12 @@ func TestInt8RecallAt10(t *testing.T) {
 	if recall < 0.95 {
 		t.Errorf("recall@10 = %.4f, want >= 0.95", recall)
 	}
+	// Anti-vacuity (F-053): a silent fallback to the memory path would
+	// score a perfect 1.0 — prove the snapshot actually served.
+	if got := mm.MmapServedCount(); got != queries {
+		t.Errorf("MmapServedCount = %d, want %d (recall measured the memory path!)", got, queries)
+	}
+	if mm.docCache.isLoaded() {
+		t.Error("recall test must not load the in-memory cache")
+	}
 }

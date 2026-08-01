@@ -344,3 +344,79 @@ func TestStoreClose_Unmaps(t *testing.T) {
 		t.Error("second Close must be a no-op")
 	}
 }
+
+// F-047 witness (a): an index rebuilt on an EMPTY table must go stale
+// once a later process populates the table — count probe alone passes
+// (0 == 0), so this pins the content-drift signal.
+func TestMmap_CrossProcessStale_EmptyIndex(t *testing.T) {
+	db, dir := setupMmapFixture(t)
+	// Rebuild over the empty table.
+	rebuildBoth(t, db, dir, QuantNone)
+
+	// A "later process" populates the table (second handle, same file).
+	db2, err := storage.Open(filepath.Join(dir, "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db2.Close()
+	later := NewStore(db2)
+	if err := later.Upsert("v1", []float32{1, 0}); err != nil {
+		t.Fatal(err)
+	}
+
+	mm := mmapStore(db2, dir)
+	res, err := mm.Search([]float32{1, 0}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 || res[0].ID != "v1" {
+		t.Errorf("search after cross-process populate = %+v, want v1 (stale empty snapshot must not serve)", res)
+	}
+	mm.mmMu.Lock()
+	stale := mm.mmDoc != nil && mm.mmDoc.stale
+	mm.mmMu.Unlock()
+	if !stale {
+		t.Error("populated-after-empty-rebuild must mark the snapshot stale")
+	}
+}
+
+// F-047 witness (b): a same-count same-dim re-embed (upsert in place)
+// must go stale — the count probe is blind to content changes.
+func TestMmap_CrossProcessStale_SameCountReembed(t *testing.T) {
+	db, dir := setupMmapFixture(t)
+	mem := NewStore(db)
+	_ = mem.Upsert("v1", []float32{1, 0})
+	_ = mem.Upsert("v2", []float32{0, 1})
+	rebuildBoth(t, db, dir, QuantNone)
+
+	// Later process re-embeds v1 to a DIFFERENT vector (count/dim unchanged).
+	db2, err := storage.Open(filepath.Join(dir, "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db2.Close()
+	later := NewStore(db2)
+	if err := later.Upsert("v1", []float32{0, 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	mm := mmapStore(db2, dir)
+	res, err := mm.Search([]float32{0, 1}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Correct post-reembed ranking: v1 (now [0,1]) ties v2 — the STALE
+	// snapshot would rank v2 strictly first with v1 scoring 0.
+	if len(res) != 2 {
+		t.Fatalf("results = %+v", res)
+	}
+	mm.mmMu.Lock()
+	stale := mm.mmDoc != nil && mm.mmDoc.stale
+	mm.mmMu.Unlock()
+	if !stale {
+		t.Error("same-count re-embed must mark the snapshot stale")
+	}
+	if res[0].Score != res[1].Score {
+		t.Errorf("post-reembed scores = %v/%v, want tie (stale snapshot served)", res[0].Score, res[1].Score)
+	}
+}

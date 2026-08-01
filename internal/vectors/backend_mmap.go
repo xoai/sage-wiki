@@ -1,6 +1,7 @@
 package vectors
 
 import (
+	"os"
 	"path/filepath"
 
 	"github.com/xoai/sage-wiki/internal/log"
@@ -61,12 +62,14 @@ func (s *Store) mmapFor(chunk bool) *parsedIndex {
 			s.warnFallbackOnce(chunk, err.Error())
 			return nil
 		}
-		// Coherence probe ONCE at load: counts exactly the rows the writer
-		// would have included (decoded-length predicate — the dimensions
-		// column is advisory and unused by the loader). Not per-search:
-		// intra-process writes mark the snapshot stale explicitly, and the
-		// SPEC-01 lock excludes a concurrent writer process — a per-search
-		// full-table COUNT would dominate query cost (P7 benchmark).
+		// Coherence probes ONCE at load (not per-search: intra-process
+		// writes mark the snapshot stale explicitly, and a per-search
+		// full-table scan would dominate query cost — P7 benchmark).
+		//
+		// 1. Row-shape probe: count exactly the rows the writer would
+		//    have included (decoded-length predicate — the dimensions
+		//    column is advisory and unused by the loader). Catches
+		//    count/dim drift.
 		var count int
 		if err := s.db.ReadDB().QueryRow(probe, idx.header.dim).Scan(&count); err != nil {
 			_ = unmap()
@@ -79,6 +82,28 @@ func (s *Store) mmapFor(chunk bool) *parsedIndex {
 			s.warnStaleOnce(chunk)
 			return nil
 		}
+		// 2. Content-drift probe (F-047): any DB write newer than the
+		//    index file marks it stale — the count probe is blind to
+		//    same-count re-embeds and to empty-index-then-populate
+		//    (sequential processes are NOT covered by markStale or the
+		//    workspace lock). False positives (a checkpoint or an
+		//    unrelated-table write) fall back to memory — the safe
+		//    direction. Missing db files (custom layouts, tests) skip
+		//    the check; the count probe still applies.
+		if idxInfo, statErr := os.Stat(path); statErr == nil {
+			for _, dbFile := range []string{"wiki.db", "wiki.db-wal"} {
+				fi, err := os.Stat(filepath.Join(s.indexDir, dbFile))
+				if err != nil {
+					continue
+				}
+				if fi.ModTime().After(idxInfo.ModTime()) {
+					_ = unmap()
+					mt.stale = true
+					s.warnStaleOnce(chunk)
+					return nil
+				}
+			}
+		}
 		mt.idx, mt.unmap = idx, unmap
 		if !mmapIsReal {
 			log.Warn("vectors.backend=mmap: real mmap unavailable on this platform — " +
@@ -88,6 +113,7 @@ func (s *Store) mmapFor(chunk bool) *parsedIndex {
 	if mt.idx == nil {
 		return nil
 	}
+	s.mmServed++
 	return mt.idx
 }
 

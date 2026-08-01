@@ -69,7 +69,7 @@ func runReindex(cmd *cobra.Command, args []string) error {
 	defer db.Close()
 
 	chunkStore := memory.NewChunkStore(db)
-	vecStore := vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled()))
+	vecStore := vectors.NewStore(db, vectors.WithANN(cfg.Search.ANNEnabled()), vectors.WithVectorBackend(cfg.VectorBackend()), vectors.WithIndexDir(filepath.Join(dir, ".sage")))
 
 	embedder, err := reindexEmbedder(embed.NewFromConfig(cfg), dropVectors)
 	if err != nil {

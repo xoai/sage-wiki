@@ -149,6 +149,13 @@ func (m *MultiServer) routeWorkspace(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusNotFound, "not_found", "no such workspace")
 			return
 		}
+		if errors.Is(err, engine.ErrLocked) {
+			// A slow first open lost the retry budget (F-056): transient
+			// contention, not a server fault — 503 + Retry-After.
+			w.Header().Set("Retry-After", "1")
+			writeErr(w, http.StatusServiceUnavailable, "busy", "workspace is contended — retry shortly")
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
