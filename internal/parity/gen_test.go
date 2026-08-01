@@ -1,9 +1,9 @@
 package parity
 
 import (
+	"encoding/json"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"

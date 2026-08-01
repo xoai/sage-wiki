@@ -1,8 +1,8 @@
 package parity
 
 import (
-	"fmt"
 	"encoding/json"
+	"fmt"
 	"hash/fnv"
 	"net/http"
 	"net/http/httptest"

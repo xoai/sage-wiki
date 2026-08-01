@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"strings"
 	"time"
 
@@ -43,6 +44,7 @@ type Server struct {
 	mux       *http.ServeMux
 	mcpStream *mcpserver.StreamableHTTPServer
 	ws        *engine.Workspace // held for the workspace lock (§2.0)
+	srvMu     sync.Mutex        // guards httpSrv (Serve writes, Shutdown reads)
 	httpSrv   *http.Server
 }
 
@@ -77,6 +79,7 @@ func (s *Server) SetWorkspace(w *engine.Workspace) { s.ws = w }
 // Serve binds addr and blocks until ctx is cancelled (SIGTERM path),
 // then drains per spec §2.7.
 func (s *Server) Serve(ctx context.Context, addr string) error {
+	s.srvMu.Lock()
 	s.httpSrv = &http.Server{
 		Addr:              addr,
 		Handler:           s.Handler(),
@@ -84,6 +87,7 @@ func (s *Server) Serve(ctx context.Context, addr string) error {
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	s.srvMu.Unlock()
 	errCh := make(chan error, 1)
 	go func() {
 		if err := s.httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -108,8 +112,11 @@ func (s *Server) Shutdown() error {
 	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.DrainTimeout)
 	defer cancel()
 	var firstErr error
-	if s.httpSrv != nil {
-		if err := s.httpSrv.Shutdown(ctx); err != nil && firstErr == nil {
+	s.srvMu.Lock()
+	httpSrv := s.httpSrv
+	s.srvMu.Unlock()
+	if httpSrv != nil {
+		if err := httpSrv.Shutdown(ctx); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

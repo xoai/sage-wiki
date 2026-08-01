@@ -2,9 +2,9 @@ package serve
 
 import (
 	"context"
-	"encoding/json"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"

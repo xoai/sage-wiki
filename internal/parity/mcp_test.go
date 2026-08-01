@@ -1,8 +1,8 @@
 package parity
 
 import (
-	"net/http/httptest"
 	"context"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/client"

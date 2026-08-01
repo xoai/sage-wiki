@@ -4,6 +4,22 @@
 
 ### Added
 
+- **Serve mode (SPEC-02).** `serve --addr` (or bare `serve`) runs the
+  engine as a persistent process: REST surface (healthz/readyz, capture,
+  search, async compile jobs with a persistent `.sage/jobs.jsonl`
+  ledger, graph query with `as_of`, docs, tar export, metrics), all 19
+  MCP tools over streamable HTTP at `/mcp`, token-file bearer auth with
+  non-loopback refusal, a rate-limit middleware hook with a token-bucket
+  example, and graceful shutdown with `--drain-timeout`. The HTTP mode
+  takes the workspace lock (CLI mutations on a served workspace fail
+  fast — the single-writer invariant); `serve --transport stdio|sse` and
+  `--ui` keep their pre-existing lock-free behavior. **Behavior note:**
+  bare `serve` previously started stdio MCP — pass `--transport stdio`
+  for the old behavior.
+
+
+### Added
+
 - **Public engine API (SPEC-01).** `pkg/engine` is the supported embedding
   surface: `Open`/`Init` → `*Workspace` with `Capture`, `Compile`
   (per-run tier/model/MaxDocs/MaxCost overrides), `Search`, `Graph`
