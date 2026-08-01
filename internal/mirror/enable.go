@@ -36,12 +36,6 @@ var ErrAlreadyEnabled = errors.New("mirror: already enabled (mirror-state.json e
 // hydrate Task 19).
 type mirrorOps struct{ m *Mirror }
 
-// Stubs for ops methods wired by later tasks (hydrate Task 19). Loud,
-// never silent. (Ship/Snapshot are real in shipper.go since Task 12.)
-func (o *mirrorOps) Hydrate(ctx context.Context, dst string) error {
-	return &NotReadyError{Op: "hydrate"}
-}
-
 func init() {
 	// Wire the facade to the real ops in Open (kept here so the wiring lives
 	// next to the implementation).
