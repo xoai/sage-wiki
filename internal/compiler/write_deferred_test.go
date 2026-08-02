@@ -1,0 +1,237 @@
+package compiler
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/xoai/sage-wiki/internal/wiki"
+)
+
+// deferredStub is a deterministic provider whose write-pass responses carry
+// per-concept delays, so goroutine COMPLETION order can be made to differ
+// from input order. SPEC-04 D3: apply order must follow input order anyway.
+type deferredStub struct {
+	writeDelays map[string]time.Duration // substring of the concept name in the write prompt → delay
+	requests    *syncCounter
+}
+
+type syncCounter struct {
+	mu    chan struct{}
+	count int
+}
+
+func (c *syncCounter) inc() { c.mu <- struct{}{}; c.count++; <-c.mu }
+func (c *syncCounter) get() int {
+	c.mu <- struct{}{}
+	defer func() { <-c.mu }()
+	return c.count
+}
+
+func (s *deferredStub) handler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+
+		if body["input"] != nil {
+			input, _ := body["input"].(string)
+			// Strongly distinct vectors per text (dominant dimension rotates
+			// with FNV): near-identical embeddings would make dedup merge
+			// distinct concepts (cosine ≥ 0.85).
+			h := fnv.New32a()
+			h.Write([]byte(input))
+			vec := []float64{0.05, 0.05, 0.05, 0.05}
+			vec[h.Sum32()%4] = 0.95
+			json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{"embedding": vec, "index": 0}},
+			})
+			return
+		}
+		s.requests.inc()
+
+		messages, _ := body["messages"].([]any)
+		var allText string
+		for _, m := range messages {
+			if mm, ok := m.(map[string]any); ok {
+				if c, _ := mm["content"].(string); ok {
+					allText += c
+				}
+			}
+		}
+
+		isExtract := strings.Contains(allText, "concept extraction system")
+		isWrite := strings.Contains(allText, "wiki author writing a comprehensive article")
+
+		var content string
+		switch {
+		case isExtract:
+			content = `[
+			  {"name": "concept-aaa", "aliases": [], "sources": ["raw/doc1.md"], "type": "concept"},
+			  {"name": "concept-bbb", "aliases": [], "sources": ["raw/doc2.md"], "type": "concept"},
+			  {"name": "concept-ccc", "aliases": [], "sources": ["raw/doc3.md"], "type": "concept"}
+			]`
+		case isWrite:
+			for name, d := range s.writeDelays {
+				if strings.Contains(allText, name) {
+					time.Sleep(d)
+				}
+			}
+			name := "concept-aaa"
+			for _, n := range []string{"concept-aaa", "concept-bbb", "concept-ccc"} {
+				if strings.Contains(allText, n) {
+					name = n
+				}
+			}
+			content = "# " + name + "\n\nDeferred-application test article body with enough content to pass validation checks.\n\n## See also\n\n[[concept-aaa]]"
+		default:
+			content = "## Key claims\n\nDeferred application test body with sufficient length to pass the summary quality gate.\n\n## Concepts\n\nconcept-aaa: A test concept."
+		}
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": content}}},
+			"model":   "gpt-4o-mini",
+			"usage":   map[string]int{"total_tokens": 60},
+		})
+	}
+}
+
+func compileDeferredCorpus(t *testing.T, serverURL string, ctx context.Context) string {
+	t.Helper()
+	dir := t.TempDir()
+	wiki.InitGreenfield(dir, "defer", "gpt-4o-mini")
+	cfg := fmt.Sprintf(`
+version: 1
+project: defer
+sources:
+  - path: raw
+    type: auto
+    watch: false
+output: wiki
+api:
+  provider: openai
+  api_key: sk-test
+  base_url: %s
+models:
+  summarize: gpt-4o-mini
+compiler:
+  max_parallel: 4
+  auto_commit: false
+  summary_max_tokens: 500
+  default_tier: 3
+`, serverURL)
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfg), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for i, name := range []string{"doc1.md", "doc2.md", "doc3.md"} {
+		body := fmt.Sprintf("# Deferred Doc %d\n\nDeferred application corpus content %d.", i+1, i+1)
+		if err := os.WriteFile(filepath.Join(dir, "raw", name), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	opts := CompileOpts{}
+	if ctx != nil {
+		opts.Ctx = ctx
+	}
+	Compile(dir, opts) // error inspected by callers via workspace state
+	return dir
+}
+
+func entityRowidOrder(t *testing.T, dir string) []string {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := db.Query("SELECT id FROM entities WHERE type = 'concept' ORDER BY rowid")
+	if err != nil {
+		t.Fatalf("entities query: %v", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		rows.Scan(&id)
+		out = append(out, id)
+	}
+	return out
+}
+
+// TestDeferredWrite_AppliesInInputOrder pins SPEC-04 D3: even when goroutine
+// completion order differs across runs, store mutations land in input order.
+func TestDeferredWrite_AppliesInInputOrder(t *testing.T) {
+	want := []string{"concept-aaa", "concept-bbb", "concept-ccc"}
+
+	// Run A: bbb responds SLOWLY (completes last despite being second).
+	stubA := &deferredStub{writeDelays: map[string]time.Duration{"concept-bbb": 200 * time.Millisecond}, requests: &syncCounter{mu: make(chan struct{}, 1)}}
+	srvA := httptest.NewServer(stubA.handler())
+	dirA := compileDeferredCorpus(t, srvA.URL, nil)
+	srvA.Close()
+
+	// Run B: aaa responds SLOWLY (completes last despite being first).
+	stubB := &deferredStub{writeDelays: map[string]time.Duration{"concept-aaa": 200 * time.Millisecond}, requests: &syncCounter{mu: make(chan struct{}, 1)}}
+	srvB := httptest.NewServer(stubB.handler())
+	dirB := compileDeferredCorpus(t, srvB.URL, nil)
+	srvB.Close()
+
+	gotA := entityRowidOrder(t, dirA)
+	gotB := entityRowidOrder(t, dirB)
+	if strings.Join(gotA, ",") != strings.Join(want, ",") {
+		t.Errorf("run A entity rowid order = %v, want %v (input order)", gotA, want)
+	}
+	if strings.Join(gotB, ",") != strings.Join(want, ",") {
+		t.Errorf("run B entity rowid order = %v, want %v (input order)", gotB, want)
+	}
+}
+
+// TestDeferredWrite_CancelDuringApply pins the P1-1 regression cell (spec
+// test 6): a cancel observed mid-apply stops the apply; the run is
+// incomplete, so pass flags are never marked — the next compile reprocesses.
+func TestDeferredWrite_CancelDuringApply(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	writeApplyHookForTest = func(idx int) {
+		if idx == 1 {
+			cancel() // item 0 applied; cancel lands before item 1
+		}
+	}
+	defer func() { writeApplyHookForTest = nil }()
+
+	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}}
+	srv := httptest.NewServer(stub.handler())
+	dir := compileDeferredCorpus(t, srv.URL, ctx)
+	srv.Close()
+
+	if _, err := os.Stat(filepath.Join(dir, "wiki", "concepts", "concept-aaa.md")); err != nil {
+		t.Errorf("concept-aaa article missing after partial apply: %v", err)
+	}
+	for _, name := range []string{"concept-bbb", "concept-ccc"} {
+		if _, err := os.Stat(filepath.Join(dir, "wiki", "concepts", name+".md")); !os.IsNotExist(err) {
+			t.Errorf("%s article present after cancel-before-its-apply (want absent)", name)
+		}
+	}
+
+	// P1-1: an incomplete run marks nothing — pass_written stays 0 for all.
+	db, err := sql.Open("sqlite", filepath.Join(dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var written int
+	if err := db.QueryRow("SELECT COUNT(*) FROM compile_items WHERE pass_written = 1").Scan(&written); err != nil {
+		t.Fatalf("count written: %v", err)
+	}
+	if written != 0 {
+		t.Errorf("pass_written=1 rows = %d, want 0 (incomplete run marks nothing)", written)
+	}
+}

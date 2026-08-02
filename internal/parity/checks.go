@@ -303,7 +303,10 @@ type AsOfGolden struct {
 	PostRelations []engine.Relation `json:"post_relations"`
 }
 
-// CaptureAsOf snapshots the graph AsOf view at t.
+// CaptureAsOf snapshots the graph AsOf view at t. Entities and relations
+// are sorted (SPEC-04 D1, same key as CaptureGraphJSONL): the AsOf SQL view
+// has no ORDER BY, so its list order is insertion order — an accident of
+// scheduling, not semantic content. The semantic contract is the SET.
 func CaptureAsOf(w *engine.Workspace, t time.Time) (*AsOfGolden, error) {
 	ents, err := w.Graph().Entities(context.Background(), engine.GraphFilter{})
 	if err != nil {
@@ -318,6 +321,7 @@ func CaptureAsOf(w *engine.Workspace, t time.Time) (*AsOfGolden, error) {
 	if err != nil {
 		return nil, err
 	}
+	sortAsOfGolden(ents, rels, postRels)
 	return &AsOfGolden{
 		GoldenFormatVersion: 1,
 		AsOf:                t.Format(time.RFC3339),
@@ -326,6 +330,23 @@ func CaptureAsOf(w *engine.Workspace, t time.Time) (*AsOfGolden, error) {
 		PostAsOf:            postT.Format(time.RFC3339),
 		PostRelations:       postRels,
 	}, nil
+}
+
+// sortAsOfGolden sorts entities by ID and relations by
+// (SourceID, Relation, TargetID) in place.
+func sortAsOfGolden(ents []engine.Entity, relsLists ...[]engine.Relation) {
+	sort.Slice(ents, func(i, j int) bool { return ents[i].ID < ents[j].ID })
+	for _, rels := range relsLists {
+		sort.Slice(rels, func(i, j int) bool {
+			if rels[i].SourceID != rels[j].SourceID {
+				return rels[i].SourceID < rels[j].SourceID
+			}
+			if rels[i].Relation != rels[j].Relation {
+				return rels[i].Relation < rels[j].Relation
+			}
+			return rels[i].TargetID < rels[j].TargetID
+		})
+	}
 }
 
 // CheckAsOf compares the workspace's AsOf view against the golden.
@@ -338,6 +359,9 @@ func CheckAsOf(wsDir, goldenPath string) error {
 	if err := json.Unmarshal(raw, &golden); err != nil {
 		return fmt.Errorf("parse asof golden: %w", err)
 	}
+	// Goldens recorded before the harness sorted the AsOf view compare by
+	// SET: sort the recorded lists the same way CaptureAsOf does.
+	sortAsOfGolden(golden.Entities, golden.Relations, golden.PostRelations)
 	if golden.GoldenFormatVersion != 1 {
 		return fmt.Errorf("asof golden_format_version %d, want 1", golden.GoldenFormatVersion)
 	}
