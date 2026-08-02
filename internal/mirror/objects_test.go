@@ -164,3 +164,46 @@ func TestShipObjects_ResurrectKeepsSHA(t *testing.T) {
 		t.Fatalf("resurrect changed the identity: %+v vs %+v", got, ref)
 	}
 }
+
+// TestShipObjects_VectorResurrectKeepsSHA (F-019 vector half): resurrecting
+// an identical vector UN-tombstones it — no re-PUT, sha preserved.
+func TestShipObjects_VectorResurrectKeepsSHA(t *testing.T) {
+	f := newShipFixture(t)
+	defer f.dbClose()
+	writeWS(t, f.dir, ".sage/vectors.idx", "SWVI-1")
+	f.pass(t)
+	st := f.remoteState(t)
+	ref := st.Vectors["vectors.idx"]
+
+	deleteWS(t, f.dir, ".sage/vectors.idx")
+	f.pass(t)
+	writeWS(t, f.dir, ".sage/vectors.idx", "SWVI-1")
+	vecPutsBefore := 0
+	for _, k := range f.fake.putLog {
+		if strings.HasPrefix(k, "ws/vectors/") {
+			vecPutsBefore++
+		}
+	}
+	res := f.pass(t)
+
+	if res.ObjectsResurrected != 1 {
+		t.Fatalf("ObjectsResurrected = %d, want 1", res.ObjectsResurrected)
+	}
+	vecPutsAfter := 0
+	for _, k := range f.fake.putLog {
+		if strings.HasPrefix(k, "ws/vectors/") {
+			vecPutsAfter++
+		}
+	}
+	if vecPutsAfter != vecPutsBefore {
+		t.Fatal("vector resurrect re-PUT (would change shipped sha under encryption)")
+	}
+	st2 := f.remoteState(t)
+	got := st2.Vectors["vectors.idx"]
+	if got.Deleted {
+		t.Fatal("resurrected vector still tombstoned")
+	}
+	if got.Key != ref.Key || got.SHA256 != ref.SHA256 {
+		t.Fatalf("vector resurrect changed identity: %+v vs %+v", got, ref)
+	}
+}

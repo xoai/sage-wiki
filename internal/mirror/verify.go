@@ -178,7 +178,10 @@ func (o *mirrorOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
 		if metaRefs[i].gen != metaRefs[j].gen {
 			return metaRefs[i].gen < metaRefs[j].gen
 		}
-		return metaRefs[i].key < metaRefs[j].key
+		if metaRefs[i].key != metaRefs[j].key {
+			return metaRefs[i].key < metaRefs[j].key
+		}
+		return metaRefs[i].path < metaRefs[j].path
 	})
 	for _, ref := range metaRefs {
 		key := ref.key

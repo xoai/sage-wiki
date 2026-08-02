@@ -71,6 +71,16 @@ func (m *Mirror) shipObjects(ctx context.Context, st *State, changes []Change, r
 func (m *Mirror) syncVector(ctx context.Context, st *State, prefix string, ch Change, res *shipResult) error {
 	switch ch.Kind {
 	case ChangeUpsert:
+		// Resurrect-with-identical-content for vectors (F-019's vector half):
+		// un-tombstone instead of re-PUT — a fresh PUT under encryption
+		// writes new-nonce ciphertext (new shipped sha) and invalidates
+		// every historical sealed map naming the old sha.
+		if ref, ok := st.Vectors[ch.Path]; ok && ref.Deleted && committedContentSHA(ref) == ch.SHA256 {
+			ref.Deleted = false
+			st.Vectors[ch.Path] = ref
+			res.ObjectsResurrected++
+			return nil
+		}
 		b, err := os.ReadFile(filepath.Join(m.dir, ".sage", ch.Path))
 		if err != nil {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("ship: %s vanished mid-pass: %v", ch.Path, err))
