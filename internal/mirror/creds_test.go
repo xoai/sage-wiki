@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
 )
 
 func TestResolveCredentials_FromEnv(t *testing.T) {

@@ -93,6 +93,10 @@ func TestShip_SealsNewWALFrames(t *testing.T) {
 		t.Fatalf("SealedSegments = %d, want 1", res.SealedSegments)
 	}
 	st := f.remoteState(t)
+	// Writer witness (N1): the segment commit carries retain_generations.
+	if st.RetainGenerations != 2 {
+		t.Fatalf("segment commit RetainGenerations = %d, want 2", st.RetainGenerations)
+	}
 	if len(st.DB.WAL) != 1 {
 		t.Fatalf("remote wal list = %d", len(st.DB.WAL))
 	}
@@ -161,6 +165,10 @@ func TestShip_FoldWithLoss_ForcesRotation(t *testing.T) {
 	st := f.remoteState(t)
 	if st.Generation != 2 {
 		t.Fatalf("generation = %d, want 2", st.Generation)
+	}
+	// Writer witness (N1): the rotation commit carries retain_generations.
+	if st.RetainGenerations != 2 {
+		t.Fatalf("rotation commit RetainGenerations = %d, want 2", st.RetainGenerations)
 	}
 	if _, ok := f.fake.get(GenerationMetaKey("ws/", 1)); !ok {
 		t.Fatal("gen-1 meta.json not written at rotation")
@@ -345,6 +353,19 @@ func TestQuiesce_WithinBudget(t *testing.T) {
 	}
 	if loaded.LastDBSHA256 != hash {
 		t.Fatal("Quiesce did not refresh the hash reference")
+	}
+}
+
+// TestHashFileCtx_CancelledCtx pins the CALL PATH: hashFileCtx must route
+// through ctxReader (a plain io.Copy replacement would pass the trickle
+// test above but fail this one).
+func TestHashFileCtx_CancelledCtx(t *testing.T) {
+	f := newShipFixture(t)
+	defer f.dbClose()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := hashFileCtx(ctx, f.m.dbPath()); err == nil {
+		t.Fatal("hashFileCtx with cancelled ctx must error")
 	}
 }
 

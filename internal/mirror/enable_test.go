@@ -324,3 +324,23 @@ func TestBootstrap_ForeignManifestRefused(t *testing.T) {
 		t.Fatal("foreign manifest must refuse bootstrap")
 	}
 }
+
+// TestEnable_WritesConfiguredRetain (N4): the state carries the CONFIGURED
+// value, not a constant (a hardcoded-2 writer fails this).
+func TestEnable_WritesConfiguredRetain(t *testing.T) {
+	fake := newFakeS3()
+	_, cfg := setupFakeMirror(t, fake)
+	cfg.RetainGenerations = 5
+	dir := makeWorkspaceWithDB(t)
+	m, err := Open(dir, cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Enable(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	st := remoteStateFromFake(t, fake)
+	if st.RetainGenerations != 5 {
+		t.Fatalf("RetainGenerations = %d, want configured 5", st.RetainGenerations)
+	}
+}
