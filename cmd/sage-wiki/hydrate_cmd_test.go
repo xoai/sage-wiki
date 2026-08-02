@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"os"
@@ -149,4 +150,123 @@ func containsStr(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// AC-2b (CLI overshoot print): the live --at overshoot names the object
+// skew ("objects are at newest (live map)") in CLI output.
+func TestHydrateCmd_PrintsDualSkewOvershoot(t *testing.T) {
+	defer resetHydrateFlags()
+	fake, endpoint := hydrateCmdFixture(t)
+	// One more write sealed into the live generation (db stays OPEN so the
+	// WAL persists for sealing), then --at BEFORE its seal time → segment
+	// overshoot on the live path.
+	db, err := sql.Open("sqlite", filepath.Join(projectDir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO t (v) VALUES ('row-2')"); err != nil {
+		t.Fatal(err)
+	}
+	maybeShipAfterCommand()
+	db.Close()
+	st := readMirrorState(t, fake)
+	if len(st.DB.WAL) == 0 {
+		t.Fatal("setup: no sealed segment in live wal")
+	}
+	// Backdate the state's created_at so --at lands INSIDE the live window
+	// (second-precision created_at ≈ sealed_at otherwise predates gen 1).
+	var raw map[string]any
+	if err := json.Unmarshal(fake.objects["ws/mirror-state.json"], &raw); err != nil {
+		t.Fatal(err)
+	}
+	raw["db"].(map[string]any)["created_at"] = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	backdated, _ := json.Marshal(raw)
+	fake.objects["ws/mirror-state.json"] = backdated
+	dst := filepath.Join(t.TempDir(), "restored")
+	hydrateEndpoint = endpoint
+	hydrateAt = st.DB.WAL[len(st.DB.WAL)-1].SealedAt.Add(-time.Millisecond).UTC().Format(time.RFC3339)
+	var buf bytes.Buffer
+	hydrateCmd.SetOut(&buf)
+	defer hydrateCmd.SetOut(nil)
+	if err := hydrateCmd.RunE(hydrateCmd, []string{"s3://bk/ws", dst}); err != nil {
+		t.Fatalf("hydrate --at: %v", err)
+	}
+	out := buf.String()
+	if !bytes.Contains([]byte(out), []byte("segment(s)")) {
+		t.Fatalf("CLI output must name excluded segments: %q", out)
+	}
+	if !bytes.Contains([]byte(out), []byte("objects are at newest (live map)")) {
+		t.Fatalf("CLI output must name the live object skew: %q", out)
+	}
+}
+
+// AC-3b (CLI fallback-warning print): an old mirror (meta without maps)
+// prints the canonical fallback note in CLI output.
+func TestHydrateCmd_PrintsFallbackWarning(t *testing.T) {
+	defer resetHydrateFlags()
+	fake, endpoint := hydrateCmdFixture(t)
+	// Rotate once (gen 1's meta exists with maps), then strip the maps —
+	// a pre-feature mirror. Floor=1 keeps gen 1.
+	writeMirrorDbRow(t, projectDir, "row-2")
+	ageLocalRotation(t, projectDir, -2*time.Hour)
+	maybeShipAfterCommand()
+	mb, ok := fake.objects["ws/db/generation-1/meta.json"]
+	if !ok {
+		t.Fatal("setup: gen-1 meta missing")
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(mb, &meta); err != nil {
+		t.Fatal(err)
+	}
+	delete(meta, "objects")
+	delete(meta, "vectors")
+	stripped, _ := json.Marshal(meta)
+	fake.objects["ws/db/generation-1/meta.json"] = stripped
+
+	dst := filepath.Join(t.TempDir(), "restored")
+	hydrateEndpoint = endpoint
+	hydrateGeneration = 1
+	var buf bytes.Buffer
+	hydrateCmd.SetOut(&buf)
+	defer hydrateCmd.SetOut(nil)
+	if err := hydrateCmd.RunE(hydrateCmd, []string{"s3://bk/ws", dst}); err != nil {
+		t.Fatalf("hydrate --generation 1: %v", err)
+	}
+	out := buf.String()
+	if !bytes.Contains([]byte(out), []byte("note: generation has no object map; docs restored at newest")) {
+		t.Fatalf("CLI output must carry the canonical fallback note: %q", out)
+	}
+}
+
+func writeMirrorDbRow(t *testing.T, dir, v string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO t (v) VALUES (?)", v); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+}
+
+type mirrorStateView2 struct {
+	DB struct {
+		WAL []struct {
+			SealedAt time.Time `json:"sealed_at"`
+		} `json:"wal"`
+	} `json:"db"`
+}
+
+func readMirrorState(t *testing.T, fake *cmdFakeS3) *mirrorStateView2 {
+	t.Helper()
+	b, ok := fake.objects["ws/mirror-state.json"]
+	if !ok {
+		t.Fatal("no remote state")
+	}
+	var st mirrorStateView2
+	if err := json.Unmarshal(b, &st); err != nil {
+		t.Fatal(err)
+	}
+	return &st
 }

@@ -9,11 +9,23 @@ import (
 	"github.com/xoai/sage-wiki/internal/mirror/s3"
 )
 
+// metaRef records one invariant-(c) expectation: an object a retained
+// generation's sealed map claims must exist.
+type metaRef struct {
+	gen    int
+	path   string
+	key    string
+	sha256 string
+}
+
 // VerifyMode checks the consistency invariant (spec.md §Data model):
 // (a) every object referenced by mirror-state exists with matching sha256,
-// (b) every retained rotated generation has a valid meta.json whose objects
-// likewise exist and match. Full re-download + re-hash by default; fast is
-// HEAD-only existence. Orphans are advisory, never violations.
+// (b) every retained rotated generation has a valid meta.json (snapshot +
+// WAL), and (c) every non-tombstoned entry in those generations' sealed
+// object maps exists with matching sha256 — a retained generation is FULLY
+// restorable, not just db-restorable. Full re-download + re-hash by
+// default; fast is HEAD-only existence. Orphans are advisory, never
+// violations.
 func (o *mirrorOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
 	m := o.m
 	prefix := NormalizePrefix(m.cfg.Prefix)
@@ -43,6 +55,11 @@ func (o *mirrorOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
 	rep.Generation = st.Generation
 
 	referenced := map[string]string{} // key → expected sha ("" = skip hash)
+	// metaRefs are invariant-(c) references from retained generations' sealed
+	// object maps — a SLICE: every (gen, path, key, sha) tuple is checked
+	// (two generations' divergent shas for one key both get verified, never
+	// collapsed by map iteration — F-019b).
+	var metaRefs []metaRef
 
 	collect := func(snapshot, snapSHA string, wal []WALSegmentRef, objects, vectors map[string]ObjectRef) {
 		referenced[snapshot] = snapSHA
@@ -106,8 +123,24 @@ func (o *mirrorOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
 		}
 		if err := meta.Validate(); err != nil {
 			fail("generation %d: meta.json invalid: %v", gen, err)
+			continue // an invalid meta contributes no references (no cascade of secondary violations)
 		}
 		collect(meta.Snapshot, meta.SnapshotSHA256, meta.WAL, nil, nil)
+		// Invariant (c): the generation's sealed object maps are checked by
+		// the same sha rule as live objects (tombstones skipped — a retained
+		// generation must be FULLY restorable, not just db-restorable).
+		for path, ref := range meta.Objects {
+			if ref.Deleted {
+				continue
+			}
+			metaRefs = append(metaRefs, metaRef{gen: gen, path: path, key: ref.Key, sha256: ref.SHA256})
+		}
+		for name, ref := range meta.Vectors {
+			if ref.Deleted {
+				continue
+			}
+			metaRefs = append(metaRefs, metaRef{gen: gen, path: name, key: ref.Key, sha256: ref.SHA256})
+		}
 	}
 
 	// Existence (and, unless fast, full re-hash) for every referenced object.
@@ -139,7 +172,50 @@ func (o *mirrorOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
 		}
 	}
 
-	// Orphan advisory: anything under our prefixes not referenced.
+	// Invariant (c): meta-map references — existence + (unless fast) full
+	// re-hash, violations naming generation + path. Sorted by (gen, key)
+	// for deterministic violation order.
+	sort.Slice(metaRefs, func(i, j int) bool {
+		if metaRefs[i].gen != metaRefs[j].gen {
+			return metaRefs[i].gen < metaRefs[j].gen
+		}
+		if metaRefs[i].key != metaRefs[j].key {
+			return metaRefs[i].key < metaRefs[j].key
+		}
+		return metaRefs[i].path < metaRefs[j].path
+	})
+	for _, ref := range metaRefs {
+		key := ref.key
+		exists, err := m.client.HeadObject(ctx, m.cfg.Bucket, key)
+		if err != nil {
+			return rep, fmt.Errorf("mirror verify: head %s: %w", key, err)
+		}
+		if !exists {
+			fail("generation %d: meta-map object %s (%s) missing", ref.gen, ref.path, key)
+			continue
+		}
+		rep.Checked++
+		if fast || ref.sha256 == "" {
+			continue
+		}
+		body, err := m.client.GetObject(ctx, m.cfg.Bucket, key)
+		if err != nil {
+			return rep, fmt.Errorf("mirror verify: download %s: %w", key, err)
+		}
+		if got := sha256HexBytes(body); got != ref.sha256 {
+			fail("generation %d: meta-map object %s (%s): sha256 mismatch: map says %s, object hashes to %s", ref.gen, ref.path, key, ref.sha256, got)
+		}
+	}
+
+	// metaRef keys referenced for the orphan union.
+	metaRefKeys := map[string]bool{}
+	for _, ref := range metaRefs {
+		metaRefKeys[ref.key] = true
+	}
+
+	// Orphan advisory: anything under our prefixes not referenced by live
+	// state OR any retained generation's sealed map (F-013: a meta-only
+	// object is a FORMAT MEMBER, never an orphan).
 	for _, listPrefix := range []string{prefix + "objects/", prefix + "vectors/", prefix + "db/"} {
 		orphans, err := m.client.ListObjects(ctx, m.cfg.Bucket, listPrefix)
 		if err != nil {
@@ -147,6 +223,16 @@ func (o *mirrorOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
 		}
 		for _, k := range orphans {
 			if _, ok := referenced[k]; ok {
+				continue
+			}
+			if metaRefKeys[k] {
+				continue // referenced by a retained generation's sealed map
+			}
+			if gen, ok := parseGenerationDirKey(k); ok && gen <= st.Generation {
+				// Chain members/debris of existing generations (benign:
+				// crash-window residue self-heals). FUTURE-gen keys (gen >
+				// live — abandoned mid-rotation garbage nothing references)
+				// still flag (F-023).
 				continue
 			}
 			if _, err := ParseGenerationMetaKey(k); err == nil {

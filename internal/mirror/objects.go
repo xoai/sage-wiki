@@ -26,6 +26,32 @@ func (m *Mirror) shipObjects(ctx context.Context, st *State, changes []Change, r
 		}
 		switch ch.Kind {
 		case ChangeUpsert:
+			// Resurrect-with-identical-content: un-tombstone the existing ref
+			// (keep sha + key, NO re-PUT) — a fresh PUT under encryption
+			// writes new-nonce ciphertext (new shipped sha) under the same
+			// content key, silently invalidating every historical sealed map
+			// that names the old sha (F-019).
+			if ref, ok := st.Objects[ch.Path]; ok && ref.Deleted && committedContentSHA(ref) == ch.SHA256 {
+				// Re-read before un-tombstoning (N-3): the diff token is
+				// from BEFORE this pass's network time — the file may have
+				// changed underfoot (same guard as the normal upsert path).
+				b, rerr := os.ReadFile(filepath.Join(m.dir, filepath.FromSlash(ch.Path)))
+				if rerr != nil {
+					// Vanished between diff and guard — DEFER like the sibling
+					// upsert path (un-tombstoning a gone file restores a
+					// just-deleted doc at next hydrate).
+					res.Warnings = append(res.Warnings, fmt.Sprintf("ship: %s vanished mid-pass: %v", ch.Path, rerr))
+					continue
+				}
+				if sha256HexBytes(b) != ch.SHA256 {
+					res.Warnings = append(res.Warnings, fmt.Sprintf("ship: %s changed mid-pass, deferred", ch.Path))
+					continue
+				}
+				ref.Deleted = false
+				st.Objects[ch.Path] = ref
+				res.ObjectsResurrected++
+				continue
+			}
 			b, err := os.ReadFile(filepath.Join(m.dir, filepath.FromSlash(ch.Path)))
 			if err != nil {
 				// Vanished between diff and read — next pass's diff settles it.
@@ -60,9 +86,36 @@ func (m *Mirror) shipObjects(ctx context.Context, st *State, changes []Change, r
 func (m *Mirror) syncVector(ctx context.Context, st *State, prefix string, ch Change, res *shipResult) error {
 	switch ch.Kind {
 	case ChangeUpsert:
+		// Resurrect-with-identical-content for vectors (F-019's vector half):
+		// un-tombstone instead of re-PUT — a fresh PUT under encryption
+		// writes new-nonce ciphertext (new shipped sha) and invalidates
+		// every historical sealed map naming the old sha.
+		if ref, ok := st.Vectors[ch.Path]; ok && ref.Deleted && committedContentSHA(ref) == ch.SHA256 {
+			b, rerr := os.ReadFile(filepath.Join(m.dir, ".sage", ch.Path))
+			if rerr != nil {
+				res.Warnings = append(res.Warnings, fmt.Sprintf("ship: %s vanished mid-pass: %v", ch.Path, rerr))
+				return nil
+			}
+			if sha256HexBytes(b) != ch.SHA256 {
+				res.Warnings = append(res.Warnings, fmt.Sprintf("ship: %s changed mid-pass, deferred", ch.Path))
+				return nil
+			}
+			ref.Deleted = false
+			st.Vectors[ch.Path] = ref
+			res.ObjectsResurrected++
+			return nil
+		}
 		b, err := os.ReadFile(filepath.Join(m.dir, ".sage", ch.Path))
 		if err != nil {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("ship: %s vanished mid-pass: %v", ch.Path, err))
+			return nil
+		}
+		// Underfoot re-hash (F-021, CRITICAL): the docs upsert has this
+		// guard; without it a torn read commits {Key: <shaX>, SHA256: <shaY>}
+		// which FAILS validateObjectRef on every subsequent pass and
+		// permanently wedges ship + all hydrates (unencrypted default).
+		if got := sha256HexBytes(b); got != ch.SHA256 {
+			res.Warnings = append(res.Warnings, fmt.Sprintf("ship: %s changed mid-pass, deferred", ch.Path))
 			return nil
 		}
 		key := VectorObjectKey(prefix, ch.SHA256)

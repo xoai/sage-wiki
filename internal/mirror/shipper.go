@@ -20,13 +20,14 @@ import (
 // shipResult reports one ship pass (best-effort; callers warn on error,
 // never fail the invoking command).
 type shipResult struct {
-	SealedSegments    int
-	Rotated           bool
-	PendingRotation   bool
-	HashedDB          bool // the full db hash ran this pass (cost observability)
-	ObjectsShipped    int
-	ObjectsTombstoned int
-	Warnings          []string
+	SealedSegments     int
+	Rotated            bool
+	PendingRotation    bool
+	HashedDB           bool // the full db hash ran this pass (cost observability)
+	ObjectsShipped     int
+	ObjectsTombstoned  int
+	ObjectsResurrected int
+	Warnings           []string
 }
 
 // withOwnBudget returns a ctx with its own timeout that ALSO cancels when
@@ -302,7 +303,7 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 		if err := m.shipObjects(ctx, st, changes, &res); err != nil {
 			return res, err
 		}
-		objectsDirty = res.ObjectsShipped+res.ObjectsTombstoned > 0
+		objectsDirty = res.ObjectsShipped+res.ObjectsTombstoned+res.ObjectsResurrected > 0
 	}
 
 	// --- WAL adoption: unknown incarnation (post-bootstrap/rotation/fold)
@@ -454,11 +455,16 @@ func (m *Mirror) rotate(ctx context.Context, st *State) error {
 	// 2. meta.json PUT for the superseded generation (derived FROM the
 	// committed mirror-state's wal list — divergence-free by construction).
 	// SealedAt is DETERMINISTIC (F-091): a crash-recovery re-run re-derives
-	// identical bytes — the tail segment's sealed_at, else the state's last
-	// commit time.
+	// identical bytes. It is max(tail segment's sealed_at, state's last
+	// commit time) — docs-only commits advance UpdatedAt WITHOUT a segment,
+	// and the sealed object map is fresh through that commit (pass-4: the
+	// skew note's heuristic must match the map's actual freshness). In the
+	// WAL-only-tail window (last commits are segments) the note can
+	// OVER-report skew for T just before the last doc change — conservative
+	// by design, never a false negative.
 	now := m.now().UTC()
 	sealedAt := st.UpdatedAt
-	if n := len(st.DB.WAL); n > 0 {
+	if n := len(st.DB.WAL); n > 0 && st.DB.WAL[n-1].SealedAt.After(sealedAt) {
 		sealedAt = st.DB.WAL[n-1].SealedAt
 	}
 	meta := &GenerationMeta{
@@ -469,6 +475,8 @@ func (m *Mirror) rotate(ctx context.Context, st *State) error {
 		Snapshot:       st.DB.Snapshot,
 		SnapshotSHA256: st.DB.SnapshotSHA256,
 		WAL:            st.DB.WAL,
+		Objects:        st.Objects,
+		Vectors:        st.Vectors,
 	}
 	mb, err := MarshalMeta(meta)
 	if err != nil {
