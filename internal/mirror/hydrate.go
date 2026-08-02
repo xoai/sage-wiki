@@ -139,7 +139,15 @@ func hydrateWithClient(ctx context.Context, client *s3.Client, prefix, bucket, d
 	}
 	phases.generation = sel.generation
 	phases.at = atStr
-	if err := phases.checkSelection(sel.generation, atStr); err != nil {
+	phases.snapshot = sel.snapshot
+	phases.objectSource = "live"
+	if sel.fromMeta {
+		phases.objectSource = "meta"
+	} else if sel.fallbackNote != "" {
+		phases.objectSource = "fallback"
+	}
+	phases.updatedAt = sel.updatedAt
+	if err := phases.checkSelection(sel, atStr); err != nil {
 		return nil, err
 	}
 	if sel.fallbackNote != "" {
@@ -155,6 +163,9 @@ func hydrateWithClient(ctx context.Context, client *s3.Client, prefix, bucket, d
 		// Live gen selected by --at: the map is always "newest" — name it
 		// even with zero excluded segments (docs may have changed after T).
 		skewParts = append(skewParts, "objects are at newest (live map)")
+	}
+	if sel.vectorsFromMeta && sel.objectSkew {
+		skewParts = append(skewParts, fmt.Sprintf("vectors at generation %d's seal", sel.generation))
 	}
 	if len(skewParts) > 0 {
 		rep.Overshoot = strings.Join(skewParts, "; ")
@@ -304,19 +315,28 @@ func loadMirrorManifest(ctx context.Context, client *s3.Client, bucket, prefix s
 // hydrateProgress tracks --partial phase completion in
 // .sage/hydrate-state.json; resume skips completed phases.
 type hydrateProgress struct {
-	path       string
-	enabled    bool
-	generation int
-	at         string
-	Done       map[string]bool
+	path         string
+	enabled      bool
+	generation   int
+	at           string
+	snapshot     string
+	objectSource string
+	updatedAt    string
+	Done         map[string]bool
 }
 
 // progressFile is the on-disk shape (selection recorded — a resume with a
-// different restore point must not mix phases, F-107).
+// different restore point must not mix phases, F-107). Fingerprint fields
+// (F-022 MAJOR): snapshot key + object source pin the SELECTION, so a
+// rotation or live-map advance between runs is caught instead of silently
+// mixing restore points.
 type progressFile struct {
-	Generation int      `json:"generation"`
-	At         string   `json:"at,omitempty"`
-	Phases     []string `json:"phases"`
+	Generation   int      `json:"generation"`
+	At           string   `json:"at,omitempty"`
+	Snapshot     string   `json:"snapshot"`
+	ObjectSource string   `json:"object_source"` // live | meta | fallback
+	UpdatedAt    string   `json:"updated_at"`    // selected state's updated_at (live-map drift pin)
+	Phases       []string `json:"phases"`
 }
 
 func newHydrateProgress(dst string, opts HydrateOpts) *hydrateProgress {
@@ -329,7 +349,7 @@ func newHydrateProgress(dst string, opts HydrateOpts) *hydrateProgress {
 
 // checkSelection refuses a resume whose selection differs from the recorded
 // one (mixing restore points would silently mix phases).
-func (p *hydrateProgress) checkSelection(gen int, at string) error {
+func (p *hydrateProgress) checkSelection(sel *restorePoint, atStr string) error {
 	if !p.enabled || len(p.Done) == 0 {
 		return nil
 	}
@@ -341,9 +361,27 @@ func (p *hydrateProgress) checkSelection(gen int, at string) error {
 	if json.Unmarshal(b, &pf); err != nil {
 		return nil
 	}
-	if pf.Generation != gen || pf.At != at {
+	src := "live"
+	if sel.fromMeta {
+		src = "meta"
+	} else if sel.fallbackNote != "" {
+		src = "fallback"
+	}
+	if pf.Generation != sel.generation || pf.At != atStr {
 		return fmt.Errorf("hydrate: resume selection mismatch: in-progress restore is generation %d (at %q), requested generation %d (at %q) — use the same selection or a fresh dir",
-			pf.Generation, pf.At, gen, at)
+			pf.Generation, pf.At, sel.generation, atStr)
+	}
+	if pf.Snapshot != "" && pf.Snapshot != sel.snapshot {
+		return fmt.Errorf("hydrate: resume selection drift: in-progress snapshot %s, current %s — the mirror moved between runs; use a fresh dir or the same selection",
+			pf.Snapshot, sel.snapshot)
+	}
+	if pf.ObjectSource != "" && pf.ObjectSource != src {
+		return fmt.Errorf("hydrate: resume object-source drift: in-progress source %s, current %s — the mirror moved between runs; use a fresh dir or the same selection",
+			pf.ObjectSource, src)
+	}
+	if pf.ObjectSource == "live" && pf.UpdatedAt != "" && pf.UpdatedAt != sel.updatedAt {
+		return fmt.Errorf("hydrate: resume live-map drift: in-progress map %s, current %s — the mirror moved between runs; use a fresh dir or the same selection",
+			pf.UpdatedAt, sel.updatedAt)
 	}
 	return nil
 }
@@ -387,7 +425,7 @@ func (p *hydrateProgress) complete(phase string) error {
 		phases = append(phases, ph)
 	}
 	sort.Strings(phases)
-	pf := progressFile{Generation: p.generation, At: p.at, Phases: phases}
+	pf := progressFile{Generation: p.generation, At: p.at, Snapshot: p.snapshot, ObjectSource: p.objectSource, UpdatedAt: p.updatedAt, Phases: phases}
 	b, err := json.MarshalIndent(pf, "", "  ")
 	if err != nil {
 		return err
@@ -439,12 +477,14 @@ type restorePoint struct {
 	generation      int
 	snapshot        string
 	snapshotSHA     string
+	updatedAt       string // selection freshness (state updated_at / meta sealed_at) — resume drift pin (F-022)
 	wal             []WALSegmentRef
 	objects         map[string]ObjectRef
 	vectors         map[string]ObjectRef
 	overshoot       int
 	fromMeta        bool   // objects/vectors came from the selected generation's sealed meta map
 	objectsFromMeta bool   // the OBJECT class specifically came from the meta map (N-2: skew notes are per-class)
+	vectorsFromMeta bool   // the VECTOR class came from the meta map (F-024: vector skew is named too)
 	objectSkew      bool   // T predates the selected generation's seal (docs newer than T)
 	fallbackNote    string // set when the selected meta has no maps (old mirror)
 }
@@ -456,7 +496,7 @@ func selectRestorePoint(ctx context.Context, client *s3.Client, prefix, bucket s
 	// Explicit generation: live state for the live gen, meta.json otherwise.
 	if opts.Generation > 0 {
 		if opts.Generation == st.Generation {
-			return &restorePoint{generation: st.Generation, snapshot: st.DB.Snapshot, snapshotSHA: st.DB.SnapshotSHA256, wal: st.DB.WAL, objects: st.Objects, vectors: st.Vectors}, nil
+			return &restorePoint{generation: st.Generation, snapshot: st.DB.Snapshot, snapshotSHA: st.DB.SnapshotSHA256, wal: st.DB.WAL, objects: st.Objects, vectors: st.Vectors, updatedAt: st.UpdatedAt.UTC().Format(time.RFC3339)}, nil
 		}
 		if opts.Generation > st.Generation {
 			return nil, fmt.Errorf("hydrate: generation %d does not exist (newest is %d)", opts.Generation, st.Generation)
@@ -484,7 +524,7 @@ func selectRestorePoint(ctx context.Context, client *s3.Client, prefix, bucket s
 					overshoot++
 				}
 			}
-			return &restorePoint{generation: st.Generation, snapshot: st.DB.Snapshot, snapshotSHA: st.DB.SnapshotSHA256, wal: wal, objects: st.Objects, vectors: st.Vectors, overshoot: overshoot}, nil
+			return &restorePoint{generation: st.Generation, snapshot: st.DB.Snapshot, snapshotSHA: st.DB.SnapshotSHA256, wal: wal, objects: st.Objects, vectors: st.Vectors, overshoot: overshoot, updatedAt: st.UpdatedAt.UTC().Format(time.RFC3339)}, nil
 		}
 		// Rotated generations: newest meta with created_at ≤ TIME.
 		metas, err := listGenerationMetas(ctx, client, prefix, bucket, st.Generation)
@@ -509,7 +549,7 @@ func selectRestorePoint(ctx context.Context, client *s3.Client, prefix, bucket s
 				overshoot++
 			}
 		}
-		rp := &restorePoint{generation: best.Generation, snapshot: best.Snapshot, snapshotSHA: best.SnapshotSHA256, wal: wal, objects: st.Objects, vectors: st.Vectors, overshoot: overshoot}
+		rp := &restorePoint{generation: best.Generation, snapshot: best.Snapshot, snapshotSHA: best.SnapshotSHA256, wal: wal, objects: st.Objects, vectors: st.Vectors, overshoot: overshoot, updatedAt: best.SealedAt.UTC().Format(time.RFC3339)}
 		rp.applyMetaMaps(best, st)
 		if rp.fromMeta {
 			// Object skew is independent of segment count: the map is at the
@@ -522,7 +562,7 @@ func selectRestorePoint(ctx context.Context, client *s3.Client, prefix, bucket s
 	}
 
 	// Newest.
-	return &restorePoint{generation: st.Generation, snapshot: st.DB.Snapshot, snapshotSHA: st.DB.SnapshotSHA256, wal: st.DB.WAL, objects: st.Objects, vectors: st.Vectors}, nil
+	return &restorePoint{generation: st.Generation, snapshot: st.DB.Snapshot, snapshotSHA: st.DB.SnapshotSHA256, wal: st.DB.WAL, objects: st.Objects, vectors: st.Vectors, updatedAt: st.UpdatedAt.UTC().Format(time.RFC3339)}, nil
 }
 
 // applyMetaMaps resolves a selected generation's object/vector maps with
@@ -551,6 +591,7 @@ func (rp *restorePoint) applyMetaMaps(meta *GenerationMeta, st *State) {
 		rp.fromMeta = true
 	}
 	rp.objectsFromMeta = objs
+	rp.vectorsFromMeta = vecs
 }
 
 func oldestPoint(st *State, metas []*GenerationMeta) string {

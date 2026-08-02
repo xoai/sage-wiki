@@ -228,8 +228,12 @@ func (o *mirrorOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
 			if metaRefKeys[k] {
 				continue // referenced by a retained generation's sealed map
 			}
-			if _, ok := parseGenerationDirKey(k); ok {
-				continue // a (possibly invalid) generation dir's own objects — never orphans (N-7)
+			if gen, ok := parseGenerationDirKey(k); ok && gen <= st.Generation {
+				// Chain members/debris of existing generations (benign:
+				// crash-window residue self-heals). FUTURE-gen keys (gen >
+				// live — abandoned mid-rotation garbage nothing references)
+				// still flag (F-023).
+				continue
 			}
 			if _, err := ParseGenerationMetaKey(k); err == nil {
 				continue // meta.json is a format member, never an orphan

@@ -559,3 +559,34 @@ func TestVerify_MetaRefsDivergentShasDeterministicAttribution(t *testing.T) {
 		t.Fatalf("attribution must name gen 1 only for the meta-map mismatch: %s", v1)
 	}
 }
+
+// F-023 witness: an abandoned FUTURE-generation dir (crash mid-rotation)
+// still flags as orphan; existing-gen debris is skipped.
+func TestVerify_OrphanExclusionBoundary(t *testing.T) {
+	fake := newFakeS3()
+	st := verifyFixture(t, fake)
+	addRotatedGen(t, fake, 2)
+	// Future-gen debris (gen = live+1): abandoned mid-rotation snapshot.
+	fake.objects["ws/db/generation-4/snapshot.db.zst"] = []byte("abandoned")
+	// Existing-gen stray key (debris, benign).
+	fake.objects["ws/db/generation-1/wal/000099.zst"] = []byte("debris")
+	m := openVerifyMirror(t, fake, st)
+	rep, err := m.Verify(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	future := false
+	for _, a := range rep.Advisories {
+		if strings.Contains(a, "generation-4") {
+			future = true
+		}
+	}
+	if !future {
+		t.Fatalf("future-gen abandoned snapshot must flag as orphan: %v", rep.Advisories)
+	}
+	for _, a := range rep.Advisories {
+		if strings.Contains(a, "000099") {
+			t.Fatalf("existing-gen debris should not flag: %v", rep.Advisories)
+		}
+	}
+}

@@ -538,8 +538,9 @@ func TestHydrate_MetaTombstoneAndLaterDeleteBound(t *testing.T) {
 // meta: objects present, vectors nil → "no vector map" advisory).
 func TestHydrate_AtPathPerClassFallbackAdvisory(t *testing.T) {
 	h := newHydrateFixture(t)
+	h.src.m.cfg.RetainGenerations = 4 // keep older gens for this window test
 	gen2Created := h.src.remoteState(t).DB.CreatedAt
-	// Space the second rotation on the injected clock so --at has a window.
+	// Rotation 1 at T0+2s: gen 2 -> 3.
 	h.src.now = gen2Created.Add(2 * time.Second)
 	h.src.dbWrite(t, "row-gen2")
 	h.src.dbClose()
@@ -547,19 +548,37 @@ func TestHydrate_AtPathPerClassFallbackAdvisory(t *testing.T) {
 	if res := h.src.pass(t); !res.Rotated {
 		t.Fatal("setup: rotation did not fire")
 	}
-	// Mixed meta: objects present, vectors nil.
-	mb0, _ := h.fake.get(GenerationMetaKey("ws/", 2))
+	// Ship a vector in gen 3's lifetime at T0+3s (live vector becomes SWVI-2).
+	h.src.now = gen2Created.Add(3 * time.Second)
+	writeWS(t, h.src.dir, ".sage/vectors.idx", "SWVI-2")
+	if _, err := h.src.m.shipPass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Rotation 2 at T0+4s: gen 3 -> 4; meta gen-3 sealed at T0+3s.
+	h.src.now = gen2Created.Add(4 * time.Second)
+	h.src.dbWrite(t, "row-gen3")
+	h.src.dbClose()
+	ageLocalRotationFile(t, h.src.dir, -2*time.Hour)
+	if res := h.src.pass(t); !res.Rotated {
+		t.Fatal("setup: second rotation did not fire")
+	}
+	// Mixed meta AFTER the last rotation (prune can't undo it): gen 3 with
+	// objects present, vectors nil.
+	mb0, ok := h.fake.get(GenerationMetaKey("ws/", 3))
+	if !ok {
+		t.Fatal("setup: gen-3 meta missing")
+	}
 	meta0, err := UnmarshalMeta(mb0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	meta0.Vectors = nil
 	mb, _ := MarshalMeta(meta0)
-	h.fake.objects[GenerationMetaKey("ws/", 2)] = mb
+	h.fake.objects[GenerationMetaKey("ws/", 3)] = mb
 
-	gen3Created := h.src.remoteState(t).DB.CreatedAt
+	// T = T0+2.5s: inside gen 3 (created T0+2s), before its seal (T0+3s).
 	dst := filepath.Join(t.TempDir(), "restored")
-	rep, err := Hydrate(context.Background(), h.cfg, dst, HydrateOpts{At: gen3Created.Add(-time.Millisecond)})
+	rep, err := Hydrate(context.Background(), h.cfg, dst, HydrateOpts{At: gen2Created.Add(2500 * time.Millisecond)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -572,7 +591,7 @@ func TestHydrate_AtPathPerClassFallbackAdvisory(t *testing.T) {
 	if !found {
 		t.Fatalf("--at mixed meta must surface the exact per-class advisory: %v", rep.Advisories)
 	}
-	// Content assertions (N-4): docs came from gen-2's sealed map, vectors
+	// Content assertions (N-4): docs came from gen-3's sealed map, vectors
 	// from LIVE state — a drift that swaps sources fails here.
 	if _, err := os.Stat(filepath.Join(dst, "wiki", "concepts", "Foo.md")); err != nil {
 		t.Fatal("sealed-map doc not restored")
@@ -607,8 +626,14 @@ func TestShipObjects_ResurrectDefersOnVanish(t *testing.T) {
 	if res.ObjectsResurrected != 0 {
 		t.Fatalf("vanished file must NOT resurrect: %d", res.ObjectsResurrected)
 	}
-	if len(res.Warnings) == 0 {
-		t.Fatal("vanish must warn")
+	found := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "vanished mid-pass") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("vanish must warn with the vanish string (not the change string): %v", res.Warnings)
 	}
 	if !st.Objects["wiki/concepts/Foo.md"].Deleted {
 		t.Fatal("vanished file un-tombstoned (should stay tombstoned this pass)")
@@ -650,5 +675,116 @@ func TestVerify_MetaRefsCheckedCountsBothTuples(t *testing.T) {
 	// shared key.
 	if rep.Checked != 8 {
 		t.Fatalf("Checked = %d, want 8 (both tuples of the shared key verified)", rep.Checked)
+	}
+}
+
+// F-022 MAJOR witness (live-map advance): newest selection, live map
+// moves between --partial runs → resume refused loudly (fingerprint:
+// snapshot key + updated_at), not a silently mixed restore.
+func TestHydrate_PartialResumeSelectionDrift_LiveMapAdvance(t *testing.T) {
+	h := newHydrateFixture(t)
+	dst := filepath.Join(t.TempDir(), "restored")
+	// Corrupt a DOC object so the run aborts in the MARKDOWN phase (after
+	// db completed and the selection was recorded).
+	st := h.src.remoteState(t)
+	var docKey string
+	for _, ref := range st.Objects {
+		docKey = ref.Key
+		break
+	}
+	orig := h.fake.objects[docKey]
+	h.fake.objects[docKey] = []byte("CORRUPTED")
+	if _, err := Hydrate(context.Background(), h.cfg, dst, HydrateOpts{Partial: true}); err == nil {
+		t.Fatal("setup: corrupted doc should abort in markdown phase")
+	}
+	// The progress file exists with the selection recorded.
+	if _, err := os.Stat(filepath.Join(dst, ".sage", "hydrate-state.json")); err != nil {
+		t.Fatalf("setup: progress marker missing: %v", err)
+	}
+	// Advance the live map between runs (new doc + fix the corruption) —
+	// on an ADVANCED clock so the state's updated_at actually moves.
+	writeWS(t, h.src.dir, "wiki/concepts/Between.md", "between")
+	h.fake.objects[docKey] = orig
+	h.src.now = h.src.now.Add(time.Minute)
+	if _, err := h.src.m.shipPass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Resume: the fingerprint must REFUSE loudly, naming the drift.
+	_, err := Hydrate(context.Background(), h.cfg, dst, HydrateOpts{Partial: true})
+	if err == nil {
+		t.Fatal("resume after live-map advance must be refused")
+	}
+	if !strings.Contains(err.Error(), "drift") {
+		t.Fatalf("refusal must name the drift: %v", err)
+	}
+}
+
+// F-024 witness: vecs-only mixed meta — docs fall back to live (advisory
+// names it) while vectors restore from the seal; the vector skew is named.
+func TestHydrate_VecsOnlyMixedMeta_PairingAndSkew(t *testing.T) {
+	h := newHydrateFixture(t)
+	h.src.m.cfg.RetainGenerations = 4 // keep older gens for this skew-window test
+	gen2Created := h.src.remoteState(t).DB.CreatedAt
+	// Rotation 1 at T0+2s: gen 2 -> 3.
+	h.src.now = gen2Created.Add(2 * time.Second)
+	h.src.dbWrite(t, "row-gen2")
+	h.src.dbClose()
+	ageLocalRotationFile(t, h.src.dir, -2*time.Hour)
+	if res := h.src.pass(t); !res.Rotated {
+		t.Fatal("setup: rotation did not fire")
+	}
+	// Ship a vector in gen 3's lifetime at T0+3s (opens gen 3's skew window:
+	// created T0+2s, SealedAt = T0+3s).
+	h.src.now = gen2Created.Add(3 * time.Second)
+	writeWS(t, h.src.dir, ".sage/vectors.idx", "SWVI-2")
+	if _, err := h.src.m.shipPass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Rotation 2 at T0+4s: gen 3 -> 4; meta gen-3 sealed at T0+3s.
+	h.src.now = gen2Created.Add(4 * time.Second)
+	h.src.dbWrite(t, "row-gen3")
+	h.src.dbClose()
+	ageLocalRotationFile(t, h.src.dir, -2*time.Hour)
+	if res := h.src.pass(t); !res.Rotated {
+		t.Fatal("setup: second rotation did not fire")
+	}
+	// Mixed meta AFTER the last rotation (prune can't undo it): gen 3 with
+	// objects nil, vectors present.
+	mb0, ok := h.fake.get(GenerationMetaKey("ws/", 3))
+	if !ok {
+		t.Fatal("setup: gen-3 meta missing")
+	}
+	meta0, err := UnmarshalMeta(mb0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta0.Objects = nil
+	mb, _ := MarshalMeta(meta0)
+	h.fake.objects[GenerationMetaKey("ws/", 3)] = mb
+
+	// T = T0+2.5s: inside gen 3 (created T0+2s), before its seal (T0+3s).
+	dst := filepath.Join(t.TempDir(), "restored")
+	rep, err := Hydrate(context.Background(), h.cfg, dst, HydrateOpts{At: gen2Created.Add(2500 * time.Millisecond)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundDocs, foundVecs := false, false
+	for _, a := range rep.Advisories {
+		if strings.Contains(a, "no object map") {
+			foundDocs = true
+		}
+	}
+	if strings.Contains(rep.Overshoot, "vectors at generation 3's seal") {
+		foundVecs = true
+	}
+	if !foundDocs {
+		t.Fatalf("docs fallback advisory missing: %v", rep.Advisories)
+	}
+	if !foundVecs {
+		t.Fatalf("vector skew not named in overshoot: %q", rep.Overshoot)
+	}
+	// Vectors came from the seal (gen-3 meta map), docs from live.
+	if _, err := os.Stat(filepath.Join(dst, ".sage", "vectors.idx")); err != nil {
+		t.Fatal("sealed vector not restored from the meta map")
 	}
 }
