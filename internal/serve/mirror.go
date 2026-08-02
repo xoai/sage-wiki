@@ -102,5 +102,9 @@ func (s *MirrorShipper) Stop() {
 	// Quiesce (F-102): fold the just-sealed frames and refresh the hash
 	// reference, so the NEXT process's first pass classifies this stop's
 	// close-fold as benign (b) rather than a spurious (a) rotation.
-	s.m.Quiesce()
+	// Failure is LOUD (pass-2 MAJOR-2) — a skipped quiesce reverts to
+	// data-safe (a) rotations, never to lost content.
+	if err := s.m.Quiesce(); err != nil {
+		slog.Warn("mirror drain: quiesce failed (serve-stop folds will rotate conservatively)", "err", err)
+	}
 }

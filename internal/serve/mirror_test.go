@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -255,36 +256,93 @@ func TestShipper_WALSegmentWithin2xInterval(t *testing.T) {
 // debounce window.
 func TestShipper_StopQuiesceMakesNextFoldBenign(t *testing.T) {
 	fake, shipper, dir := shipperFixture(t, shipperFixtureOpts{
-		interval:         time.Hour,
+		interval:         20 * time.Millisecond,
 		snapshotInterval: time.Hour,
 		drainTimeout:     2 * time.Second,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	shipper.Start(ctx)
-	os.MkdirAll(filepath.Join(dir, "wiki", "concepts"), 0o755)
-	os.WriteFile(filepath.Join(dir, "wiki", "concepts", "Foo.md"), []byte("# Foo"), 0o644)
-	shipper.Stop() // final pass seals + Quiesce refreshes the reference
+	// PRECONDITION the reviewer's scenario: the row is SEALED before the
+	// stop (an unsealed row at stop correctly rotates — not the bug).
+	db, err := sql.Open("sqlite", filepath.Join(dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO t (v) VALUES ('stop-row')"); err != nil {
+		t.Fatal(err)
+	}
+	// Keep the handle OPEN while the ticker seals (the serve shape: the
+	// engine handle is open during writes).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if fake.hasPrefix("ws/db/generation-1/wal/") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !fake.hasPrefix("ws/db/generation-1/wal/") {
+		t.Fatal("setup: row never sealed before stop")
+	}
+	// PRODUCTION ORDER: the engine handle is OPEN during the drain
+	// (Shutdown closes it after deps.Close) — Quiesce folds and refreshes
+	// BEFORE the stop-fold exists.
+	shipper.Stop() // final pass (nothing new) + Quiesce (fold + refresh)
+	db.Close()     // engine close: no-op fold, WAL deleted
 
-	// Next process: a plain pass (no writes) — must NOT rotate and must
-	// NOT flag pending, even with the debounce aged away.
+	// Next process: a plain pass (no writes) — explicit NO rotation, NO
+	// pending flag, even with the debounce aged away.
 	m, err := mirror.Open(dir, shipper.m.Config(), mirror.NewDiffChangeSource(dir))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Ship(context.Background(), pkmirror.ChangeBatch{}); err != nil {
-		t.Fatalf("post-stop pass: %v", err)
-	}
-	// Age the debounce window via mirror-local.json: still benign.
+	stBefore := mirrorStateForTest(t, fake)
 	ageMirrorLocal(t, dir)
 	if err := m.Ship(context.Background(), pkmirror.ChangeBatch{}); err != nil {
 		t.Fatalf("aged pass: %v", err)
+	}
+	stAfter := mirrorStateForTest(t, fake)
+	if stAfter.Generation != stBefore.Generation {
+		t.Fatalf("spurious rotation after drained stop: gen %d → %d", stBefore.Generation, stAfter.Generation)
 	}
 	rep, err := m.Verify(context.Background())
 	if err != nil || !rep.Valid {
 		t.Fatalf("verify: %+v %v", rep, err)
 	}
-	_ = fake
+	// The sealed row is restorable (the point of the whole exercise).
+	dst := filepath.Join(t.TempDir(), "restored")
+	if _, err := mirror.Hydrate(context.Background(), shipper.m.Config(), dst, mirror.HydrateOpts{}); err != nil {
+		t.Fatalf("hydrate: %v", err)
+	}
+	rdb, _ := sql.Open("sqlite", filepath.Join(dst, ".sage", "wiki.db"))
+	defer rdb.Close()
+	var n int
+	rdb.QueryRow("SELECT COUNT(*) FROM t WHERE v='stop-row'").Scan(&n)
+	if n != 1 {
+		t.Fatal("stop-row not restorable after drained stop")
+	}
+}
+
+func mirrorStateForTest(t *testing.T, fake *serveFakeS3) mirrorStateView {
+	t.Helper()
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	var st mirrorStateView
+	if b, ok := fake.objects["ws/mirror-state.json"]; ok {
+		jsonUnmarshalForTest(t, b, &st)
+	}
+	return st
+}
+
+type mirrorStateView struct {
+	Generation int `json:"generation"`
+}
+
+func jsonUnmarshalForTest(t *testing.T, b []byte, v any) {
+	t.Helper()
+	if err := json.Unmarshal(b, v); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func ageMirrorLocal(t *testing.T, dir string) {

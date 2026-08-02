@@ -281,3 +281,36 @@ func TestHydrate_PathTraversalRejected(t *testing.T) {
 		t.Fatal("traversal wrote outside dst")
 	}
 }
+
+// TestHydrate_PartialResumeSelectionMismatch (F-107 witness): resuming a
+// --partial restore with a different selection is refused.
+func TestHydrate_PartialResumeSelectionMismatch(t *testing.T) {
+	h := newHydrateFixture(t)
+	dst := filepath.Join(t.TempDir(), "restored")
+	h.cfg.Encryption = EncryptionConfig{}
+	// First partial run: force an abort after db by corrupting one doc.
+	st := h.src.remoteState(t)
+	var docKey string
+	for _, ref := range st.Objects {
+		docKey = ref.Key
+		break
+	}
+	orig := h.fake.objects[docKey]
+	h.fake.objects[docKey] = []byte("CORRUPTED")
+	_, cfg := setupFakeMirror(t, h.fake)
+	if _, err := Hydrate(context.Background(), cfg, dst, HydrateOpts{Partial: true}); err == nil {
+		t.Fatal("setup: corrupted doc should abort")
+	}
+	h.fake.objects[docKey] = orig
+	// Resume with a DIFFERENT selection (--generation 1 vs newest-at-first-run).
+	// Force a rotation so newest changed since the first run.
+	h.src.dbWrite(t, "row-x")
+	h.src.dbClose()
+	ageLocalRotationFile(t, h.src.dir, -2*time.Hour)
+	if res := h.src.pass(t); !res.Rotated {
+		t.Fatal("setup: rotation did not fire")
+	}
+	if _, err := Hydrate(context.Background(), cfg, dst, HydrateOpts{Partial: true, Generation: 1}); err == nil {
+		t.Fatal("resume with a different selection must be refused")
+	}
+}

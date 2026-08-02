@@ -328,7 +328,7 @@ func (p *hydrateProgress) checkSelection(gen int, at string) error {
 		return nil
 	}
 	if pf.Generation != gen || pf.At != at {
-		return fmt.Errorf("hydrate: resume selection mismatch: in-progress restore is generation %d%s, requested generation %d%s — use the same selection or a fresh dir",
+		return fmt.Errorf("hydrate: resume selection mismatch: in-progress restore is generation %d (at %q), requested generation %d (at %q) — use the same selection or a fresh dir",
 			pf.Generation, pf.At, gen, at)
 	}
 	return nil
@@ -432,6 +432,9 @@ type restorePoint struct {
 }
 
 func selectRestorePoint(ctx context.Context, client *s3.Client, prefix, bucket string, st *State, opts HydrateOpts) (*restorePoint, error) {
+	if opts.Generation > 0 && !opts.At.IsZero() {
+		return nil, fmt.Errorf("hydrate: --generation and --at are mutually exclusive (pick one restore point)")
+	}
 	// Explicit generation: live state for the live gen, meta.json otherwise.
 	if opts.Generation > 0 {
 		if opts.Generation == st.Generation {

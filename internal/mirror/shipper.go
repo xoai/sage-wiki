@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -27,9 +28,21 @@ type shipResult struct {
 
 // Ship implements the pkg seam: a ChangeBatch is accepted for interface
 // conformance; shipping is diff-driven (spec.md §Ship trigger), so the batch
-// payload is advisory only.
+// payload is advisory only. Warnings are LOGGED (pass-2 MAJOR-4: prune
+// advisories and deferrals must reach an operator, not just the result
+// struct that production callers discard).
 func (o *mirrorOps) Ship(ctx context.Context, batch pkmirror.ChangeBatch) error {
-	_, err := o.m.shipPass(ctx)
+	res, err := o.m.shipPass(ctx)
+	for _, w := range res.Warnings {
+		slog.Warn("mirror ship", "warning", w)
+	}
+	return err
+}
+
+// ShipPass exposes the result for callers that surface warnings themselves
+// (serve drain).
+func (m *Mirror) ShipPass(ctx context.Context) error {
+	_, err := m.shipPass(ctx)
 	return err
 }
 
@@ -77,7 +90,23 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 
 	st, err := m.remoteState(ctx)
 	if err != nil {
-		return res, err
+		// First-pass bootstrap (F-104, pass-2 finding: enable ran pre-db and
+		// only wrote the manifest — the first pass with a database MUST
+		// bootstrap generation 1, not warn forever).
+		var nr *NotReadyError
+		if !errors.As(err, &nr) {
+			return res, err
+		}
+		if _, serr := os.Stat(m.dbPath()); serr != nil {
+			return res, err // still no db — nothing to bootstrap
+		}
+		if berr := m.bootstrapGeneration1(ctx, "ship bootstrap"); berr != nil {
+			return res, berr
+		}
+		st, err = m.remoteState(ctx)
+		if err != nil {
+			return res, err
+		}
 	}
 
 	// WAL identity for reconciliation and sealing. A torn header (kill
@@ -543,32 +572,40 @@ func (m *Mirror) adoptWAL() (uint64, int64) {
 // the process is exiting and the next incarnation is naturally fresh.
 // After Quiesce, a serve-stop close-fold hashes IDENTICAL to the
 // reference (branch (b) benign) instead of a spurious (a) rotation
-// (F-102, independent /review finding).
-func (m *Mirror) Quiesce() {
+// (F-102). Runs UNDER the ship-mutex (pass-2 MAJOR-1: a concurrent pass's
+// save must not be clobbered) and returns failures loudly (MAJOR-2).
+func (m *Mirror) Quiesce() error {
+	mutex, err := AcquireShipMutex(m.dir, m.cfg.ShipLockTimeout)
+	if err != nil {
+		return fmt.Errorf("quiesce: %w", err)
+	}
+	defer mutex.Release()
+
 	local, err := LoadLocalState(localStatePath(m.dir))
 	if err != nil {
-		return
+		return fmt.Errorf("quiesce: load local state: %w", err)
 	}
 	db, err := sql.Open("sqlite", m.dbPath())
 	if err != nil {
-		return
+		return fmt.Errorf("quiesce: open db: %w", err)
 	}
 	defer db.Close()
 	if _, err := db.Exec("PRAGMA busy_timeout=2000"); err != nil {
-		return
+		return fmt.Errorf("quiesce: busy_timeout: %w", err)
 	}
 	if _, err := db.Exec("PRAGMA wal_checkpoint(PASSIVE)"); err != nil {
-		return
+		return fmt.Errorf("quiesce: checkpoint: %w", err)
 	}
 	hash, size, err := hashFile(m.dbPath())
 	if err != nil {
-		return
+		return fmt.Errorf("quiesce: hash db: %w", err)
 	}
 	local.LastDBSHA256 = hash
 	local.LastDBSize = size
 	if err := SaveLocalState(localStatePath(m.dir), local); err != nil {
-		return
+		return fmt.Errorf("quiesce: save local state: %w", err)
 	}
+	return nil
 }
 
 // checkpointRestart runs a RESTART checkpoint so the new generation's WAL

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 // buildWAL writes a synthetic WAL: 32-byte header + n complete frames +
@@ -155,5 +157,36 @@ func TestWALSaltChanged(t *testing.T) {
 	hdr2, _, _ := WALInfoFromFile(path)
 	if hdr1.SaltID() == hdr2.SaltID() {
 		t.Fatal("salt change not detected")
+	}
+}
+
+// TestSealWALSegment_SaltMismatch (F-101 witness): sealing with a pinned
+// salt that no longer matches the file errors with ErrSaltMismatch.
+func TestSealWALSegment_SaltMismatch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "wiki.db-wal")
+	buildWAL(t, path, 1, 2, 1, 0)
+	if _, err := SealWALSegment(path, 0, WALHeader{Salt1: 9, Salt2: 9}.SaltID()); err == nil {
+		t.Fatal("expected ErrSaltMismatch")
+	} else {
+		var mism *ErrSaltMismatch
+		if !errors.As(err, &mism) {
+			t.Fatalf("err = %T %v, want ErrSaltMismatch", err, err)
+		}
+	}
+	// Matching salt seals fine.
+	hdr, _, _ := WALInfoFromFile(path)
+	if _, err := SealWALSegment(path, 0, hdr.SaltID()); err != nil {
+		t.Fatalf("matching salt: %v", err)
+	}
+}
+
+// TestStateValidate_WalSeqStartsAt1 (F-106 witness).
+func TestStateValidate_WalSeqStartsAt1(t *testing.T) {
+	s := fixtureState()
+	s.DB.WAL = []WALSegmentRef{
+		{Key: "ws/db/generation-3/wal/000002.zst", SHA256: strings.Repeat("ab", 32), SealedAt: time.Now().UTC()},
+	}
+	if err := s.Validate(); err == nil {
+		t.Fatal("wal[0] seq != 1 must fail validation")
 	}
 }

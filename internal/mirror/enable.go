@@ -10,9 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -93,6 +95,18 @@ func (m *Mirror) bootstrapGeneration1(ctx context.Context, what string) error {
 		return fmt.Errorf("%s: %w", what, err)
 	}
 	defer mutex.Release()
+
+	// Absence re-check UNDER the mutex (pass-2 MAJOR-3): two concurrent
+	// enables (or an enable racing a first-pass bootstrap) must not
+	// double-commit generation 1 — the second writer's chain would replay
+	// onto the first's snapshot (franken-db, verify VALID).
+	exists, err := m.client.HeadObject(ctx, m.cfg.Bucket, StateKey(prefix))
+	if err != nil {
+		return fmt.Errorf("%s: re-check remote state: %w", what, err)
+	}
+	if exists {
+		return ErrAlreadyEnabled
+	}
 
 	snapBytes, err := snapshotDatabase(ctx, m.dbPath())
 	if err != nil {
@@ -191,8 +205,13 @@ func snapshotForRotation(ctx context.Context, dbPath string, opts snapOptions) (
 		b, err := snapshotViaBackup(ctx, dbPath)
 		if err == nil {
 			return b, nil
+		} else {
+			// Loud once per process (pass-2 finding): the downgrade changes
+			// busy-writer semantics (VACUUM defers; backup API doesn't).
+			backupDowngradeOnce.Do(func() {
+				slog.Warn("mirror: backup API unavailable, using VACUUM INTO fallback", "err", err)
+			})
 		}
-		// Fall through to VACUUM INTO on any backup-API failure.
 	}
 	err := snapshotViaVacuum(ctx, dbPath, opts)
 	if err == nil {
@@ -318,3 +337,7 @@ func zstdDecode(b []byte) ([]byte, error) {
 // hashFileCalls counts file-hash operations (F-082's idle-cost proof in
 // tests; production reads are unaffected).
 var hashFileCalls atomic.Int64
+
+// backupDowngradeOnce limits the backup-API→VACUUM downgrade log to once
+// per process.
+var backupDowngradeOnce sync.Once

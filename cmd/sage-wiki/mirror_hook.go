@@ -39,7 +39,6 @@ func maybeShipAfterCommand() {
 		fmt.Fprintf(os.Stderr, "mirror: ship pass skipped: %v\n", err)
 		return
 	}
-	_ = mcfg
 	m, err := mirror.Open(dir, mcfg, mirror.NewDiffChangeSource(dir))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "mirror: ship pass skipped: %v\n", err)
