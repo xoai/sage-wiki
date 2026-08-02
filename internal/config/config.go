@@ -38,6 +38,116 @@ type Config struct {
 	TypeSignals []TypeSignal   `yaml:"type_signals,omitempty"`
 	Storage     StorageConfig  `yaml:"storage,omitempty"`
 	Vectors     VectorsConfig  `yaml:"vectors,omitempty"`
+	Mirror      MirrorConfig   `yaml:"mirror,omitempty"`
+}
+
+// MirrorEncryptionConfig tunes optional client-side encryption (SPEC-03).
+type MirrorEncryptionConfig struct {
+	Enabled bool   `yaml:"enabled,omitempty"`
+	KeyFile string `yaml:"key_file,omitempty"` // 32-byte key, MUST live outside the workspace
+}
+
+// MirrorConfig configures the S3-compatible remote mirror (SPEC-03).
+// Credentials come from named env vars or a credentials file — inline
+// secret values are declared ONLY to be rejected by Validate (forward-compat
+// guard: secrets never live in config values).
+type MirrorConfig struct {
+	Enabled              bool                   `yaml:"enabled,omitempty"`
+	Endpoint             string                 `yaml:"endpoint,omitempty"`
+	Addressing           string                 `yaml:"addressing,omitempty"` // "auto" (default) | "path" | "virtual"
+	Bucket               string                 `yaml:"bucket,omitempty"`
+	Prefix               string                 `yaml:"prefix,omitempty"`
+	Region               string                 `yaml:"region,omitempty"`
+	AccessKeyEnv         string                 `yaml:"access_key_env,omitempty"`
+	SecretKeyEnv         string                 `yaml:"secret_key_env,omitempty"`
+	CredentialsFile      string                 `yaml:"credentials_file,omitempty"`
+	ShipInterval         string                 `yaml:"ship_interval,omitempty"`
+	SnapshotInterval     string                 `yaml:"snapshot_interval,omitempty"`
+	MinRotationInterval  string                 `yaml:"min_rotation_interval,omitempty"`
+	ShipLockTimeout      string                 `yaml:"ship_lock_timeout,omitempty"`
+	DrainTimeout         string                 `yaml:"drain_timeout,omitempty"`
+	RetainGenerations    int                    `yaml:"retain_generations,omitempty"`
+	MaxConsecutiveDefers int                    `yaml:"max_consecutive_defers,omitempty"`
+	Encryption           MirrorEncryptionConfig `yaml:"encryption,omitempty"`
+	AccessKey            string                 `yaml:"access_key,omitempty"` // rejected by Validate
+	SecretKey            string                 `yaml:"secret_key,omitempty"` // rejected by Validate
+}
+
+// RegionOrDefault resolves the SigV4 region (default "auto" for R2/MinIO).
+func (m *MirrorConfig) RegionOrDefault() string {
+	if m.Region == "" {
+		return "auto"
+	}
+	return m.Region
+}
+
+// AccessKeyEnvOrDefault resolves the env var NAME holding the access key.
+func (m *MirrorConfig) AccessKeyEnvOrDefault() string {
+	if m.AccessKeyEnv == "" {
+		return "AWS_ACCESS_KEY_ID"
+	}
+	return m.AccessKeyEnv
+}
+
+// SecretKeyEnvOrDefault resolves the env var NAME holding the secret key.
+func (m *MirrorConfig) SecretKeyEnvOrDefault() string {
+	if m.SecretKeyEnv == "" {
+		return "AWS_SECRET_ACCESS_KEY"
+	}
+	return m.SecretKeyEnv
+}
+
+// RetainGenerationsOrDefault resolves PITR depth in rotation count (default 2).
+func (m *MirrorConfig) RetainGenerationsOrDefault() int {
+	if m.RetainGenerations == 0 {
+		return 2
+	}
+	return m.RetainGenerations
+}
+
+// MaxConsecutiveDefersOrDefault resolves the VACUUM-fallback defer ceiling
+// before status surfaces rotation_deferred (default 10).
+func (m *MirrorConfig) MaxConsecutiveDefersOrDefault() int {
+	if m.MaxConsecutiveDefers == 0 {
+		return 10
+	}
+	return m.MaxConsecutiveDefers
+}
+
+// ShipIntervalDur resolves the WAL seal cadence (default 1s).
+func (m *MirrorConfig) ShipIntervalDur() time.Duration {
+	return durationOr(m.ShipInterval, time.Second)
+}
+
+// SnapshotIntervalDur resolves the scheduled generation cadence (default 1h).
+func (m *MirrorConfig) SnapshotIntervalDur() time.Duration {
+	return durationOr(m.SnapshotInterval, time.Hour)
+}
+
+// MinRotationIntervalDur resolves the fold-forced-rotation debounce (default 60s).
+func (m *MirrorConfig) MinRotationIntervalDur() time.Duration {
+	return durationOr(m.MinRotationInterval, 60*time.Second)
+}
+
+// ShipLockTimeoutDur resolves the ship-mutex wait (default 5s).
+func (m *MirrorConfig) ShipLockTimeoutDur() time.Duration {
+	return durationOr(m.ShipLockTimeout, 5*time.Second)
+}
+
+// DrainTimeoutDur resolves the serve shutdown ship budget (default 10s).
+func (m *MirrorConfig) DrainTimeoutDur() time.Duration {
+	return durationOr(m.DrainTimeout, 10*time.Second)
+}
+
+func durationOr(s string, def time.Duration) time.Duration {
+	if s == "" {
+		return def
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return def
+	}
+	return d
 }
 
 // VectorsConfig tunes the vector query backend (SPEC-06).
@@ -1069,6 +1179,44 @@ func (c *Config) Validate() error {
 	}
 	if err := c.validateStorage(); err != nil {
 		return err
+	}
+	// Mirror (SPEC-03): inline secrets are rejected unconditionally; the
+	// rest is required only when enabled.
+	if c.Mirror.AccessKey != "" || c.Mirror.SecretKey != "" {
+		return fmt.Errorf("config: mirror credentials must come from env vars or credentials_file, never inline mirror.access_key/secret_key values")
+	}
+	if m := &c.Mirror; m.Enabled {
+		if m.Endpoint == "" {
+			return fmt.Errorf("config: mirror.endpoint required when mirror.enabled")
+		}
+		if m.Bucket == "" {
+			return fmt.Errorf("config: mirror.bucket required when mirror.enabled")
+		}
+		for name, s := range map[string]string{
+			"mirror.ship_interval":         m.ShipInterval,
+			"mirror.snapshot_interval":     m.SnapshotInterval,
+			"mirror.min_rotation_interval": m.MinRotationInterval,
+			"mirror.ship_lock_timeout":     m.ShipLockTimeout,
+			"mirror.drain_timeout":         m.DrainTimeout,
+		} {
+			if s != "" {
+				if _, err := time.ParseDuration(s); err != nil {
+					return fmt.Errorf("config: invalid %s %q: %w", name, s, err)
+				}
+			}
+		}
+		if m.Addressing != "" && m.Addressing != "auto" && m.Addressing != "path" && m.Addressing != "virtual" {
+			return fmt.Errorf("config: invalid mirror.addressing %q (valid: auto, path, virtual)", m.Addressing)
+		}
+		if m.RetainGenerations < 0 {
+			return fmt.Errorf("config: mirror.retain_generations must be non-negative")
+		}
+		if m.MaxConsecutiveDefers < 0 {
+			return fmt.Errorf("config: mirror.max_consecutive_defers must be non-negative")
+		}
+		if m.Encryption.Enabled && m.Encryption.KeyFile == "" {
+			return fmt.Errorf("config: mirror.encryption.key_file required when mirror.encryption.enabled")
+		}
 	}
 	if c.Serve.Transport != "" {
 		if c.Serve.Transport != "stdio" && c.Serve.Transport != "sse" {

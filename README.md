@@ -218,6 +218,8 @@ The core surface; run `sage-wiki <command> --help` for flags.
 | `sage-wiki learn "text"` / `sage-wiki capture "text"` / `sage-wiki scribe <session-file>` | Knowledge capture |
 | `sage-wiki skill <refresh\|preview> [--target <agent>]` | Generate or refresh agent skill files |
 | `sage-wiki provenance <source-or-concept>` / `sage-wiki version` | Provenance mappings, version |
+| `sage-wiki mirror <enable\|status\|snapshot\|verify>` | Remote mirror (S3-compatible backup, WAL shipping) — see [Remote mirror](#remote-mirror-s3-backup) |
+| `sage-wiki hydrate s3://<bucket>/<prefix> <DIR>` | Restore a workspace from a remote mirror into an empty dir (`--generation`, `--at`, `--partial`, `--key-file`) |
 
 Topic-specific command families live with their guides: `pack *` in
 [CONTRIBUTING](CONTRIBUTING.md), `auth *` (login, import, status, logout,
@@ -557,6 +559,77 @@ sage-wiki serve --workspace-root /path/to/vaults --addr 127.0.0.1:8484
 - Memory note: a served workspace opens up to 3 handles (engine, worker,
   MCP); the bounded-memory goal in multi-workspace serve requires
   `vectors.backend: mmap`.
+
+### Remote mirror (S3 backup)
+
+Continuous, crash-safe replication of a workspace to any S3-compatible
+bucket (S3, R2, MinIO) and fast restore from it. The local directory stays
+the operating surface — the mirror is durability and mobility, never a
+live query path.
+
+```bash
+# 1. Configure the mirror: block (below), then:
+sage-wiki mirror enable        # validates creds, writes manifest, bootstraps generation 1
+sage-wiki mirror status        # local + remote state, pending changes, lag
+sage-wiki mirror snapshot      # force a new generation
+sage-wiki mirror verify        # full re-hash invariant check (--fast for HEAD-only)
+sage-wiki hydrate s3://bucket/prefix /path/to/empty-dir
+```
+
+How it ships: the `serve` process ships continuously (`ship_interval`);
+every CLI command runs a best-effort ship pass after it finishes (success
+or error). The db ships Litestream-style (snapshot + WAL segments);
+markdown, prompts, sources, manifests, and vector indexes ship as
+content-addressed objects. Crash safety: the commit pointer is written
+last, so any kill leaves the previous committed state restorable —
+`mirror verify` proves it (full re-download re-hash; `--fast` is
+existence-only). Point-in-time restore: `hydrate --at 2026-08-01T12:00:00Z`
+(segment granularity — overshoot ≤ 1 segment is printed);
+`--generation N` pins a generation; `--partial` restores in order
+(manifest → db → markdown → vectors) so lexical/graph works before
+vectors finish. **Scope:** PITR covers the database chain (FTS, graph,
+vectors are rebuildable from it) — markdown/source objects always
+restore at newest, so a hydrated tree mixes db@TIME with docs@newest.
+
+Credentials come from the environment (names configurable), never the
+workspace or config values:
+
+```yaml
+mirror:
+  enabled: false              # `mirror enable` sets this
+  endpoint: ""                # e.g. https://<acct>.r2.cloudflarestorage.com or http://localhost:9000
+  addressing: "auto"          # auto = virtual-host for amazonaws.com, path-style otherwise; "path"/"virtual" force
+  bucket: ""
+  prefix: ""                  # default: workspace directory name
+  region: "auto"              # SigV4 region; "auto" works for R2/MinIO
+  access_key_env: "AWS_ACCESS_KEY_ID"    # NAME of env var, never the value
+  secret_key_env: "AWS_SECRET_ACCESS_KEY"
+  credentials_file: ""        # optional JSON {"access_key","secret_key"} outside the workspace
+  ship_interval: "1s"         # WAL seal cadence while active
+  snapshot_interval: "1h"     # scheduled generation cadence
+  min_rotation_interval: "60s" # debounce for fold-forced rotations
+  ship_lock_timeout: "5s"     # ship-mutex wait for CLI passes
+  drain_timeout: "10s"        # serve shutdown budget for the final ship pass
+  retain_generations: 2       # PITR depth in ROTATION COUNT, not time — raise for PITR-heavy use
+  max_consecutive_defers: 10  # busy-writer deferrals before status surfaces rotation_deferred
+  encryption:
+    enabled: false            # AES-256-GCM client-side encryption
+    key_file: ""              # 32-byte key file — MUST live outside the workspace
+```
+
+Notes:
+
+- `config.yaml` itself is **not** mirrored (it can hold secrets like
+  `api.api_key`) — hydrate restores data only; run `sage-wiki init` or
+  restore your own config after a migration.
+- Optional encryption is AES-256-GCM with a keyfile; `mirror verify`
+  works **without** the key (integrity hashes cover shipped ciphertext).
+- The standalone `sage-wiki tui` has no in-process shipper — its changes
+  ship at TUI exit (kill -9 → at the next command). `serve` and
+  `serve --ui` ship continuously.
+- RPO: with defaults, induced loss loses ≤ `ship_interval` of writes
+  (measured: 30.8ms of writes at a 50ms interval — see the test
+  `TestRPO_ServeShipper`).
 
 
 ## Ecosystem

@@ -4,6 +4,34 @@
 
 ### Added
 
+- **Remote mirror — S3-compatible backup, WAL shipping, hydrate (SPEC-03).**
+  `sage-wiki mirror enable|status|snapshot|verify` continuously replicates
+  a workspace to any S3-compatible bucket (S3, R2, MinIO), and
+  `sage-wiki hydrate s3://<bucket>/<prefix> <DIR>` restores it into an
+  empty dir with point-in-time (`--at`, segment granularity),
+  `--generation`, and ordered `--partial` (lexical/graph available before
+  vectors) options. The db ships Litestream-style (snapshot + WAL
+  segments via the SQLite online backup API, `VACUUM INTO` fallback);
+  markdown, sources, prompts, manifests, and vector indexes ship as
+  content-addressed objects; deletes are tombstones (bucket versioning
+  honored). Crash safety: the commit pointer is written last, so any
+  kill -9 leaves the previous committed generation restorable — proven by
+  a crash-injection loop (kill mid-ship ×N, verify always valid).
+  Shipping runs in-process under `serve` (continuous) and after every CLI
+  command (best-effort pass, never changes exit codes); a single-leader
+  ship-mutex serializes concurrent shippers. Optional AES-256-GCM
+  client-side encryption (off by default; `mirror verify` works without
+  the key). Hand-rolled stdlib SigV4 client — zero SDK dependency;
+  `klauspost/compress` (zstd) is the only new dependency. `config.yaml`
+  is never mirrored (it can hold secrets). New `mirror:` config block
+  (endpoint, bucket, prefix, region, credential env names or
+  credentials_file, ship/snapshot/min-rotation intervals, ship-lock and
+  drain timeouts, retain_generations, max_consecutive_defers,
+  encryption). Guide: `docs/guides/remote-mirror.md`. CI runs the
+  integration suite against a MinIO service; offline tests perform zero
+  network I/O.
+
+
 - **Multi-workspace + bounded vector memory (SPEC-06).**
   `pkg/engine.OpenManager` manages many workspaces in one process: a
   registry of root subdirectories, lazy open, LRU close beyond

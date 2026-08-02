@@ -218,6 +218,55 @@ jobs:
             ./internal/hub/... \
             ./internal/wiki/...
 
+  minio:
+    name: MinIO mirror integration
+    runs-on: ubuntu-latest
+    services:
+      minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "mc ready local || curl -f http://localhost:9000/minio/health/live"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - name: Create test buckets
+        run: |
+          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /tmp/mc
+          chmod +x /tmp/mc
+          /tmp/mc alias set local http://localhost:9000 minioadmin minioadmin
+          for i in $(seq 1 15); do
+            /tmp/mc ready local && break
+            sleep 2
+          done
+          /tmp/mc mb --ignore-existing local/sage-it-roundtrip
+          /tmp/mc mb --ignore-existing local/sage-it-corrupt
+          /tmp/mc mb --ignore-existing local/sage-it-crypt
+
+      # SAGE_MIRROR_CRASH_LOOPS=100 is AC-2's CI count; the default 5 stays
+      # for local runs. No real cloud creds anywhere in this job.
+      - name: Test (MinIO-gated mirror packages)
+        env:
+          SAGE_TEST_MINIO: "1"
+          SAGE_TEST_MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+          SAGE_MIRROR_CRASH_LOOPS: "100"
+        run: |
+          CGO_ENABLED=0 go test -count=1 -timeout 10m ./internal/mirror/...
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

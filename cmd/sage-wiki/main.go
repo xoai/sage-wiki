@@ -70,7 +70,7 @@ func main() {
 	rootCmd.SilenceErrors = true
 	rootCmd.SilenceUsage = true
 
-	if err := rootCmd.Execute(); err != nil {
+	if err := executeWithShipPass(); err != nil {
 		if outputFormat == "json" {
 			fmt.Println(cli.FormatJSON(false, nil, err.Error()))
 		} else {
@@ -242,7 +242,7 @@ func init() {
 	queryCmd.Flags().Bool("upgrade", false, "Adopt a pre-format (v0.2.x) workspace (one-way)")
 	ingestCmd.Flags().Bool("upgrade", false, "Adopt a pre-format (v0.2.x) workspace (one-way)")
 
-	rootCmd.AddCommand(initCmd, compileCmd, reindexCmd, indexCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, scribeCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, sourceCmd, hubCmd, skillCmd, packCmd, costCmd, versionCmd)
+	rootCmd.AddCommand(initCmd, compileCmd, reindexCmd, indexCmd, serveCmd, lintCmd, searchCmd, queryCmd, statusCmd, ingestCmd, doctorCmd, tuiCmd, provenanceCmd, scribeCmd, diffCmd, listCmd, ontologyCmd, writeCmd, learnCmd, captureCmd, addSourceCmd, sourceCmd, hubCmd, skillCmd, packCmd, costCmd, versionCmd, mirrorCmd)
 
 	// Enables `sage-wiki --version` in addition to the `version` subcommand.
 	rootCmd.Version = version
@@ -739,6 +739,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			deps.StartWorker(ctx)
 			fmt.Fprintln(os.Stderr, "⚙️  compile worker started (serve.worker).")
 		}
+		deps.StartMirror(ctx)
 		return webSrv.Serve(ctx, addr)
 	}
 
@@ -755,6 +756,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.StartWorker(ctx)
 		fmt.Fprintln(os.Stderr, "⚙️  compile worker started (serve.worker).")
 	}
+	deps.StartMirror(ctx)
 
 	transport, _ := cmd.Flags().GetString("transport")
 	if transport == "sse" {
@@ -1483,6 +1485,7 @@ func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
 	if deps.WorkerEnabled() {
 		deps.StartWorker(ctx)
 	}
+	deps.StartMirror(ctx)
 	fmt.Fprintf(os.Stderr, "sage-wiki serve (HTTP) listening on %s — REST at /, MCP at /mcp, metrics at /metrics\n", addr)
 	go srv.StartQueue(ctx)
 	<-ctx.Done()

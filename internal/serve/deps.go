@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"sync"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/linter"
 	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
+	"github.com/xoai/sage-wiki/internal/mirror"
 )
 
 // serveDeps assembles the shared serve-mode compile state (P2-3, spec C4):
@@ -24,6 +26,8 @@ type Deps struct {
 	workerApp *app.App // the worker's own backend handle; nil when disabled
 	workerWG  sync.WaitGroup
 	closeOnce sync.Once
+
+	mirrorShipper *MirrorShipper // nil unless mirror.enabled
 }
 
 // Progress returns the shared progress hub.
@@ -60,6 +64,7 @@ func AssembleDeps(dir string) (*Deps, error) {
 		progress: compiler.NewProgress(),
 	}
 	if !cfg.Serve.WorkerEnabled() {
+		assembleMirrorShipper(d, dir, cfg)
 		return d, nil
 	}
 	a, err := app.Open(dir)
@@ -68,11 +73,45 @@ func AssembleDeps(dir string) (*Deps, error) {
 	}
 	d.workerApp = a
 	d.worker = compiler.NewWorkerForServe(dir, a.Backend, d.coord, d.progress, cfg.Serve.Worker)
+	assembleMirrorShipper(d, dir, cfg)
 	return d, nil
+}
+
+// assembleMirrorShipper attaches the in-process shipper when mirror.enabled
+// (spec.md §Components: serve AND serve --ui share serveDeps). Failures are
+// loud warnings, never serve-fatal — mirroring is best-effort.
+func assembleMirrorShipper(d *Deps, dir string, cfg *config.Config) {
+	if !cfg.Mirror.Enabled {
+		return
+	}
+	mcfg, err := mirror.ConfigFromYAML(dir, cfg.Mirror)
+	if err != nil {
+		slog.Warn("mirror: shipper disabled (config error)", "err", err)
+		return
+	}
+	mm, err := mirror.Open(dir, mcfg, mirror.NewDiffChangeSource(dir))
+	if err != nil {
+		slog.Warn("mirror: shipper disabled (open error)", "err", err)
+		return
+	}
+	d.mirrorShipper = NewMirrorShipper(mm, mcfg)
+}
+
+// StartMirror launches the mirror shipper when enabled.
+func (d *Deps) StartMirror(ctx context.Context) {
+	if d.mirrorShipper == nil {
+		return
+	}
+	d.mirrorShipper.Start(ctx)
 }
 
 func (d *Deps) Close() {
 	d.closeOnce.Do(func() {
+		// Drain the shipper (final segment within drain_timeout) BEFORE
+		// closing the handles it reads from.
+		if d.mirrorShipper != nil {
+			d.mirrorShipper.Stop()
+		}
 		// Wait for the in-flight cycle before closing the handle under it.
 		d.workerWG.Wait()
 		if d.workerApp != nil {
