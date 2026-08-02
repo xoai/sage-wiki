@@ -214,3 +214,92 @@ func runSkipClassification(projectDir string, run *compileRun, diff *DiffResult)
 	defer sdb.Close()
 	return classifySkips(run.cfg, pr, NewCompileItemStore(sdb, config.NowUTC), run.mf, diff, run.opts.Force, run.opts.DryRun)
 }
+
+// CompileExplanation is the --explain report for one doc (spec §Observability
+// / AC-5): every key component, stored-vs-current parts, and the verdict.
+type CompileExplanation struct {
+	Path         string          `json:"path"`
+	SourceHash   string          `json:"source_hash"`
+	Pipeline     string          `json:"pipeline"`
+	Templates    string          `json:"templates"`
+	Models       string          `json:"models"`
+	ConfigHash   string          `json:"config_hash"`
+	Embed        string          `json:"embed"`
+	Key          string          `json:"key"`
+	StoredKey    string          `json:"stored_key"`
+	StoredParts  CompileKeyParts `json:"stored_parts"`
+	CurrentParts CompileKeyParts `json:"current_parts"`
+	Verdict      string          `json:"verdict"`
+}
+
+// ExplainCompileKey computes the --explain report for one doc, side-effect
+// free (no adoptions, no resets — the skip rule as a pure query).
+func ExplainCompileKey(projectDir, doc string, cfg *config.Config, pr *prompts.Registry, items store.CompileItemStore) (*CompileExplanation, error) {
+	absPath := filepath.Join(projectDir, doc)
+	diskHash, err := fileHash(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("explain %s: %w", doc, err)
+	}
+
+	item, err := items.GetByPath(doc)
+	if err != nil {
+		return nil, fmt.Errorf("explain %s: %w", doc, err)
+	}
+
+	ex := &CompileExplanation{Path: doc, SourceHash: diskHash, Pipeline: PipelineVersion}
+
+	if item == nil {
+		// Never compiled: the computed key still describes what a compile
+		// would produce (tier from the config default chain — ResolveTier is
+		// the pipeline's own call, but Explain keeps it simple: tier 3).
+		parts := ComputeCompileKeyParts(diskHash, 3, cfg, pr)
+		fillExplanation(ex, parts, "", 3)
+		ex.Verdict = "compile: content (new)"
+		return ex, nil
+	}
+
+	parts := ComputeCompileKeyParts(diskHash, item.Tier, cfg, pr)
+	fillExplanation(ex, parts, item.CompileKey, item.Tier)
+	if err := json.Unmarshal([]byte(item.CompileKeyParts), &ex.StoredParts); err != nil && item.CompileKeyParts != "" {
+		return nil, fmt.Errorf("explain %s: stored parts: %w", doc, err)
+	}
+
+	switch {
+	case !tierComplete(item):
+		ex.Verdict = "compile: incomplete (resume)"
+	case item.Hash != diskHash:
+		ex.Verdict = "compile: content"
+	case item.CompileKey == "":
+		ex.Verdict = "skip: unchanged (adopted)"
+	case item.CompileKey == parts.Key(item.Tier):
+		ex.Verdict = "skip: unchanged"
+	default:
+		class := DriftClass(ex.StoredParts, parts)
+		if class == "" || class == "content" {
+			class = "config"
+		}
+		ex.Verdict = "compile: " + class
+	}
+	return ex, nil
+}
+
+func fillExplanation(ex *CompileExplanation, parts CompileKeyParts, stored string, tier int) {
+	ex.Templates = parts.Templates
+	ex.Models = parts.Models
+	ex.ConfigHash = parts.Config
+	ex.Embed = parts.Embed
+	ex.Key = parts.Key(tier)
+	ex.StoredKey = stored
+	ex.CurrentParts = parts
+}
+
+// ClassifySkipsForDiff is the read-only drift surface for `sage-wiki diff`
+// (SPEC-04): docs whose content is unchanged but whose compile inputs
+// drifted, mapped path → drift class. No adoptions, no resets.
+func ClassifySkipsForDiff(cfg *config.Config, items store.CompileItemStore, mf *manifest.Manifest, diff *DiffResult) (map[string]string, error) {
+	cls, err := classifySkips(cfg, nil, items, mf, diff, false, true)
+	if err != nil {
+		return nil, err
+	}
+	return cls.driftReasons, nil
+}

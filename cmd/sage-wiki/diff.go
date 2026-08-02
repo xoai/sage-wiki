@@ -3,12 +3,14 @@ package main
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 
 	"github.com/spf13/cobra"
 	"github.com/xoai/sage-wiki/internal/cli"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/manifest"
+	"github.com/xoai/sage-wiki/internal/storage"
 )
 
 var diffCmd = &cobra.Command{
@@ -35,12 +37,17 @@ func runDiff(cmd *cobra.Command, args []string) error {
 		return cli.CLIError(outputFormat, err)
 	}
 
+	type driftEntry struct {
+		Path  string `json:"path"`
+		Class string `json:"class"`
+	}
 	type diffData struct {
-		Added    []string `json:"added"`
-		Modified []string `json:"modified"`
-		Removed  []string `json:"removed"`
-		Pending  int      `json:"pending"`
-		Total    int      `json:"total"`
+		Added    []string     `json:"added"`
+		Modified []string     `json:"modified"`
+		Removed  []string     `json:"removed"`
+		Drifted  []driftEntry `json:"drifted,omitempty"`
+		Pending  int          `json:"pending"`
+		Total    int          `json:"total"`
 	}
 
 	added := make([]string, len(diff.Added))
@@ -58,6 +65,19 @@ func runDiff(cmd *cobra.Command, args []string) error {
 		Removed:  diff.Removed,
 		Pending:  len(diff.Added) + len(diff.Modified),
 		Total:    mf.SourceCount(),
+	}
+
+	// SPEC-04: key-drift annotation — docs whose content is unchanged but
+	// whose compile inputs drifted (pipeline/templates/models/config/embed).
+	if sdb, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db")); err == nil {
+		items := compiler.NewCompileItemStore(sdb, config.NowUTC)
+		if cls, err := compiler.ClassifySkipsForDiff(cfg, items, mf, diff); err == nil {
+			for path, class := range cls {
+				data.Drifted = append(data.Drifted, driftEntry{Path: path, Class: class})
+			}
+			sort.Slice(data.Drifted, func(i, j int) bool { return data.Drifted[i].Path < data.Drifted[j].Path })
+		}
+		sdb.Close()
 	}
 
 	if outputFormat == "json" {
@@ -78,6 +98,9 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	}
 	for _, p := range diff.Removed {
 		fmt.Printf("  - %s (removed)\n", p)
+	}
+	for _, d := range data.Drifted {
+		fmt.Printf("  ≈ %s (drift: %s)\n", d.Path, d.Class)
 	}
 	return nil
 }
