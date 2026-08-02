@@ -42,6 +42,13 @@ var defaultDimensions = map[string]int{
 	"nomic-embed-text":           768,
 }
 
+// DefaultModel exposes the documented per-provider default (SPEC-04 needs
+// the same resolution for the compile key's embed component).
+func DefaultModel(provider string) string { return defaultModels[provider] }
+
+// DefaultDimensions exposes the documented per-model default dimensions.
+func DefaultDimensions(model string) int { return defaultDimensions[model] }
+
 // EmbedOverride holds optional overrides from the embed config block.
 type EmbedOverride struct {
 	Provider   string
@@ -68,7 +75,6 @@ func NewFromConfig(cfg *config.Config) Embedder {
 	}
 	return NewCascade(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, ov)
 }
-
 
 // NewCascade auto-detects the best available embedding provider.
 // Tier 0: Explicit embed config override (if model + credentials provided).

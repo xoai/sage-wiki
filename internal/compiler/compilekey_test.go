@@ -1,0 +1,255 @@
+package compiler
+
+import (
+	"encoding/json"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/xoai/sage-wiki/internal/config"
+)
+
+func keyTestConfig() *config.Config {
+	base := config.Defaults()
+	cfg := &base
+	cfg.Project = "keytest"
+	cfg.Output = "wiki"
+	cfg.Sources = []config.Source{{Path: "raw"}}
+	cfg.API.Provider = "openai"
+	cfg.Models.Summarize = "gpt-4o-mini"
+	return cfg
+}
+
+// TestCompileKey_Golden pins the exact key + parts for a fixture config
+// (spec test 5: compile-key composition golden, tier≥3 and tier<3 shapes).
+func TestCompileKey_Golden(t *testing.T) {
+	cfg := keyTestConfig()
+	parts := ComputeCompileKeyParts("sha256:abc123", 3, cfg, nil)
+
+	if parts.Source != "sha256:abc123" {
+		t.Errorf("Source = %q", parts.Source)
+	}
+	if parts.Pipeline != "1" {
+		t.Errorf("Pipeline = %q, want 1", parts.Pipeline)
+	}
+	if parts.Templates == "" || parts.Models == "" {
+		t.Error("tier≥3 parts must carry templates and models components")
+	}
+	if !strings.Contains(parts.Templates, "write_article@1.0.0:") {
+		t.Errorf("templates component missing versioned write_article: %q", parts.Templates)
+	}
+	if !strings.Contains(parts.Models, "summarize=gpt-4o-mini") {
+		t.Errorf("models component missing resolved summarize model: %q", parts.Models)
+	}
+	if !strings.HasPrefix(parts.Embed, "openai:") {
+		t.Errorf("embed identity = %q, want openai:...", parts.Embed)
+	}
+	key := parts.Key(3)
+	if len(key) != 64 {
+		t.Errorf("key length = %d, want 64 hex chars", len(key))
+	}
+
+	// tier<3: no templates/models; config = chunk subset hash; key differs.
+	partsLow := ComputeCompileKeyParts("sha256:abc123", 1, cfg, nil)
+	if partsLow.Templates != "" || partsLow.Models != "" {
+		t.Errorf("tier<3 parts must have empty templates/models, got %q / %q", partsLow.Templates, partsLow.Models)
+	}
+	if partsLow.Key(1) == key {
+		t.Error("tier<3 key equals tier≥3 key — shapes must differ")
+	}
+}
+
+// TestDriftClass_FirstDifferingComponent pins the attribution order.
+func TestDriftClass_FirstDifferingComponent(t *testing.T) {
+	base := ComputeCompileKeyParts("sha256:a", 3, keyTestConfig(), nil)
+
+	other := base
+	other.Source = "sha256:b"
+	if got := DriftClass(base, other); got != "content" {
+		t.Errorf("source drift: got %q, want content", got)
+	}
+	other = base
+	other.Pipeline = "2"
+	if got := DriftClass(base, other); got != "pipeline" {
+		t.Errorf("pipeline drift: got %q, want pipeline", got)
+	}
+	other = base
+	other.Templates += "x"
+	if got := DriftClass(base, other); got != "templates" {
+		t.Errorf("templates drift: got %q, want templates", got)
+	}
+	other = base
+	other.Models += "x"
+	if got := DriftClass(base, other); got != "models" {
+		t.Errorf("models drift: got %q, want models", got)
+	}
+	other = base
+	other.Config += "x"
+	if got := DriftClass(base, other); got != "config" {
+		t.Errorf("config drift: got %q, want config", got)
+	}
+	other = base
+	other.Embed += "x"
+	if got := DriftClass(base, other); got != "embed" {
+		t.Errorf("embed drift: got %q, want embed", got)
+	}
+	if got := DriftClass(base, base); got != "" {
+		t.Errorf("identical parts: got %q, want empty", got)
+	}
+}
+
+// TestModelKey_ResolutionChains pins each pass's fallback chain against the
+// same config mutations the passes see.
+func TestModelKey_ResolutionChains(t *testing.T) {
+	cfg := keyTestConfig()
+	cfg.Models.Summarize = ""
+	cfg.Models.Extract = "ext-model"
+	parts := ComputeCompileKeyParts("sha256:x", 3, cfg, nil)
+	// summarize falls to the hardcoded default; extract explicit; write/triples/resolve/communities follow extract→summarize chain.
+	if !strings.Contains(parts.Models, "summarize=gpt-4o-mini") {
+		t.Errorf("summarize fallback: %q", parts.Models)
+	}
+	if !strings.Contains(parts.Models, "extract=ext-model") {
+		t.Errorf("extract explicit: %q", parts.Models)
+	}
+	if !strings.Contains(parts.Models, "write=gpt-4o-mini") {
+		t.Errorf("write follows summarize-resolved (which fell to default): %q", parts.Models)
+	}
+	if !strings.Contains(parts.Models, "triples=ext-model") {
+		t.Errorf("triples follows extract: %q", parts.Models)
+	}
+}
+
+// TestCompileKey_ConfigDriftSensitivity: a subset field change rekeys; an
+// ignored field change must NOT.
+func TestCompileKey_ConfigDriftSensitivity(t *testing.T) {
+	cfg1 := keyTestConfig()
+	k1 := ComputeCompileKeyParts("sha256:a", 3, cfg1, nil).Key(3)
+
+	cfg2 := keyTestConfig()
+	cfg2.Compiler.DedupThreshold = 0.9
+	k2 := ComputeCompileKeyParts("sha256:a", 3, cfg2, nil).Key(3)
+	if k1 == k2 {
+		t.Error("dedup_threshold change did not rekey (subset field)")
+	}
+
+	cfg3 := keyTestConfig()
+	cfg3.Serve.Token = "supersecret"
+	k3 := ComputeCompileKeyParts("sha256:a", 3, cfg3, nil).Key(3)
+	if k1 != k3 {
+		t.Error("serve.token change rekeyed — ignored fields must not affect the key")
+	}
+}
+
+// TestConfigSubset_ReflectionGuard: every config leaf has a policy
+// disposition, every policy entry is a real leaf, and every "include" leaf
+// appears in the subset JSON. THIS is what keeps the key complete forever.
+func TestConfigSubset_ReflectionGuard(t *testing.T) {
+	leaves := configLeafPaths()
+	policy := policyDispositionsForTest()
+
+	for _, leaf := range leaves {
+		if _, ok := policy[leaf]; !ok {
+			t.Errorf("config leaf %q has NO policy disposition — add it to subsetPolicy with include or a justification", leaf)
+		}
+	}
+	for key := range policy {
+		found := false
+		for _, leaf := range leaves {
+			if leaf == key {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("policy entry %q is not a config leaf (stale or typo)", key)
+		}
+	}
+
+	subset := compileConfigSubset(keyTestConfig())
+	subsetJSON := canonicalSubsetJSON(subset)
+	var flat map[string]any
+	json.Unmarshal([]byte(subsetJSON), &flat)
+	for leaf, disposition := range policy {
+		if disposition == "" {
+			if _, ok := flat[leaf]; !ok {
+				t.Errorf("leaf %q is policy-include but MISSING from the subset map", leaf)
+			}
+		}
+	}
+}
+
+// TestCompileKey_CanonicalFuzz: semantically identical configs built from
+// differently-ordered YAML produce identical keys (spec test 4 config half).
+func TestCompileKey_CanonicalFuzz(t *testing.T) {
+	yamlA := []byte(`
+version: 1
+project: fuzz
+output: wiki
+sources:
+  - path: raw
+api:
+  provider: openai
+models:
+  summarize: gpt-4o-mini
+compiler:
+  dedup_threshold: 0.9
+  summary_max_tokens: 1000
+`)
+	yamlB := []byte(`
+compiler:
+  summary_max_tokens: 1000
+  dedup_threshold: 0.9
+models:
+  summarize: gpt-4o-mini
+api:
+  provider: openai
+output: wiki
+project: fuzz
+version: 1
+sources:
+  - path: raw
+`)
+	dir := t.TempDir()
+	pA := dir + "/a.yaml"
+	pB := dir + "/b.yaml"
+	writeFileForKeyTest(t, pA, yamlA)
+	writeFileForKeyTest(t, pB, yamlB)
+	cfgA, err := config.Load(pA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfgB, err := config.Load(pB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kA := ComputeCompileKeyParts("sha256:z", 3, cfgA, nil).Key(3)
+	kB := ComputeCompileKeyParts("sha256:z", 3, cfgB, nil).Key(3)
+	if kA != kB {
+		t.Errorf("reordered YAML produced different keys:\nA %s\nB %s", kA, kB)
+	}
+}
+
+// TestBuildFrontmatter_CanonicalProperty is spec test 4's frontmatter half:
+// shuffled custom-field input order → identical bytes (the alias/source
+// shuffle property lives in determinism_order_test.go, Task 3).
+func TestBuildFrontmatter_CanonicalProperty(t *testing.T) {
+	t.Setenv("SOURCE_DATE_EPOCH", "1700000000") // pin created_at
+	c := ExtractedConcept{Name: "alpha", Sources: []string{"raw/a.md"}}
+	order := []string{"field_b", "field_a", "field_c"}
+	fieldsA := map[string]string{"field_a": "1", "field_b": "2", "field_c": "3"}
+	fieldsB := map[string]string{"field_c": "3", "field_a": "1", "field_b": "2"}
+	fmA := buildFrontmatter(c, "concept", fieldsA, order, time.UTC)
+	fmB := buildFrontmatter(c, "concept", fieldsB, order, time.UTC)
+	if fmA != fmB {
+		t.Errorf("map-ordered field input changed frontmatter bytes:\n%s\nvs\n%s", fmA, fmB)
+	}
+}
+
+func writeFileForKeyTest(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
