@@ -70,12 +70,20 @@ func (o *mirrorOps) Enable(ctx context.Context) error {
 		CreatedAt:     time.Now().UTC(),
 		Encrypted:     m.cfg.Encryption.Enabled,
 	}
-	mb, err := json.MarshalIndent(man, "", "  ")
+	// manifest.json is written ONCE (N6: re-enable keeps the original
+	// CreatedAt rather than rewriting it).
+	exists, err = m.client.HeadObject(ctx, m.cfg.Bucket, ManifestKey(prefix))
 	if err != nil {
-		return fmt.Errorf("mirror enable: marshal manifest: %w", err)
+		return fmt.Errorf("mirror enable: check manifest: %w", err)
 	}
-	if err := m.client.PutObject(ctx, m.cfg.Bucket, ManifestKey(prefix), mb); err != nil {
-		return fmt.Errorf("mirror enable: PUT manifest.json: %w", err)
+	if !exists {
+		mb, err := json.MarshalIndent(man, "", "  ")
+		if err != nil {
+			return fmt.Errorf("mirror enable: marshal manifest: %w", err)
+		}
+		if err := m.client.PutObject(ctx, m.cfg.Bucket, ManifestKey(prefix), mb); err != nil {
+			return fmt.Errorf("mirror enable: PUT manifest.json: %w", err)
+		}
 	}
 
 	// Bootstrap generation 1 if a database exists (pre-compile workspaces
@@ -127,6 +135,12 @@ func (m *Mirror) bootstrapGeneration1Locked(ctx context.Context, what string) er
 	}
 	if man.FormatVersion != FormatVersion {
 		return fmt.Errorf("%s: manifest format_version %d, want %d (foreign or legacy bucket — refusing to commit)", what, man.FormatVersion, FormatVersion)
+	}
+	// Full identity check (pass-4 N1): a same-format foreign manifest must
+	// not receive this workspace's gen-1 chain either.
+	if man.Tool != "sage-wiki" || man.Workspace != filepath.Base(m.dir) {
+		return fmt.Errorf("%s: manifest belongs to tool=%q workspace=%q, not this workspace %q — refusing to commit under a foreign manifest",
+			what, man.Tool, man.Workspace, filepath.Base(m.dir))
 	}
 
 	snapBytes, err := snapshotDatabase(ctx, m.dbPath())

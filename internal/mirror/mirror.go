@@ -2,6 +2,7 @@ package mirror
 
 import (
 	"context"
+	"net/url"
 	"strings"
 	"time"
 
@@ -111,7 +112,12 @@ func (c *Config) pathStyle() bool {
 	case "virtual":
 		return false
 	default: // auto
-		return !strings.Contains(c.Endpoint, "amazonaws.com")
+		u, err := url.Parse(c.Endpoint)
+		if err != nil {
+			return true // unparseable → path-style (client validates endpoint anyway)
+		}
+		host := u.Hostname()
+		return host != "amazonaws.com" && !strings.HasSuffix(host, ".amazonaws.com")
 	}
 }
 

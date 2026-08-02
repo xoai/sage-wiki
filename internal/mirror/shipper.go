@@ -26,12 +26,34 @@ type shipResult struct {
 	Warnings          []string
 }
 
+// withOwnBudget returns a ctx with its own timeout that ALSO cancels when
+// parent does (a plain WithTimeout(parent) can't grow the budget).
+func withOwnBudget(parent context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	go func() {
+		select {
+		case <-parent.Done():
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
+}
+
 // reconcileWalBookkeeping runs pass-entry wal reconciliation (Gate-3
 // F-077/F-078): local wal bookkeeping must agree with the committed remote
 // chain BEFORE any sealing. shipPass AND Snapshot both run it (pass-3
 // F-114: a rotation without it re-seals the committed tail into a
 // duplicate seq and wedges the remote permanently).
-func (m *Mirror) reconcileWalBookkeeping(ctx context.Context, res *shipResult, st *State, local *LocalState, walHdr WALHeader, walSize int64, walPresent bool) error {
+func (m *Mirror) reconcileWalBookkeeping(ctx context.Context, res *shipResult, st *State, local *LocalState) error {
+	walHdr, _, walErr := WALInfoFromFile(m.walPath())
+	walPresent := walErr == nil
+	if walErr != nil && !errors.Is(walErr, os.ErrNotExist) {
+		var torn *ErrTornWALHeader
+		if !errors.As(walErr, &torn) {
+			return walErr
+		}
+	}
 	// (see caller comment)
 	// bookkeeping must agree with the committed remote chain BEFORE any
 	// sealing, on EVERY pass — not only under pending_rotation. The two
@@ -53,16 +75,16 @@ func (m *Mirror) reconcileWalBookkeeping(ctx context.Context, res *shipResult, s
 		// reads are stale by then (F-093).
 		staleSalt := local.WALSalt
 		staleGen := local.Generation
-		curHdr, curSize, curErr := WALInfoFromFile(m.walPath())
+		curHdr, _, curErr := WALInfoFromFile(m.walPath())
 		local.Generation = st.Generation
 		local.LastSegmentSeq = len(st.DB.WAL)
 		switch {
 		case curErr == nil && staleSalt != 0 && curHdr.SaltID() != staleSalt:
-			// (b): adopt the fresh incarnation at offset 0 — branch (1)
-			// seals from the header; the chain keeps ONE salt.
+			// (b): adopt the fresh incarnation at offset 0 — the caller's
+			// seal branch re-reads identity and seals from the header; the
+			// chain keeps ONE salt.
 			local.WALSalt = curHdr.SaltID()
 			local.WALOffset = 0
-			walHdr, walSize, walPresent = curHdr, curSize, true
 		default:
 			// (a)/unknown: fold the stale incarnation (its content is
 			// either already in the snapshot or handled by the fold rules
@@ -71,11 +93,6 @@ func (m *Mirror) reconcileWalBookkeeping(ctx context.Context, res *shipResult, s
 				return fmt.Errorf("ship: reconcile generation %d→%d: %w", staleGen, st.Generation, err)
 			}
 			local.WALSalt, local.WALOffset = m.adoptWAL()
-			if hdr2, size2, err2 := WALInfoFromFile(m.walPath()); err2 == nil {
-				walHdr, walSize, walPresent = hdr2, size2, true
-			} else {
-				walPresent = false
-			}
 		}
 		// A pending rotation IS this remote commit — consume it here.
 		if local.PendingRotation {
@@ -152,16 +169,8 @@ func (o *mirrorOps) Snapshot(ctx context.Context) (pkmirror.SnapshotID, error) {
 	// F-114: Snapshot rotates directly — it MUST run the same pass-entry
 	// reconciliation or a step-1-crash window wedges the remote with a
 	// duplicate seq (permanent, bucket surgery).
-	walHdr, walSize, walErr := WALInfoFromFile(m.walPath())
-	walPresent := walErr == nil
-	if walErr != nil && !errors.Is(walErr, os.ErrNotExist) {
-		var torn *ErrTornWALHeader
-		if !errors.As(walErr, &torn) {
-			return "", walErr
-		}
-	}
 	var res shipResult
-	if err := m.reconcileWalBookkeeping(ctx, &res, st, local, walHdr, walSize, walPresent); err != nil {
+	if err := m.reconcileWalBookkeeping(ctx, &res, st, local); err != nil {
 		return "", err
 	}
 	if err := m.rotate(ctx, st); err != nil {
@@ -201,7 +210,14 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 		if _, serr := os.Stat(m.dbPath()); serr != nil {
 			return res, err // still no db — nothing to bootstrap
 		}
-		if berr := m.bootstrapGeneration1Locked(ctx, "ship bootstrap"); berr != nil {
+		// The bootstrap (snapshot + uploads) gets its OWN budget (pass-4
+		// N2): the CLI hook's 2×ship_lock_timeout pass budget can't fit a
+		// large-db snapshot and would wedge forever. Parent cancellation is
+		// still honored.
+		bctx, bcancel := withOwnBudget(ctx, 10*m.cfg.ShipLockTimeout)
+		berr := m.bootstrapGeneration1Locked(bctx, "ship bootstrap")
+		bcancel()
+		if berr != nil {
 			return res, berr
 		}
 		st, err = m.remoteState(ctx)
@@ -222,7 +238,7 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 	}
 
 	// --- Pass-entry reconciliation (shared with Snapshot, F-114) ---
-	if err := m.reconcileWalBookkeeping(ctx, &res, st, local, walHdr, walSize, walPresent); err != nil {
+	if err := m.reconcileWalBookkeeping(ctx, &res, st, local); err != nil {
 		return res, err
 	}
 	// Refresh identity post-reconciliation (adoption/checkpoint may have
