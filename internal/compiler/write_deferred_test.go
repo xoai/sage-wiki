@@ -22,11 +22,46 @@ import (
 // per-concept delays, so goroutine COMPLETION order can be made to differ
 // from input order. SPEC-04 D3: apply order must follow input order anyway.
 type deferredStub struct {
-	mu          sync.Mutex               // guards writeDelays/embedDelays swaps between runs
-	writeDelays map[string]time.Duration // substring of the concept name in the write prompt → delay
-	embedDelays map[string]time.Duration // substring of the chunk text in the embed input → delay
-	requests    *syncCounter
-	embeds      *syncCounter
+	mu            sync.Mutex               // guards writeDelays/embedDelays swaps between runs
+	writeDelays   map[string]time.Duration // substring of the concept name in the write prompt → delay
+	embedDelays   map[string]time.Duration // substring of the chunk text in the embed input → delay
+	requests      *syncCounter
+	embeds        *syncCounter
+	summarizeLog  *stringLog // source paths seen in summarize prompts (AC-3 scoping)
+	writeLog      *stringLog // concept names seen in write prompts
+	extractInputs *stringLog // source paths whose summaries reached the extract prompt
+}
+
+type stringLog struct {
+	mu    sync.Mutex
+	items []string
+}
+
+func (l *stringLog) add(s string) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.items = append(l.items, s)
+	l.mu.Unlock()
+}
+
+func (l *stringLog) clear() {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.items = nil
+	l.mu.Unlock()
+}
+
+func (l *stringLog) snapshot() []string {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.items...)
 }
 
 type syncCounter struct {
@@ -87,6 +122,27 @@ func (s *deferredStub) handler() http.HandlerFunc {
 
 		isExtract := strings.Contains(allText, "concept extraction system")
 		isWrite := strings.Contains(allText, "wiki author writing a comprehensive article")
+		if isExtract {
+			for _, doc := range []string{"raw/doc1.md", "raw/doc2.md", "raw/doc3.md"} {
+				if strings.Contains(allText, doc) {
+					s.extractInputs.add(doc)
+				}
+			}
+		}
+		if isWrite {
+			for _, n := range []string{"concept-aaa", "concept-bbb", "concept-ccc"} {
+				if strings.Contains(allText, n) {
+					s.writeLog.add(n)
+				}
+			}
+		}
+		if !isExtract && !isWrite {
+			for _, doc := range []string{"raw/doc1.md", "raw/doc2.md", "raw/doc3.md"} {
+				if strings.Contains(allText, doc) {
+					s.summarizeLog.add(doc)
+				}
+			}
+		}
 
 		var content string
 		switch {

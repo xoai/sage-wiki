@@ -57,11 +57,15 @@ func TestSkip_AdoptThenUnchanged(t *testing.T) {
 	}
 	db.Close()
 
-	// R3: adoption run — zero provider requests, keys stored, all adopted.
+	// R3: adoption run — zero provider requests of ANY kind (chat AND embed).
 	before := stub.requests.get()
+	embedBefore := stub.embeds.get()
 	res := compileInDir(t, dir, srv.URL, CompileOpts{})
 	if got := stub.requests.get() - before; got != 0 {
-		t.Errorf("adoption run made %d provider requests, want 0", got)
+		t.Errorf("adoption run made %d chat requests, want 0", got)
+	}
+	if got := stub.embeds.get() - embedBefore; got != 0 {
+		t.Errorf("adoption run made %d embed requests, want 0 (Auto-QA check 2)", got)
 	}
 	if res == nil || res.Adopted != 3 {
 		t.Errorf("Adopted = %v, want 3", res)
@@ -73,11 +77,15 @@ func TestSkip_AdoptThenUnchanged(t *testing.T) {
 		}
 	}
 
-	// R4: steady state — zero requests, all skipped unchanged.
+	// R4: steady state — zero requests of any kind, all skipped unchanged.
 	before = stub.requests.get()
+	embedBefore = stub.embeds.get()
 	res2 := compileInDir(t, dir, srv.URL, CompileOpts{})
 	if got := stub.requests.get() - before; got != 0 {
-		t.Errorf("unchanged run made %d provider requests, want 0 (all-skip short-circuit)", got)
+		t.Errorf("unchanged run made %d chat requests, want 0 (all-skip short-circuit)", got)
+	}
+	if got := stub.embeds.get() - embedBefore; got != 0 {
+		t.Errorf("unchanged run made %d embed requests, want 0 (Auto-QA check 2)", got)
 	}
 	if res2 == nil || len(res2.Skipped) != 3 {
 		t.Errorf("Skipped = %v, want 3 docs", res2)
@@ -472,33 +480,97 @@ func TestSkip_TemplateDriftReasonAssertion(t *testing.T) {
 }
 
 // TestSkip_DependentsEnumeration pins AC-3's enumerated dependents: touching
-// one doc changes exactly that doc's dependent artifacts.
+// one doc recompiles exactly that doc's dependent artifacts — its summary,
+// its newly-extracted concepts' articles (merged concepts are NOT
+// rewritten), and its index rows; nothing else's.
 func TestSkip_DependentsEnumeration(t *testing.T) {
-	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
+	stub := &deferredStub{
+		requests:     &syncCounter{mu: make(chan struct{}, 1)},
+		embeds:       &syncCounter{mu: make(chan struct{}, 1)},
+		summarizeLog: &stringLog{}, writeLog: &stringLog{}, extractInputs: &stringLog{},
+	}
 	srv := newTestServer(stub)
 	defer srv.Close()
 
 	dir := compileDeferredCorpusOpts(t, srv.URL, CompileOpts{})
 
-	// Baseline: summary + article files hashed.
-	sumBefore, _ := os.ReadFile(filepath.Join(dir, "wiki", "summaries", "raw-doc2.md"))
+	// Reset the request logs so only the touch compile's calls are measured.
+	stub.summarizeLog.clear()
+	stub.writeLog.clear()
+	stub.extractInputs.clear()
+
+	// Baseline: every doc's summary bytes + chunk content, captured BEFORE
+	// the touch (the QA finding — the earlier version read doc1 after).
+	sum1Before, _ := os.ReadFile(filepath.Join(dir, "wiki", "summaries", "raw-doc1.md"))
+	sum2Before, _ := os.ReadFile(filepath.Join(dir, "wiki", "summaries", "raw-doc2.md"))
+	sum3Before, _ := os.ReadFile(filepath.Join(dir, "wiki", "summaries", "raw-doc3.md"))
+	chunkTextBefore := func(doc string) string {
+		db, err := sql.Open("sqlite", filepath.Join(dir, ".sage", "wiki.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		var content string
+		db.QueryRow("SELECT GROUP_CONCAT(content, '') FROM chunks_meta WHERE doc_id = ?", "src:"+doc).Scan(&content)
+		return content
+	}
+	ch1Before := chunkTextBefore("raw/doc1.md")
+	ch2Before := chunkTextBefore("raw/doc2.md")
+	ch3Before := chunkTextBefore("raw/doc2.md")
+	_ = ch3Before
 
 	if err := os.WriteFile(filepath.Join(dir, "raw", "doc2.md"), []byte("# Deferred Doc 2\n\nEDITED substantially, entirely new content about gardening."), 0644); err != nil {
 		t.Fatal(err)
 	}
 	compileInDir(t, dir, srv.URL, CompileOpts{})
 
-	// Dependent 1: the doc's summary changed.
-	sumAfter, _ := os.ReadFile(filepath.Join(dir, "wiki", "summaries", "raw-doc2.md"))
-	if string(sumBefore) == string(sumAfter) {
+	// Dependent 1: the touched doc's summary changed; others did not.
+	sum2After, _ := os.ReadFile(filepath.Join(dir, "wiki", "summaries", "raw-doc2.md"))
+	if string(sum2Before) == string(sum2After) {
 		t.Error("touched doc's summary unchanged — should have been recompiled")
 	}
-	// Dependent 2: untouched docs' summaries unchanged.
-	sum1Before, _ := os.ReadFile(filepath.Join(dir, "wiki", "summaries", "raw-doc1.md"))
-	compileInDir(t, dir, srv.URL, CompileOpts{})
 	sum1After, _ := os.ReadFile(filepath.Join(dir, "wiki", "summaries", "raw-doc1.md"))
+	sum3After, _ := os.ReadFile(filepath.Join(dir, "wiki", "summaries", "raw-doc3.md"))
 	if string(sum1Before) != string(sum1After) {
-		t.Error("untouched doc's summary changed across a no-op compile")
+		t.Error("untouched doc1's summary changed by the touch compile")
+	}
+	if string(sum3Before) != string(sum3After) {
+		t.Error("untouched doc3's summary changed by the touch compile")
+	}
+
+	// Dependent 2: the request log proves only doc2's summarize ran (and the
+	// extract batch carried only doc2's summary).
+	sumLog := stub.summarizeLog.snapshot()
+	if len(sumLog) != 1 || sumLog[0] != "raw/doc2.md" {
+		t.Errorf("summarize log = %v, want exactly [raw/doc2.md]", sumLog)
+	}
+	extLog := stub.extractInputs.snapshot()
+	if len(extLog) != 1 || extLog[0] != "raw/doc2.md" {
+		t.Errorf("extract inputs = %v, want exactly [raw/doc2.md]", extLog)
+	}
+
+	// Dependent 3: article writes are scoped to this run's extraction (which
+	// carried ONLY doc2's summary — proven above). Exact-name re-extractions
+	// rewrite articles (they ARE the touched doc's dependents); dedup-MERGED
+	// concepts (different names) are not rewritten — the spec's "merged-
+	// existing" clause, an existing-pipeline semantic this fixture's exact-
+	// name concepts don't exercise.
+	writeLog := stub.writeLog.snapshot()
+	if len(writeLog) == 0 {
+		t.Error("write log empty — the touched doc's extracted concepts should rewrite their articles")
+	}
+	for _, c := range writeLog {
+		if c != "concept-aaa" && c != "concept-bbb" && c != "concept-ccc" {
+			t.Errorf("write log contains out-of-batch concept %q", c)
+		}
+	}
+
+	// Dependent 4: index rows — the touched doc's chunks changed, others did not.
+	if chunkTextBefore("raw/doc2.md") == ch2Before {
+		t.Error("touched doc's chunk content unchanged — index rows should rebuild")
+	}
+	if chunkTextBefore("raw/doc1.md") != ch1Before {
+		t.Error("untouched doc1's chunk content changed")
 	}
 }
 
