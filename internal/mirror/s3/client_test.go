@@ -226,6 +226,12 @@ func TestCallTimeout_Formula(t *testing.T) {
 			t.Fatalf("callTimeout(%d) = %v, want %v", tc.bodyLen, got, tc.want)
 		}
 	}
+	// F-027 regime: tiny injected rate — the early clamp must return the cap,
+	// never overflow int64 ns (reviewer repro: 3GiB @ 1B/s).
+	c2 := &Client{callTimeoutBase: defaultCallTimeout, callTimeoutCap: maxCallTimeout, rateBytesPerSec: 1}
+	if got := c2.callTimeout(3 << 30); got != maxCallTimeout {
+		t.Fatalf("callTimeout(3GiB @ 1B/s) = %v, want cap %v", got, maxCallTimeout)
+	}
 }
 
 // Stall-abort: a server that accepts then hangs is cut at the per-attempt

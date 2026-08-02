@@ -2,7 +2,10 @@ package mirror
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"io"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -321,7 +324,7 @@ func TestQuiesce_BudgetExceeded(t *testing.T) {
 	}
 }
 
-// TestQuiesce_WithinBudget: normal ctx succeeds and refreshes the reference.
+// TestQuiesce_WithinBudget: normal ctx succeeds AND refreshes the reference.
 func TestQuiesce_WithinBudget(t *testing.T) {
 	f := newShipFixture(t)
 	defer f.dbClose()
@@ -332,4 +335,51 @@ func TestQuiesce_WithinBudget(t *testing.T) {
 	if err := f.m.Quiesce(ctx); err != nil {
 		t.Fatalf("Quiesce: %v", err)
 	}
+	hash, _, err := hashFile(f.m.dbPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadLocalState(localStatePath(f.dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.LastDBSHA256 != hash {
+		t.Fatal("Quiesce did not refresh the hash reference")
+	}
 }
+
+// TestHashFileCtx_MidReadCancel (independent review issue 3): cancellation
+// DURING the hash aborts it (the ctxReader path, not the fail-fast gate).
+// The witness reader cancels the ctx after its first Read — the copy must
+// die at the SECOND Read, proving interruption mid-stream.
+func TestHashFileCtx_MidReadCancel(t *testing.T) {
+	f := newShipFixture(t)
+	defer f.dbClose()
+	ctx, cancel := context.WithCancel(context.Background())
+	fh, err := os.Open(f.m.dbPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fh.Close()
+	h := sha256.New()
+	reads := 0
+	killer := readerFunc(func(p []byte) (int, error) {
+		reads++
+		if reads > 1 {
+			cancel() // cancel AFTER the first successful Read
+		}
+		// Trickle: one byte per Read so the copy spans MANY reads and the
+		// mid-stream cancel is what aborts it (not EOF).
+		if len(p) > 1 {
+			p = p[:1]
+		}
+		return fh.Read(p)
+	})
+	if _, err := io.Copy(h, &ctxReader{ctx: ctx, r: killer}); err == nil {
+		t.Fatal("hashFileCtx must abort on mid-stream cancel")
+	}
+}
+
+type readerFunc func(p []byte) (int, error)
+
+func (f readerFunc) Read(p []byte) (int, error) { return f(p) }

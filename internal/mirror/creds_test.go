@@ -110,8 +110,6 @@ func TestLoadEncryptionKey_Missing(t *testing.T) {
 	}
 }
 
-var _ = s3.Credentials{} // type anchor: ResolveCredentials returns s3.Credentials
-
 func TestResolveCredentials_SessionToken(t *testing.T) {
 	t.Setenv("TEST_AK", "ak")
 	t.Setenv("TEST_SK", "sk")

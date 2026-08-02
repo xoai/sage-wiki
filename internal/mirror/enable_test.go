@@ -174,6 +174,11 @@ func TestEnable_WritesManifestSnapshotState(t *testing.T) {
 	if st.Generation != 1 {
 		t.Fatalf("generation = %d, want 1", st.Generation)
 	}
+	// Writer witness: retain_generations lands in the committed state
+	// (independent review issue 1 — the writer half had no witness).
+	if st.RetainGenerations != 2 {
+		t.Fatalf("RetainGenerations = %d, want 2 (normalized default written to state)", st.RetainGenerations)
+	}
 	if _, ok := fake.get(st.DB.Snapshot); !ok {
 		t.Fatalf("committed snapshot %q missing from bucket", st.DB.Snapshot)
 	}

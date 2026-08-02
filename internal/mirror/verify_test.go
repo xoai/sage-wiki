@@ -204,15 +204,20 @@ func TestVerify_RetainFromState_LargerWins(t *testing.T) {
 	// gen 1 retained (3-1=2 > 3-3=0... precisely: gen > live-retain = 0).
 	addRotatedGen(t, fake, 1)
 	addRotatedGen(t, fake, 2)
+	// gen-1's meta deleted: a VIOLATION iff the state's retain=3 is in
+	// force (gen 1 retained). Under the local cfg=1 both gens are exempt,
+	// so the old intact version passed identically either way — vacuous
+	// (independent review issue 2). This version distinguishes.
+	delete(fake.objects, GenerationMetaKey("ws/", 1))
 	st.RetainGenerations = 3
 	m := openVerifyMirror(t, fake, st)
-	m.cfg.RetainGenerations = 1 // local would prune everything — state wins
+	m.cfg.RetainGenerations = 1 // local would exempt everything — state must win
 	rep, err := m.Verify(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !rep.Valid {
-		t.Fatalf("state retain=3 must retain gen 1+2: %+v", rep.Violations)
+	if rep.Valid {
+		t.Fatal("state retain=3 must retain (and flag) gen 1 — local cfg did NOT win")
 	}
 }
 

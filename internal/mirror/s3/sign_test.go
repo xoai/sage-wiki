@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -114,8 +113,6 @@ func sha256hex(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
-
-var _ = url.Values{} // keep url import if needed by future tests
 
 // TestSignRequest_SessionToken: STS token sets X-Amz-Security-Token AND
 // joins SignedHeaders (sorted); absent token → byte-identical to today.

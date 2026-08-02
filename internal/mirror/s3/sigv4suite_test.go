@@ -132,6 +132,15 @@ func TestSigV4Suite_Derived(t *testing.T) {
 			// position, recompute with raw stdlib.
 			wantSig := deriveSignature(t, creq, sts, payloadHash, date, token)
 
+			// Harness self-check (review issue 6): deriving WITHOUT
+			// injection must reproduce AWS's published .authz signature
+			// exactly — anchors the derivation end-to-end to ground truth.
+			authz := readSuiteFile(t, tc.dir, tc.dir[strings.LastIndex(tc.dir, "/")+1:]+".authz")
+			vendorSig := deriveVendorSignature(t, creq, sts)
+			if !strings.Contains(authz, "Signature="+vendorSig) {
+				t.Fatalf("derivation disagrees with vendored .authz: %q vs computed %q", authz, vendorSig)
+			}
+
 			auth := req.Header.Get("Authorization")
 			if !strings.HasSuffix(auth, "Signature="+wantSig) {
 				t.Fatalf("signature mismatch:\n got: %q\nwant suffix: Signature=%s", auth, wantSig)
@@ -238,4 +247,23 @@ func sortHeaderLines(headers []string) {
 func sha256HexStr(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
+}
+
+// deriveVendorSignature recomputes the vendored canonical request VERBATIM
+// (no injection) — must equal AWS's published signature in .authz.
+func deriveVendorSignature(t *testing.T, creq, sts string) string {
+	t.Helper()
+	scope := strings.Split(sts, "\n")[2]
+	amzDate := strings.Split(sts, "\n")[1]
+	hm := func(key []byte, data string) []byte {
+		h := hmac.New(sha256.New, key)
+		h.Write([]byte(data))
+		return h.Sum(nil)
+	}
+	kDate := hm([]byte("AWS4"+suiteCredsSK), amzDate[:8])
+	kRegion := hm(kDate, suiteRegion)
+	kService := hm(kRegion, suiteService)
+	kSigning := hm(kService, "aws4_request")
+	derivedSts := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + sha256HexStr(strings.TrimRight(creq, "\n"))
+	return hex.EncodeToString(hm(kSigning, derivedSts))
 }

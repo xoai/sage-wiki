@@ -80,7 +80,14 @@ sage-wiki hydrate s3://bucket/prefix dir --key-file ~/.config/sage/mirror.key
 - Credentials for hydrate read from `AWS_ACCESS_KEY_ID` /
   `AWS_SECRET_ACCESS_KEY` or `--credentials-file` (no workspace config
   exists yet); `--region` defaults to `auto`, and `--endpoint` is required
-  for R2/MinIO (derived from `--region` for AWS).
+  for R2/MinIO (derived from `--region` for AWS). STS: hydrate also picks
+  up `AWS_SESSION_TOKEN` by default — and `--credentials-file` plus an
+  ambient token env var is a hard error (same-source rule). Equally: env
+  keys with an UNREADABLE credentials file configured is now a hard
+  error (previously env won silently).
+- Error timing: a stalled small call can now take up to
+  retries × 30s + backoff to report (per-attempt floors) — the trade for
+  large snapshots completing at up to 15m.
 
 ## Encryption (optional)
 
