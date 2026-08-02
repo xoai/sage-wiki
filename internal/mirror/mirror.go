@@ -162,9 +162,15 @@ func (m *Mirror) Config() Config { return m.cfg }
 
 // ScheduledRotationDue reports whether the scheduled rotation cadence
 // (snapshot_interval) has elapsed since the last generation commit of ANY
-// kind — used by the serve shipper ticker.
+// kind — used by the serve shipper ticker. Reads the FILE (the shared
+// truth): m.local is concurrently reassigned by Ship/Snapshot on the
+// rotation goroutine (data race otherwise, caught by -race).
 func (m *Mirror) ScheduledRotationDue() bool {
-	return m.now().Sub(m.local.LastRotationAt) >= m.cfg.SnapshotInterval
+	local, err := LoadLocalState(localStatePath(m.dir))
+	if err != nil {
+		return false
+	}
+	return m.now().Sub(local.LastRotationAt) >= m.cfg.SnapshotInterval
 }
 
 func localStatePath(dir string) string {
