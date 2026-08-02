@@ -97,5 +97,10 @@ func (s *MirrorShipper) Stop() {
 	if err := s.m.Ship(ctx, pkmirror.ChangeBatch{}); err != nil {
 		s.drainAbandoned = true
 		slog.Warn("mirror drain: final ship pass abandoned (local state correct; next run re-ships)", "err", err)
+		return
 	}
+	// Quiesce (F-102): fold the just-sealed frames and refresh the hash
+	// reference, so the NEXT process's first pass classifies this stop's
+	// close-fold as benign (b) rather than a spurious (a) rotation.
+	s.m.Quiesce()
 }

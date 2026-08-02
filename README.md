@@ -587,7 +587,9 @@ existence-only). Point-in-time restore: `hydrate --at 2026-08-01T12:00:00Z`
 (segment granularity — overshoot ≤ 1 segment is printed);
 `--generation N` pins a generation; `--partial` restores in order
 (manifest → db → markdown → vectors) so lexical/graph works before
-vectors finish.
+vectors finish. **Scope:** PITR covers the database chain (FTS, graph,
+vectors are rebuildable from it) — markdown/source objects always
+restore at newest, so a hydrated tree mixes db@TIME with docs@newest.
 
 Credentials come from the environment (names configurable), never the
 workspace or config values:

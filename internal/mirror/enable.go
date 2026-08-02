@@ -78,31 +78,36 @@ func (o *mirrorOps) Enable(ctx context.Context) error {
 
 	// Bootstrap generation 1 if a database exists (pre-compile workspaces
 	// bootstrap on the first ship pass instead).
-	dbPath := filepath.Join(m.dir, ".sage", "wiki.db")
-	if _, err := os.Stat(dbPath); err != nil {
+	if _, err := os.Stat(m.dbPath()); err != nil {
 		return nil // manifest written; nothing to snapshot yet
 	}
+	return m.bootstrapGeneration1(ctx, "mirror enable")
+}
 
+// bootstrapGeneration1 snapshots the db and commits generation 1 under the
+// ship-mutex (shared by Enable and the first ship pass, F-104).
+func (m *Mirror) bootstrapGeneration1(ctx context.Context, what string) error {
+	prefix := NormalizePrefix(m.cfg.Prefix)
 	mutex, err := AcquireShipMutex(m.dir, m.cfg.ShipLockTimeout)
 	if err != nil {
-		return fmt.Errorf("mirror enable: %w", err)
+		return fmt.Errorf("%s: %w", what, err)
 	}
 	defer mutex.Release()
 
-	snapBytes, err := snapshotDatabase(ctx, dbPath)
+	snapBytes, err := snapshotDatabase(ctx, m.dbPath())
 	if err != nil {
-		return fmt.Errorf("mirror enable: snapshot: %w", err)
+		return fmt.Errorf("%s: snapshot: %w", what, err)
 	}
 	compressed, err := zstdEncode(snapBytes)
 	if err != nil {
-		return fmt.Errorf("mirror enable: compress snapshot: %w", err)
+		return fmt.Errorf("%s: compress snapshot: %w", what, err)
 	}
 	now := time.Now().UTC()
 
 	snapKey := SnapshotKey(prefix, 1)
 	sha, err := m.putObjectShasum(ctx, snapKey, compressed)
 	if err != nil {
-		return fmt.Errorf("mirror enable: PUT snapshot: %w", err)
+		return fmt.Errorf("%s: PUT snapshot: %w", what, err)
 	}
 
 	st := &State{
@@ -120,17 +125,17 @@ func (o *mirrorOps) Enable(ctx context.Context) error {
 	}
 	sb, err := MarshalState(st)
 	if err != nil {
-		return fmt.Errorf("mirror enable: marshal state: %w", err)
+		return fmt.Errorf("%s: marshal state: %w", what, err)
 	}
 	if err := m.client.PutObject(ctx, m.cfg.Bucket, StateKey(prefix), sb); err != nil {
-		return fmt.Errorf("mirror enable: PUT mirror-state: %w", err)
+		return fmt.Errorf("%s: PUT mirror-state: %w", what, err)
 	}
 
 	// Local bookkeeping: the db is quiesced post-snapshot, so record its
 	// content hash for fold detection.
-	dbHash, dbSize, hashErr := hashFile(dbPath)
+	dbHash, dbSize, hashErr := hashFile(m.dbPath())
 	if hashErr != nil {
-		return fmt.Errorf("mirror enable: hash local db: %w", hashErr)
+		return fmt.Errorf("%s: hash local db: %w", what, hashErr)
 	}
 	m.local.Generation = 1
 	m.local.WALSalt = 0
@@ -142,7 +147,7 @@ func (o *mirrorOps) Enable(ctx context.Context) error {
 	m.local.PendingRotation = false
 	m.local.ConsecutiveDefers = 0
 	if err := SaveLocalState(localStatePath(m.dir), m.local); err != nil {
-		return fmt.Errorf("mirror enable: save local state: %w", err)
+		return fmt.Errorf("%s: save local state: %w", what, err)
 	}
 	return nil
 }

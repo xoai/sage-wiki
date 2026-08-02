@@ -38,11 +38,10 @@ const (
 
 // Change is one detected workspace change.
 type Change struct {
-	Path    string // workspace-relative slash path (vectors: basename)
-	Kind    ChangeKind
-	SHA256  string // content hash (upserts only)
-	ModUnix int64
-	Vector  bool // true for .sage/vectors*.idx entries (top-level vectors/ prefix)
+	Path   string // workspace-relative slash path (vectors: basename)
+	Kind   ChangeKind
+	SHA256 string // content hash (upserts only)
+	Vector bool   // true for .sage/vectors*.idx entries (top-level vectors/ prefix)
 }
 
 // shipSetDirs are walked recursively (missing is fine — pre-init workspace).

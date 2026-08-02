@@ -127,16 +127,26 @@ func hydrateWithClient(ctx context.Context, client *s3.Client, prefix, bucket, d
 	if err != nil {
 		return nil, err
 	}
+	phases := newHydrateProgress(dst, opts)
+	if err := phases.load(); err != nil {
+		return nil, err
+	}
+
 	rep.Generation = sel.generation
+	atStr := ""
+	if !opts.At.IsZero() {
+		atStr = opts.At.UTC().Format(time.RFC3339)
+	}
+	phases.generation = sel.generation
+	phases.at = atStr
+	if err := phases.checkSelection(sel.generation, atStr); err != nil {
+		return nil, err
+	}
 	if sel.overshoot > 0 {
 		rep.Overshoot = fmt.Sprintf("%d segment(s) sealed after the requested time excluded", sel.overshoot)
 	}
 
 	if err := os.MkdirAll(filepath.Join(dst, ".sage"), 0o755); err != nil {
-		return nil, err
-	}
-	phases := newHydrateProgress(dst, opts)
-	if err := phases.load(); err != nil {
 		return nil, err
 	}
 
@@ -280,9 +290,19 @@ func loadMirrorManifest(ctx context.Context, client *s3.Client, bucket, prefix s
 // hydrateProgress tracks --partial phase completion in
 // .sage/hydrate-state.json; resume skips completed phases.
 type hydrateProgress struct {
-	path    string
-	enabled bool
-	Done    map[string]bool
+	path       string
+	enabled    bool
+	generation int
+	at         string
+	Done       map[string]bool
+}
+
+// progressFile is the on-disk shape (selection recorded — a resume with a
+// different restore point must not mix phases, F-107).
+type progressFile struct {
+	Generation int      `json:"generation"`
+	At         string   `json:"at,omitempty"`
+	Phases     []string `json:"phases"`
 }
 
 func newHydrateProgress(dst string, opts HydrateOpts) *hydrateProgress {
@@ -291,6 +311,27 @@ func newHydrateProgress(dst string, opts HydrateOpts) *hydrateProgress {
 		enabled: opts.Partial,
 		Done:    map[string]bool{},
 	}
+}
+
+// checkSelection refuses a resume whose selection differs from the recorded
+// one (mixing restore points would silently mix phases).
+func (p *hydrateProgress) checkSelection(gen int, at string) error {
+	if !p.enabled || len(p.Done) == 0 {
+		return nil
+	}
+	b, err := os.ReadFile(p.path)
+	if err != nil {
+		return nil // no recorded selection (legacy/parallel) — proceed
+	}
+	var pf progressFile
+	if json.Unmarshal(b, &pf); err != nil {
+		return nil
+	}
+	if pf.Generation != gen || pf.At != at {
+		return fmt.Errorf("hydrate: resume selection mismatch: in-progress restore is generation %d%s, requested generation %d%s — use the same selection or a fresh dir",
+			pf.Generation, pf.At, gen, at)
+	}
+	return nil
 }
 
 func (p *hydrateProgress) load() error {
@@ -304,11 +345,19 @@ func (p *hydrateProgress) load() error {
 	if err != nil {
 		return fmt.Errorf("hydrate: read progress: %w", err)
 	}
-	var phases []string
-	if err := json.Unmarshal(b, &phases); err != nil {
-		return fmt.Errorf("hydrate: parse progress: %w", err)
+	var pf progressFile
+	if err := json.Unmarshal(b, &pf); err != nil {
+		// Legacy shape: bare []string.
+		var phases []string
+		if err2 := json.Unmarshal(b, &phases); err2 != nil {
+			return fmt.Errorf("hydrate: parse progress: %w", err)
+		}
+		for _, ph := range phases {
+			p.Done[ph] = true
+		}
+		return nil
 	}
-	for _, ph := range phases {
+	for _, ph := range pf.Phases {
 		p.Done[ph] = true
 	}
 	return nil
@@ -324,7 +373,8 @@ func (p *hydrateProgress) complete(phase string) error {
 		phases = append(phases, ph)
 	}
 	sort.Strings(phases)
-	b, err := json.MarshalIndent(phases, "", "  ")
+	pf := progressFile{Generation: p.generation, At: p.at, Phases: phases}
+	b, err := json.MarshalIndent(pf, "", "  ")
 	if err != nil {
 		return err
 	}

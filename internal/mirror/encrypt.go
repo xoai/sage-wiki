@@ -78,7 +78,3 @@ func (m *Mirror) shipBytes(b []byte) ([]byte, error) {
 	}
 	return encryptBytes(m.encKey, b)
 }
-
-// shipContentSHA is the plaintext content hash used for diff dedupe and
-// content addressing (stable under encryption, unlike ciphertext).
-func shipContentSHA(b []byte) string { return sha256HexBytes(b) }

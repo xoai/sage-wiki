@@ -127,6 +127,9 @@ func Open(wsDir string, cfg Config, src ChangeSource) (*Mirror, error) {
 // facade (kept a var so the facade file stays free of implementation deps).
 var openWiresOps func(*Mirror)
 
+// Config returns the mirror's runtime configuration (read-only).
+func (m *Mirror) Config() Config { return m.cfg }
+
 // ScheduledRotationDue reports whether the scheduled rotation cadence
 // (snapshot_interval) has elapsed since the last generation commit of ANY
 // kind — used by the serve shipper ticker.

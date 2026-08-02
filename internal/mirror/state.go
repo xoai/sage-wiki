@@ -146,6 +146,11 @@ func validateDB(what string, gen int, snapshot, snapshotSHA string, wal []WALSeg
 		if g != gen {
 			return fmt.Errorf("%s: wal[%d] key belongs to generation %d, want %d", what, i, g, gen)
 		}
+		if i == 0 && seq != 1 {
+			// F-106: the chain's first segment must be seq 1 (it carries the
+			// WAL header; a headerless first segment replays as garbage).
+			return fmt.Errorf("%s: wal[0] seq %06d, want 000001", what, seq)
+		}
 		if i > 0 {
 			_, prevSeq, _ := ParseWALSegmentKey(wal[i-1].Key)
 			if seq != prevSeq+1 {

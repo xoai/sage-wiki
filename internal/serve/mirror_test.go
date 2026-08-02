@@ -16,6 +16,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/xoai/sage-wiki/internal/mirror"
+	pkmirror "github.com/xoai/sage-wiki/pkg/mirror"
 )
 
 type serveFakeS3 struct {
@@ -246,4 +247,64 @@ func TestShipper_WALSegmentWithin2xInterval(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("no WAL segment shipped within 2×ship_interval of a db write")
+}
+
+// TestShipper_StopQuiesceMakesNextFoldBenign (F-102): after a drained
+// serve stops (final pass + Quiesce), the next process's pass classifies
+// the stop's close-fold as benign — no spurious rotation, even past the
+// debounce window.
+func TestShipper_StopQuiesceMakesNextFoldBenign(t *testing.T) {
+	fake, shipper, dir := shipperFixture(t, shipperFixtureOpts{
+		interval:         time.Hour,
+		snapshotInterval: time.Hour,
+		drainTimeout:     2 * time.Second,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	shipper.Start(ctx)
+	os.MkdirAll(filepath.Join(dir, "wiki", "concepts"), 0o755)
+	os.WriteFile(filepath.Join(dir, "wiki", "concepts", "Foo.md"), []byte("# Foo"), 0o644)
+	shipper.Stop() // final pass seals + Quiesce refreshes the reference
+
+	// Next process: a plain pass (no writes) — must NOT rotate and must
+	// NOT flag pending, even with the debounce aged away.
+	m, err := mirror.Open(dir, shipper.m.Config(), mirror.NewDiffChangeSource(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Ship(context.Background(), pkmirror.ChangeBatch{}); err != nil {
+		t.Fatalf("post-stop pass: %v", err)
+	}
+	// Age the debounce window via mirror-local.json: still benign.
+	ageMirrorLocal(t, dir)
+	if err := m.Ship(context.Background(), pkmirror.ChangeBatch{}); err != nil {
+		t.Fatalf("aged pass: %v", err)
+	}
+	rep, err := m.Verify(context.Background())
+	if err != nil || !rep.Valid {
+		t.Fatalf("verify: %+v %v", rep, err)
+	}
+	_ = fake
+}
+
+func ageMirrorLocal(t *testing.T, dir string) {
+	t.Helper()
+	path := filepath.Join(dir, ".sage", "mirror-local.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	marker := `"last_rotation_at"`
+	start := strings.Index(s, marker)
+	if start < 0 {
+		return
+	}
+	tail := s[start:]
+	end := strings.Index(tail, "\n")
+	if end < 0 {
+		end = len(tail)
+	}
+	replaced := `"last_rotation_at": "2020-01-01T00:00:00Z",` + tail[end:]
+	os.WriteFile(path, []byte(s[:start]+replaced), 0o644)
 }

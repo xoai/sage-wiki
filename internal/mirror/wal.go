@@ -71,14 +71,29 @@ func WALInfoFromFile(path string) (WALHeader, int64, error) {
 	}, info.Size(), nil
 }
 
+// ErrSaltMismatch reports a WAL incarnation change between the pass's
+// entry read and the seal read (TOCTOU, F-101): a cross-process reset
+// mid-pass must never splice new-incarnation frames into the old chain.
+type ErrSaltMismatch struct {
+	Want, Got uint64
+}
+
+func (e *ErrSaltMismatch) Error() string {
+	return fmt.Sprintf("wal: salt mismatch: pass validated %x, file now %x", e.Want, e.Got)
+}
+
 // SealWALSegment returns the WAL bytes [fromOffset, end-of-last-complete-
 // frame). fromOffset 0 includes the 32-byte header (generation start);
 // otherwise it must be a frame boundary. A torn trailing frame (crash
-// mid-write) is never sealed.
-func SealWALSegment(path string, fromOffset int64) ([]byte, error) {
+// mid-write) is never sealed. expectedSalt != 0 pins the incarnation the
+// caller validated at pass entry (F-101).
+func SealWALSegment(path string, fromOffset int64, expectedSalt ...uint64) ([]byte, error) {
 	hdr, size, err := WALInfoFromFile(path)
 	if err != nil {
 		return nil, err
+	}
+	if len(expectedSalt) > 0 && expectedSalt[0] != 0 && hdr.SaltID() != expectedSalt[0] {
+		return nil, &ErrSaltMismatch{Want: expectedSalt[0], Got: hdr.SaltID()}
 	}
 	frameSize := int64(walFrameHdr + hdr.PageSize)
 	if fromOffset < 0 || (fromOffset != 0 && (fromOffset-walHeaderSize)%frameSize != 0) {

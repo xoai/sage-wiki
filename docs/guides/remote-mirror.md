@@ -61,6 +61,10 @@ sage-wiki hydrate s3://bucket/prefix dir --key-file ~/.config/sage/mirror.key
 - `--at` is segment-granular: it lands on the last WAL segment sealed at
   or before TIME; any overshoot (≤ 1 segment) is printed. Timestamps come
   from the mirror's own records, never bucket metadata.
+- **PITR scope:** `--at`/`--generation` select the database chain only.
+  Markdown and source objects always restore at newest (the tree mixes
+  db@TIME with docs@newest). Per-generation object maps are a format-v2
+  follow-up.
 - `--partial` writes progress markers and prints when lexical/graph is
   available (before vectors finish); a follow-up `--partial` resumes.
 - Credentials for hydrate read from `AWS_ACCESS_KEY_ID` /

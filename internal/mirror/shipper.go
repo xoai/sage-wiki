@@ -228,8 +228,15 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 
 	// --- Branch (1): seal new WAL frames at the recorded (salt, offset) ---
 	if walPresent && walHdr.SaltID() == local.WALSalt && walSize > local.WALOffset && walSize > walHeaderSize {
-		seg, err := SealWALSegment(m.walPath(), local.WALOffset)
+		seg, err := SealWALSegment(m.walPath(), local.WALOffset, local.WALSalt)
 		if err != nil {
+			var mism *ErrSaltMismatch
+			if errors.As(err, &mism) {
+				// TOCTOU (F-101): the WAL reset mid-pass — skip sealing;
+				// the next pass re-reads identity and classifies the fold.
+				res.Warnings = append(res.Warnings, "wal incarnation changed mid-pass; seal deferred to next pass")
+				return res, nil
+			}
 			return res, err
 		}
 		if len(seg) > 0 {
@@ -244,6 +251,11 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 			}
 		}
 	}
+
+	// Quiesce-refresh happens ONLY in the serve drain (MirrorShipper.Stop
+	// via Mirror.Quiesce) — a checkpoint here would force every subsequent
+	// write into a fresh WAL incarnation and break chain continuity
+	// (measured). See serve/mirror.go Stop.
 
 	// State commit for docs-only passes (no segment sealed this pass but
 	// objects changed): the committed map is already updated in memory.
@@ -337,8 +349,10 @@ func (m *Mirror) rotate(ctx context.Context, st *State) error {
 	// 1. Tail seal: ship any remaining WAL frames as gen N's final segment.
 	walHdr, walSize, walErr := WALInfoFromFile(m.walPath())
 	if walErr == nil && local.WALSalt != 0 && walHdr.SaltID() == local.WALSalt && walSize > local.WALOffset {
-		seg, err := SealWALSegment(m.walPath(), local.WALOffset)
+		seg, err := SealWALSegment(m.walPath(), local.WALOffset, local.WALSalt)
 		if err != nil {
+			// Salt mismatch (F-101): fold landed mid-rotation — abort; the
+			// next pass re-detects and retries (rotation is idempotent).
 			return fmt.Errorf("rotate: tail seal: %w", err)
 		}
 		if len(seg) > 0 {
@@ -522,6 +536,39 @@ func (m *Mirror) adoptWAL() (uint64, int64) {
 		return 0, 0
 	}
 	return hdr.SaltID(), 0
+}
+
+// Quiesce folds sealed frames into the db (passive checkpoint) and
+// refreshes the hash reference — called by the serve drain (Stop), where
+// the process is exiting and the next incarnation is naturally fresh.
+// After Quiesce, a serve-stop close-fold hashes IDENTICAL to the
+// reference (branch (b) benign) instead of a spurious (a) rotation
+// (F-102, independent /review finding).
+func (m *Mirror) Quiesce() {
+	local, err := LoadLocalState(localStatePath(m.dir))
+	if err != nil {
+		return
+	}
+	db, err := sql.Open("sqlite", m.dbPath())
+	if err != nil {
+		return
+	}
+	defer db.Close()
+	if _, err := db.Exec("PRAGMA busy_timeout=2000"); err != nil {
+		return
+	}
+	if _, err := db.Exec("PRAGMA wal_checkpoint(PASSIVE)"); err != nil {
+		return
+	}
+	hash, size, err := hashFile(m.dbPath())
+	if err != nil {
+		return
+	}
+	local.LastDBSHA256 = hash
+	local.LastDBSize = size
+	if err := SaveLocalState(localStatePath(m.dir), local); err != nil {
+		return
+	}
 }
 
 // checkpointRestart runs a RESTART checkpoint so the new generation's WAL

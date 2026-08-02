@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -224,6 +223,3 @@ func orBackground(cmd *cobra.Command) context.Context {
 	}
 	return context.Background()
 }
-
-var _ = cli.FormatJSON // used by status (Task 9)
-var _ = os.Getenv
