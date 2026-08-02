@@ -182,11 +182,15 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 		result.ArticlesWritten = pResult.ArticlesWritten
 		result.ConceptsExtracted = pResult.ConceptsExtracted
 
-		// Collect written article info
-		for name, concept := range mf.Concepts {
+		// Collect written article info (SPEC-04 D1: sorted by name, deduped —
+		// a concept matches once per matching source without the guard)
+		seenArticles := map[string]bool{}
+		for _, name := range sortedConceptNames(mf.Concepts) {
+			concept := mf.Concepts[name]
 			for _, src := range uncompiled {
 				for _, cs := range concept.Sources {
-					if cs == src.Path {
+					if cs == src.Path && !seenArticles[name] {
+						seenArticles[name] = true
 						result.Articles = append(result.Articles, ArticleInfo{
 							Name: name,
 							Path: concept.ArticlePath,

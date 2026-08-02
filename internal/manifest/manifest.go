@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 )
 
@@ -288,6 +289,8 @@ func (m *Manifest) ArticlesFromSource(sourcePath string) []string {
 			}
 		}
 	}
+	// SPEC-04 D1: sorted — drives prune/delete order and CLI output.
+	sort.Strings(names)
 	return names
 }
 

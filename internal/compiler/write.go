@@ -376,8 +376,12 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap m
 }
 
 func buildFrontmatter(concept ExtractedConcept, entityType string, fields map[string]string, fieldOrder []string, loc *time.Location) string {
-	aliases := quoteYAMLList(concept.Aliases)
-	sources := quoteYAMLList(concept.Sources)
+	// SPEC-04 D1 (plan-review F-035): aliases/sources are SETS serialized as
+	// lists — emit them sorted so frontmatter bytes are canonical regardless
+	// of LLM/merge slice order. The manifest's internal order is unchanged
+	// (LLM-derived content order, like prose).
+	aliases := quoteYAMLList(sortedCopy(concept.Aliases))
+	sources := quoteYAMLList(sortedCopy(concept.Sources))
 
 	confidence := fields["confidence"]
 	if confidence == "" {
@@ -672,6 +676,13 @@ func quoteYAMLList(items []string) string {
 		quoted[i] = fmt.Sprintf("%q", item)
 	}
 	return "[" + strings.Join(quoted, ", ") + "]"
+}
+
+// sortedCopy returns an ascending-sorted copy of the input (SPEC-04 D1).
+func sortedCopy(items []string) []string {
+	out := append([]string(nil), items...)
+	sort.Strings(out)
+	return out
 }
 
 // maxRelatedConcepts caps how many "See also" links each article is seeded

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 
 	"github.com/spf13/cobra"
 	"github.com/xoai/sage-wiki/internal/cli"
@@ -41,6 +42,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		for path, s := range mf.Sources {
 			items = append(items, sourceItem{Path: path, Type: s.Type, Status: s.Status})
 		}
+		sort.Slice(items, func(i, j int) bool { return items[i].Path < items[j].Path }) // SPEC-04 D1
 		if outputFormat == "json" {
 			fmt.Println(cli.FormatJSON(true, map[string]any{"items": items, "total": len(items)}, ""))
 		} else {

@@ -35,10 +35,23 @@ type ExtractedConcept struct {
 // existing concepts' aliases.
 func manifestConceptRefs(m map[string]manifest.Concept) []ExtractedConcept {
 	refs := make([]ExtractedConcept, 0, len(m))
-	for name, c := range m {
+	for _, name := range sortedConceptNames(m) {
+		c := m[name]
 		refs = append(refs, ExtractedConcept{Name: name, Sources: c.Sources, Aliases: c.Aliases})
 	}
 	return refs
+}
+
+// sortedConceptNames returns the map keys in canonical (ascending) order.
+// SPEC-04 D1: any slice derived from map iteration that feeds bytes,
+// prompts, merge decisions, or output order is sorted before use.
+func sortedConceptNames(m map[string]manifest.Concept) []string {
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // ExtractConcepts runs Pass 2: concept extraction from summaries.
@@ -87,11 +100,8 @@ func ExtractConcepts(
 	}
 
 	// Build existing concept list for dedup context (shared snapshot for all batches)
-	var existingList []string
-	for name := range existingConcepts {
-		existingList = append(existingList, name)
-	}
-	dedupSnapshot := strings.Join(existingList, ", ")
+	// SPEC-04 D1: sorted — map iteration order must not leak into prompt bytes.
+	dedupSnapshot := strings.Join(sortedConceptNames(existingConcepts), ", ")
 
 	// Split into batches
 	type batchWork struct {

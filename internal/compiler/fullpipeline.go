@@ -287,12 +287,9 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	if opts.Embedder != nil && cfg.Compiler.DedupStrategy != "llm" {
 		dc := NewDedupCache(opts.Embedder, opts.VecStore, cfg.Compiler.DedupThreshold)
 
-		// Seed with existing concepts
-		var existingNames []string
-		for name := range mf.Concepts {
-			existingNames = append(existingNames, name)
-		}
-		dc.Seed(existingNames)
+		// Seed with existing concepts (SPEC-04 D1: sorted — seed order must
+		// not depend on map iteration)
+		dc.Seed(sortedConceptNames(mf.Concepts))
 
 		// Check new concepts for duplicates
 		var dedupedConcepts []ExtractedConcept

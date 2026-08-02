@@ -1144,6 +1144,7 @@ func resumeBatch(
 			}
 		}
 		if len(missing) > 0 {
+			sort.Strings(missing) // SPEC-04 D1: deterministic error text
 			return nil, fmt.Errorf("compile: batch returned %d of %d expected results — missing: %s (batch state kept for re-poll)",
 				matched, len(expected), strings.Join(missing, ", "))
 		}

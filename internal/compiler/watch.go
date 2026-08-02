@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -208,6 +209,9 @@ func watchPoll(projectDir string, sources []config.Source, ignore []string, inte
 				log.Info("file removed", "path", path)
 			}
 		}
+
+		// SPEC-04 D1: deterministic compile enqueue order.
+		sort.Strings(changed)
 
 		snapshot = newSnapshot
 
