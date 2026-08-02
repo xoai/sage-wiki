@@ -67,8 +67,9 @@ sage-wiki hydrate s3://bucket/prefix dir --key-file ~/.config/sage/mirror.key
   rotated-generation restore is a consistent tree. Granularity is
   per-generation for docs (per-segment for the db): a mid-generation
   delete may still be present and a mid-generation create may be
-  missing — the restore report prints both skews (excluded segments and
-  "objects at generation N's seal"). Mirrors written before object maps
+  missing — an `--at` restore report prints both skews (excluded
+  segments and "objects at generation N's seal"; `--generation` is
+  seal-consistent by construction). Mirrors written before object maps
   fall back to docs at newest with a printed note
   (`note: generation has no object map; docs restored at newest`).
 - `--partial` writes progress markers and prints when lexical/graph is

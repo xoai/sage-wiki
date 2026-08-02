@@ -465,10 +465,23 @@ func selectRestorePoint(ctx context.Context, client *s3.Client, prefix, bucket s
 			return nil, err
 		}
 		rp := &restorePoint{generation: meta.Generation, snapshot: meta.Snapshot, snapshotSHA: meta.SnapshotSHA256, wal: meta.WAL, objects: st.Objects, vectors: st.Vectors}
-		if meta.Objects != nil || meta.Vectors != nil {
+		// Per-class presence (N-2): a hand-edited mixed meta (one class
+		// nil) must not silently zero that class — it falls back with a
+		// per-class advisory instead of a silent mixed restore.
+		objs, vecs := meta.Objects != nil, meta.Vectors != nil
+		if objs {
 			rp.objects = meta.Objects
+		}
+		if vecs {
 			rp.vectors = meta.Vectors
+		}
+		if objs || vecs {
 			rp.fromMeta = true
+			if !objs {
+				rp.fallbackNote = "note: generation has no object map; docs restored at newest"
+			} else if !vecs {
+				rp.fallbackNote = "note: generation has no vector map; vectors restored at newest"
+			}
 		} else {
 			rp.fallbackNote = "note: generation has no object map; docs restored at newest"
 		}
@@ -515,9 +528,14 @@ func selectRestorePoint(ctx context.Context, client *s3.Client, prefix, bucket s
 			}
 		}
 		rp := &restorePoint{generation: best.Generation, snapshot: best.Snapshot, snapshotSHA: best.SnapshotSHA256, wal: wal, objects: st.Objects, vectors: st.Vectors, overshoot: overshoot}
-		if best.Objects != nil || best.Vectors != nil {
+		objs, vecs := best.Objects != nil, best.Vectors != nil
+		if objs {
 			rp.objects = best.Objects
+		}
+		if vecs {
 			rp.vectors = best.Vectors
+		}
+		if objs || vecs {
 			rp.fromMeta = true
 			// Object skew is independent of segment count: the map is at the
 			// generation's seal; the db is at T.

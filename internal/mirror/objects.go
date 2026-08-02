@@ -32,6 +32,15 @@ func (m *Mirror) shipObjects(ctx context.Context, st *State, changes []Change, r
 			// content key, silently invalidating every historical sealed map
 			// that names the old sha (F-019).
 			if ref, ok := st.Objects[ch.Path]; ok && ref.Deleted && committedContentSHA(ref) == ch.SHA256 {
+				// Re-read before un-tombstoning (N-3): the diff token is
+				// from BEFORE this pass's network time — the file may have
+				// changed underfoot (same guard as the normal upsert path).
+				if b, rerr := os.ReadFile(filepath.Join(m.dir, filepath.FromSlash(ch.Path))); rerr == nil {
+					if sha256HexBytes(b) != ch.SHA256 {
+						res.Warnings = append(res.Warnings, fmt.Sprintf("ship: %s changed mid-pass, deferred", ch.Path))
+						continue
+					}
+				}
 				ref.Deleted = false
 				st.Objects[ch.Path] = ref
 				res.ObjectsResurrected++
@@ -76,6 +85,12 @@ func (m *Mirror) syncVector(ctx context.Context, st *State, prefix string, ch Ch
 		// writes new-nonce ciphertext (new shipped sha) and invalidates
 		// every historical sealed map naming the old sha.
 		if ref, ok := st.Vectors[ch.Path]; ok && ref.Deleted && committedContentSHA(ref) == ch.SHA256 {
+			if b, rerr := os.ReadFile(filepath.Join(m.dir, ".sage", ch.Path)); rerr == nil {
+				if sha256HexBytes(b) != ch.SHA256 {
+					res.Warnings = append(res.Warnings, fmt.Sprintf("ship: %s changed mid-pass, deferred", ch.Path))
+					return nil
+				}
+			}
 			ref.Deleted = false
 			st.Vectors[ch.Path] = ref
 			res.ObjectsResurrected++

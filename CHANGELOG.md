@@ -4,7 +4,7 @@
 
 ### Added
 
-- **Per-generation object maps — PITR now covers markdown.** Each rotation seals the superseded generation's doc/vector object map into its meta.json, so `hydrate --generation N` and `hydrate --at T` (into a rotated generation) restore a CONSISTENT tree (db chain + docs as of that generation) instead of db@TIME with docs@newest. Docs restore at per-generation granularity (a mid-generation delete may persist, a create may be missing); the restore report prints both skews. Pre-map mirrors fall back to docs at newest with a printed note. `mirror verify` checks the sealed maps too (invariant (c): a retained generation is FULLY restorable, not just db-restorable).
+- **Per-generation object maps — PITR now covers markdown.** Each rotation seals the superseded generation's doc/vector object map into its meta.json, so `hydrate --generation N` and `hydrate --at T` (into a rotated generation) restore a CONSISTENT tree (db chain + docs as of that generation) instead of db@TIME with docs@newest. Docs restore at per-generation granularity (a mid-generation delete may persist, a create may be missing); an --at restore report prints both skews (--generation is seal-consistent). Pre-map mirrors fall back to docs at newest with a printed note. `mirror verify` checks the sealed maps too (invariant (c): a retained generation is FULLY restorable, not just db-restorable).
 
 - **Mirror follow-ups — SigV4 suite, STS, retain-in-state, budgets.** The
   mirror's SigV4 signing is now verified against the vendored

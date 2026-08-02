@@ -466,19 +466,22 @@ func TestVerify_MetaRefsDivergentShasBothChecked(t *testing.T) {
 	// Bucket holds shaA content.
 	fake.objects[key] = []byte("doc-A")
 
-	// Gen 1 (also retained, shaB for the same key — WRONG bytes).
+	// Gen 1 (also retained): same key, WRONG sha — but STRUCTURALLY VALID
+	// (ContentSHA256=shaA satisfies content-addressed validation), so only
+	// invariant (c) can attribute the violation. An invalid entry would
+	// satisfy the assertion through the meta-invalid channel instead and
+	// make this witness vacuous (N-1, pass-3 catch).
 	metaB := &GenerationMeta{
 		FormatVersion: FormatVersion, Generation: 1,
 		CreatedAt: time.Now().Add(-time.Hour).UTC(), SealedAt: time.Now().UTC(),
 		Snapshot: "ws/db/generation-1/snapshot.db.zst", SnapshotSHA256: sha256HexBytes([]byte("gen-snap")),
 		WAL:     []WALSegmentRef{},
-		Objects: map[string]ObjectRef{"wiki/a.md": {Key: key, SHA256: shaB}},
+		Objects: map[string]ObjectRef{"wiki/a.md": {Key: key, SHA256: shaB, ContentSHA256: shaA}},
 	}
 	mb2, _ := MarshalMeta(metaB)
 	fake.objects[GenerationMetaKey("ws/", 1)] = mb2
 	// Give gen 1 a snapshot so invariant (b) doesn't fire first.
 	fake.objects["ws/db/generation-1/snapshot.db.zst"] = []byte("gen-snap")
-	fake.objects[GenerationMetaKey("ws/", 1)] = mb2
 
 	m := openVerifyMirror(t, fake, st)
 	m.cfg.RetainGenerations = 5 // both gens retained
@@ -520,4 +523,51 @@ func TestHydrate_LiveAtZeroSegmentOvershoot_NoteFires(t *testing.T) {
 	if !strings.Contains(rep.Overshoot, "objects are at newest (live map)") {
 		t.Fatalf("live --at note must fire with zero excluded segments: %q", rep.Overshoot)
 	}
+}
+
+// N-1 regression pin: if invariant (c) collapsed metaRefs by key, this
+// assertion would FLIP between runs — call Verify twice and require the
+// SAME attribution both times (deterministic slice order).
+func TestVerify_MetaRefsDivergentShasDeterministicAttribution(t *testing.T) {
+	fake := newFakeS3()
+	st := verifyFixture(t, fake)
+	addRotatedGen(t, fake, 2)
+	shaA := sha256HexBytes([]byte("doc-A"))
+	shaB := sha256HexBytes([]byte("doc-B"))
+	key := "ws/objects/docs/" + shaA[:2] + "/" + shaA
+	mk := func(gen int, sha string, created time.Time) {
+		meta := &GenerationMeta{
+			FormatVersion: FormatVersion, Generation: gen,
+			CreatedAt: created, SealedAt: created,
+			Snapshot: "ws/db/generation-" + itoa(gen) + "/snapshot.db.zst", SnapshotSHA256: sha256HexBytes([]byte("gen-snap")),
+			WAL:     []WALSegmentRef{},
+			Objects: map[string]ObjectRef{"wiki/a.md": {Key: key, SHA256: sha, ContentSHA256: shaA}},
+		}
+		mb, _ := MarshalMeta(meta)
+		fake.objects[GenerationMetaKey("ws/", gen)] = mb
+		fake.objects["ws/db/generation-"+itoa(gen)+"/snapshot.db.zst"] = []byte("gen-snap")
+	}
+	mk(1, shaB, time.Now().Add(-time.Hour).UTC())
+	mk(2, shaA, time.Now().UTC())
+	fake.objects[key] = []byte("doc-A")
+
+	m := openVerifyMirror(t, fake, st)
+	m.cfg.RetainGenerations = 5
+	r1, _ := m.Verify(context.Background())
+	r2, _ := m.Verify(context.Background())
+	v1 := strings.Join(r1.Violations, "|")
+	v2 := strings.Join(r2.Violations, "|")
+	if v1 != v2 {
+		t.Fatalf("attribution must be deterministic:\nrun1: %s\nrun2: %s", v1, v2)
+	}
+	if !strings.Contains(v1, "generation 1") || strings.Contains(v1, "generation 2: meta-map") {
+		t.Fatalf("attribution must name gen 1 only for the meta-map mismatch: %s", v1)
+	}
+}
+
+func itoa(n int) string {
+	if n == 1 {
+		return "1"
+	}
+	return "2"
 }
