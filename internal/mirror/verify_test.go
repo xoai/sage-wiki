@@ -445,9 +445,27 @@ func TestVerify_MetaOnlyObjectNotOrphaned(t *testing.T) {
 	}
 }
 
+// Live --at with ZERO excluded segments: the live note fires anyway.
+func TestHydrate_LiveAtZeroSegmentOvershoot_NoteFires(t *testing.T) {
+	h := newHydrateFixture(t)
+	// --at in the future relative to everything sealed: zero excluded
+	// segments, live gen selected.
+	future := time.Now().Add(time.Hour).UTC()
+	dst := filepath.Join(t.TempDir(), "restored")
+	rep, err := Hydrate(context.Background(), h.cfg, dst, HydrateOpts{At: future})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rep.Overshoot, "objects are at newest (live map)") {
+		t.Fatalf("live --at note must fire with zero excluded segments: %q", rep.Overshoot)
+	}
+}
+
 // F-019b witness: two retained generations with DIVERGENT shas for one key
 // are BOTH checked deterministically — the mismatching generation is named
 // (a key-collapsed map would check one nondeterministically or neither).
+// The fixture is STRUCTURALLY VALID (ContentSHA256 satisfies content-
+// addressed validation) so only invariant (c) can attribute the violation.
 func TestVerify_MetaRefsDivergentShasBothChecked(t *testing.T) {
 	fake := newFakeS3()
 	st := verifyFixture(t, fake)
@@ -460,18 +478,12 @@ func TestVerify_MetaRefsDivergentShasBothChecked(t *testing.T) {
 		CreatedAt: time.Now().UTC(), SealedAt: time.Now().UTC(),
 		Snapshot: "ws/db/generation-2/snapshot.db.zst", SnapshotSHA256: sha256HexBytes([]byte("gen-snap")),
 		WAL:     []WALSegmentRef{},
-		Objects: map[string]ObjectRef{"wiki/a.md": {Key: key, SHA256: shaA}},
+		Objects: map[string]ObjectRef{"wiki/a.md": {Key: key, SHA256: shaA, ContentSHA256: shaA}},
 	}
 	mb, _ := MarshalMeta(metaA)
 	fake.objects[GenerationMetaKey("ws/", 2)] = mb
-	// Bucket holds shaA content.
 	fake.objects[key] = []byte("doc-A")
 
-	// Gen 1 (also retained): same key, WRONG sha — but STRUCTURALLY VALID
-	// (ContentSHA256=shaA satisfies content-addressed validation), so only
-	// invariant (c) can attribute the violation. An invalid entry would
-	// satisfy the assertion through the meta-invalid channel instead and
-	// make this witness vacuous (N-1, pass-3 catch).
 	metaB := &GenerationMeta{
 		FormatVersion: FormatVersion, Generation: 1,
 		CreatedAt: time.Now().Add(-time.Hour).UTC(), SealedAt: time.Now().UTC(),
@@ -481,7 +493,6 @@ func TestVerify_MetaRefsDivergentShasBothChecked(t *testing.T) {
 	}
 	mb2, _ := MarshalMeta(metaB)
 	fake.objects[GenerationMetaKey("ws/", 1)] = mb2
-	// Give gen 1 a snapshot so invariant (b) doesn't fire first.
 	fake.objects["ws/db/generation-1/snapshot.db.zst"] = []byte("gen-snap")
 
 	m := openVerifyMirror(t, fake, st)
@@ -502,27 +513,10 @@ func TestVerify_MetaRefsDivergentShasBothChecked(t *testing.T) {
 	if !found {
 		t.Fatalf("violation must name generation 1 (the mismatching gen): %v", rep.Violations)
 	}
-	// The matching generation must NOT be flagged.
 	for _, v := range rep.Violations {
 		if strings.Contains(v, "generation 2") && strings.Contains(v, "wiki/a.md") {
 			t.Fatalf("matching generation wrongly flagged: %v", rep.Violations)
 		}
-	}
-}
-
-// Live --at with ZERO excluded segments: the live note fires anyway.
-func TestHydrate_LiveAtZeroSegmentOvershoot_NoteFires(t *testing.T) {
-	h := newHydrateFixture(t)
-	// --at in the future relative to everything sealed: zero excluded
-	// segments, live gen selected.
-	future := time.Now().Add(time.Hour).UTC()
-	dst := filepath.Join(t.TempDir(), "restored")
-	rep, err := Hydrate(context.Background(), h.cfg, dst, HydrateOpts{At: future})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(rep.Overshoot, "objects are at newest (live map)") {
-		t.Fatalf("live --at note must fire with zero excluded segments: %q", rep.Overshoot)
 	}
 }
 

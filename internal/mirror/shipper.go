@@ -458,7 +458,10 @@ func (m *Mirror) rotate(ctx context.Context, st *State) error {
 	// identical bytes. It is max(tail segment's sealed_at, state's last
 	// commit time) — docs-only commits advance UpdatedAt WITHOUT a segment,
 	// and the sealed object map is fresh through that commit (pass-4: the
-	// skew note's heuristic must match the map's actual freshness).
+	// skew note's heuristic must match the map's actual freshness). In the
+	// WAL-only-tail window (last commits are segments) the note can
+	// OVER-report skew for T just before the last doc change — conservative
+	// by design, never a false negative.
 	now := m.now().UTC()
 	sealedAt := st.UpdatedAt
 	if n := len(st.DB.WAL); n > 0 && st.DB.WAL[n-1].SealedAt.After(sealedAt) {

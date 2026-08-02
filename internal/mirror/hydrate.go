@@ -149,9 +149,9 @@ func hydrateWithClient(ctx context.Context, client *s3.Client, prefix, bucket, d
 	if sel.overshoot > 0 {
 		skewParts = append(skewParts, fmt.Sprintf("%d segment(s) sealed after the requested time excluded", sel.overshoot))
 	}
-	if sel.fromMeta && sel.objectSkew {
+	if sel.objectsFromMeta && sel.objectSkew {
 		skewParts = append(skewParts, fmt.Sprintf("objects at generation %d's seal", sel.generation))
-	} else if !sel.fromMeta && !opts.At.IsZero() {
+	} else if !sel.objectsFromMeta && !opts.At.IsZero() {
 		// Live gen selected by --at: the map is always "newest" — name it
 		// even with zero excluded segments (docs may have changed after T).
 		skewParts = append(skewParts, "objects are at newest (live map)")
@@ -436,16 +436,17 @@ func downloadVerified(ctx context.Context, client *s3.Client, bucket, key, wantS
 
 // restorePoint is the selected generation + restore chain.
 type restorePoint struct {
-	generation   int
-	snapshot     string
-	snapshotSHA  string
-	wal          []WALSegmentRef
-	objects      map[string]ObjectRef
-	vectors      map[string]ObjectRef
-	overshoot    int
-	fromMeta     bool   // objects/vectors came from the selected generation's sealed meta map
-	objectSkew   bool   // T predates the selected generation's seal (docs newer than T)
-	fallbackNote string // set when the selected meta has no maps (old mirror)
+	generation      int
+	snapshot        string
+	snapshotSHA     string
+	wal             []WALSegmentRef
+	objects         map[string]ObjectRef
+	vectors         map[string]ObjectRef
+	overshoot       int
+	fromMeta        bool   // objects/vectors came from the selected generation's sealed meta map
+	objectsFromMeta bool   // the OBJECT class specifically came from the meta map (N-2: skew notes are per-class)
+	objectSkew      bool   // T predates the selected generation's seal (docs newer than T)
+	fallbackNote    string // set when the selected meta has no maps (old mirror)
 }
 
 func selectRestorePoint(ctx context.Context, client *s3.Client, prefix, bucket string, st *State, opts HydrateOpts) (*restorePoint, error) {
@@ -549,6 +550,7 @@ func (rp *restorePoint) applyMetaMaps(meta *GenerationMeta, st *State) {
 	if objs || vecs {
 		rp.fromMeta = true
 	}
+	rp.objectsFromMeta = objs
 }
 
 func oldestPoint(st *State, metas []*GenerationMeta) string {

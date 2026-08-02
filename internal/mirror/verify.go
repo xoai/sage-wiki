@@ -228,6 +228,9 @@ func (o *mirrorOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
 			if metaRefKeys[k] {
 				continue // referenced by a retained generation's sealed map
 			}
+			if _, ok := parseGenerationDirKey(k); ok {
+				continue // a (possibly invalid) generation dir's own objects — never orphans (N-7)
+			}
 			if _, err := ParseGenerationMetaKey(k); err == nil {
 				continue // meta.json is a format member, never an orphan
 			}

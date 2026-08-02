@@ -110,6 +110,14 @@ func (m *Mirror) syncVector(ctx context.Context, st *State, prefix string, ch Ch
 			res.Warnings = append(res.Warnings, fmt.Sprintf("ship: %s vanished mid-pass: %v", ch.Path, err))
 			return nil
 		}
+		// Underfoot re-hash (F-021, CRITICAL): the docs upsert has this
+		// guard; without it a torn read commits {Key: <shaX>, SHA256: <shaY>}
+		// which FAILS validateObjectRef on every subsequent pass and
+		// permanently wedges ship + all hydrates (unencrypted default).
+		if got := sha256HexBytes(b); got != ch.SHA256 {
+			res.Warnings = append(res.Warnings, fmt.Sprintf("ship: %s changed mid-pass, deferred", ch.Path))
+			return nil
+		}
 		key := VectorObjectKey(prefix, ch.SHA256)
 		shippedSHA, err := m.putObjectShasum(ctx, key, b)
 		if err != nil {
