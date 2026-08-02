@@ -81,7 +81,11 @@ func (s *MirrorShipper) Start(ctx context.Context) {
 func (s *MirrorShipper) Stop() {
 	close(s.stop)
 	<-s.done
-	// Await in-flight rotations within the drain budget.
+	// ONE shared drain ctx (item 4): the rotation wait, the final Ship,
+	// and Quiesce all share it — total drain ≈ drainTimeout. If the wait
+	// consumes the budget, Ship is abandoned loudly and Quiesce skipped.
+	drainCtx, cancel := context.WithTimeout(context.Background(), s.drainTimeout)
+	defer cancel()
 	rotDone := make(chan struct{})
 	go func() {
 		s.rotWG.Wait()
@@ -89,12 +93,10 @@ func (s *MirrorShipper) Stop() {
 	}()
 	select {
 	case <-rotDone:
-	case <-time.After(s.drainTimeout):
+	case <-drainCtx.Done():
 		slog.Warn("mirror drain: rotation still in flight at budget — proceeding to final pass")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), s.drainTimeout)
-	defer cancel()
-	if err := s.m.Ship(ctx, pkmirror.ChangeBatch{}); err != nil {
+	if err := s.m.Ship(drainCtx, pkmirror.ChangeBatch{}); err != nil {
 		s.drainAbandoned = true
 		slog.Warn("mirror drain: final ship pass abandoned (local state correct; next run re-ships)", "err", err)
 		return
@@ -102,9 +104,9 @@ func (s *MirrorShipper) Stop() {
 	// Quiesce (F-102): fold the just-sealed frames and refresh the hash
 	// reference, so the NEXT process's first pass classifies this stop's
 	// close-fold as benign (b) rather than a spurious (a) rotation.
-	// Failure is LOUD (pass-2 MAJOR-2) — a skipped quiesce reverts to
-	// data-safe (a) rotations, never to lost content.
-	if err := s.m.Quiesce(); err != nil {
+	// Failure is LOUD — a skipped quiesce reverts to data-safe (a)
+	// rotations, never to lost content.
+	if err := s.m.Quiesce(drainCtx); err != nil {
 		slog.Warn("mirror drain: quiesce failed (serve-stop folds will rotate conservatively)", "err", err)
 	}
 }

@@ -297,3 +297,39 @@ func TestShip_CombinedWindow_SealAndBranchC(t *testing.T) {
 		t.Fatal("combined window must not rotate (no lost frames)")
 	}
 }
+
+// TestQuiesce_BudgetExceeded (follow-up item 4): a tiny drain budget makes
+// Quiesce fail LOUDLY and leave the hash reference untouched.
+func TestQuiesce_BudgetExceeded(t *testing.T) {
+	f := newShipFixture(t)
+	defer f.dbClose()
+	f.dbWrite(t, "row-1")
+	f.pass(t)
+	before := f.m.local.LastDBSHA256
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	time.Sleep(time.Millisecond)
+	if err := f.m.Quiesce(ctx); err == nil {
+		t.Fatal("expired-budget Quiesce must fail loudly")
+	}
+	loaded, err := LoadLocalState(localStatePath(f.dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.LastDBSHA256 != before {
+		t.Fatal("failed Quiesce must not update the reference")
+	}
+}
+
+// TestQuiesce_WithinBudget: normal ctx succeeds and refreshes the reference.
+func TestQuiesce_WithinBudget(t *testing.T) {
+	f := newShipFixture(t)
+	defer f.dbClose()
+	f.dbWrite(t, "row-1")
+	f.pass(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := f.m.Quiesce(ctx); err != nil {
+		t.Fatalf("Quiesce: %v", err)
+	}
+}
