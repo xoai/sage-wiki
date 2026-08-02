@@ -404,3 +404,50 @@ func TestHashFileCtx_MidReadCancel(t *testing.T) {
 type readerFunc func(p []byte) (int, error)
 
 func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
+
+// TestShip_RotateSealsObjectMaps (AC-6 writer half): the superseded
+// generation's meta.json carries objects/vectors maps EQUAL to the
+// committed mirror-state's maps.
+func TestShip_RotateSealsObjectMaps(t *testing.T) {
+	f := newShipFixture(t)
+	defer f.dbClose()
+	writeWS(t, f.dir, "wiki/concepts/Foo.md", "# Foo")
+	writeWS(t, f.dir, "raw/paper.pdf", "PDF")
+	writeWS(t, f.dir, ".sage/vectors.idx", "SWVI")
+	f.dbWrite(t, "row-1")
+	f.dbClose()
+	ageLocalRotationFile(t, f.dir, -2*time.Hour)
+	if res := f.pass(t); !res.Rotated {
+		t.Fatal("setup: rotation did not fire")
+	}
+	mb, ok := f.fake.get(GenerationMetaKey("ws/", 1))
+	if !ok {
+		t.Fatal("gen-1 meta.json missing")
+	}
+	meta, err := UnmarshalMeta(mb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.Validate(); err != nil {
+		t.Fatalf("sealed meta invalid: %v", err)
+	}
+	st := f.remoteState(t)
+	if len(meta.Objects) != len(st.Objects) {
+		t.Fatalf("meta objects %d != state objects %d", len(meta.Objects), len(st.Objects))
+	}
+	for path, ref := range st.Objects {
+		got, ok := meta.Objects[path]
+		if !ok || got != ref {
+			t.Fatalf("meta objects[%q] = %+v, want %+v", path, got, ref)
+		}
+	}
+	if len(meta.Vectors) != len(st.Vectors) {
+		t.Fatalf("meta vectors %d != state vectors %d", len(meta.Vectors), len(st.Vectors))
+	}
+	for name, ref := range st.Vectors {
+		got, ok := meta.Vectors[name]
+		if !ok || got != ref {
+			t.Fatalf("meta vectors[%q] = %+v, want %+v", name, got, ref)
+		}
+	}
+}

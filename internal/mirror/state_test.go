@@ -153,3 +153,99 @@ func TestStateTimestampsUTC(t *testing.T) {
 		t.Fatalf("non-UTC timestamp leaked: %s", b)
 	}
 }
+
+// GenerationMeta object maps (per-generation PITR): additive, validated
+// with the same rules as mirror-state when present.
+func TestGenerationMeta_MapsRoundTrip(t *testing.T) {
+	sha := strings.Repeat("ab", 32)
+	meta := &GenerationMeta{
+		FormatVersion: FormatVersion, Generation: 2,
+		CreatedAt: stateTestTime, SealedAt: stateTestTime.Add(time.Hour),
+		Snapshot: "ws/db/generation-2/snapshot.db.zst", SnapshotSHA256: sha,
+		WAL: []WALSegmentRef{},
+		Objects: map[string]ObjectRef{
+			"wiki/concepts/Foo.md": {Key: "ws/objects/docs/ab/" + sha, SHA256: sha},
+		},
+		Vectors: map[string]ObjectRef{
+			"vectors.idx": {Key: "ws/vectors/" + sha, SHA256: sha},
+		},
+	}
+	b1, err := MarshalMeta(meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Deterministic across adversarial insertion order (same entries, both orders).
+	meta2 := &GenerationMeta{}
+	*meta2 = *meta
+	meta2.Objects = map[string]ObjectRef{}
+	meta2.Objects["wiki/concepts/Foo.md"] = meta.Objects["wiki/concepts/Foo.md"]
+	b2, err := MarshalMeta(meta2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b1) != string(b2) {
+		t.Fatal("non-deterministic meta marshal")
+	}
+	got, err := UnmarshalMeta(b1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := got.Validate(); err != nil {
+		t.Fatalf("meta with maps must validate: %v", err)
+	}
+	if got.Objects["wiki/concepts/Foo.md"].SHA256 != sha {
+		t.Fatal("object map lost in round-trip")
+	}
+}
+
+func TestGenerationMeta_MapsAbsentIsValid(t *testing.T) {
+	// Old pre-feature meta (no maps) must load + validate.
+	sha := strings.Repeat("ab", 32)
+	meta := &GenerationMeta{
+		FormatVersion: FormatVersion, Generation: 2,
+		CreatedAt: stateTestTime, SealedAt: stateTestTime,
+		Snapshot: "ws/db/generation-2/snapshot.db.zst", SnapshotSHA256: sha,
+		WAL: []WALSegmentRef{},
+	}
+	if err := meta.Validate(); err != nil {
+		t.Fatalf("absent maps must be tolerated: %v", err)
+	}
+}
+
+func TestGenerationMeta_MapsValidatedWhenPresent(t *testing.T) {
+	sha := strings.Repeat("ab", 32)
+	base := func() *GenerationMeta {
+		return &GenerationMeta{
+			FormatVersion: FormatVersion, Generation: 2,
+			CreatedAt: stateTestTime, SealedAt: stateTestTime,
+			Snapshot: "ws/db/generation-2/snapshot.db.zst", SnapshotSHA256: sha,
+			WAL: []WALSegmentRef{},
+		}
+	}
+	cases := []struct {
+		name   string
+		mutate func(*GenerationMeta)
+	}{
+		{"unsafe path", func(m *GenerationMeta) {
+			m.Objects = map[string]ObjectRef{"../escape.md": {Key: "ws/objects/docs/ab/" + sha, SHA256: sha}}
+		}},
+		{"non-basename vector", func(m *GenerationMeta) {
+			m.Vectors = map[string]ObjectRef{"../vec.idx": {Key: "ws/vectors/" + sha, SHA256: sha}}
+		}},
+		{"bad sha", func(m *GenerationMeta) {
+			m.Objects = map[string]ObjectRef{"wiki/a.md": {Key: "ws/objects/docs/ab/" + sha, SHA256: "zz"}}
+		}},
+		{"non-content-addressed key", func(m *GenerationMeta) {
+			m.Objects = map[string]ObjectRef{"wiki/a.md": {Key: "ws/objects/docs/xx/nope", SHA256: sha}}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := base()
+			tc.mutate(m)
+			if err := m.Validate(); err == nil {
+				t.Fatal("invalid map entry must fail validation")
+			}
+		})
+	}
+}

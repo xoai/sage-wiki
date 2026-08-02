@@ -51,15 +51,19 @@ type State struct {
 }
 
 // GenerationMeta is db/generation-N/meta.json — the rotation record of a
-// superseded generation, derived from mirror-state by construction.
+// superseded generation, derived from mirror-state by construction. Objects
+// and Vectors seal the committed object maps at rotation (per-generation
+// PITR — additive; old metas lack them and hydrate falls back).
 type GenerationMeta struct {
-	FormatVersion  int             `json:"format_version"`
-	Generation     int             `json:"generation"`
-	CreatedAt      time.Time       `json:"created_at"`
-	SealedAt       time.Time       `json:"sealed_at"`
-	Snapshot       string          `json:"snapshot"`
-	SnapshotSHA256 string          `json:"snapshot_sha256"`
-	WAL            []WALSegmentRef `json:"wal"`
+	FormatVersion  int                  `json:"format_version"`
+	Generation     int                  `json:"generation"`
+	CreatedAt      time.Time            `json:"created_at"`
+	SealedAt       time.Time            `json:"sealed_at"`
+	Snapshot       string               `json:"snapshot"`
+	SnapshotSHA256 string               `json:"snapshot_sha256"`
+	WAL            []WALSegmentRef      `json:"wal"`
+	Objects        map[string]ObjectRef `json:"objects,omitempty"`
+	Vectors        map[string]ObjectRef `json:"vectors,omitempty"`
 }
 
 // MarshalState serializes deterministically: encoding/json sorts map keys;
@@ -131,7 +135,29 @@ func (m *GenerationMeta) Validate() error {
 	if m.SealedAt.IsZero() {
 		return fmt.Errorf("meta: sealed_at missing")
 	}
-	return validateDB("meta", m.Generation, m.Snapshot, m.SnapshotSHA256, m.WAL, nil, nil)
+	if err := validateDB("meta", m.Generation, m.Snapshot, m.SnapshotSHA256, m.WAL, nil, nil); err != nil {
+		return err
+	}
+	// Object maps: absent = tolerated (pre-feature metas); present = the
+	// same rules as mirror-state (paths confined, vectors basename,
+	// content-addressed keys, sha shapes).
+	for path, ref := range m.Objects {
+		if err := confineRelPath(path); err != nil {
+			return fmt.Errorf("meta objects[%q]: unsafe path: %w", path, err)
+		}
+		if err := validateObjectRef("meta objects", path, ref); err != nil {
+			return err
+		}
+	}
+	for name, ref := range m.Vectors {
+		if name != filepath.Base(name) {
+			return fmt.Errorf("meta vectors[%q]: not a basename (unsafe)", name)
+		}
+		if err := validateObjectRef("meta vectors", name, ref); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func validateDB(what string, gen int, snapshot, snapshotSHA string, wal []WALSegmentRef, objects, vectors map[string]ObjectRef) error {

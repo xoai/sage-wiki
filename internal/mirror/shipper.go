@@ -469,6 +469,8 @@ func (m *Mirror) rotate(ctx context.Context, st *State) error {
 		Snapshot:       st.DB.Snapshot,
 		SnapshotSHA256: st.DB.SnapshotSHA256,
 		WAL:            st.DB.WAL,
+		Objects:        st.Objects,
+		Vectors:        st.Vectors,
 	}
 	mb, err := MarshalMeta(meta)
 	if err != nil {
