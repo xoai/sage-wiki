@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xoai/sage-wiki/internal/mirror/s3"
 )
 
 func TestResolveCredentials_FromEnv(t *testing.T) {
