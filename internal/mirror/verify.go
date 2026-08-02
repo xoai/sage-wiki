@@ -74,10 +74,16 @@ func (o *mirrorOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
 	if err != nil {
 		return rep, fmt.Errorf("mirror verify: list db/: %w", err)
 	}
+	// Retention: prefer the STATE's recorded retain (it reflects the
+	// shipper's actual config; local config may differ on this workspace).
+	retain := st.RetainGenerations
+	if retain == 0 {
+		retain = m.cfg.RetainGenerations
+	}
 	rotated := map[int]bool{}
 	for _, k := range genKeys {
 		if gen, ok := parseGenerationDirKey(k); ok && gen < st.Generation &&
-			gen > st.Generation-m.cfg.RetainGenerations {
+			gen > st.Generation-retain {
 			rotated[gen] = true
 		}
 	}

@@ -520,9 +520,10 @@ func (m *Mirror) rotate(ctx context.Context, st *State) error {
 			CreatedAt:      now,
 			WAL:            []WALSegmentRef{},
 		},
-		Objects:   st.Objects,
-		Vectors:   st.Vectors,
-		UpdatedAt: now,
+		Objects:           st.Objects,
+		Vectors:           st.Vectors,
+		UpdatedAt:         now,
+		RetainGenerations: m.cfg.RetainGenerations,
 	}
 	sb, err := MarshalState(newState)
 	if err != nil {
@@ -570,6 +571,7 @@ func (m *Mirror) commitSegment(ctx context.Context, st *State, seg []byte, seq i
 		SealedAt: m.now().UTC(),
 	})
 	st.UpdatedAt = m.now().UTC()
+	st.RetainGenerations = m.cfg.RetainGenerations
 	sb, err := MarshalState(st)
 	if err != nil {
 		return err

@@ -193,3 +193,92 @@ func TestVerify_NoState(t *testing.T) {
 		t.Fatal("no mirror-state → invalid")
 	}
 }
+
+// retain-in-state witnesses (follow-up item 3): verify prefers the STATE's
+// retain_generations over the verifier's local config.
+
+func TestVerify_RetainFromState_LargerWins(t *testing.T) {
+	fake := newFakeS3()
+	st := verifyFixture(t, fake)
+	// Add rotated gens 1 and 2 with metas; live is 3. State retain = 3 →
+	// gen 1 retained (3-1=2 > 3-3=0... precisely: gen > live-retain = 0).
+	addRotatedGen(t, fake, 1)
+	addRotatedGen(t, fake, 2)
+	st.RetainGenerations = 3
+	m := openVerifyMirror(t, fake, st)
+	m.cfg.RetainGenerations = 1 // local would prune everything — state wins
+	rep, err := m.Verify(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.Valid {
+		t.Fatalf("state retain=3 must retain gen 1+2: %+v", rep.Violations)
+	}
+}
+
+func TestVerify_RetainFromState_SmallerWins(t *testing.T) {
+	fake := newFakeS3()
+	st := verifyFixture(t, fake)
+	addRotatedGen(t, fake, 2) // meta present; live=3; state retain=1 → gen 2 prune-eligible (exempt)
+	// Remove gen-2's meta to make the point: with retain=1 gen 2 is exempt
+	// from the invariant even with a MISSING meta; with local cfg=5 it
+	// would be retained and flagged.
+	delete(fake.objects, GenerationMetaKey("ws/", 2))
+	st.RetainGenerations = 1
+	m := openVerifyMirror(t, fake, st)
+	m.cfg.RetainGenerations = 5
+	rep, err := m.Verify(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.Valid {
+		t.Fatalf("state retain=1 must exempt gen 2 (local cfg does NOT resurrect): %+v", rep.Violations)
+	}
+}
+
+func TestVerify_RetainFallback_LocalConfig(t *testing.T) {
+	fake := newFakeS3()
+	st := verifyFixture(t, fake)
+	addRotatedGen(t, fake, 2) // live=3; local retain=2 → gen 2 retained → checked
+	delete(fake.objects, "ws/db/generation-2/snapshot.db.zst")
+	// st.RetainGenerations stays 0 (absent) → fallback to local (2).
+	m := openVerifyMirror(t, fake, st)
+	rep, err := m.Verify(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Valid {
+		t.Fatal("missing gen-2 snapshot within local retain must fail")
+	}
+}
+
+func TestVerify_RetainFallback_LocalUnsetDefaultsTo2(t *testing.T) {
+	fake := newFakeS3()
+	st := verifyFixture(t, fake)
+	addRotatedGen(t, fake, 1) // live=3; gen 1 is prune-eligible at retain=2 → exempt, no violation
+	m := openVerifyMirror(t, fake, st)
+	m.cfg.RetainGenerations = 0 // unset → normalized 2
+	rep, err := m.Verify(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.Valid {
+		t.Fatalf("unset local retain must normalize to 2 (gen 1 exempt): %+v", rep.Violations)
+	}
+}
+
+// addRotatedGen plants a valid rotated generation (meta + snapshot).
+func addRotatedGen(t *testing.T, fake *fakeS3, gen int) {
+	t.Helper()
+	sha := sha256HexBytes([]byte("gen-snap"))
+	snapKey := SnapshotKey("ws/", gen)
+	meta := &GenerationMeta{
+		FormatVersion: FormatVersion, Generation: gen,
+		CreatedAt: time.Now().UTC(), SealedAt: time.Now().UTC(),
+		Snapshot: snapKey, SnapshotSHA256: sha,
+		WAL: []WALSegmentRef{},
+	}
+	mb, _ := MarshalMeta(meta)
+	fake.objects[GenerationMetaKey("ws/", gen)] = mb
+	fake.objects[snapKey] = []byte("gen-snap")
+}
