@@ -740,7 +740,7 @@ func ResolveEntitiesPass(
 				"blocks_done", stats.calls, "blocks", len(blocks))
 			break
 		}
-		clusters, err := arbitrateBlock(ctx, b, rcfg, model, client, &stats, pr)
+		clusters, err := arbitrateBlock(ctx, b, rcfg, model, client, &stats, pr, cfg.Compiler.CompileTemperature())
 		stats.calls++
 		if err != nil {
 			stats.failed++
@@ -1082,6 +1082,7 @@ func arbitrateBlock(
 	client *llm.Client,
 	stats *resolveStats,
 	pr *prompts.Registry,
+	temp *float64,
 ) ([]normalizedCluster, error) {
 	// NeutralizeTags over the whole rendered block: names and descriptions are
 	// model-generated text derived from arbitrary source documents, i.e.
@@ -1095,7 +1096,7 @@ func arbitrateBlock(
 	payload, _, err := client.StructuredCompletion(ctx, []llm.Message{
 		{Role: "system", Content: "You are an entity-resolution system. Output valid JSON only."},
 		{Role: "user", Content: prompt},
-	}, ResolveSchema, llm.CallOpts{Model: model, MaxTokens: rcfg.MaxTokens})
+	}, ResolveSchema, llm.CallOpts{Model: model, MaxTokens: rcfg.MaxTokens, Temperature: temp})
 	if err != nil {
 		return nil, err
 	}

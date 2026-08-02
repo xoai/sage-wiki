@@ -1003,7 +1003,7 @@ func submitBatch(
 				{Role: "system", Content: "You are a research assistant creating structured summaries for a personal knowledge wiki."},
 				{Role: "user", Content: prompt + "\n\n" + prompts.WrapUntrusted(content.Text)},
 			},
-			Opts: llm.CallOpts{Model: model, MaxTokens: maxTokens},
+			Opts: llm.CallOpts{Model: model, MaxTokens: maxTokens, Temperature: cfg.Compiler.CompileTemperature()},
 		})
 	}
 
@@ -1309,7 +1309,7 @@ func resumeBatch(
 		client.SetPass("extract")
 		extCacheID, _ := client.SetupCache("You are an expert knowledge organizer. Extract structured concepts from source summaries.", model)
 		progress.StartPhase("Pass 2: Extract concepts", len(successfulSummaries))
-		concepts, err := ExtractConcepts(opts.Ctx, successfulSummaries, mf.Concepts, client, model, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel, opts.Prompts)
+		concepts, err := ExtractConcepts(opts.Ctx, successfulSummaries, mf.Concepts, client, model, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel, opts.Prompts, cfg.Compiler.CompileTemperature())
 		if err != nil {
 			progress.ItemError("concept extraction", err)
 			result.Errors++
@@ -1348,6 +1348,7 @@ func resumeBatch(
 				relPatterns := ontology.RelationPatterns(merged)
 				progress.StartPhase("Pass 3: Write articles", len(concepts))
 				articles := WriteArticles(ArticleWriteOpts{
+					Temperature:        cfg.Compiler.CompileTemperature(),
 					Prompts:            opts.Prompts,
 					Ctx:                opts.Ctx,
 					ProjectDir:         projectDir,

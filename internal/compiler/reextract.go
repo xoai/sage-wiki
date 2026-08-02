@@ -127,7 +127,7 @@ func ReExtract(projectDir string, options ...ReExtractOption) (*CompileResult, e
 	log.Info("Pass 2: extracting concepts", "from_summaries", len(summaries))
 	// ReExtract has no cancellation context of its own; --re-extract cancellation
 	// is a follow-up. Use a background context so the LLM calls still function.
-	concepts, err := ExtractConcepts(context.Background(), summaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel, ro.prompts)
+	concepts, err := ExtractConcepts(context.Background(), summaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel, ro.prompts, cfg.Compiler.CompileTemperature())
 	if err != nil {
 		return nil, fmt.Errorf("re-extract: concept extraction: %w", err)
 	}
@@ -160,6 +160,7 @@ func ReExtract(projectDir string, options ...ReExtractOption) (*CompileResult, e
 		relPatterns := ontology.RelationPatterns(mergedRels)
 		log.Info("Pass 3: writing articles", "concepts", len(concepts))
 		articles := WriteArticles(ArticleWriteOpts{
+			Temperature:        cfg.Compiler.CompileTemperature(),
 			Prompts:            ro.prompts,
 			ProjectDir:         projectDir,
 			OutputDir:          cfg.Output,

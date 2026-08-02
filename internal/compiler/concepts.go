@@ -70,6 +70,7 @@ func ExtractConcepts(
 	maxTokens int,
 	concurrency int,
 	pr *prompts.Registry,
+	temp *float64,
 ) ([]ExtractedConcept, error) {
 	defer metrics.ObserveDuration(metrics.HistogramNamed("compile_pass_duration_seconds", metrics.CompileBuckets(), "pass", "extract"), time.Now())
 	if ctx == nil {
@@ -185,7 +186,7 @@ func ExtractConcepts(
 			payload, _, err := client.StructuredCompletion(ctx, []llm.Message{
 				{Role: "system", Content: "You are a concept extraction system for a knowledge wiki. Output valid JSON only."},
 				{Role: "user", Content: prompt},
-			}, ConceptsSchema, llm.CallOpts{Model: model, MaxTokens: maxTokens})
+			}, ConceptsSchema, llm.CallOpts{Model: model, MaxTokens: maxTokens, Temperature: temp})
 			if err != nil {
 				recordFailure(fmt.Errorf("batch %d: %w", b.index+1, err))
 				log.Error("concept extraction batch failed", "batch", b.index+1, "error", err)

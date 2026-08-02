@@ -105,8 +105,8 @@ func (p *anthropicProvider) formatBody(messages []Message, opts CallOpts, stream
 	if systemPrompt != "" {
 		body["system"] = systemPrompt
 	}
-	if opts.Temperature > 0 {
-		body["temperature"] = opts.Temperature
+	if opts.Temperature != nil {
+		body["temperature"] = *opts.Temperature
 	}
 
 	mergeExtraParams(body, p.extraParams, anthropicProtectedKeys)
@@ -189,8 +189,8 @@ func (p *anthropicProvider) FormatCachedRequest(cacheID string, messages []Messa
 	if len(systemContent) > 0 {
 		body["system"] = systemContent
 	}
-	if opts.Temperature > 0 {
-		body["temperature"] = opts.Temperature
+	if opts.Temperature != nil {
+		body["temperature"] = *opts.Temperature
 	}
 
 	mergeExtraParams(body, p.extraParams, anthropicProtectedKeys)

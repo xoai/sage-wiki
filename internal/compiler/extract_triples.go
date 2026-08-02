@@ -115,6 +115,7 @@ func ExtractTriples(
 	validTypes, validPredicates []string,
 	client *llm.Client,
 	pr *prompts.Registry,
+	temp *float64,
 ) (ExtractedGraph, error) {
 	var graph ExtractedGraph
 
@@ -138,7 +139,7 @@ func ExtractTriples(
 	payload, _, err := client.StructuredCompletion(ctx, []llm.Message{
 		{Role: "system", Content: "You are a knowledge-graph extraction system. Output valid JSON only."},
 		{Role: "user", Content: prompt},
-	}, TriplesSchema, llm.CallOpts{Model: model, MaxTokens: tcfg.MaxTokens})
+	}, TriplesSchema, llm.CallOpts{Model: model, MaxTokens: tcfg.MaxTokens, Temperature: temp})
 	if err != nil {
 		return graph, err
 	}
@@ -724,7 +725,7 @@ func ExtractTriplesPass(
 			doc := s
 			doc.Summary = body
 
-			graph, err := ExtractTriples(ctx, doc, tcfg, model, validTypes, validPredicates, client, pr)
+			graph, err := ExtractTriples(ctx, doc, tcfg, model, validTypes, validPredicates, client, pr, cfg.Compiler.CompileTemperature())
 			if err != nil {
 				// Every early exit either records a failure or fills its slot.
 				// A cancel mid-flight surfaces as an error here; classify it as

@@ -11,11 +11,11 @@ import (
 	"sync/atomic"
 	"time"
 
-		"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/extract"
 	"github.com/xoai/sage-wiki/internal/fsutil"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/prompts"
 )
 
@@ -52,6 +52,9 @@ type SummarizeOpts struct {
 	// (issue #107). SummaryNaming "" behaves as "full".
 	SummaryNaming string
 	SourceRoots   []string
+	// Temperature (SPEC-04 D2): the compile sampling temperature — always
+	// non-nil from cfg.Compiler.CompileTemperature() at construction sites.
+	Temperature *float64
 }
 
 // Summarize processes sources through Pass 1, producing summaries.
@@ -111,7 +114,7 @@ func Summarize(opts SummarizeOpts) []SummaryResult {
 			defer wg.Done()
 			defer release()
 
-			result := summarizeOne(opts.Ctx, opts.ProjectDir, opts.OutputDir, info, opts.Client, opts.Model, opts.MaxTokens, opts.UserTZ, opts.Language, opts.SummaryNaming, opts.SourceRoots, opts.Prompts, opts.ExtractOpts...)
+			result := summarizeOne(opts.Ctx, opts.ProjectDir, opts.OutputDir, info, opts.Client, opts.Model, opts.MaxTokens, opts.UserTZ, opts.Language, opts.SummaryNaming, opts.SourceRoots, opts.Prompts, opts.Temperature, opts.ExtractOpts...)
 			results[idx] = result
 
 			n := int(done.Add(1))
@@ -155,6 +158,7 @@ func summarizeOne(
 	summaryNaming string,
 	sourceRoots []string,
 	pr *prompts.Registry,
+	temp *float64,
 	extractOpts ...extract.ExtractOpts,
 ) SummaryResult {
 	result := SummaryResult{SourcePath: info.Path}
@@ -216,7 +220,7 @@ func summarizeOne(
 
 	// Handle image sources — use vision if available
 	if extract.IsImageSource(content) {
-		text, err := summarizeImage(ctx, projectDir, info, client, model, maxTokens)
+		text, err := summarizeImage(ctx, projectDir, info, client, model, maxTokens, temp)
 		if err != nil {
 			result.Error = err
 			return result
@@ -250,7 +254,7 @@ func summarizeOne(
 		resp, err := client.ChatCompletionCtx(ctx, []llm.Message{
 			{Role: "system", Content: "You are a research assistant creating structured summaries for a personal knowledge wiki."},
 			{Role: "user", Content: prompt + "\n\n" + prompts.WrapUntrusted(content.Text)},
-		}, llm.CallOpts{Model: model, MaxTokens: maxTokens})
+		}, llm.CallOpts{Model: model, MaxTokens: maxTokens, Temperature: temp})
 		if err != nil {
 			result.Error = fmt.Errorf("llm call: %w", err)
 			return result
@@ -263,14 +267,14 @@ func summarizeOne(
 		summaryText = resp.Content
 	} else {
 		// Multi-chunk: summarize each chunk, then synthesize hierarchically
-		chunkSummaries, err := summarizeChunks(ctx, content.Chunks, info, templateName, content.Type, client, model, maxTokens, language, pr)
+		chunkSummaries, err := summarizeChunks(ctx, content.Chunks, info, templateName, content.Type, client, model, maxTokens, language, pr, temp)
 		if err != nil {
 			result.Error = err
 			return result
 		}
 
 		// Hierarchical synthesis: reduce in groups until we have a single summary
-		summaryText, err = synthesizeHierarchical(ctx, chunkSummaries, info.Path, client, model, maxTokens, language)
+		summaryText, err = synthesizeHierarchical(ctx, chunkSummaries, info.Path, client, model, maxTokens, language, temp)
 		if err != nil {
 			result.Error = err
 			return result
@@ -339,7 +343,7 @@ chunk_count: %d
 	return result
 }
 
-func summarizeImage(ctx context.Context, projectDir string, info SourceInfo, client *llm.Client, model string, maxTokens int) (string, error) {
+func summarizeImage(ctx context.Context, projectDir string, info SourceInfo, client *llm.Client, model string, maxTokens int, temp *float64) (string, error) {
 	if !client.SupportsVision() {
 		return "", fmt.Errorf("skipping image %s — LLM provider does not support vision", info.Path)
 	}
@@ -357,7 +361,7 @@ func summarizeImage(ctx context.Context, projectDir string, info SourceInfo, cli
 
 	resp, err := client.ChatCompletionWithImageCtx(ctx, []llm.Message{
 		{Role: "system", Content: "You are a research assistant describing images for a personal knowledge wiki."},
-	}, prompt, b64, mimeType, llm.CallOpts{Model: model, MaxTokens: maxTokens})
+	}, prompt, b64, mimeType, llm.CallOpts{Model: model, MaxTokens: maxTokens, Temperature: temp})
 	if err != nil {
 		return "", fmt.Errorf("vision LLM: %w", err)
 	}
@@ -399,6 +403,7 @@ func summarizeChunks(
 	maxTokens int,
 	language string,
 	pr *prompts.Registry,
+	temp *float64,
 ) ([]string, error) {
 	// Group chunks if per-chunk budget is too low
 	groups := groupChunks(chunks, maxTokens)
@@ -441,7 +446,7 @@ func summarizeChunks(
 		resp, err := client.ChatCompletionCtx(ctx, []llm.Message{
 			{Role: "system", Content: "You are summarizing a section of a larger document."},
 			{Role: "user", Content: prompt + "\n\n" + prompts.WrapUntrusted(groupText.String())},
-		}, llm.CallOpts{Model: model, MaxTokens: perGroupBudget})
+		}, llm.CallOpts{Model: model, MaxTokens: perGroupBudget, Temperature: temp})
 		if err != nil {
 			return nil, fmt.Errorf("group %d llm: %w", gi, err)
 		}
@@ -496,7 +501,7 @@ func groupChunks(chunks []extract.Chunk, maxTokens int) [][]extract.Chunk {
 
 // synthesizeHierarchical reduces summaries in tiers of synthesisGroupSize
 // until a single final summary remains.
-func synthesizeHierarchical(ctx context.Context, summaries []string, sourcePath string, client *llm.Client, model string, maxTokens int, language string) (string, error) {
+func synthesizeHierarchical(ctx context.Context, summaries []string, sourcePath string, client *llm.Client, model string, maxTokens int, language string, temp *float64) (string, error) {
 	if len(summaries) == 0 {
 		return "", fmt.Errorf("synthesize: no summaries to combine for %q", sourcePath)
 	}
@@ -528,7 +533,7 @@ func synthesizeHierarchical(ctx context.Context, summaries []string, sourcePath 
 			resp, err := client.ChatCompletionCtx(ctx, []llm.Message{
 				{Role: "system", Content: "You are synthesizing partial summaries into a final summary."},
 				{Role: "user", Content: synthesisPrompt},
-			}, llm.CallOpts{Model: model, MaxTokens: maxTokens})
+			}, llm.CallOpts{Model: model, MaxTokens: maxTokens, Temperature: temp})
 			if err != nil {
 				return "", fmt.Errorf("synthesis llm: %w", err)
 			}
