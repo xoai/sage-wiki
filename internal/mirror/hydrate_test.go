@@ -389,10 +389,10 @@ func TestHydrate_PITR_RotatedObjectsAndDualSkew(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dst, "wiki/concepts/Later.md")); !os.IsNotExist(err) {
 		t.Fatal("later-generation doc must be absent in PITR restore")
 	}
-	if !strings.Contains(rep.Overshoot, "seal") {
-		t.Fatalf("overshoot must name the object skew (generation seal): %q", rep.Overshoot)
+	if !strings.Contains(rep.Overshoot, "objects at generation 2's seal") {
+		t.Fatalf("overshoot must name the object skew exactly (pre-feature 'sealed' must not satisfy): %q", rep.Overshoot)
 	}
-	if !strings.Contains(rep.Overshoot, "segment") {
+	if !strings.Contains(rep.Overshoot, "segment(s)") {
 		t.Fatalf("overshoot must name excluded segments: %q", rep.Overshoot)
 	}
 	// row-gen2-seg (sealed after T) must NOT be in the restored db.
