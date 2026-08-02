@@ -20,13 +20,14 @@ import (
 // shipResult reports one ship pass (best-effort; callers warn on error,
 // never fail the invoking command).
 type shipResult struct {
-	SealedSegments    int
-	Rotated           bool
-	PendingRotation   bool
-	HashedDB          bool // the full db hash ran this pass (cost observability)
-	ObjectsShipped    int
-	ObjectsTombstoned int
-	Warnings          []string
+	SealedSegments     int
+	Rotated            bool
+	PendingRotation    bool
+	HashedDB           bool // the full db hash ran this pass (cost observability)
+	ObjectsShipped     int
+	ObjectsTombstoned  int
+	ObjectsResurrected int
+	Warnings           []string
 }
 
 // withOwnBudget returns a ctx with its own timeout that ALSO cancels when
@@ -302,7 +303,7 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 		if err := m.shipObjects(ctx, st, changes, &res); err != nil {
 			return res, err
 		}
-		objectsDirty = res.ObjectsShipped+res.ObjectsTombstoned > 0
+		objectsDirty = res.ObjectsShipped+res.ObjectsTombstoned+res.ObjectsResurrected > 0
 	}
 
 	// --- WAL adoption: unknown incarnation (post-bootstrap/rotation/fold)

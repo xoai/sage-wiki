@@ -26,6 +26,17 @@ func (m *Mirror) shipObjects(ctx context.Context, st *State, changes []Change, r
 		}
 		switch ch.Kind {
 		case ChangeUpsert:
+			// Resurrect-with-identical-content: un-tombstone the existing ref
+			// (keep sha + key, NO re-PUT) — a fresh PUT under encryption
+			// writes new-nonce ciphertext (new shipped sha) under the same
+			// content key, silently invalidating every historical sealed map
+			// that names the old sha (F-019).
+			if ref, ok := st.Objects[ch.Path]; ok && ref.Deleted && committedContentSHA(ref) == ch.SHA256 {
+				ref.Deleted = false
+				st.Objects[ch.Path] = ref
+				res.ObjectsResurrected++
+				continue
+			}
 			b, err := os.ReadFile(filepath.Join(m.dir, filepath.FromSlash(ch.Path)))
 			if err != nil {
 				// Vanished between diff and read — next pass's diff settles it.

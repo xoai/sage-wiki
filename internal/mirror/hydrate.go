@@ -151,7 +151,9 @@ func hydrateWithClient(ctx context.Context, client *s3.Client, prefix, bucket, d
 	}
 	if sel.fromMeta && sel.objectSkew {
 		skewParts = append(skewParts, fmt.Sprintf("objects at generation %d's seal", sel.generation))
-	} else if !sel.fromMeta && sel.overshoot > 0 {
+	} else if !sel.fromMeta && !opts.At.IsZero() {
+		// Live gen selected by --at: the map is always "newest" — name it
+		// even with zero excluded segments (docs may have changed after T).
 		skewParts = append(skewParts, "objects are at newest (live map)")
 	}
 	if len(skewParts) > 0 {

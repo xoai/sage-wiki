@@ -14,6 +14,7 @@ import (
 type metaRef struct {
 	gen    int
 	path   string
+	key    string
 	sha256 string
 }
 
@@ -55,8 +56,10 @@ func (o *mirrorOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
 
 	referenced := map[string]string{} // key → expected sha ("" = skip hash)
 	// metaRefs are invariant-(c) references from retained generations' sealed
-	// object maps (key → which generation/path expected it).
-	metaRefs := map[string]metaRef{}
+	// object maps — a SLICE: every (gen, path, key, sha) tuple is checked
+	// (two generations' divergent shas for one key both get verified, never
+	// collapsed by map iteration — F-019b).
+	var metaRefs []metaRef
 
 	collect := func(snapshot, snapSHA string, wal []WALSegmentRef, objects, vectors map[string]ObjectRef) {
 		referenced[snapshot] = snapSHA
@@ -129,13 +132,13 @@ func (o *mirrorOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
 			if ref.Deleted {
 				continue
 			}
-			metaRefs[ref.Key] = metaRef{gen: gen, path: path, sha256: ref.SHA256}
+			metaRefs = append(metaRefs, metaRef{gen: gen, path: path, key: ref.Key, sha256: ref.SHA256})
 		}
 		for name, ref := range meta.Vectors {
 			if ref.Deleted {
 				continue
 			}
-			metaRefs[ref.Key] = metaRef{gen: gen, path: name, sha256: ref.SHA256}
+			metaRefs = append(metaRefs, metaRef{gen: gen, path: name, key: ref.Key, sha256: ref.SHA256})
 		}
 	}
 
@@ -169,14 +172,16 @@ func (o *mirrorOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
 	}
 
 	// Invariant (c): meta-map references — existence + (unless fast) full
-	// re-hash, violations naming generation + path.
-	metaKeys := make([]string, 0, len(metaRefs))
-	for k := range metaRefs {
-		metaKeys = append(metaKeys, k)
-	}
-	sort.Strings(metaKeys)
-	for _, key := range metaKeys {
-		ref := metaRefs[key]
+	// re-hash, violations naming generation + path. Sorted by (gen, key)
+	// for deterministic violation order.
+	sort.Slice(metaRefs, func(i, j int) bool {
+		if metaRefs[i].gen != metaRefs[j].gen {
+			return metaRefs[i].gen < metaRefs[j].gen
+		}
+		return metaRefs[i].key < metaRefs[j].key
+	})
+	for _, ref := range metaRefs {
+		key := ref.key
 		exists, err := m.client.HeadObject(ctx, m.cfg.Bucket, key)
 		if err != nil {
 			return rep, fmt.Errorf("mirror verify: head %s: %w", key, err)
@@ -198,6 +203,12 @@ func (o *mirrorOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
 		}
 	}
 
+	// metaRef keys referenced for the orphan union.
+	metaRefKeys := map[string]bool{}
+	for _, ref := range metaRefs {
+		metaRefKeys[ref.key] = true
+	}
+
 	// Orphan advisory: anything under our prefixes not referenced by live
 	// state OR any retained generation's sealed map (F-013: a meta-only
 	// object is a FORMAT MEMBER, never an orphan).
@@ -210,7 +221,7 @@ func (o *mirrorOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
 			if _, ok := referenced[k]; ok {
 				continue
 			}
-			if _, ok := metaRefs[k]; ok {
+			if metaRefKeys[k] {
 				continue // referenced by a retained generation's sealed map
 			}
 			if _, err := ParseGenerationMetaKey(k); err == nil {

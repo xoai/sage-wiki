@@ -347,7 +347,7 @@ func TestHydrate_GenerationRestoresSealedObjectMap(t *testing.T) {
 	dstOld := filepath.Join(t.TempDir(), "old")
 	rep, err := Hydrate(context.Background(), h.cfg, dstOld, HydrateOpts{Generation: 2})
 	if err != nil {
-		t.Fatalf("hydrate --generation 1: %v", err)
+		t.Fatalf("hydrate --generation 2: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dstOld, "wiki/concepts/New.md")); !os.IsNotExist(err) {
 		t.Fatal("--generation 2 must NOT see the post-seal doc")
@@ -447,6 +447,42 @@ func TestHydrate_OldMirrorFallbackWarning(t *testing.T) {
 
 // AC-4: tombstone in the sealed map stays absent; a file deleted in a LATER
 // generation's lifetime IS restored (the per-generation bound).
+// F-020 (empty-seal witness): a generation sealed with an EMPTY doc set
+// (objects: {} vectors: {}) restores ZERO docs and does NOT fire the
+// fallback advisory — a len()==0 or omitempty regression would silently
+// fall back to live docs.
+func TestHydrate_EmptySealedSetRestoresEmpty(t *testing.T) {
+	h := newHydrateFixture(t)
+	// Write a stripped-to-{} meta for gen 1 (present, empty).
+	mb0, ok := h.fake.get(GenerationMetaKey("ws/", 1))
+	if !ok {
+		t.Fatal("setup: gen-1 meta missing")
+	}
+	meta0, err := UnmarshalMeta(mb0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta0.Objects = map[string]ObjectRef{}
+	meta0.Vectors = map[string]ObjectRef{}
+	mb, _ := MarshalMeta(meta0)
+	h.fake.objects[GenerationMetaKey("ws/", 1)] = mb
+
+	dst := filepath.Join(t.TempDir(), "restored")
+	rep, err := Hydrate(context.Background(), h.cfg, dst, HydrateOpts{Generation: 1})
+	if err != nil {
+		t.Fatalf("hydrate --generation 1: %v", err)
+	}
+	for _, a := range rep.Advisories {
+		if strings.Contains(a, "no object map") {
+			t.Fatalf("empty-seal must NOT fire the fallback advisory: %v", rep.Advisories)
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(dst, "wiki", "concepts"))
+	if err == nil && len(entries) > 0 {
+		t.Fatalf("empty sealed set must restore zero docs, found %d", len(entries))
+	}
+}
+
 // AC-4 second half: a file deleted in a LATER generation's lifetime IS
 // restored from the pre-delete generation's sealed map.
 func TestHydrate_LaterDeleteRestoredFromEarlierGen(t *testing.T) {

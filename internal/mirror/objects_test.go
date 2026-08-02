@@ -118,3 +118,49 @@ func deleteWS(t *testing.T, dir, rel string) {
 		t.Fatal(err)
 	}
 }
+
+// TestShipObjects_ResurrectKeepsSHA (F-019): resurrecting identical content
+// UN-tombstones the existing ref (same key, same sha, NO re-PUT) — under
+// encryption a fresh PUT would write new-nonce ciphertext (new shipped sha)
+// and silently invalidate every historical sealed map naming the old sha.
+func TestShipObjects_ResurrectKeepsSHA(t *testing.T) {
+	f := newShipFixture(t)
+	defer f.dbClose()
+	writeWS(t, f.dir, "wiki/concepts/Foo.md", "# Foo")
+	f.pass(t)
+	st := f.remoteState(t)
+	ref := st.Objects["wiki/concepts/Foo.md"]
+
+	// Tombstone, then resurrect with IDENTICAL content.
+	deleteWS(t, f.dir, "wiki/concepts/Foo.md")
+	f.pass(t)
+	writeWS(t, f.dir, "wiki/concepts/Foo.md", "# Foo")
+	objectPutsBefore := 0
+	for _, k := range f.fake.putLog {
+		if strings.HasPrefix(k, "ws/objects/") {
+			objectPutsBefore++
+		}
+	}
+	res := f.pass(t)
+
+	if res.ObjectsResurrected != 1 {
+		t.Fatalf("ObjectsResurrected = %d, want 1", res.ObjectsResurrected)
+	}
+	objectPutsAfter := 0
+	for _, k := range f.fake.putLog {
+		if strings.HasPrefix(k, "ws/objects/") {
+			objectPutsAfter++
+		}
+	}
+	if objectPutsAfter != objectPutsBefore {
+		t.Fatal("resurrect re-PUT the object (would change shipped sha under encryption)")
+	}
+	st2 := f.remoteState(t)
+	got := st2.Objects["wiki/concepts/Foo.md"]
+	if got.Deleted {
+		t.Fatal("resurrected ref still tombstoned")
+	}
+	if got.Key != ref.Key || got.SHA256 != ref.SHA256 {
+		t.Fatalf("resurrect changed the identity: %+v vs %+v", got, ref)
+	}
+}
