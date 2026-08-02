@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"path/filepath"
@@ -71,10 +72,33 @@ func indexRawSources(projectDir string, sources []CompileItem, memStore store.En
 	return indexed
 }
 
+// indexApplyHookForTest is the fault-injection seam for the embed-pass
+// cancel-during-apply witness (SPEC-04 D3, spec test 6). Called with each
+// item's input index immediately BEFORE that item's apply step. Nil in
+// production; same precedent as writeApplyHookForTest.
+var indexApplyHookForTest func(idx int)
+
+// embedPayload is everything the embed-pass apply phase needs, computed in
+// the concurrent phase without touching any store (SPEC-04 D3).
+type embedPayload struct {
+	src             CompileItem
+	extractErr      error // → MarkError in apply
+	empty           bool  // content.Text == "" → skip entirely (today's behavior)
+	chunks          []extract.Chunk
+	chunkEmbeddings [][]float32
+	allChunksOK     bool
+}
+
 // indexAndEmbedSources indexes + embeds sources at Tier 1.
 // FTS5 indexing is synchronous; embedding uses BackpressureController for
 // API rate limiting. Sources already indexed skip the FTS5 step.
+//
+// SPEC-04 D3 (deferred application): the fan-out only extracts + embeds
+// (file reads, network calls). Every store mutation — chunk rows, vectors,
+// cache invalidation, pass marks — happens in a sequential post-join apply
+// loop in INPUT order, so rowid order never depends on completion order.
 func indexAndEmbedSources(
+	ctx context.Context,
 	projectDir string,
 	sources []CompileItem,
 	memStore store.EntryStore,
@@ -150,14 +174,17 @@ func indexAndEmbedSources(
 	}
 
 	var wg sync.WaitGroup
-	var mu sync.Mutex
-	embeddedCount := 0
+
+	var applyList []*embedPayload
 
 	for _, src := range sources {
 		if src.PassEmbedded {
 			continue
 		}
+		applyList = append(applyList, &embedPayload{src: src})
+	}
 
+	for i, payload := range applyList {
 		wg.Add(1)
 
 		var release func()
@@ -167,33 +194,33 @@ func indexAndEmbedSources(
 			release = func() {}
 		}
 
-		go func(s CompileItem) {
+		go func(p *embedPayload) {
 			defer wg.Done()
 			defer release()
 
+			s := p.src
 			absPath := filepath.Join(projectDir, s.SourcePath)
 			content, err := extract.Extract(absPath, s.FileType, extractOpts...)
 			if err != nil {
 				log.Warn("tier 1 embed: extract failed", "path", s.SourcePath, "error", err)
-				if merr := items.MarkError(s.SourcePath, err); merr != nil {
-					log.Warn("mark error failed", "path", s.SourcePath, "error", merr)
-				}
+				p.extractErr = err
 				return
 			}
 
 			if content.Text == "" {
+				p.empty = true
 				return
 			}
 
-			chunks := extract.ChunkText(content.Text, chunkSize, chunkOverlap)
+			p.chunks = extract.ChunkText(content.Text, chunkSize, chunkOverlap)
 
 			// Embed each chunk sequentially (same pattern as write.go:250-260)
-			chunkEmbeddings := make([][]float32, len(chunks))
-			allChunksOK := true
-			for i, c := range chunks {
+			p.chunkEmbeddings = make([][]float32, len(p.chunks))
+			p.allChunksOK = true
+			for i, c := range p.chunks {
 				vec, err := embedder.Embed(c.Text)
 				if err != nil {
-					allChunksOK = false
+					p.allChunksOK = false
 					if bp != nil && llm.IsRateLimitError(err) {
 						delay := bp.OnRateLimit()
 						log.Warn("embedding rate limited", "delay", delay)
@@ -201,75 +228,98 @@ func indexAndEmbedSources(
 					log.Warn("tier 1 chunk embed failed", "path", s.SourcePath, "chunk", i, "error", err)
 					continue
 				}
-				chunkEmbeddings[i] = vec
+				p.chunkEmbeddings[i] = vec
 				if bp != nil {
 					bp.OnSuccess()
 				}
 			}
-
-			docID := "src:" + s.SourcePath
-
-			if chunkStore != nil && db != nil {
-				// Clean up legacy whole-document vector
-				vecStore.Delete(docID)
-
-				if err := db.WriteTx(func(tx *sql.Tx) error {
-					if err := chunkStore.DeleteDocChunks(tx, docID); err != nil {
-						return err
-					}
-
-					entries := make([]memory.ChunkEntry, len(chunks))
-					for i, c := range chunks {
-						entries[i] = memory.ChunkEntry{
-							ChunkID:    fmt.Sprintf("%s:c%d", docID, i),
-							ChunkIndex: c.Index,
-							Heading:    c.Heading,
-							Content:    c.Text,
-						}
-					}
-
-					if err := chunkStore.IndexChunks(tx, docID, entries); err != nil {
-						return err
-					}
-
-					for i, emb := range chunkEmbeddings {
-						if emb != nil {
-							if err := vecStore.UpsertChunk(tx, entries[i].ChunkID, docID, emb); err != nil {
-								log.Warn("tier 1 chunk vector upsert failed", "chunk", entries[i].ChunkID, "error", err)
-							}
-						}
-					}
-
-					return nil
-				}); err != nil {
-					log.Error("tier 1 chunk indexing failed", "path", s.SourcePath, "error", err)
-					if merr := items.MarkError(s.SourcePath, err); merr != nil {
-						log.Warn("mark error failed", "path", s.SourcePath, "error", merr)
-					}
-					return
-				}
-				vecStore.InvalidateChunkCache() // chunk cache invalidation (P1-5): caller-tx writes are invisible to vectors.Store until post-commit
-			} else {
-				// Fallback: single-vector embed (legacy path when chunk infra unavailable)
-				if len(chunkEmbeddings) > 0 && chunkEmbeddings[0] != nil {
-					vecStore.Upsert(docID, chunkEmbeddings[0])
-				} else {
-					allChunksOK = false
-				}
-			}
-
-			if allChunksOK {
-				if err := items.MarkPass(s.SourcePath, "embedded"); err != nil {
-					log.Warn("mark pass failed", "path", s.SourcePath, "pass", "embedded", "error", err)
-				}
-			}
-
-			mu.Lock()
-			embeddedCount++
-			mu.Unlock()
-		}(src)
+		}(payload)
+		_ = i
 	}
 
 	wg.Wait()
-	return indexed, embeddedCount
+
+	// Apply phase: sequential, input order (SPEC-04 D3). A cancel observed
+	// here stops the loop — remaining sources keep pass_embedded=0, so the
+	// next compile's claim resumes them (P1-1).
+	for i, p := range applyList {
+		if indexApplyHookForTest != nil {
+			indexApplyHookForTest(i)
+		}
+		if ctx != nil && ctx.Err() != nil {
+			log.Warn("tier 1 embed: cancel observed during apply — remaining sources deferred to next compile", "applied", i, "total", len(applyList))
+			break
+		}
+		s := p.src
+
+		if p.extractErr != nil {
+			if merr := items.MarkError(s.SourcePath, p.extractErr); merr != nil {
+				log.Warn("mark error failed", "path", s.SourcePath, "error", merr)
+			}
+			continue
+		}
+		if p.empty {
+			continue
+		}
+
+		docID := "src:" + s.SourcePath
+		allChunksOK := p.allChunksOK
+
+		if chunkStore != nil && db != nil {
+			// Clean up legacy whole-document vector
+			vecStore.Delete(docID)
+
+			if err := db.WriteTx(func(tx *sql.Tx) error {
+				if err := chunkStore.DeleteDocChunks(tx, docID); err != nil {
+					return err
+				}
+
+				entries := make([]memory.ChunkEntry, len(p.chunks))
+				for i, c := range p.chunks {
+					entries[i] = memory.ChunkEntry{
+						ChunkID:    fmt.Sprintf("%s:c%d", docID, i),
+						ChunkIndex: c.Index,
+						Heading:    c.Heading,
+						Content:    c.Text,
+					}
+				}
+
+				if err := chunkStore.IndexChunks(tx, docID, entries); err != nil {
+					return err
+				}
+
+				for i, emb := range p.chunkEmbeddings {
+					if emb != nil {
+						if err := vecStore.UpsertChunk(tx, entries[i].ChunkID, docID, emb); err != nil {
+							log.Warn("tier 1 chunk vector upsert failed", "chunk", entries[i].ChunkID, "error", err)
+						}
+					}
+				}
+
+				return nil
+			}); err != nil {
+				log.Error("tier 1 chunk indexing failed", "path", s.SourcePath, "error", err)
+				if merr := items.MarkError(s.SourcePath, err); merr != nil {
+					log.Warn("mark error failed", "path", s.SourcePath, "error", merr)
+				}
+				continue
+			}
+			vecStore.InvalidateChunkCache() // chunk cache invalidation (P1-5): caller-tx writes are invisible to vectors.Store until post-commit
+		} else {
+			// Fallback: single-vector embed (legacy path when chunk infra unavailable)
+			if len(p.chunkEmbeddings) > 0 && p.chunkEmbeddings[0] != nil {
+				vecStore.Upsert(docID, p.chunkEmbeddings[0])
+			} else {
+				allChunksOK = false
+			}
+		}
+
+		if allChunksOK {
+			if err := items.MarkPass(s.SourcePath, "embedded"); err != nil {
+				log.Warn("mark pass failed", "path", s.SourcePath, "pass", "embedded", "error", err)
+			}
+		}
+		embedded++
+	}
+	return indexed, embedded
 }

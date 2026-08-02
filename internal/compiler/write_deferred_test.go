@@ -22,6 +22,7 @@ import (
 // from input order. SPEC-04 D3: apply order must follow input order anyway.
 type deferredStub struct {
 	writeDelays map[string]time.Duration // substring of the concept name in the write prompt → delay
+	embedDelays map[string]time.Duration // substring of the chunk text in the embed input → delay
 	requests    *syncCounter
 }
 
@@ -44,6 +45,11 @@ func (s *deferredStub) handler() http.HandlerFunc {
 
 		if body["input"] != nil {
 			input, _ := body["input"].(string)
+			for sub, d := range s.embedDelays {
+				if strings.Contains(input, sub) {
+					time.Sleep(d)
+				}
+			}
 			// Strongly distinct vectors per text (dominant dimension rotates
 			// with FNV): near-identical embeddings would make dedup merge
 			// distinct concepts (cosine ≥ 0.85).
@@ -233,5 +239,97 @@ func TestDeferredWrite_CancelDuringApply(t *testing.T) {
 	}
 	if written != 0 {
 		t.Errorf("pass_written=1 rows = %d, want 0 (incomplete run marks nothing)", written)
+	}
+}
+
+// chunkDocidRowidOrder returns chunk docids in rowid (insertion) order.
+func chunkDocidRowidOrder(t *testing.T, dir string) []string {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := db.Query("SELECT DISTINCT doc_id FROM chunks_meta WHERE doc_id LIKE 'src:%' ORDER BY rowid")
+	if err != nil {
+		t.Fatalf("chunks query: %v", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var d string
+		rows.Scan(&d)
+		out = append(out, d)
+	}
+	return out
+}
+
+// TestDeferredEmbed_AppliesInInputOrder pins SPEC-04 D3 for the tier-1 embed
+// pass: scrambled embed completion order must not change chunk rowid order.
+func TestDeferredEmbed_AppliesInInputOrder(t *testing.T) {
+	want := []string{"src:raw/doc1.md", "src:raw/doc2.md", "src:raw/doc3.md"}
+
+	delayA := &deferredStub{embedDelays: map[string]time.Duration{"Deferred Doc 2": 250 * time.Millisecond}, requests: &syncCounter{mu: make(chan struct{}, 1)}}
+	srvA := httptest.NewServer(delayA.handler())
+	dirA := compileDeferredCorpus(t, srvA.URL, nil)
+	srvA.Close()
+
+	delayB := &deferredStub{embedDelays: map[string]time.Duration{"Deferred Doc 1": 250 * time.Millisecond}, requests: &syncCounter{mu: make(chan struct{}, 1)}}
+	srvB := httptest.NewServer(delayB.handler())
+	dirB := compileDeferredCorpus(t, srvB.URL, nil)
+	srvB.Close()
+
+	gotA := chunkDocidRowidOrder(t, dirA)
+	gotB := chunkDocidRowidOrder(t, dirB)
+	if strings.Join(gotA, ",") != strings.Join(want, ",") {
+		t.Errorf("run A chunk rowid order = %v, want %v (input order)", gotA, want)
+	}
+	if strings.Join(gotB, ",") != strings.Join(want, ",") {
+		t.Errorf("run B chunk rowid order = %v, want %v (input order)", gotB, want)
+	}
+}
+
+// TestDeferredEmbed_CancelDuringApply pins the P1-1 regression cell for the
+// embed pass (spec test 6): a cancel observed mid-apply stops the apply and
+// leaves pass flags unmarked.
+func TestDeferredEmbed_CancelDuringApply(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	indexApplyHookForTest = func(idx int) {
+		if idx == 1 {
+			cancel()
+		}
+	}
+	defer func() { indexApplyHookForTest = nil }()
+
+	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}}
+	srv := httptest.NewServer(stub.handler())
+	dir := compileDeferredCorpus(t, srv.URL, ctx)
+	srv.Close()
+
+	db, err := sql.Open("sqlite", filepath.Join(dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	var doc2Chunks int
+	if err := db.QueryRow("SELECT COUNT(*) FROM chunks_meta WHERE doc_id = 'src:raw/doc2.md'").Scan(&doc2Chunks); err != nil {
+		t.Fatalf("count doc2 chunks: %v", err)
+	}
+	if doc2Chunks != 0 {
+		t.Errorf("doc2 chunks = %d, want 0 (cancel before its apply)", doc2Chunks)
+	}
+
+	// Item 0 fully applied BEFORE the cancel → its per-item checkpoint is
+	// legitimate (the tier system's sticky-flag resume design); items 1+ were
+	// never applied and stay unmarked — the P1-1 shape for this pass.
+	var embedded int
+	if err := db.QueryRow("SELECT COUNT(*) FROM compile_items WHERE pass_embedded = 1").Scan(&embedded); err != nil {
+		t.Fatalf("count embedded: %v", err)
+	}
+	if embedded != 1 {
+		t.Errorf("pass_embedded=1 rows = %d, want 1 (only the item applied before the cancel)", embedded)
 	}
 }

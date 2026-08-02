@@ -43,6 +43,12 @@ func Open(path string) (*DB, error) {
 		"PRAGMA busy_timeout=5000",
 		"PRAGMA foreign_keys=ON",
 		"PRAGMA synchronous=NORMAL",
+		// SPEC-04 D7: zero freed-cell content on delete/update. Without it,
+		// overwritten values (e.g. a released lease's pid+nonce owner token)
+		// survive as garbage bytes in pages, and two logically-identical DBs
+		// still differ at the byte level — the last blocker for AC-1's
+		// byte-identical wiki.db. Cost is minor write amplification.
+		"PRAGMA secure_delete=ON",
 	} {
 		if _, err := writeDB.Exec(pragma); err != nil {
 			writeDB.Close()
