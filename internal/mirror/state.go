@@ -41,12 +41,13 @@ type ObjectRef struct {
 // State is mirror-state.json — the single commit pointer, always written
 // LAST after every object it references is durably uploaded.
 type State struct {
-	FormatVersion int                  `json:"format_version"`
-	Generation    int                  `json:"generation"`
-	DB            DBState              `json:"db"`
-	Objects       map[string]ObjectRef `json:"objects"`
-	Vectors       map[string]ObjectRef `json:"vectors"`
-	UpdatedAt     time.Time            `json:"updated_at"`
+	FormatVersion     int                  `json:"format_version"`
+	Generation        int                  `json:"generation"`
+	DB                DBState              `json:"db"`
+	Objects           map[string]ObjectRef `json:"objects"`
+	Vectors           map[string]ObjectRef `json:"vectors"`
+	UpdatedAt         time.Time            `json:"updated_at"`
+	RetainGenerations int                  `json:"retain_generations,omitempty"` // shipper's retention (verify prefers this over local config; additive)
 }
 
 // GenerationMeta is db/generation-N/meta.json — the rotation record of a

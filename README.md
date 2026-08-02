@@ -604,7 +604,8 @@ mirror:
   region: "auto"              # SigV4 region; "auto" works for R2/MinIO
   access_key_env: "AWS_ACCESS_KEY_ID"    # NAME of env var, never the value
   secret_key_env: "AWS_SECRET_ACCESS_KEY"
-  credentials_file: ""        # optional JSON {"access_key","secret_key"} outside the workspace
+  session_token_env: "AWS_SESSION_TOKEN" # STS session token env var NAME (empty = absent)
+  credentials_file: ""        # optional JSON {"access_key","secret_key","session_token"} outside the workspace
   ship_interval: "1s"         # WAL seal cadence while active
   snapshot_interval: "1h"     # scheduled generation cadence
   min_rotation_interval: "60s" # debounce for fold-forced rotations

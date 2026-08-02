@@ -2,7 +2,10 @@ package mirror
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"io"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -90,6 +93,10 @@ func TestShip_SealsNewWALFrames(t *testing.T) {
 		t.Fatalf("SealedSegments = %d, want 1", res.SealedSegments)
 	}
 	st := f.remoteState(t)
+	// Writer witness (N1): the segment commit carries retain_generations.
+	if st.RetainGenerations != 2 {
+		t.Fatalf("segment commit RetainGenerations = %d, want 2", st.RetainGenerations)
+	}
 	if len(st.DB.WAL) != 1 {
 		t.Fatalf("remote wal list = %d", len(st.DB.WAL))
 	}
@@ -158,6 +165,10 @@ func TestShip_FoldWithLoss_ForcesRotation(t *testing.T) {
 	st := f.remoteState(t)
 	if st.Generation != 2 {
 		t.Fatalf("generation = %d, want 2", st.Generation)
+	}
+	// Writer witness (N1): the rotation commit carries retain_generations.
+	if st.RetainGenerations != 2 {
+		t.Fatalf("rotation commit RetainGenerations = %d, want 2", st.RetainGenerations)
 	}
 	if _, ok := f.fake.get(GenerationMetaKey("ws/", 1)); !ok {
 		t.Fatal("gen-1 meta.json not written at rotation")
@@ -297,3 +308,99 @@ func TestShip_CombinedWindow_SealAndBranchC(t *testing.T) {
 		t.Fatal("combined window must not rotate (no lost frames)")
 	}
 }
+
+// TestQuiesce_BudgetExceeded (follow-up item 4): a tiny drain budget makes
+// Quiesce fail LOUDLY and leave the hash reference untouched.
+func TestQuiesce_BudgetExceeded(t *testing.T) {
+	f := newShipFixture(t)
+	defer f.dbClose()
+	f.dbWrite(t, "row-1")
+	f.pass(t)
+	before := f.m.local.LastDBSHA256
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	time.Sleep(time.Millisecond)
+	if err := f.m.Quiesce(ctx); err == nil {
+		t.Fatal("expired-budget Quiesce must fail loudly")
+	}
+	loaded, err := LoadLocalState(localStatePath(f.dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.LastDBSHA256 != before {
+		t.Fatal("failed Quiesce must not update the reference")
+	}
+}
+
+// TestQuiesce_WithinBudget: normal ctx succeeds AND refreshes the reference.
+func TestQuiesce_WithinBudget(t *testing.T) {
+	f := newShipFixture(t)
+	defer f.dbClose()
+	f.dbWrite(t, "row-1")
+	f.pass(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := f.m.Quiesce(ctx); err != nil {
+		t.Fatalf("Quiesce: %v", err)
+	}
+	hash, _, err := hashFile(f.m.dbPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadLocalState(localStatePath(f.dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.LastDBSHA256 != hash {
+		t.Fatal("Quiesce did not refresh the hash reference")
+	}
+}
+
+// TestHashFileCtx_CancelledCtx pins the CALL PATH: hashFileCtx must route
+// through ctxReader (a plain io.Copy replacement would pass the trickle
+// test above but fail this one).
+func TestHashFileCtx_CancelledCtx(t *testing.T) {
+	f := newShipFixture(t)
+	defer f.dbClose()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := hashFileCtx(ctx, f.m.dbPath()); err == nil {
+		t.Fatal("hashFileCtx with cancelled ctx must error")
+	}
+}
+
+// TestHashFileCtx_MidReadCancel (independent review issue 3): cancellation
+// DURING the hash aborts it (the ctxReader path, not the fail-fast gate).
+// The witness reader cancels the ctx after its first Read — the copy must
+// die at the SECOND Read, proving interruption mid-stream.
+func TestHashFileCtx_MidReadCancel(t *testing.T) {
+	f := newShipFixture(t)
+	defer f.dbClose()
+	ctx, cancel := context.WithCancel(context.Background())
+	fh, err := os.Open(f.m.dbPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fh.Close()
+	h := sha256.New()
+	reads := 0
+	killer := readerFunc(func(p []byte) (int, error) {
+		reads++
+		if reads > 1 {
+			cancel() // cancel AFTER the first successful Read
+		}
+		// Trickle: one byte per Read so the copy spans MANY reads and the
+		// mid-stream cancel is what aborts it (not EOF).
+		if len(p) > 1 {
+			p = p[:1]
+		}
+		return fh.Read(p)
+	})
+	if _, err := io.Copy(h, &ctxReader{ctx: ctx, r: killer}); err == nil {
+		t.Fatal("hashFileCtx must abort on mid-stream cancel")
+	}
+}
+
+type readerFunc func(p []byte) (int, error)
+
+func (f readerFunc) Read(p []byte) (int, error) { return f(p) }

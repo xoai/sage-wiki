@@ -69,12 +69,25 @@ sage-wiki hydrate s3://bucket/prefix dir --key-file ~/.config/sage/mirror.key
   available (before vectors finish); a follow-up `--partial` resumes.
 - Addressing: `mirror.addressing: auto` uses virtual-host style for AWS
   endpoints (path-style is deprecated there) and path-style elsewhere
-  (MinIO/R2); `path`/`virtual` force a style. Static credentials only
-  (no STS/session-token support).
+  (MinIO/R2); `path`/`virtual` force a style.
+- Credentials: static keys via env (names configurable) or a
+  credentials_file; **STS temporary credentials are supported** via
+  `session_token_env` (default AWS_SESSION_TOKEN) or a `session_token`
+  key in the credentials file. The token must come from the SAME source
+  as the keys — env keys + a file token is a hard error at enable
+  (signing without a token yields opaque 403s). An empty token value
+  reads as absent.
 - Credentials for hydrate read from `AWS_ACCESS_KEY_ID` /
   `AWS_SECRET_ACCESS_KEY` or `--credentials-file` (no workspace config
   exists yet); `--region` defaults to `auto`, and `--endpoint` is required
-  for R2/MinIO (derived from `--region` for AWS).
+  for R2/MinIO (derived from `--region` for AWS). STS: hydrate also picks
+  up `AWS_SESSION_TOKEN` by default — and `--credentials-file` plus an
+  ambient token env var is a hard error (same-source rule). Equally: env
+  keys with an UNREADABLE credentials file configured is now a hard
+  error (previously env won silently).
+- Error timing: a stalled small call can now take up to
+  retries × 30s + backoff to report (per-attempt floors) — the trade for
+  large snapshots completing at up to 15m.
 
 ## Encryption (optional)
 
@@ -97,9 +110,22 @@ correct `--key-file` fails loudly.
   holds the workspace.
 - `retain_generations` bounds point-in-time depth in ROTATION COUNT, not
   time — under CLI-heavy churn, depth may be minutes; raise it for
-  PITR-heavy deployments.
+  PITR-heavy deployments. The value is recorded in mirror-state.json at
+  every commit, and **`mirror verify` uses the state's recorded value**
+  (not your local config) when checking rotated generations — so verify
+  works correctly from any machine, and old states without the field
+  fall back to local config.
+- Timeouts: S3 calls use a per-attempt, payload-scaled timeout
+  (30s floor, 3×(size/256KiB·s), 15m cap) — a large snapshot on a slow
+  uplink finishes; a stalled server is cut at the attempt cap.
 - The standalone `sage-wiki tui` has no in-process shipper: its changes
   ship at TUI exit (on kill -9, at the next command). `serve` and
   `serve --ui` ship continuously.
 - RPO: induced loss ≤ `ship_interval` of writes with the shipper running
   (measured in `internal/mirror/rpo_test.go`).
+- Signing is verified against the vendored aws4_testsuite
+  (`internal/mirror/s3/testdata/aws4_testsuite`, botocore, Apache-2.0)
+  with derived S3-shaped expectations, covering STS session-token
+  signing. **Live smoke (maintainer-run):** `SAGE_TEST_AWS=1
+  SAGE_TEST_AWS_BUCKET=<bucket> AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...
+  go test ./internal/mirror/ -run TestLiveAWS_RoundTrip` — never in CI.

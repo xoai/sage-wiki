@@ -168,9 +168,10 @@ func (m *Mirror) bootstrapGeneration1Locked(ctx context.Context, what string) er
 			CreatedAt:      now,
 			WAL:            []WALSegmentRef{},
 		},
-		Objects:   map[string]ObjectRef{},
-		Vectors:   map[string]ObjectRef{},
-		UpdatedAt: now,
+		Objects:           map[string]ObjectRef{},
+		Vectors:           map[string]ObjectRef{},
+		UpdatedAt:         now,
+		RetainGenerations: m.cfg.RetainGenerations,
 	}
 	sb, err := MarshalState(st)
 	if err != nil {

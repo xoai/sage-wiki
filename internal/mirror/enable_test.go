@@ -174,6 +174,11 @@ func TestEnable_WritesManifestSnapshotState(t *testing.T) {
 	if st.Generation != 1 {
 		t.Fatalf("generation = %d, want 1", st.Generation)
 	}
+	// Writer witness: retain_generations lands in the committed state
+	// (independent review issue 1 — the writer half had no witness).
+	if st.RetainGenerations != 2 {
+		t.Fatalf("RetainGenerations = %d, want 2 (normalized default written to state)", st.RetainGenerations)
+	}
 	if _, ok := fake.get(st.DB.Snapshot); !ok {
 		t.Fatalf("committed snapshot %q missing from bucket", st.DB.Snapshot)
 	}
@@ -317,5 +322,25 @@ func TestBootstrap_ForeignManifestRefused(t *testing.T) {
 	}
 	if _, err := m.shipPass(context.Background()); err == nil {
 		t.Fatal("foreign manifest must refuse bootstrap")
+	}
+}
+
+// TestEnable_WritesConfiguredRetain (N4): the state carries the CONFIGURED
+// value, not a constant (a hardcoded-2 writer fails this).
+func TestEnable_WritesConfiguredRetain(t *testing.T) {
+	fake := newFakeS3()
+	_, cfg := setupFakeMirror(t, fake)
+	cfg.RetainGenerations = 5
+	dir := makeWorkspaceWithDB(t)
+	m, err := Open(dir, cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Enable(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	st := remoteStateFromFake(t, fake)
+	if st.RetainGenerations != 5 {
+		t.Fatalf("RetainGenerations = %d, want configured 5", st.RetainGenerations)
 	}
 }

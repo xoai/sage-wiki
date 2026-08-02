@@ -74,10 +74,19 @@ func (o *mirrorOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
 	if err != nil {
 		return rep, fmt.Errorf("mirror verify: list db/: %w", err)
 	}
+	// Retention: prefer the STATE's recorded retain (it reflects the
+	// shipper's actual config; local config may differ on this workspace).
+	// A state retain < 1 is treated as ABSENT (F-023): 0 is the omitempty
+	// zero, and a negative (hand-edit/corruption) must never disable ALL
+	// rotated-generation checks silently.
+	retain := st.RetainGenerations
+	if retain < 1 {
+		retain = m.cfg.RetainGenerations
+	}
 	rotated := map[int]bool{}
 	for _, k := range genKeys {
 		if gen, ok := parseGenerationDirKey(k); ok && gen < st.Generation &&
-			gen > st.Generation-m.cfg.RetainGenerations {
+			gen > st.Generation-retain {
 			rotated[gen] = true
 		}
 	}

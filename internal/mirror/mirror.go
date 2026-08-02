@@ -16,6 +16,7 @@ type Config struct {
 	Endpoint, Bucket, Prefix, Region string
 	Addressing                       string // "auto" (default) | "path" | "virtual"
 	AccessKeyEnv, SecretKeyEnv       string
+	SessionTokenEnv                  string
 	CredentialsFile                  string
 	ShipInterval                     durationField
 	SnapshotInterval                 durationField
@@ -75,6 +76,9 @@ func (c *Config) normalize() {
 	if c.SecretKeyEnv == "" {
 		c.SecretKeyEnv = "AWS_SECRET_ACCESS_KEY"
 	}
+	if c.SessionTokenEnv == "" {
+		c.SessionTokenEnv = "AWS_SESSION_TOKEN"
+	}
 	if c.RetainGenerations == 0 {
 		c.RetainGenerations = 2
 	}
@@ -125,7 +129,7 @@ func (c *Config) pathStyle() bool {
 // loads local ship-state. Never takes engine.lock.
 func Open(wsDir string, cfg Config, src ChangeSource) (*Mirror, error) {
 	cfg.normalize()
-	creds, err := ResolveCredentials(cfg.AccessKeyEnv, cfg.SecretKeyEnv, cfg.CredentialsFile)
+	creds, err := ResolveCredentials(cfg.AccessKeyEnv, cfg.SecretKeyEnv, cfg.SessionTokenEnv, cfg.CredentialsFile)
 	if err != nil {
 		return nil, err
 	}
@@ -158,9 +162,15 @@ func (m *Mirror) Config() Config { return m.cfg }
 
 // ScheduledRotationDue reports whether the scheduled rotation cadence
 // (snapshot_interval) has elapsed since the last generation commit of ANY
-// kind — used by the serve shipper ticker.
+// kind — used by the serve shipper ticker. Reads the FILE (the shared
+// truth): m.local is concurrently reassigned by Ship/Snapshot on the
+// rotation goroutine (data race otherwise, caught by -race).
 func (m *Mirror) ScheduledRotationDue() bool {
-	return m.now().Sub(m.local.LastRotationAt) >= m.cfg.SnapshotInterval
+	local, err := LoadLocalState(localStatePath(m.dir))
+	if err != nil {
+		return false
+	}
+	return m.now().Sub(local.LastRotationAt) >= m.cfg.SnapshotInterval
 }
 
 func localStatePath(dir string) string {

@@ -60,6 +60,7 @@ type MirrorConfig struct {
 	Region               string                 `yaml:"region,omitempty"`
 	AccessKeyEnv         string                 `yaml:"access_key_env,omitempty"`
 	SecretKeyEnv         string                 `yaml:"secret_key_env,omitempty"`
+	SessionTokenEnv      string                 `yaml:"session_token_env,omitempty"`
 	CredentialsFile      string                 `yaml:"credentials_file,omitempty"`
 	ShipInterval         string                 `yaml:"ship_interval,omitempty"`
 	SnapshotInterval     string                 `yaml:"snapshot_interval,omitempty"`
@@ -95,6 +96,15 @@ func (m *MirrorConfig) SecretKeyEnvOrDefault() string {
 		return "AWS_SECRET_ACCESS_KEY"
 	}
 	return m.SecretKeyEnv
+}
+
+// SessionTokenEnvOrDefault resolves the env var NAME holding the STS session
+// token (default AWS_SESSION_TOKEN; empty value reads as absent).
+func (m *MirrorConfig) SessionTokenEnvOrDefault() string {
+	if m.SessionTokenEnv == "" {
+		return "AWS_SESSION_TOKEN"
+	}
+	return m.SessionTokenEnv
 }
 
 // RetainGenerationsOrDefault resolves PITR depth in rotation count (default 2).

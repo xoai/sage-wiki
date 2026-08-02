@@ -17,18 +17,21 @@ import (
 // Credentials holds S3 access keys. Resolve them from environment variables
 // or a credentials file — never store them in the workspace or config.
 type Credentials struct {
-	AccessKey string
-	SecretKey string
+	AccessKey    string
+	SecretKey    string
+	SessionToken string // STS temporary credentials (optional)
 }
 
 // EmptyPayloadHash is the SHA-256 of the empty body, used for GET/HEAD/DELETE.
 const EmptyPayloadHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
-const signedHeaders = "host;x-amz-content-sha256;x-amz-date"
+const signedHeadersBase = "host;x-amz-content-sha256;x-amz-date"
 
 // SignRequest signs req in place with AWS Signature Version 4 for the given
 // payload hash, credentials, region, and service at time now. Callers set
 // the body separately; payloadHash must be the hex SHA-256 of that body.
+// With an STS SessionToken, X-Amz-Security-Token is set and signed
+// (sorted position); without one, output is byte-identical to static creds.
 func SignRequest(req *http.Request, payloadHash string, creds Credentials, region, service string, now time.Time) {
 	amzDate := now.UTC().Format("20060102T150405Z")
 	dateStamp := now.UTC().Format("20060102")
@@ -36,15 +39,23 @@ func SignRequest(req *http.Request, payloadHash string, creds Credentials, regio
 	req.Header.Set("X-Amz-Date", amzDate)
 	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
 
+	signedHeaders := signedHeadersBase
+	// Host comes from the request URL, never a caller-set Host header
+	// that could drift from the connection target.
+	canonicalHeaders := "host:" + req.Host + "\n" +
+		"x-amz-content-sha256:" + payloadHash + "\n" +
+		"x-amz-date:" + amzDate + "\n"
+	if creds.SessionToken != "" {
+		req.Header.Set("X-Amz-Security-Token", creds.SessionToken)
+		signedHeaders += ";x-amz-security-token"
+		canonicalHeaders += "x-amz-security-token:" + creds.SessionToken + "\n"
+	}
+
 	canonicalRequest := strings.Join([]string{
 		req.Method,
 		escapePath(req.URL.EscapedPath()),
 		canonicalQuery(req.URL.Query()),
-		// Host comes from the request URL, never a caller-set Host header
-		// that could drift from the connection target.
-		"host:" + req.Host + "\n" +
-			"x-amz-content-sha256:" + payloadHash + "\n" +
-			"x-amz-date:" + amzDate + "\n",
+		canonicalHeaders,
 		signedHeaders,
 		payloadHash,
 	}, "\n")

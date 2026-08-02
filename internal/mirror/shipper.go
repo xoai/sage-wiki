@@ -2,9 +2,12 @@ package mirror
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -520,9 +523,10 @@ func (m *Mirror) rotate(ctx context.Context, st *State) error {
 			CreatedAt:      now,
 			WAL:            []WALSegmentRef{},
 		},
-		Objects:   st.Objects,
-		Vectors:   st.Vectors,
-		UpdatedAt: now,
+		Objects:           st.Objects,
+		Vectors:           st.Vectors,
+		UpdatedAt:         now,
+		RetainGenerations: m.cfg.RetainGenerations,
 	}
 	sb, err := MarshalState(newState)
 	if err != nil {
@@ -570,6 +574,7 @@ func (m *Mirror) commitSegment(ctx context.Context, st *State, seg []byte, seq i
 		SealedAt: m.now().UTC(),
 	})
 	st.UpdatedAt = m.now().UTC()
+	st.RetainGenerations = m.cfg.RetainGenerations
 	sb, err := MarshalState(st)
 	if err != nil {
 		return err
@@ -627,9 +632,16 @@ func (m *Mirror) adoptWAL() (uint64, int64) {
 // the process is exiting and the next incarnation is naturally fresh.
 // After Quiesce, a serve-stop close-fold hashes IDENTICAL to the
 // reference (branch (b) benign) instead of a spurious (a) rotation
-// (F-102). Runs UNDER the ship-mutex (pass-2 MAJOR-1: a concurrent pass's
-// save must not be clobbered) and returns failures loudly (MAJOR-2).
-func (m *Mirror) Quiesce() error {
+// (F-102). Runs UNDER the ship-mutex, returns failures loudly, and the
+// hash is interruptible via ctx (item 4: an exhausted drain budget aborts
+// the hash — reference NOT updated, all-or-nothing).
+func (m *Mirror) Quiesce(ctx context.Context) error {
+	// Fail fast on an exhausted budget BEFORE the (uninterruptible) mutex
+	// acquire — the residual overrun is one acquire timeout, documented
+	// (F-029).
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("quiesce: %w", err)
+	}
 	mutex, err := AcquireShipMutex(m.dir, m.cfg.ShipLockTimeout)
 	if err != nil {
 		return fmt.Errorf("quiesce: %w", err)
@@ -645,13 +657,13 @@ func (m *Mirror) Quiesce() error {
 		return fmt.Errorf("quiesce: open db: %w", err)
 	}
 	defer db.Close()
-	if _, err := db.Exec("PRAGMA busy_timeout=2000"); err != nil {
+	if _, err := db.ExecContext(ctx, "PRAGMA busy_timeout=2000"); err != nil {
 		return fmt.Errorf("quiesce: busy_timeout: %w", err)
 	}
-	if _, err := db.Exec("PRAGMA wal_checkpoint(PASSIVE)"); err != nil {
+	if _, err := db.ExecContext(ctx, "PRAGMA wal_checkpoint(PASSIVE)"); err != nil {
 		return fmt.Errorf("quiesce: checkpoint: %w", err)
 	}
-	hash, size, err := hashFile(m.dbPath())
+	hash, size, err := hashFileCtx(ctx, m.dbPath())
 	if err != nil {
 		return fmt.Errorf("quiesce: hash db: %w", err)
 	}
@@ -661,6 +673,35 @@ func (m *Mirror) Quiesce() error {
 		return fmt.Errorf("quiesce: save local state: %w", err)
 	}
 	return nil
+}
+
+// ctxReader aborts a long read when ctx is done (per Read — io.Copy uses
+// ≤32KiB chunks, so cancellation is responsive).
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c *ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
+}
+
+// hashFileCtx streams a file's SHA-256 and size, interruptible via ctx.
+func hashFileCtx(ctx context.Context, path string) (sha string, size int64, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", 0, err
+	}
+	defer f.Close()
+	h := sha256.New()
+	size, err = io.Copy(h, &ctxReader{ctx: ctx, r: f})
+	if err != nil {
+		return "", 0, err
+	}
+	return hex.EncodeToString(h.Sum(nil)), size, nil
 }
 
 // checkpointRestart runs a RESTART checkpoint so the new generation's WAL

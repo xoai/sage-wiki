@@ -4,6 +4,20 @@
 
 ### Added
 
+- **Mirror follow-ups — SigV4 suite, STS, retain-in-state, budgets.** The
+  mirror's SigV4 signing is now verified against the vendored
+  aws4_testsuite (botocore, Apache-2.0) with derived S3-shaped
+  expectations covering session-token signing. **STS temporary
+  credentials** work via `mirror.session_token_env` (default
+  AWS_SESSION_TOKEN) or `session_token` in the credentials file
+  (same-source pairing enforced loudly). `mirror verify` prefers the
+  retain_generations recorded in mirror-state.json over local config.
+  The serve drain shares one budget across rotation wait, final ship,
+  and quiesce, whose full-db hash is now interruptible. S3 calls get
+  per-attempt payload-scaled timeouts (30s floor, 15m cap) so large
+  snapshots complete and stalled servers are still cut. A maintainer-run
+  live-AWS smoke (`SAGE_TEST_AWS=1`) exists but never runs in CI.
+
 - **Remote mirror — S3-compatible backup, WAL shipping, hydrate (SPEC-03).**
   `sage-wiki mirror enable|status|snapshot|verify` continuously replicates
   a workspace to any S3-compatible bucket (S3, R2, MinIO), and

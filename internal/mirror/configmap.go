@@ -20,6 +20,7 @@ func ConfigFromYAML(wsDir string, mc config.MirrorConfig) (Config, error) {
 		Region:               mc.RegionOrDefault(),
 		AccessKeyEnv:         mc.AccessKeyEnvOrDefault(),
 		SecretKeyEnv:         mc.SecretKeyEnvOrDefault(),
+		SessionTokenEnv:      mc.SessionTokenEnvOrDefault(),
 		CredentialsFile:      mc.CredentialsFile,
 		ShipInterval:         mc.ShipIntervalDur(),
 		SnapshotInterval:     mc.SnapshotIntervalDur(),
