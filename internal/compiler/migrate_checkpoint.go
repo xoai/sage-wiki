@@ -9,6 +9,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/store"
+	"sort"
 )
 
 // MigrateCheckpoint migrates compile-state.json into compile_items table.
@@ -43,7 +44,6 @@ func MigrateCheckpoint(projectDir string, items store.CompileItemStore, mf *mani
 		}
 	}
 
-
 	completedSet := make(map[string]bool)
 	for _, p := range state.Completed {
 		completedSet[p] = true
@@ -55,8 +55,15 @@ func MigrateCheckpoint(projectDir string, items store.CompileItemStore, mf *mani
 
 	migrated := 0
 
-	// Migrate all sources from manifest into compile_items
-	for path, src := range mf.Sources {
+	// Migrate all sources from manifest into compile_items (SPEC-04 D1:
+	// sorted — the inserted rowids are permanent).
+	paths := make([]string, 0, len(mf.Sources))
+	for path := range mf.Sources {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		src := mf.Sources[path]
 		item := CompileItem{
 			SourcePath:  path,
 			Hash:        src.Hash,

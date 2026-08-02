@@ -20,6 +20,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/vectors"
+	"sort"
 )
 
 // ReconcileResult summarizes a reconcile pass.
@@ -188,6 +189,8 @@ func (rc *reconciler) expectedOutputs(mf *manifest.Manifest) []expectedOutput {
 		}
 		out = append(out, expectedOutput{path: s.SummaryPath, kind: "summary", ftsID: src})
 	}
+	// SPEC-04 D1: heal/replace order is observable (FTS delete+re-add rowids).
+	sort.Slice(out, func(i, j int) bool { return out[i].path < out[j].path })
 	return out
 }
 

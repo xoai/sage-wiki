@@ -183,6 +183,9 @@ func entityRowidOrder(t *testing.T, dir string) []string {
 		rows.Scan(&id)
 		out = append(out, id)
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("entity scan: %v", err)
+	}
 	return out
 }
 
@@ -274,6 +277,9 @@ func chunkDocidRowidOrder(t *testing.T, dir string) []string {
 		var d string
 		rows.Scan(&d)
 		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("chunk scan: %v", err)
 	}
 	return out
 }

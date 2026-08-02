@@ -10,18 +10,6 @@ import (
 	"github.com/xoai/sage-wiki/internal/prompts"
 )
 
-// skipCompileOnce compiles the deferred 3-doc corpus and returns (dir, result).
-func skipCompileOnce(t *testing.T, serverURL string, opts CompileOpts) (string, *CompileResult) {
-	t.Helper()
-	dir := compileDeferredCorpusOpts(t, serverURL, opts)
-	db, err := sql.Open("sqlite", filepath.Join(dir, ".sage", "wiki.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	return dir, nil
-}
-
 func keyRows(t *testing.T, dir string) map[string]string {
 	t.Helper()
 	db, err := sql.Open("sqlite", filepath.Join(dir, ".sage", "wiki.db"))
@@ -39,6 +27,9 @@ func keyRows(t *testing.T, dir string) map[string]string {
 		var p, k string
 		rows.Scan(&p, &k)
 		out[p] = k
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("key rows scan: %v", err)
 	}
 	return out
 }

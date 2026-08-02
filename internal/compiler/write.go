@@ -408,7 +408,9 @@ func applyArticlePayload(opts ArticleWriteOpts, payload *articlePayload, result 
 
 	// Concept vector (computed in prepare)
 	if payload.conceptVec != nil {
-		opts.VecStore.Upsert("concept:"+concept.Name, payload.conceptVec)
+		if err := opts.VecStore.Upsert("concept:"+concept.Name, payload.conceptVec); err != nil {
+			log.Warn("concept vector upsert failed", "concept", concept.Name, "error", err)
+		}
 	}
 
 	// Index chunks for enhanced search

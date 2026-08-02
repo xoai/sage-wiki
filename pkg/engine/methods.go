@@ -336,7 +336,6 @@ type CompileExplanation = compiler.CompileExplanation
 // every compile-key component, stored-vs-current parts, and the verdict
 // (side-effect free — no adoptions, no resets).
 func (w *Workspace) ExplainCompile(ctx context.Context, doc string) (*CompileExplanation, error) {
-	ctx = orBackground(ctx)
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	if err := w.checkOpen(); err != nil {

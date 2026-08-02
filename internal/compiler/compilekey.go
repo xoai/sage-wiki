@@ -577,7 +577,7 @@ func walkConfigLeaves(v reflect.Type, prefix string, out *[]string) {
 		}
 		path := prefix + name
 		t := f.Type
-		if t.Kind() == reflect.Ptr {
+		if t.Kind() == reflect.Pointer {
 			t = t.Elem()
 		}
 		if t.Kind() == reflect.Struct && t.PkgPath() == "github.com/xoai/sage-wiki/internal/config" {

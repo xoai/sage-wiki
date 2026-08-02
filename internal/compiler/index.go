@@ -267,7 +267,9 @@ func indexAndEmbedSources(
 
 		if chunkStore != nil && db != nil {
 			// Clean up legacy whole-document vector
-			vecStore.Delete(docID)
+			if err := vecStore.Delete(docID); err != nil {
+				log.Warn("tier 1 legacy vector delete failed", "doc", docID, "error", err)
+			}
 
 			if err := db.WriteTx(func(tx *sql.Tx) error {
 				if err := chunkStore.DeleteDocChunks(tx, docID); err != nil {
@@ -308,7 +310,9 @@ func indexAndEmbedSources(
 		} else {
 			// Fallback: single-vector embed (legacy path when chunk infra unavailable)
 			if len(p.chunkEmbeddings) > 0 && p.chunkEmbeddings[0] != nil {
-				vecStore.Upsert(docID, p.chunkEmbeddings[0])
+				if err := vecStore.Upsert(docID, p.chunkEmbeddings[0]); err != nil {
+					log.Warn("tier 1 single-vector upsert failed", "doc", docID, "error", err)
+				}
 			} else {
 				allChunksOK = false
 			}

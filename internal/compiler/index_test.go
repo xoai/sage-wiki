@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -142,7 +143,7 @@ func TestIndexAndEmbedSources_ChunkLongSource(t *testing.T) {
 
 	sources := []CompileItem{{SourcePath: "raw/long.md", FileType: "article"}}
 
-	indexed, embedded := indexAndEmbedSources(nil, dir, sources, memStore, vecStore, embedder, itemStore, nil, chunkStore, 800, 0, db)
+	indexed, embedded := indexAndEmbedSources(context.Background(), dir, sources, memStore, vecStore, embedder, itemStore, nil, chunkStore, 800, 0, db)
 
 	if indexed != 1 {
 		t.Errorf("expected 1 indexed, got %d", indexed)
@@ -193,7 +194,7 @@ func TestIndexAndEmbedSources_ShortSource(t *testing.T) {
 	embedder := &mockEmbedder{embeddings: map[string][]float32{}}
 
 	sources := []CompileItem{{SourcePath: "raw/short.md", FileType: "article"}}
-	_, embedded := indexAndEmbedSources(nil, dir, sources, memStore, vecStore, embedder, itemStore, nil, chunkStore, 800, 0, db)
+	_, embedded := indexAndEmbedSources(context.Background(), dir, sources, memStore, vecStore, embedder, itemStore, nil, chunkStore, 800, 0, db)
 
 	if embedded != 1 {
 		t.Errorf("expected 1 embedded, got %d", embedded)
@@ -225,7 +226,7 @@ func TestIndexAndEmbedSources_EmptyText(t *testing.T) {
 	embedder := &mockEmbedder{embeddings: map[string][]float32{}}
 
 	sources := []CompileItem{{SourcePath: "raw/empty.md", FileType: "article"}}
-	_, embedded := indexAndEmbedSources(nil, dir, sources, memStore, vecStore, embedder, itemStore, nil, chunkStore, 800, 0, db)
+	_, embedded := indexAndEmbedSources(context.Background(), dir, sources, memStore, vecStore, embedder, itemStore, nil, chunkStore, 800, 0, db)
 
 	if embedded != 0 {
 		t.Errorf("expected 0 embedded for empty source, got %d", embedded)
@@ -251,7 +252,7 @@ func TestIndexAndEmbedSources_NilChunkStore(t *testing.T) {
 	embedder := &mockEmbedder{embeddings: map[string][]float32{}}
 
 	sources := []CompileItem{{SourcePath: "raw/doc.md", FileType: "article"}}
-	_, embedded := indexAndEmbedSources(nil, dir, sources, memStore, vecStore, embedder, itemStore, nil, nil, 800, 0, nil)
+	_, embedded := indexAndEmbedSources(context.Background(), dir, sources, memStore, vecStore, embedder, itemStore, nil, nil, 800, 0, nil)
 
 	if embedded != 1 {
 		t.Errorf("expected 1 embedded (legacy path), got %d", embedded)

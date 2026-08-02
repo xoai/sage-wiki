@@ -108,7 +108,8 @@ func classifySkips(
 		// tier passes' own claim domain (retried every compile by design) —
 		// injecting them would recompile permanently-failing embeds forever.
 		if !tierComplete(&item) {
-			if item.Tier >= 3 && !(item.PassSummarized && item.PassExtracted && item.PassWritten) {
+			llmPassesDone := item.PassSummarized && item.PassExtracted && item.PassWritten
+			if item.Tier >= 3 && !llmPassesDone {
 				out.resumePending++
 				out.resume = append(out.resume, SourceInfo{Path: path, Hash: item.Hash, Type: item.FileType, Size: item.SizeBytes})
 			}
