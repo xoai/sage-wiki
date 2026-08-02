@@ -142,8 +142,20 @@ func hydrateWithClient(ctx context.Context, client *s3.Client, prefix, bucket, d
 	if err := phases.checkSelection(sel.generation, atStr); err != nil {
 		return nil, err
 	}
+	if sel.fallbackNote != "" {
+		rep.Advisories = append(rep.Advisories, sel.fallbackNote)
+	}
+	var skewParts []string
 	if sel.overshoot > 0 {
-		rep.Overshoot = fmt.Sprintf("%d segment(s) sealed after the requested time excluded", sel.overshoot)
+		skewParts = append(skewParts, fmt.Sprintf("%d segment(s) sealed after the requested time excluded", sel.overshoot))
+	}
+	if sel.fromMeta && sel.objectSkew {
+		skewParts = append(skewParts, fmt.Sprintf("objects at generation %d's seal", sel.generation))
+	} else if !sel.fromMeta && sel.overshoot > 0 {
+		skewParts = append(skewParts, "objects are at newest (live map)")
+	}
+	if len(skewParts) > 0 {
+		rep.Overshoot = strings.Join(skewParts, "; ")
 	}
 
 	if err := os.MkdirAll(filepath.Join(dst, ".sage"), 0o755); err != nil {
@@ -422,13 +434,16 @@ func downloadVerified(ctx context.Context, client *s3.Client, bucket, key, wantS
 
 // restorePoint is the selected generation + restore chain.
 type restorePoint struct {
-	generation  int
-	snapshot    string
-	snapshotSHA string
-	wal         []WALSegmentRef
-	objects     map[string]ObjectRef
-	vectors     map[string]ObjectRef
-	overshoot   int
+	generation   int
+	snapshot     string
+	snapshotSHA  string
+	wal          []WALSegmentRef
+	objects      map[string]ObjectRef
+	vectors      map[string]ObjectRef
+	overshoot    int
+	fromMeta     bool   // objects/vectors came from the selected generation's sealed meta map
+	objectSkew   bool   // T predates the selected generation's seal (docs newer than T)
+	fallbackNote string // set when the selected meta has no maps (old mirror)
 }
 
 func selectRestorePoint(ctx context.Context, client *s3.Client, prefix, bucket string, st *State, opts HydrateOpts) (*restorePoint, error) {
@@ -447,7 +462,15 @@ func selectRestorePoint(ctx context.Context, client *s3.Client, prefix, bucket s
 		if err != nil {
 			return nil, err
 		}
-		return &restorePoint{generation: meta.Generation, snapshot: meta.Snapshot, snapshotSHA: meta.SnapshotSHA256, wal: meta.WAL, objects: st.Objects, vectors: st.Vectors}, nil
+		rp := &restorePoint{generation: meta.Generation, snapshot: meta.Snapshot, snapshotSHA: meta.SnapshotSHA256, wal: meta.WAL, objects: st.Objects, vectors: st.Vectors}
+		if len(meta.Objects) > 0 || len(meta.Vectors) > 0 {
+			rp.objects = meta.Objects
+			rp.vectors = meta.Vectors
+			rp.fromMeta = true
+		} else {
+			rp.fallbackNote = "note: generation has no object map; docs restored at newest"
+		}
+		return rp, nil
 	}
 
 	// Point-in-time: segment-granular, sealed_at ≤ TIME (spec.md §AC-6).
@@ -489,7 +512,20 @@ func selectRestorePoint(ctx context.Context, client *s3.Client, prefix, bucket s
 				overshoot++
 			}
 		}
-		return &restorePoint{generation: best.Generation, snapshot: best.Snapshot, snapshotSHA: best.SnapshotSHA256, wal: wal, objects: st.Objects, vectors: st.Vectors, overshoot: overshoot}, nil
+		rp := &restorePoint{generation: best.Generation, snapshot: best.Snapshot, snapshotSHA: best.SnapshotSHA256, wal: wal, objects: st.Objects, vectors: st.Vectors, overshoot: overshoot}
+		if len(best.Objects) > 0 || len(best.Vectors) > 0 {
+			rp.objects = best.Objects
+			rp.vectors = best.Vectors
+			rp.fromMeta = true
+			// Object skew is independent of segment count: the map is at the
+			// generation's seal; the db is at T.
+			if at.Before(best.SealedAt.UTC()) {
+				rp.objectSkew = true
+			}
+		} else {
+			rp.fallbackNote = "note: generation has no object map; docs restored at newest"
+		}
+		return rp, nil
 	}
 
 	// Newest.

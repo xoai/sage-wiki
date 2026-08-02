@@ -314,3 +314,155 @@ func TestHydrate_PartialResumeSelectionMismatch(t *testing.T) {
 		t.Fatal("resume with a different selection must be refused")
 	}
 }
+
+// AC-1 (PITR objects): --generation restores the PRE-rotation doc set;
+// newest restores the NEW set — proving the object selection is in force.
+func TestHydrate_GenerationRestoresSealedObjectMap(t *testing.T) {
+	h := newHydrateFixture(t)
+	// Gen 1 has Foo. Rotate to gen 2, then MUTATE the doc set.
+	h.src.dbWrite(t, "row-gen2")
+	h.src.dbClose()
+	ageLocalRotationFile(t, h.src.dir, -2*time.Hour)
+	if res := h.src.pass(t); !res.Rotated {
+		t.Fatal("setup: rotation did not fire")
+	}
+	writeWS(t, h.src.dir, "wiki/concepts/New.md", "new doc after seal")
+	writeWS(t, h.src.dir, "wiki/concepts/Foo.md", "# Foo CHANGED")
+	h.src.pass(t)
+
+	// Newest: sees the NEW set.
+	dstNew := filepath.Join(t.TempDir(), "new")
+	if _, err := Hydrate(context.Background(), h.cfg, dstNew, HydrateOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dstNew, "wiki/concepts/New.md")); err != nil {
+		t.Fatal("newest restore must see the new doc")
+	}
+	b, _ := os.ReadFile(filepath.Join(dstNew, "wiki/concepts/Foo.md"))
+	if string(b) != "# Foo CHANGED" {
+		t.Fatal("newest restore must see the changed doc")
+	}
+
+	// --generation 2 (the retained rotated gen): sees the SEALED map.
+	dstOld := filepath.Join(t.TempDir(), "old")
+	rep, err := Hydrate(context.Background(), h.cfg, dstOld, HydrateOpts{Generation: 2})
+	if err != nil {
+		t.Fatalf("hydrate --generation 1: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dstOld, "wiki/concepts/New.md")); !os.IsNotExist(err) {
+		t.Fatal("--generation 2 must NOT see the post-seal doc")
+	}
+	b, _ = os.ReadFile(filepath.Join(dstOld, "wiki/concepts/Foo.md"))
+	if string(b) != "# Foo" {
+		t.Fatalf("--generation 2 must see the SEALED Foo content, got %q", b)
+	}
+	_ = rep
+}
+
+// AC-2: --at into a rotated generation: docs created in a LATER generation
+// are absent; overshoot names both skews.
+func TestHydrate_PITR_RotatedObjectsAndDualSkew(t *testing.T) {
+	h := newHydrateFixture(t)
+	gen2Created := h.src.remoteState(t).DB.CreatedAt
+	// Seal a segment in gen 2's lifetime at T0+1s (opens a created→sealed window).
+	h.src.now = gen2Created.Add(time.Second)
+	h.src.dbWrite(t, "row-gen2-seg")
+	h.src.pass(t)
+	// Rotate to gen 3 at T0+2s (meta gen 2: created=T0, sealed=T0+1s).
+	h.src.now = gen2Created.Add(2 * time.Second)
+	h.src.dbWrite(t, "row-gen2")
+	h.src.dbClose()
+	ageLocalRotationFile(t, h.src.dir, -2*time.Hour)
+	if res := h.src.pass(t); !res.Rotated {
+		t.Fatal("setup: rotation did not fire")
+	}
+	writeWS(t, h.src.dir, "wiki/concepts/Later.md", "later")
+	h.src.pass(t)
+
+	// --at T0+0.5s: inside gen 2's window → segment overshoot (the T0+1s
+	// segment) AND object skew (docs at gen 2's seal, newer than T).
+	dst := filepath.Join(t.TempDir(), "restored")
+	rep, err := Hydrate(context.Background(), h.cfg, dst, HydrateOpts{At: gen2Created.Add(500 * time.Millisecond)})
+	if err != nil {
+		t.Fatalf("hydrate --at: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "wiki/concepts/Later.md")); !os.IsNotExist(err) {
+		t.Fatal("later-generation doc must be absent in PITR restore")
+	}
+	if !strings.Contains(rep.Overshoot, "seal") {
+		t.Fatalf("overshoot must name the object skew (generation seal): %q", rep.Overshoot)
+	}
+	if !strings.Contains(rep.Overshoot, "segment") {
+		t.Fatalf("overshoot must name excluded segments: %q", rep.Overshoot)
+	}
+	// row-gen2-seg (sealed after T) must NOT be in the restored db.
+	db, err := sql.Open("sqlite", filepath.Join(dst, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var n int
+	db.QueryRow("SELECT COUNT(*) FROM t WHERE v='row-gen2-seg'").Scan(&n)
+	if n != 0 {
+		t.Fatal("post-T segment replayed into the restored db")
+	}
+}
+
+// AC-3: old mirror (meta without maps) → fallback to live maps + canonical advisory.
+func TestHydrate_OldMirrorFallbackWarning(t *testing.T) {
+	h := newHydrateFixture(t) // gen 1 already rotated (meta exists)
+	// Rewrite gen-1's meta WITHOUT maps but with its REAL snapshot (a
+	// pre-feature mirror — meta written before the objects field existed).
+	mb0, ok := h.fake.get(GenerationMetaKey("ws/", 1))
+	if !ok {
+		t.Fatal("setup: gen-1 meta missing")
+	}
+	meta0, err := UnmarshalMeta(mb0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta0.Objects = nil
+	meta0.Vectors = nil
+	mb, _ := MarshalMeta(meta0)
+	h.fake.objects[GenerationMetaKey("ws/", 1)] = mb
+
+	dst := filepath.Join(t.TempDir(), "restored")
+	rep, err := Hydrate(context.Background(), h.cfg, dst, HydrateOpts{Generation: 1})
+	if err != nil {
+		t.Fatalf("hydrate on old mirror: %v", err)
+	}
+	found := false
+	for _, a := range rep.Advisories {
+		if strings.Contains(a, "note: generation has no object map; docs restored at newest") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("canonical fallback advisory missing: %v", rep.Advisories)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "wiki/concepts/Foo.md")); err != nil {
+		t.Fatal("fallback must restore docs from live state")
+	}
+}
+
+// AC-4: tombstone in the sealed map stays absent; a file deleted in a LATER
+// generation's lifetime IS restored (the per-generation bound).
+func TestHydrate_MetaTombstoneAndLaterDeleteBound(t *testing.T) {
+	h := newHydrateFixture(t)
+	deleteWS(t, h.src.dir, "wiki/concepts/Foo.md")
+	h.src.pass(t) // tombstone committed (Foo deleted in gen 1's lifetime)
+	h.src.dbWrite(t, "row-gen2")
+	h.src.dbClose()
+	ageLocalRotationFile(t, h.src.dir, -2*time.Hour)
+	if res := h.src.pass(t); !res.Rotated {
+		t.Fatal("setup: rotation did not fire")
+	}
+	// Gen 1's sealed map carries Foo as a TOMBSTONE.
+	dst := filepath.Join(t.TempDir(), "restored")
+	if _, err := Hydrate(context.Background(), h.cfg, dst, HydrateOpts{Generation: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "wiki/concepts/Foo.md")); !os.IsNotExist(err) {
+		t.Fatal("tombstoned file in the sealed map must stay absent")
+	}
+}
