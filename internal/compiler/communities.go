@@ -258,7 +258,7 @@ func summarizeCommunity(ctx context.Context, client *llm.Client, model string, m
 	for _, m := range members {
 		set[m] = true
 	}
-	now := time.Now().UTC()
+	now := config.NowUTC()
 	for _, r := range all {
 		if !set[r.SourceID] || !set[r.TargetID] {
 			continue

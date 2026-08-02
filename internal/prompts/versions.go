@@ -3,6 +3,7 @@ package prompts
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"os"
 	"sort"
 )
 
@@ -43,27 +44,28 @@ func CompileTemplateNames() []string {
 }
 
 // EffectiveTemplateHashes returns sha256[:16 hex] of each compile
-// template's EFFECTIVE bytes — the registry's override when present, else
-// the embedded default. This is the drift channel for overrides and for
-// embedded edits that forgot to bump the version constant.
+// template's EFFECTIVE RAW BYTES — the override file's bytes when one
+// backs the template, else the embedded file's bytes (SPEC-04). Raw bytes,
+// not the parse tree: a comment-only edit drifts (as it should — comments
+// steer the model too), and a user can reproduce the printed hash with
+// sha256sum on their override file.
 func EffectiveTemplateHashes(r *Registry) (map[string]string, error) {
 	if r == nil {
 		r = defaultRegistry
 	}
 	out := make(map[string]string, len(templateVersions))
 	for _, name := range CompileTemplateNames() {
-		var text string
-		tmpl := r.templates.Lookup(name + ".txt")
-		if tmpl == nil {
-			data, err := templateFS.ReadFile("templates/" + name + ".txt")
-			if err != nil {
-				return nil, err
-			}
-			text = string(data)
+		var data []byte
+		var err error
+		if path := r.OverridePath(name + ".txt"); path != "" {
+			data, err = os.ReadFile(path)
 		} else {
-			text = tmpl.Root.String()
+			data, err = templateFS.ReadFile("templates/" + name + ".txt")
 		}
-		sum := sha256.Sum256([]byte(text))
+		if err != nil {
+			return nil, err
+		}
+		sum := sha256.Sum256(data)
 		out[name] = hex.EncodeToString(sum[:])[:16]
 	}
 	return out, nil

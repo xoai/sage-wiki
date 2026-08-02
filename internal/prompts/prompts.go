@@ -30,6 +30,10 @@ func init() {
 // state. Build with NewRegistry.
 type Registry struct {
 	templates *template.Template
+	// overrides records which template names came from which on-disk file
+	// (SPEC-04): the effective-bytes hash reads the override file's raw
+	// bytes, not the parse tree.
+	overrides map[string]string
 }
 
 // NewRegistry returns a Registry holding the embedded default templates.
@@ -95,6 +99,10 @@ func (r *Registry) LoadFromDir(dir string) error {
 			return fmt.Errorf("prompts: parse %s: %w", entry.Name(), err)
 		}
 		loaded++
+		if r.overrides == nil {
+			r.overrides = map[string]string{}
+		}
+		r.overrides[templateName] = filepath.Join(dir, entry.Name())
 	}
 
 	if loaded > 0 {
@@ -102,6 +110,15 @@ func (r *Registry) LoadFromDir(dir string) error {
 	}
 
 	return nil
+}
+
+// OverridePath returns the on-disk file backing an override template, or ""
+// when the template is the embedded default (SPEC-04).
+func (r *Registry) OverridePath(templateName string) string {
+	if r == nil {
+		return ""
+	}
+	return r.overrides[templateName]
 }
 
 // Render renders a named template with the given data from this registry.
@@ -315,5 +332,13 @@ func Available() []string {
 
 // Reset restores the DEFAULT registry to embedded defaults (useful for testing).
 func Reset() {
+	defaultRegistry = NewRegistry()
+}
+
+// ResetDefaultRegistryForTest restores the package-default registry to the
+// embedded templates (drops any prompts/ overrides loaded via the
+// package-level LoadFromDir). Test-only seam — production code never calls
+// it (the override state is deliberately process-global, matching compile).
+func ResetDefaultRegistryForTest() {
 	defaultRegistry = NewRegistry()
 }

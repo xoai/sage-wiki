@@ -43,7 +43,14 @@ func Backfill(projectDir string, mem store.EntryStore, m *manifest.Manifest) (in
 		if ts <= 0 {
 			continue
 		}
-		for id, present := range map[string]bool{path: haveBare, "src:" + path: haveSrc} {
+		// SPEC-04 D1 (Gate-2 review): fixed-order identity iteration — a
+		// 2-key inline map literal iterates in random order and entry_dates
+		// rowids follow it.
+		for _, id := range []string{path, "src:" + path} {
+			present := haveBare
+			if id != path {
+				present = haveSrc
+			}
 			if present {
 				continue
 			}

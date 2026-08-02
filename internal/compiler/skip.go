@@ -128,7 +128,10 @@ func classifySkips(
 			continue
 		}
 
-		current := ComputeCompileKeyParts(item.Hash, tier, cfg, pr)
+		current, err := ComputeCompileKeyParts(item.Hash, tier, cfg, pr)
+		if err != nil {
+			return nil, fmt.Errorf("classify %s: %w", path, err)
+		}
 
 		// R3 — adopt: compute + store, skip without recompiling.
 		if item.CompileKey == "" {
@@ -186,7 +189,10 @@ func storeCompileKeysForCompleted(cfg *config.Config, pr *prompts.Registry, item
 			if !tierComplete(&item) {
 				continue
 			}
-			parts := ComputeCompileKeyParts(item.Hash, item.Tier, cfg, pr)
+			parts, err := ComputeCompileKeyParts(item.Hash, item.Tier, cfg, pr)
+			if err != nil {
+				return fmt.Errorf("store keys: %s: %w", item.SourcePath, err)
+			}
 			key := parts.Key(item.Tier)
 			if key == item.CompileKey {
 				continue // already current — no write churn
@@ -253,13 +259,19 @@ func ExplainCompileKey(projectDir, doc string, cfg *config.Config, pr *prompts.R
 		// Never compiled: the computed key still describes what a compile
 		// would produce (tier from the config default chain — ResolveTier is
 		// the pipeline's own call, but Explain keeps it simple: tier 3).
-		parts := ComputeCompileKeyParts(diskHash, 3, cfg, pr)
+		parts, err := ComputeCompileKeyParts(diskHash, 3, cfg, pr)
+		if err != nil {
+			return nil, fmt.Errorf("explain %s: %w", doc, err)
+		}
 		fillExplanation(ex, parts, "", 3)
 		ex.Verdict = "compile: content (new)"
 		return ex, nil
 	}
 
-	parts := ComputeCompileKeyParts(diskHash, item.Tier, cfg, pr)
+	parts, err := ComputeCompileKeyParts(diskHash, item.Tier, cfg, pr)
+	if err != nil {
+		return nil, fmt.Errorf("explain %s: %w", doc, err)
+	}
 	fillExplanation(ex, parts, item.CompileKey, item.Tier)
 	if err := json.Unmarshal([]byte(item.CompileKeyParts), &ex.StoredParts); err != nil && item.CompileKeyParts != "" {
 		return nil, fmt.Errorf("explain %s: stored parts: %w", doc, err)

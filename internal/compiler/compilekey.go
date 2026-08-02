@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"crypto/sha256"
+	"fmt"
 	"encoding/hex"
 	"encoding/json"
 	"reflect"
@@ -82,8 +83,9 @@ func DriftClass(stored, current CompileKeyParts) string {
 // ComputeCompileKeyParts resolves every key component for one source doc.
 // pr may be nil (package-default registry). cfg must be the compile-time
 // resolved config (per-run overrides already applied by the caller, as
-// pipeline.go does for CompileOpts.Model/Tier).
-func ComputeCompileKeyParts(sourceHash string, tier int, cfg *config.Config, pr *prompts.Registry) CompileKeyParts {
+// pipeline.go does for CompileOpts.Model/Tier). Errors propagate (Gate-3
+// review): key material must never embed error text.
+func ComputeCompileKeyParts(sourceHash string, tier int, cfg *config.Config, pr *prompts.Registry) (CompileKeyParts, error) {
 	parts := CompileKeyParts{
 		Source:   sourceHash,
 		Pipeline: PipelineVersion,
@@ -93,30 +95,40 @@ func ComputeCompileKeyParts(sourceHash string, tier int, cfg *config.Config, pr 
 		pr = prompts.DefaultRegistry()
 	}
 	if tier >= 3 {
-		parts.Templates = templateKeyComponent(pr)
+		tmpl, err := templateKeyComponent(pr)
+		if err != nil {
+			return parts, fmt.Errorf("compile key: templates: %w", err)
+		}
+		parts.Templates = tmpl
 		parts.Models = modelKeyComponent(cfg)
-		parts.Config = sha256Hex(canonicalSubsetJSON(compileConfigSubset(cfg)))
+		subset, err := canonicalSubsetJSON(compileConfigSubset(cfg))
+		if err != nil {
+			return parts, fmt.Errorf("compile key: config subset: %w", err)
+		}
+		parts.Config = sha256Hex(subset)
 	} else {
-		parts.Config = sha256Hex(canonicalSubsetJSON(chunkConfigSubset(cfg)))
+		subset, err := canonicalSubsetJSON(chunkConfigSubset(cfg))
+		if err != nil {
+			return parts, fmt.Errorf("compile key: chunk subset: %w", err)
+		}
+		parts.Config = sha256Hex(subset)
 	}
-	return parts
+	return parts, nil
 }
 
 // templateKeyComponent joins "name@version:hash16" sorted by name.
-func templateKeyComponent(pr *prompts.Registry) string {
+func templateKeyComponent(pr *prompts.Registry) (string, error) {
 	versions := prompts.TemplateVersions()
 	hashes, err := prompts.EffectiveTemplateHashes(pr)
 	if err != nil {
-		// The registry's templates come from the same embed FS the guard test
-		// walks — an unreadable template is a build defect, surfaced, not hidden.
-		return "ERROR:" + err.Error()
+		return "", err
 	}
 	names := prompts.CompileTemplateNames()
 	entries := make([]string, 0, len(names))
 	for _, name := range names {
 		entries = append(entries, name+"@"+versions[name]+":"+hashes[name])
 	}
-	return strings.Join(entries, ",")
+	return strings.Join(entries, ","), nil
 }
 
 // modelKeyComponent joins "pass=model" sorted by pass, mirroring the
@@ -192,12 +204,12 @@ func sha256Hex(s string) string {
 
 // canonicalSubsetJSON marshals the subset deterministically: encoding/json
 // sorts map keys, so the flat dotted-key map has a canonical byte form.
-func canonicalSubsetJSON(subset map[string]any) string {
+func canonicalSubsetJSON(subset map[string]any) (string, error) {
 	b, err := json.Marshal(subset)
 	if err != nil {
-		return "ERROR:" + err.Error()
+		return "", err
 	}
-	return string(b)
+	return string(b), nil
 }
 
 // compileConfigSubset extracts the resolved, output-affecting config values
@@ -313,29 +325,18 @@ func chunkConfigSubset(cfg *config.Config) map[string]any {
 	}
 }
 
-// qualityResolved mirrors the compiler's quality-weight resolution
-// (config.go:367-375 constants; compiler/confidence.go Normalized).
+// qualityResolved delegates to the config accessors (one implementation —
+// ground rule 2; the mirror here was the Gate-2 finding).
 func qualityResolved(c config.CompilerConfig) config.QualityConfig {
-	q := c.Quality
-	if q.Threshold <= 0 {
-		q.Threshold = 0.5
+	format, grounding, coverage, wikilink, antiPattern := c.QualityWeights()
+	return config.QualityConfig{
+		Threshold:         c.QualityThreshold(),
+		WeightFormat:      format,
+		WeightGrounding:   grounding,
+		WeightCoverage:    coverage,
+		WeightWikilink:    wikilink,
+		WeightAntiPattern: antiPattern,
 	}
-	if q.WeightFormat <= 0 {
-		q.WeightFormat = 0.15
-	}
-	if q.WeightGrounding <= 0 {
-		q.WeightGrounding = 0.30
-	}
-	if q.WeightCoverage <= 0 {
-		q.WeightCoverage = 0.20
-	}
-	if q.WeightWikilink <= 0 {
-		q.WeightWikilink = 0.15
-	}
-	if q.WeightAntiPattern <= 0 {
-		q.WeightAntiPattern = 0.20
-	}
-	return q
 }
 
 func intOrDefault(v, d int) int {

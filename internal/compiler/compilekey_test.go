@@ -25,7 +25,10 @@ func keyTestConfig() *config.Config {
 // (spec test 5: compile-key composition golden, tier≥3 and tier<3 shapes).
 func TestCompileKey_Golden(t *testing.T) {
 	cfg := keyTestConfig()
-	parts := ComputeCompileKeyParts("sha256:abc123", 3, cfg, nil)
+	parts, err := ComputeCompileKeyParts("sha256:abc123", 3, cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if parts.Source != "sha256:abc123" {
 		t.Errorf("Source = %q", parts.Source)
@@ -51,7 +54,10 @@ func TestCompileKey_Golden(t *testing.T) {
 	}
 
 	// tier<3: no templates/models; config = chunk subset hash; key differs.
-	partsLow := ComputeCompileKeyParts("sha256:abc123", 1, cfg, nil)
+	partsLow, err := ComputeCompileKeyParts("sha256:abc123", 1, cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if partsLow.Templates != "" || partsLow.Models != "" {
 		t.Errorf("tier<3 parts must have empty templates/models, got %q / %q", partsLow.Templates, partsLow.Models)
 	}
@@ -62,7 +68,10 @@ func TestCompileKey_Golden(t *testing.T) {
 
 // TestDriftClass_FirstDifferingComponent pins the attribution order.
 func TestDriftClass_FirstDifferingComponent(t *testing.T) {
-	base := ComputeCompileKeyParts("sha256:a", 3, keyTestConfig(), nil)
+	base, err := ComputeCompileKeyParts("sha256:a", 3, keyTestConfig(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	other := base
 	other.Source = "sha256:b"
@@ -105,7 +114,10 @@ func TestModelKey_ResolutionChains(t *testing.T) {
 	cfg := keyTestConfig()
 	cfg.Models.Summarize = ""
 	cfg.Models.Extract = "ext-model"
-	parts := ComputeCompileKeyParts("sha256:x", 3, cfg, nil)
+	parts, err := ComputeCompileKeyParts("sha256:x", 3, cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	// summarize falls to the hardcoded default; extract explicit; write/triples/resolve/communities follow extract→summarize chain.
 	if !strings.Contains(parts.Models, "summarize=gpt-4o-mini") {
 		t.Errorf("summarize fallback: %q", parts.Models)
@@ -125,18 +137,30 @@ func TestModelKey_ResolutionChains(t *testing.T) {
 // ignored field change must NOT.
 func TestCompileKey_ConfigDriftSensitivity(t *testing.T) {
 	cfg1 := keyTestConfig()
-	k1 := ComputeCompileKeyParts("sha256:a", 3, cfg1, nil).Key(3)
+	p1, err := ComputeCompileKeyParts("sha256:a", 3, cfg1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k1 := p1.Key(3)
 
 	cfg2 := keyTestConfig()
 	cfg2.Compiler.DedupThreshold = 0.9
-	k2 := ComputeCompileKeyParts("sha256:a", 3, cfg2, nil).Key(3)
+	p2, err := ComputeCompileKeyParts("sha256:a", 3, cfg2, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k2 := p2.Key(3)
 	if k1 == k2 {
 		t.Error("dedup_threshold change did not rekey (subset field)")
 	}
 
 	cfg3 := keyTestConfig()
 	cfg3.Serve.Token = "supersecret"
-	k3 := ComputeCompileKeyParts("sha256:a", 3, cfg3, nil).Key(3)
+	p3, err := ComputeCompileKeyParts("sha256:a", 3, cfg3, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k3 := p3.Key(3)
 	if k1 != k3 {
 		t.Error("serve.token change rekeyed — ignored fields must not affect the key")
 	}
@@ -168,7 +192,10 @@ func TestConfigSubset_ReflectionGuard(t *testing.T) {
 	}
 
 	subset := compileConfigSubset(keyTestConfig())
-	subsetJSON := canonicalSubsetJSON(subset)
+	subsetJSON, err := canonicalSubsetJSON(subset)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var flat map[string]any
 	json.Unmarshal([]byte(subsetJSON), &flat)
 	for leaf, disposition := range policy {
@@ -224,8 +251,16 @@ sources:
 	if err != nil {
 		t.Fatal(err)
 	}
-	kA := ComputeCompileKeyParts("sha256:z", 3, cfgA, nil).Key(3)
-	kB := ComputeCompileKeyParts("sha256:z", 3, cfgB, nil).Key(3)
+	partsA, err2 := ComputeCompileKeyParts("sha256:z", 3, cfgA, nil)
+	if err2 != nil {
+		t.Fatal(err2)
+	}
+	kA := partsA.Key(3)
+	partsB, err2 := ComputeCompileKeyParts("sha256:z", 3, cfgB, nil)
+	if err2 != nil {
+		t.Fatal(err2)
+	}
+	kB := partsB.Key(3)
 	if kA != kB {
 		t.Errorf("reordered YAML produced different keys:\nA %s\nB %s", kA, kB)
 	}

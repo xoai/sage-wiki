@@ -184,14 +184,23 @@ func indexAndEmbedSources(
 		applyList = append(applyList, &embedPayload{src: src})
 	}
 
-	for i, payload := range applyList {
+	// Same bounded fallback as the write pass (Gate-2 review): a nil
+	// backpressure controller must not mean unbounded goroutines.
+	var sem chan struct{}
+	if bp == nil {
+		maxParallel := 20
+		sem = make(chan struct{}, maxParallel)
+	}
+
+	for _, payload := range applyList {
 		wg.Add(1)
 
 		var release func()
 		if bp != nil {
 			release = bp.Acquire()
 		} else {
-			release = func() {}
+			sem <- struct{}{}
+			release = func() { <-sem }
 		}
 
 		go func(p *embedPayload) {
@@ -234,7 +243,6 @@ func indexAndEmbedSources(
 				}
 			}
 		}(payload)
-		_ = i
 	}
 
 	wg.Wait()

@@ -14,9 +14,9 @@ internal/compiler/worker_cycle.go:439 claimedItemFor is a membership scan, first
 internal/compiler/worker_cycle.go:160 heartbeat path list feeds one IN-clause UPDATE (set semantics)
 internal/compiler/worker_cycle.go:299 heartbeat path list feeds one IN-clause UPDATE (set semantics)
 internal/compiler/worker_cycle.go:322 error-report log order only (stderr text)
-internal/compiler/compilekey.go:155 sort.Strings(names) immediately after the loop
-internal/compiler/pipeline.go:1185 sort.Strings(missing) immediately after the loop (SPEC-04 Task 3)
-internal/compiler/pipeline.go:1071 batch results: per-path independent atomic writes + manifest is a json-sorted map
+internal/compiler/compilekey.go:167 sort.Strings(names) immediately after the loop
+internal/compiler/pipeline.go:1200 sort.Strings(missing) immediately after the loop (SPEC-04 Task 3)
+internal/compiler/pipeline.go:1086 batch results: per-path independent atomic writes + manifest is a json-sorted map
 internal/compiler/write.go:523 prefix-match membership loop, produces no ordered output
 internal/compiler/write.go:826 sort.Slice(related) immediately after the shared-count loop
 internal/compiler/write.go:837 same: the related slice is sorted by count desc, name asc right below
@@ -32,8 +32,8 @@ internal/compiler/resolve_entities.go:579 labels slice already sorted at :577 im
 internal/compiler/resolve_entities.go:1264 adj[cur] is a slice lookup; BFS result sorted at :1273
 internal/compiler/watch.go:206 sort.Strings(changed) after both snapshot loops (SPEC-04 Task 3)
 internal/compiler/resolve_entities.go:492 byType[seed.Type] is a slice lookup, not a map-order iteration
-internal/compiler/diff.go:121 Added/Modified sorted at :133-134, Removed at :142 (pre-existing AGENTS.md rule 6)
-internal/compiler/diff.go:137 Removed sorted at :142 (pre-existing AGENTS.md rule 6)
+internal/compiler/diff.go:128 Added/Modified sorted at :140-141, Removed at :149 (pre-existing AGENTS.md rule 6)
+internal/compiler/diff.go:144 Removed sorted at :149 (pre-existing AGENTS.md rule 6)
 internal/compiler/migrate_checkpoint.go:169 sources sorted at :61-64 before upserts (SPEC-04 D1 fix)
 internal/compiler/fullpipeline.go:482 mf.Concepts[name].Sources is a slice lookup, not a map-order iteration
 internal/compiler/dedup.go:142 canonical tie-break (Task 3) makes the result order-independent
@@ -52,8 +52,8 @@ internal/mirror/verify.go:111 gens sorted immediately after this loop (SPEC-04 D
 internal/pack/merge.go:518 files is a []string parameter (slice), not a map
 internal/wiki/reconcile.go:180 expectedOutputs sorted by path before return (SPEC-04 D1 fix)
 internal/wiki/reconcile.go:186 expectedOutputs sorted by path before return (SPEC-04 D1 fix)
-internal/sourcedate/backfill.go:168 this IS the sort helper (sortedSourcePaths)
-internal/sourcedate/backfill.go:177 this IS the sort helper (sortedConceptNames)
+internal/sourcedate/backfill.go:175 this IS the sort helper (sortedSourcePaths)
+internal/sourcedate/backfill.go:184 this IS the sort helper (sortedConceptNames)
 internal/parity/normalize.go:79 zeroing timestamps in a keyed map (normalized output is json-sorted)
 internal/parity/normalize.go:84 zeroing timestamps in a keyed map (normalized output is json-sorted)
 internal/compiler/migrate_checkpoint.go:61 paths slice sorted at :62 before upserts (SPEC-04 D1 fix)

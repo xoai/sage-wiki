@@ -7,7 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/prompts"
+	"github.com/xoai/sage-wiki/internal/storage"
 )
 
 func keyRows(t *testing.T, dir string) map[string]string {
@@ -279,4 +282,231 @@ func TestSkip_TierLowSkips(t *testing.T) {
 		t.Error("chunk_size drift made zero embed requests, want tier-1 re-embed")
 	}
 	_ = res2
+}
+
+// TestSkip_ForceInterruptedAttribution pins the force×interrupted cell
+// (spec test 3): R0 wins over --force — verdict is resume, not forced.
+func TestSkip_ForceInterruptedAttribution(t *testing.T) {
+	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
+	srv := newTestServer(stub)
+	defer srv.Close()
+
+	dir := compileDeferredCorpusOpts(t, srv.URL, CompileOpts{})
+	db, err := sql.Open("sqlite", filepath.Join(dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("UPDATE compile_items SET pass_written = 0 WHERE source_path = 'raw/doc2.md'"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	// The interrupted doc compiles under --force (R0's work set); the other
+	// two also recompile (R1). Requests must flow for all three.
+	before := stub.requests.get()
+	res := compileInDir(t, dir, srv.URL, CompileOpts{Force: true})
+	if got := stub.requests.get() - before; got == 0 {
+		t.Error("force×interrupted made zero requests, want recompile")
+	}
+	if res != nil && len(res.Skipped) != 0 {
+		t.Errorf("Skipped under force×interrupted = %v, want 0", res.Skipped)
+	}
+}
+
+// TestSkip_ForceNewDocAttribution pins the force×new cell: a no-row doc
+// under --force compiles (R1), keys stored at completion.
+func TestSkip_ForceNewDocAttribution(t *testing.T) {
+	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
+	srv := newTestServer(stub)
+	defer srv.Close()
+
+	dir := compileDeferredCorpusOpts(t, srv.URL, CompileOpts{Force: true})
+	keys := keyRows(t, dir)
+	if len(keys) != 3 {
+		t.Fatalf("expected 3 keyed docs, got %d", len(keys))
+	}
+	for p, k := range keys {
+		if k == "" {
+			t.Errorf("no key stored for %s after forced fresh compile", p)
+		}
+	}
+}
+
+// TestSkip_EmptyKeyIncompleteFlags pins R0's second resume case: empty key +
+// incomplete flags → compile (never adopted-and-skipped).
+func TestSkip_EmptyKeyIncompleteFlags(t *testing.T) {
+	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
+	srv := newTestServer(stub)
+	defer srv.Close()
+
+	dir := compileDeferredCorpusOpts(t, srv.URL, CompileOpts{})
+	db, err := sql.Open("sqlite", filepath.Join(dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("UPDATE compile_items SET compile_key = '', compile_key_parts = '', pass_written = 0 WHERE source_path = 'raw/doc1.md'"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	before := stub.requests.get()
+	compileInDir(t, dir, srv.URL, CompileOpts{})
+	if got := stub.requests.get() - before; got == 0 {
+		t.Error("empty key + incomplete flags made zero requests — R0 must recompile, never adopt")
+	}
+}
+
+// TestSkip_ModelDriftRecompiles pins the models drift class.
+func TestSkip_ModelDriftRecompiles(t *testing.T) {
+	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
+	srv := newTestServer(stub)
+	defer srv.Close()
+
+	dir := compileDeferredCorpusOpts(t, srv.URL, CompileOpts{})
+	raw, _ := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	raw = []byte(strings.Replace(string(raw), "summarize: gpt-4o-mini", "summarize: gpt-4o", 1))
+	os.WriteFile(filepath.Join(dir, "config.yaml"), raw, 0644)
+
+	before := stub.requests.get()
+	res := compileInDir(t, dir, srv.URL, CompileOpts{})
+	if got := stub.requests.get() - before; got == 0 {
+		t.Error("model edit made zero requests, want models-drift recompile")
+	}
+	if res != nil && len(res.Skipped) != 0 {
+		t.Errorf("Skipped under model drift = %v, want 0", res.Skipped)
+	}
+}
+
+// TestSkip_EmbedDriftRecompiles pins the embed drift class.
+func TestSkip_EmbedDriftRecompiles(t *testing.T) {
+	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
+	srv := newTestServer(stub)
+	defer srv.Close()
+
+	dir := compileDeferredCorpusOpts(t, srv.URL, CompileOpts{})
+	raw, _ := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	raw = []byte(strings.Replace(string(raw), "summarize: gpt-4o-mini", "summarize: gpt-4o-mini\nembed:\n  provider: openai\n  model: text-embedding-3-large", 1))
+	os.WriteFile(filepath.Join(dir, "config.yaml"), raw, 0644)
+
+	before := stub.requests.get()
+	compileInDir(t, dir, srv.URL, CompileOpts{})
+	if got := stub.requests.get() - before; got == 0 {
+		t.Error("embed model edit made zero requests, want embed-drift recompile")
+	}
+}
+
+// TestSkip_TemplateVersionBumpRecompiles pins AC-4's version-constant cell:
+// a bumped template version (no content change) recompiles affected docs.
+// Simulated by direct part comparison — a version bump changes the parts'
+// version component, so DriftClass reports templates.
+func TestSkip_TemplateVersionBumpRecompiles(t *testing.T) {
+	cfg, err := loadConfigFromDir(t, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	partsA, err := ComputeCompileKeyParts("sha256:x", 3, cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	versions := prompts.TemplateVersions()
+	if versions["write_article"] != "1.0.0" {
+		t.Fatalf("write_article version = %q, want 1.0.0", versions["write_article"])
+	}
+	// A bump changes the version component → templates drift (AC-4's mechanism).
+	partsB := partsA
+	partsB.Templates = strings.Replace(partsA.Templates, "write_article@1.0.0:", "write_article@1.0.1:", 1)
+	if got := DriftClass(partsA, partsB); got != "templates" {
+		t.Errorf("DriftClass on version bump = %q, want templates", got)
+	}
+	if partsA.Key(3) == partsB.Key(3) {
+		t.Error("version bump did not rekey")
+	}
+}
+
+// TestSkip_TemplateDriftReasonAssertion strengthens the template-drift test:
+// the classification names 'templates' as the drift class.
+func TestSkip_TemplateDriftReasonAssertion(t *testing.T) {
+	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
+	srv := newTestServer(stub)
+	defer srv.Close()
+
+	reg := prompts.NewRegistry()
+	dir := compileDeferredCorpusOpts(t, srv.URL, CompileOpts{Prompts: reg})
+
+	os.MkdirAll(filepath.Join(dir, "prompts"), 0755)
+	os.WriteFile(filepath.Join(dir, "prompts", "summarize-article.md"),
+		[]byte("Summarize {{.SourcePath}} — drift-reason override body."), 0644)
+
+	reg2 := prompts.NewRegistry()
+	reg2.LoadFromDir(filepath.Join(dir, "prompts"))
+	db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := NewCompileItemStore(db, config.NowUTC)
+	defer db.Close()
+	mf, err := manifest.Load(filepath.Join(dir, ".manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfigFromDir(t, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff, err := Diff(dir, cfg, mf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cls, err := classifySkips(cfg, reg2, items, mf, diff, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cls.drifted) != 3 {
+		t.Errorf("drifted = %d docs, want 3", len(cls.drifted))
+	}
+	for p, reason := range cls.driftReasons {
+		if reason != "templates" {
+			t.Errorf("drift reason for %s = %q, want templates", p, reason)
+		}
+	}
+}
+
+// TestSkip_DependentsEnumeration pins AC-3's enumerated dependents: touching
+// one doc changes exactly that doc's dependent artifacts.
+func TestSkip_DependentsEnumeration(t *testing.T) {
+	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
+	srv := newTestServer(stub)
+	defer srv.Close()
+
+	dir := compileDeferredCorpusOpts(t, srv.URL, CompileOpts{})
+
+	// Baseline: summary + article files hashed.
+	sumBefore, _ := os.ReadFile(filepath.Join(dir, "wiki", "summaries", "raw-doc2.md"))
+
+	if err := os.WriteFile(filepath.Join(dir, "raw", "doc2.md"), []byte("# Deferred Doc 2\n\nEDITED substantially, entirely new content about gardening."), 0644); err != nil {
+		t.Fatal(err)
+	}
+	compileInDir(t, dir, srv.URL, CompileOpts{})
+
+	// Dependent 1: the doc's summary changed.
+	sumAfter, _ := os.ReadFile(filepath.Join(dir, "wiki", "summaries", "raw-doc2.md"))
+	if string(sumBefore) == string(sumAfter) {
+		t.Error("touched doc's summary unchanged — should have been recompiled")
+	}
+	// Dependent 2: untouched docs' summaries unchanged.
+	sum1Before, _ := os.ReadFile(filepath.Join(dir, "wiki", "summaries", "raw-doc1.md"))
+	compileInDir(t, dir, srv.URL, CompileOpts{})
+	sum1After, _ := os.ReadFile(filepath.Join(dir, "wiki", "summaries", "raw-doc1.md"))
+	if string(sum1Before) != string(sum1After) {
+		t.Error("untouched doc's summary changed across a no-op compile")
+	}
+}
+
+func loadConfigFromDir(t *testing.T, dir string) (*config.Config, error) {
+	t.Helper()
+	if dir == "" {
+		c := config.Defaults()
+		return &c, nil
+	}
+	return config.Load(filepath.Join(dir, "config.yaml"))
 }

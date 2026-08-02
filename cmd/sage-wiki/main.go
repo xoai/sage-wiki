@@ -608,6 +608,10 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return cli.CLIError(outputFormat, err)
 		}
+		force, _ := cmd.Flags().GetBool("force")
+		if force {
+			ex.Verdict = "compile: forced"
+		}
 		if outputFormat == "json" {
 			fmt.Println(cli.FormatJSON(true, ex, ""))
 			return nil
@@ -621,6 +625,7 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Embed:        %s\n", ex.Embed)
 		fmt.Printf("Key:          %s\n", ex.Key)
 		fmt.Printf("Stored key:   %s\n", ex.StoredKey)
+		printPartsDiff(ex)
 		fmt.Printf("Verdict:      %s\n", ex.Verdict)
 		return nil
 	}
@@ -1558,4 +1563,26 @@ func runServeMulti(cmd *cobra.Command, root, addr string) error {
 	}
 	fmt.Fprintf(os.Stderr, "sage-wiki serve (multi-workspace) listening on %s — root %s, workspaces at /w/{name}/, list at /v1/workspaces\n", addr, abs)
 	return ms.Serve(ctx, addr)
+}
+
+// printPartsDiff prints old→new for each differing key component (spec
+// §Observability's human-table line item).
+func printPartsDiff(ex *engine.CompileExplanation) {
+	diffs := []struct{ name, old, new string }{
+		{"source", ex.StoredParts.Source, ex.CurrentParts.Source},
+		{"pipeline", ex.StoredParts.Pipeline, ex.CurrentParts.Pipeline},
+		{"templates", ex.StoredParts.Templates, ex.CurrentParts.Templates},
+		{"models", ex.StoredParts.Models, ex.CurrentParts.Models},
+		{"config", ex.StoredParts.Config, ex.CurrentParts.Config},
+		{"embed", ex.StoredParts.Embed, ex.CurrentParts.Embed},
+	}
+	for _, d := range diffs {
+		if d.old != d.new {
+			old := d.old
+			if old == "" {
+				old = "(none)"
+			}
+			fmt.Printf("  %s: %s → %s\n", d.name, old, d.new)
+		}
+	}
 }

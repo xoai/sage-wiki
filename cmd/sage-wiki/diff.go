@@ -9,7 +9,9 @@ import (
 	"github.com/xoai/sage-wiki/internal/cli"
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
+	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/storage"
 )
 
@@ -69,6 +71,12 @@ func runDiff(cmd *cobra.Command, args []string) error {
 
 	// SPEC-04: key-drift annotation — docs whose content is unchanged but
 	// whose compile inputs drifted (pipeline/templates/models/config/embed).
+	// The classification hashes effective templates — load prompts/ overrides
+	// exactly as compile does, or every override workspace gets a perpetual
+	// false 'templates' drift (Gate-1 review F-1).
+	if err := prompts.LoadFromDir(filepath.Join(dir, "prompts")); err != nil {
+		log.Warn("diff: prompts/ overrides not loaded", "error", err)
+	}
 	if sdb, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db")); err == nil {
 		items := compiler.NewCompileItemStore(sdb, config.NowUTC)
 		if cls, err := compiler.ClassifySkipsForDiff(cfg, items, mf, diff); err == nil {
@@ -76,8 +84,12 @@ func runDiff(cmd *cobra.Command, args []string) error {
 				data.Drifted = append(data.Drifted, driftEntry{Path: path, Class: class})
 			}
 			sort.Slice(data.Drifted, func(i, j int) bool { return data.Drifted[i].Path < data.Drifted[j].Path })
+		} else {
+			log.Warn("diff: drift annotation unavailable", "error", err)
 		}
 		sdb.Close()
+	} else {
+		log.Warn("diff: open db for drift annotation failed", "error", err)
 	}
 
 	if outputFormat == "json" {
@@ -85,7 +97,7 @@ func runDiff(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if data.Pending == 0 && len(diff.Removed) == 0 {
+	if data.Pending == 0 && len(diff.Removed) == 0 && len(data.Drifted) == 0 {
 		fmt.Println("Nothing to compile — wiki is up to date.")
 		return nil
 	}

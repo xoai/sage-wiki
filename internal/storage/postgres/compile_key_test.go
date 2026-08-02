@@ -128,3 +128,48 @@ func TestMigrationV9CompileKeyColumns(t *testing.T) {
 		t.Fatalf("SetCompileKey after re-migration: %v", err)
 	}
 }
+
+// TestOpenOptionsNow_LandsInTimestamps proves the D4 postgres clock path
+// (Gate-2 review): an opener-supplied Now lands in created_at/updated_at.
+func TestOpenOptionsNow_LandsInTimestamps(t *testing.T) {
+	dsn := migrationTestDSN(t)
+	dbName := fmt.Sprintf("cknow_%d", time.Now().UnixNano())
+	boot, err := sql.Open("pgx", swapDB(dsn, "postgres"))
+	if err != nil {
+		t.Fatalf("bootstrap connect: %v", err)
+	}
+	createClone(t, boot, dbName, dsnDB(dsn))
+	boot.Close()
+	t.Cleanup(func() {
+		c, err := sql.Open("pgx", swapDB(dsn, "postgres"))
+		if err == nil {
+			c.Exec("DROP DATABASE " + dbName)
+			c.Close()
+		}
+	})
+
+	fixed := time.Date(2023, 11, 14, 22, 13, 20, 0, time.UTC)
+	b, err := Open(swapDB(dsn, dbName), store.OpenOptions{
+		Mode: store.ModeWriter, VectorDimension: 8,
+		Now: func() time.Time { return fixed },
+	})
+	if err != nil {
+		t.Fatalf("open backend: %v", err)
+	}
+	defer b.Close()
+
+	items := b.CompileItems()
+	if err := items.Upsert(store.CompileItem{SourcePath: "raw/now.md", Hash: "sha256:n", FileType: "article", Tier: 3, TierDefault: 3, SourceType: "compiler"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	got, err := items.GetByPath("raw/now.md")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.CreatedAt != "2023-11-14 22:13:20" {
+		t.Errorf("CreatedAt = %q, want 2023-11-14 22:13:20 (OpenOptions.Now)", got.CreatedAt)
+	}
+	if got.UpdatedAt != "2023-11-14 22:13:20" {
+		t.Errorf("UpdatedAt = %q, want 2023-11-14 22:13:20 (OpenOptions.Now)", got.UpdatedAt)
+	}
+}

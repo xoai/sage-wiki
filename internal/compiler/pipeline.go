@@ -292,6 +292,21 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	run.result.Adopted = len(skipCls.adopted)
 	run.result.Skipped = append(skipCls.skipped, skipCls.adopted...)
 	run.driftReasons = skipCls.driftReasons
+	// SPEC-04 §APIs: the classification lands on DiffResult (Unchanged +
+	// per-entry Reason) for the engine/CLI surfaces.
+	diff.Unchanged = run.result.Skipped
+	diff.Reason = skipCls.driftReasons
+	for _, s := range diff.Added {
+		diff.Reason[s.Path] = "content (new)"
+	}
+	for _, s := range diff.Modified {
+		if _, ok := diff.Reason[s.Path]; !ok {
+			diff.Reason[s.Path] = "content"
+		}
+	}
+	for _, s := range skipCls.resume {
+		diff.Reason[s.Path] = "incomplete (resume)"
+	}
 	if len(skipCls.drifted) > 0 || len(skipCls.resume) > 0 {
 		diff.Modified = append(diff.Modified, skipCls.drifted...)
 		diff.Modified = append(diff.Modified, skipCls.resume...)
@@ -1464,6 +1479,12 @@ func resumeBatch(
 		log.Info("batch compile interrupted before Pass 2/3 completed — manifest not saved; sources will reprocess on next compile")
 	} else if err := manifest.MergeSave(orBackground(opts.Ctx), mfPath, base, mf); err != nil {
 		return nil, fmt.Errorf("compile: save manifest: %w", err)
+	} else {
+		// SPEC-04: batch compiles store keys at the same completion point as
+		// standard compiles (spec edge case — Gate-1 review F-5).
+		if err := storeCompileKeysForCompleted(cfg, opts.Prompts, NewCompileItemStore(db, config.NowUTC)); err != nil {
+			log.Warn("compile-key storage failed (batch)", "error", err)
+		}
 	}
 
 	if err := writeChangelog(projectDir, cfg.Output, result, cfg.Compiler.UserTimeLocation()); err != nil {
