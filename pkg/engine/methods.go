@@ -1,12 +1,10 @@
 package engine
 
 import (
-	"archive/tar"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -14,6 +12,7 @@ import (
 
 	"github.com/xoai/sage-wiki/internal/capturefmt"
 	"github.com/xoai/sage-wiki/internal/compiler"
+	"github.com/xoai/sage-wiki/internal/export"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
 
@@ -284,50 +283,8 @@ func (w *Workspace) Export(ctx context.Context, dst io.Writer) error {
 	if err := w.checkOpen(); err != nil {
 		return err
 	}
-
-	tw := tar.NewWriter(dst)
-	walkErr := filepath.WalkDir(w.dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if path == w.dir {
-			return nil
-		}
-		rel, err := filepath.Rel(w.dir, path)
-		if err != nil {
-			return err
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		hdr, err := tar.FileInfoHeader(info, "")
-		if err != nil {
-			return err
-		}
-		hdr.Name = filepath.ToSlash(rel)
-		if err := tw.WriteHeader(hdr); err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		f, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		_, copyErr := io.Copy(tw, f)
-		closeErr := f.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		return closeErr
-	})
-	if err := tw.Close(); walkErr == nil {
-		walkErr = err
-	}
-	return walkErr
+	// Shared deterministic exporter (SPEC-04 D5): normalized headers,
+	// symlinks and engine.lock skipped. The live DB caveat from the pre-D5
+	// implementation is unchanged (documented in internal/export).
+	return export.Tar(ctx, w.dir, dst)
 }

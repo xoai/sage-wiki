@@ -1,13 +1,11 @@
 package serve
 
 import (
-	"archive/tar"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,6 +18,7 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/xoai/sage-wiki/internal/api"
 	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/export"
 	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/pkg/engine"
@@ -418,61 +417,10 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// exportTar streams a tar of dir, ctx-honoring (no engine — a small
-// local helper per adaptation #1, F-024).
+// exportTar streams a tar of dir — thin wrapper over the shared
+// deterministic exporter (SPEC-04 D5). The live SQLite DB is copied as-is —
+// a concurrent compile may leave it inconsistent (documented caveat;
+// backup-API snapshot is out of scope).
 func exportTar(ctx context.Context, dir string, dst io.Writer) error {
-	tw := tar.NewWriter(dst)
-	walkErr := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if path == dir {
-			return nil
-		}
-		if d.Type()&os.ModeSymlink != 0 {
-			return nil // symlinks are skipped (R-15: empty link targets break readers)
-		}
-		rel, err := filepath.Rel(dir, path)
-		if err != nil {
-			return err
-		}
-		// The lock artifact is not workspace content (F-050). The live
-		// SQLite DB is copied as-is — a concurrent compile may leave it
-		// inconsistent (documented caveat; backup-API snapshot is out of scope).
-		if rel == ".sage/engine.lock" {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		hdr, err := tar.FileInfoHeader(info, "")
-		if err != nil {
-			return err
-		}
-		hdr.Name = filepath.ToSlash(rel)
-		if err := tw.WriteHeader(hdr); err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		f, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		_, copyErr := io.Copy(tw, f)
-		closeErr := f.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		return closeErr
-	})
-	if err := tw.Close(); walkErr == nil {
-		walkErr = err
-	}
-	return walkErr
+	return export.Tar(ctx, dir, dst)
 }
