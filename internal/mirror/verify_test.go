@@ -286,3 +286,22 @@ func addRotatedGen(t *testing.T, fake *fakeS3, gen int) {
 	fake.objects[GenerationMetaKey("ws/", gen)] = mb
 	fake.objects[snapKey] = []byte("gen-snap")
 }
+
+// TestVerify_NegativeStateRetain_FallsBack (F-023 witness): a negative
+// retain in mirror-state is treated as ABSENT — the rotated-generation
+// checks still run under local fallback, never silently disabled.
+func TestVerify_NegativeStateRetain_FallsBack(t *testing.T) {
+	fake := newFakeS3()
+	st := verifyFixture(t, fake)
+	addRotatedGen(t, fake, 2)
+	delete(fake.objects, "ws/db/generation-2/snapshot.db.zst") // violation at retain=2
+	st.RetainGenerations = -1
+	m := openVerifyMirror(t, fake, st)
+	rep, err := m.Verify(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Valid {
+		t.Fatal("negative state retain must NOT disable rotated checks (fallback applies)")
+	}
+}

@@ -163,3 +163,32 @@ func TestResolveCredentials_TokenFromFile(t *testing.T) {
 		t.Fatalf("SessionToken = %q", creds.SessionToken)
 	}
 }
+
+// TestResolveCredentials_MalformedFileUnderEnvKeys (F-024 witness): env
+// keys + an UNREADABLE credentials file errors loudly naming the file.
+func TestResolveCredentials_MalformedFileUnderEnvKeys(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "creds.json")
+	os.WriteFile(f, []byte("{not json"), 0o600)
+	t.Setenv("TEST_AK", "ak-env")
+	t.Setenv("TEST_SK", "sk-env")
+	_, err := ResolveCredentials("TEST_AK", "TEST_SK", "TEST_ST", f)
+	if err == nil {
+		t.Fatal("malformed file under env keys must error loudly")
+	}
+	if !strings.Contains(err.Error(), "creds.json") {
+		t.Fatalf("error must name the file: %v", err)
+	}
+}
+
+// TestResolveCredentials_ReverseCrossSourceRejected (F-025 witness): file
+// keys + env token set is a loud symmetric error.
+func TestResolveCredentials_ReverseCrossSourceRejected(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "creds.json")
+	os.WriteFile(f, []byte(`{"access_key":"ak-file","secret_key":"sk-file"}`), 0o600)
+	t.Setenv("TEST_ST", "token-from-env")
+	if _, err := ResolveCredentials("UNSET_AK", "UNSET_SK", "TEST_ST", f); err == nil {
+		t.Fatal("file keys + env token must be a loud error")
+	}
+}

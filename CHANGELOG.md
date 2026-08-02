@@ -18,9 +18,6 @@
   snapshots complete and stalled servers are still cut. A maintainer-run
   live-AWS smoke (`SAGE_TEST_AWS=1`) exists but never runs in CI.
 
-
-### Added
-
 - **Remote mirror — S3-compatible backup, WAL shipping, hydrate (SPEC-03).**
   `sage-wiki mirror enable|status|snapshot|verify` continuously replicates
   a workspace to any S3-compatible bucket (S3, R2, MinIO), and
