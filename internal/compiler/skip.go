@@ -306,13 +306,37 @@ func fillExplanation(ex *CompileExplanation, parts CompileKeyParts, stored strin
 	ex.CurrentParts = parts
 }
 
+// populateDiffReasons writes the classification onto the DiffResult the
+// caller already holds (spec §APIs): Unchanged = skipped + adopted,
+// Reason per compiling entry (content / content (new) / incomplete
+// (resume) / forced / drift class). One implementation, two call sites
+// (pipeline.go's compile path and ClassifySkipsForDiff).
+func populateDiffReasons(diff *DiffResult, cls *skipClassification) {
+	diff.Unchanged = append(append([]SkippedDoc{}, cls.skipped...), cls.adopted...)
+	diff.Reason = cls.driftReasons
+	for _, s := range diff.Added {
+		diff.Reason[s.Path] = "content (new)"
+	}
+	for _, s := range diff.Modified {
+		if _, ok := diff.Reason[s.Path]; !ok {
+			diff.Reason[s.Path] = "content"
+		}
+	}
+	for _, s := range cls.resume {
+		diff.Reason[s.Path] = "incomplete (resume)"
+	}
+}
+
 // ClassifySkipsForDiff is the read-only drift surface for `sage-wiki diff`
 // (SPEC-04): docs whose content is unchanged but whose compile inputs
-// drifted, mapped path → drift class. No adoptions, no resets.
+// drifted, mapped path → drift class. No adoptions, no resets. The specced
+// DiffResult fields (Unchanged, Reason — §APIs) are populated as a side
+// effect so the consumer reads them from the diff it already holds.
 func ClassifySkipsForDiff(cfg *config.Config, items store.CompileItemStore, mf *manifest.Manifest, diff *DiffResult) (map[string]string, error) {
 	cls, err := classifySkips(cfg, nil, items, mf, diff, false, true)
 	if err != nil {
 		return nil, err
 	}
+	populateDiffReasons(diff, cls)
 	return cls.driftReasons, nil
 }

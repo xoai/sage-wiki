@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 
@@ -77,19 +78,24 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	if err := prompts.LoadFromDir(filepath.Join(dir, "prompts")); err != nil {
 		log.Warn("diff: prompts/ overrides not loaded", "error", err)
 	}
-	if sdb, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db")); err == nil {
-		items := compiler.NewCompileItemStore(sdb, config.NowUTC)
-		if cls, err := compiler.ClassifySkipsForDiff(cfg, items, mf, diff); err == nil {
-			for path, class := range cls {
-				data.Drifted = append(data.Drifted, driftEntry{Path: path, Class: class})
+	// Read-only open, and only when the DB exists (NEW-1: a read command
+	// must not create/migrate state as a side effect).
+	dbPath := filepath.Join(dir, ".sage", "wiki.db")
+	if _, err := os.Stat(dbPath); err == nil {
+		if sdb, err := storage.OpenWithOptions(dbPath, storage.OpenOptions{ReadOnly: true}); err == nil {
+			items := compiler.NewCompileItemStore(sdb, config.NowUTC)
+			if cls, err := compiler.ClassifySkipsForDiff(cfg, items, mf, diff); err == nil {
+				for path, class := range cls {
+					data.Drifted = append(data.Drifted, driftEntry{Path: path, Class: class})
+				}
+				sort.Slice(data.Drifted, func(i, j int) bool { return data.Drifted[i].Path < data.Drifted[j].Path })
+			} else {
+				log.Warn("diff: drift annotation unavailable", "error", err)
 			}
-			sort.Slice(data.Drifted, func(i, j int) bool { return data.Drifted[i].Path < data.Drifted[j].Path })
+			sdb.Close()
 		} else {
-			log.Warn("diff: drift annotation unavailable", "error", err)
+			log.Warn("diff: open db for drift annotation failed", "error", err)
 		}
-		sdb.Close()
-	} else {
-		log.Warn("diff: open db for drift annotation failed", "error", err)
 	}
 
 	if outputFormat == "json" {

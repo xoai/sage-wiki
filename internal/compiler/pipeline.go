@@ -294,19 +294,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	run.driftReasons = skipCls.driftReasons
 	// SPEC-04 §APIs: the classification lands on DiffResult (Unchanged +
 	// per-entry Reason) for the engine/CLI surfaces.
-	diff.Unchanged = run.result.Skipped
-	diff.Reason = skipCls.driftReasons
-	for _, s := range diff.Added {
-		diff.Reason[s.Path] = "content (new)"
-	}
-	for _, s := range diff.Modified {
-		if _, ok := diff.Reason[s.Path]; !ok {
-			diff.Reason[s.Path] = "content"
-		}
-	}
-	for _, s := range skipCls.resume {
-		diff.Reason[s.Path] = "incomplete (resume)"
-	}
+	populateDiffReasons(diff, skipCls)
 	if len(skipCls.drifted) > 0 || len(skipCls.resume) > 0 {
 		diff.Modified = append(diff.Modified, skipCls.drifted...)
 		diff.Modified = append(diff.Modified, skipCls.resume...)

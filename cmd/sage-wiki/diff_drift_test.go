@@ -2,11 +2,11 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -110,7 +110,6 @@ func TestExplainJSON_RealShape(t *testing.T) {
 	if !strings.Contains(out, `"verdict": "skip: unchanged"`) {
 		t.Errorf("verdict in --json output: %s", out)
 	}
-	_ = bytes.MinRead
 }
 
 // writeCompileableWorkspace lays out a one-doc workspace with a stub LLM.

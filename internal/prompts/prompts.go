@@ -73,6 +73,7 @@ func (r *Registry) LoadFromDir(dir string) error {
 	}
 
 	loaded := 0
+	loadedOverrides := map[string]string{}
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -99,14 +100,15 @@ func (r *Registry) LoadFromDir(dir string) error {
 			return fmt.Errorf("prompts: parse %s: %w", entry.Name(), err)
 		}
 		loaded++
-		if r.overrides == nil {
-			r.overrides = map[string]string{}
-		}
-		r.overrides[templateName] = filepath.Join(dir, entry.Name())
+		loadedOverrides[templateName] = filepath.Join(dir, entry.Name())
 	}
 
 	if loaded > 0 {
+		// Templates and provenance swap atomically (NEW-2: a mid-load parse
+		// error must not leave overrides pointing at templates that render
+		// the old body); each call rebuilds both from scratch.
 		r.templates = merged
+		r.overrides = loadedOverrides
 	}
 
 	return nil
@@ -310,7 +312,7 @@ type WriteArticleData struct {
 	RelatedList     string
 	Confidence      string
 	MaxTokens       int
-	SourceContext    string // relevant source sections (from document splitting)
+	SourceContext   string // relevant source sections (from document splitting)
 }
 
 // CaptionData holds data for image captioning template.
