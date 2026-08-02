@@ -18,17 +18,28 @@ var ErrNotFound = errors.New("s3: object not found")
 
 const defaultCallTimeout = 30 * time.Second
 
+// defaultRateBytesPerSec is the assumed minimum uplink for payload scaling:
+// the per-attempt timeout is max(30s, 3×(bodyLen/rate)s), capped at 15m
+// (item 5 — a large snapshot upload must not die at 30s).
+const defaultRateBytesPerSec = 256 * 1024
+
+const maxCallTimeout = 15 * time.Minute
+
 // Client is a minimal S3-compatible client. All calls carry a timeout and
 // honor context cancellation (AGENTS.md ground rule 7).
 type Client struct {
-	endpoint  *url.URL
-	region    string
-	creds     Credentials
-	hc        *http.Client
-	pathStyle bool
-	retries   int
-	backoff   func(attempt int) time.Duration
-	now       func() time.Time
+	endpoint         *url.URL
+	region           string
+	creds            Credentials
+	hc               *http.Client
+	pathStyle        bool
+	retries          int
+	backoff          func(attempt int) time.Duration
+	now              func() time.Time
+	callTimeoutBase  time.Duration
+	callTimeoutCap   time.Duration
+	rateBytesPerSec  int64
+	fixedCallTimeout time.Duration // WithCallTimeout override (0 = formula)
 }
 
 // Option customizes a Client.
@@ -43,6 +54,21 @@ func WithPathStyle(on bool) Option {
 // WithHTTPClient sets the underlying http.Client (e.g. custom transport).
 func WithHTTPClient(hc *http.Client) Option {
 	return func(c *Client) { c.hc = hc }
+}
+
+// WithCallTimeout overrides the per-attempt timeout entirely (0 = formula).
+func WithCallTimeout(d time.Duration) Option {
+	return func(c *Client) { c.fixedCallTimeout = d }
+}
+
+// WithCallTimeoutScale injects the assumed uplink rate for the payload
+// scaling formula (tests use it to keep wall-clock small).
+func WithCallTimeoutScale(bytesPerSec int64) Option {
+	return func(c *Client) {
+		if bytesPerSec > 0 {
+			c.rateBytesPerSec = bytesPerSec
+		}
+	}
 }
 
 // WithRetries sets the max attempts per call (default 3: initial + 2 retries).
@@ -71,12 +97,15 @@ func NewClient(endpoint, region string, creds Credentials, opts ...Option) (*Cli
 		return nil, errors.New("s3: region is required (use \"auto\" for R2/MinIO)")
 	}
 	c := &Client{
-		endpoint: u,
-		region:   region,
-		creds:    creds,
-		hc:       &http.Client{},
-		retries:  3,
-		now:      time.Now,
+		endpoint:        u,
+		region:          region,
+		creds:           creds,
+		hc:              &http.Client{},
+		retries:         3,
+		now:             time.Now,
+		callTimeoutBase: defaultCallTimeout,
+		callTimeoutCap:  maxCallTimeout,
+		rateBytesPerSec: defaultRateBytesPerSec,
 	}
 	c.backoff = func(attempt int) time.Duration { return (100 * time.Millisecond) << attempt }
 	for _, o := range opts {
@@ -183,12 +212,31 @@ func (c *Client) ListObjects(ctx context.Context, bucket, prefix string) ([]stri
 	}
 }
 
-// do executes one request with signing, per-call timeout, and bounded retry
-// on 5xx/connection errors (never on 4xx — those are caller bugs or auth).
-func (c *Client) do(ctx context.Context, method, bucket, key string, query url.Values, body []byte, payloadHash string, handle func(*http.Response) error) error {
-	ctx, cancel := context.WithTimeout(ctx, defaultCallTimeout)
-	defer cancel()
+// callTimeout computes the per-attempt timeout: a fixed override when set,
+// else max(base, 3×(bodyLen/rate)s) capped at cap.
+func (c *Client) callTimeout(bodyLen int) time.Duration {
+	if c.fixedCallTimeout > 0 {
+		return c.fixedCallTimeout
+	}
+	d := c.callTimeoutBase
+	if c.rateBytesPerSec > 0 {
+		scaled := 3 * time.Duration(int64(bodyLen)/c.rateBytesPerSec) * time.Second
+		if scaled > d {
+			d = scaled
+		}
+	}
+	if d > c.callTimeoutCap {
+		d = c.callTimeoutCap
+	}
+	return d
+}
 
+// do executes one request with signing, a PER-ATTEMPT payload-scaled
+// timeout passed into that attempt's HTTP request (the request ctx bounds
+// dial, TLS, header wait, and body read — a stalled server is truly cut),
+// and bounded retry on 5xx/connection errors (never on 4xx). Parent ctx
+// still bounds the whole loop; the per-attempt cap is the TCP-level bound.
+func (c *Client) do(ctx context.Context, method, bucket, key string, query url.Values, body []byte, payloadHash string, handle func(*http.Response) error) error {
 	var lastErr error
 	for attempt := 0; attempt < c.retries; attempt++ {
 		if attempt > 0 {
@@ -198,20 +246,24 @@ func (c *Client) do(ctx context.Context, method, bucket, key string, query url.V
 			case <-time.After(c.backoff(attempt - 1)):
 			}
 		}
-		req, err := c.newRequest(ctx, method, bucket, key, query, body, payloadHash)
+		attemptCtx, cancel := context.WithTimeout(ctx, c.callTimeout(len(body)))
+		req, err := c.newRequest(attemptCtx, method, bucket, key, query, body, payloadHash)
 		if err != nil {
+			cancel()
 			return err
 		}
 		resp, err := c.hc.Do(req)
 		if err != nil {
+			cancel()
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			lastErr = fmt.Errorf("s3: %s %s: %w", method, key, err)
-			continue // connection errors are retryable
+			continue // connection errors (incl. per-attempt timeout) are retryable
 		}
 		err = handle(resp)
 		resp.Body.Close()
+		cancel()
 		if err == nil {
 			return nil
 		}
