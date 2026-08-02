@@ -61,10 +61,16 @@ sage-wiki hydrate s3://bucket/prefix dir --key-file ~/.config/sage/mirror.key
 - `--at` is segment-granular: it lands on the last WAL segment sealed at
   or before TIME; any overshoot (≤ 1 segment) is printed. Timestamps come
   from the mirror's own records, never bucket metadata.
-- **PITR scope:** `--at`/`--generation` select the database chain only.
-  Markdown and source objects always restore at newest (the tree mixes
-  db@TIME with docs@newest). Per-generation object maps are a format-v2
-  follow-up.
+- **PITR scope:** `--at`/`--generation` select the database chain AND the
+  markdown set from the same generation. Every rotation seals the
+  generation's doc/vector object map into its meta.json, so a
+  rotated-generation restore is a consistent tree. Granularity is
+  per-generation for docs (per-segment for the db): a mid-generation
+  delete may still be present and a mid-generation create may be
+  missing — the restore report prints both skews (excluded segments and
+  "objects at generation N's seal"). Mirrors written before object maps
+  fall back to docs at newest with a printed note
+  (`note: generation has no object map; docs restored at newest`).
 - `--partial` writes progress markers and prints when lexical/graph is
   available (before vectors finish); a follow-up `--partial` resumes.
 - Addressing: `mirror.addressing: auto` uses virtual-host style for AWS

@@ -584,12 +584,18 @@ content-addressed objects. Crash safety: the commit pointer is written
 last, so any kill leaves the previous committed state restorable —
 `mirror verify` proves it (full re-download re-hash; `--fast` is
 existence-only). Point-in-time restore: `hydrate --at 2026-08-01T12:00:00Z`
-(segment granularity — overshoot ≤ 1 segment is printed);
+(segment granularity for the db; overshoot printed);
 `--generation N` pins a generation; `--partial` restores in order
 (manifest → db → markdown → vectors) so lexical/graph works before
-vectors finish. **Scope:** PITR covers the database chain (FTS, graph,
-vectors are rebuildable from it) — markdown/source objects always
-restore at newest, so a hydrated tree mixes db@TIME with docs@newest.
+vectors finish. **PITR scope:** the db restores at the selected
+generation/segment; **markdown and source objects restore from the same
+generation's sealed object map** (rotation points seal each generation's
+doc set into its meta.json) — so a rotated-generation restore is a
+consistent tree, not db@TIME with docs@newest. Docs restore at
+per-generation granularity: a mid-generation delete may still be
+present, a mid-generation create may be missing (bounded, and the
+restore report prints both skews). Mirrors written before object maps
+fall back to docs@newest with a printed note.
 
 Credentials come from the environment (names configurable), never the
 workspace or config values:
