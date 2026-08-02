@@ -451,3 +451,38 @@ func TestShip_RotateSealsObjectMaps(t *testing.T) {
 		}
 	}
 }
+
+// N-5 witness: a docs-only commit (no WAL growth) advances the sealed
+// map's freshness PAST the last segment — SealedAt must be
+// max(tail sealed_at, UpdatedAt), i.e. the docs-only commit time, not
+// the segment's.
+func TestShip_RotateSealedAtCoversDocsOnlyCommits(t *testing.T) {
+	f := newShipFixture(t)
+	defer f.dbClose()
+	f.dbWrite(t, "row-1")
+	f.pass(t) // segment sealed (tail exists)
+	// Docs-only commit at a LATER fake time (no WAL growth).
+	writeWS(t, f.dir, "wiki/concepts/Late.md", "late")
+	f.now = f.now.Add(3 * time.Second)
+	f.pass(t)
+	st := f.remoteState(t)
+	docsCommit := st.UpdatedAt
+	// Rotate.
+	f.dbWrite(t, "row-2")
+	f.dbClose()
+	f.now = f.now.Add(2 * time.Minute)
+	if res := f.pass(t); !res.Rotated {
+		t.Fatal("setup: rotation did not fire")
+	}
+	mb, ok := f.fake.get(GenerationMetaKey("ws/", 1))
+	if !ok {
+		t.Fatal("meta missing")
+	}
+	meta, err := UnmarshalMeta(mb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !meta.SealedAt.Equal(docsCommit) {
+		t.Fatalf("SealedAt = %v, want the docs-only commit time %v (map freshness, not the segment's)", meta.SealedAt, docsCommit)
+	}
+}

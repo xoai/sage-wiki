@@ -565,12 +565,25 @@ func TestHydrate_AtPathPerClassFallbackAdvisory(t *testing.T) {
 	}
 	found := false
 	for _, a := range rep.Advisories {
-		if strings.Contains(a, "no vector map") {
+		if strings.Contains(a, "note: generation has no vector map; vectors restored at newest") {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("--at mixed meta must surface the per-class advisory: %v", rep.Advisories)
+		t.Fatalf("--at mixed meta must surface the exact per-class advisory: %v", rep.Advisories)
+	}
+	// Content assertions (N-4): docs came from gen-2's sealed map, vectors
+	// from LIVE state — a drift that swaps sources fails here.
+	if _, err := os.Stat(filepath.Join(dst, "wiki", "concepts", "Foo.md")); err != nil {
+		t.Fatal("sealed-map doc not restored")
+	}
+	if _, err := os.Stat(filepath.Join(dst, ".sage", "vectors.idx")); err == nil {
+		// Live-state vector restore: content must match the LIVE vector object.
+		liveVec := h.src.remoteState(t).Vectors["vectors.idx"]
+		b, _ := os.ReadFile(filepath.Join(dst, ".sage", "vectors.idx"))
+		if shaOf(string(b)) != liveVec.SHA256 {
+			t.Fatalf("vectors restored from wrong source (want live %s)", liveVec.SHA256[:12])
+		}
 	}
 }
 
