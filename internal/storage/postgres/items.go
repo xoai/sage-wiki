@@ -30,6 +30,7 @@ const itemCols = `source_path, hash, file_type, size_bytes, tier, tier_default, 
 	query_hit_count, last_queried_at, promoted_at, demoted_at,
 	source_type, quality_score,
 	status, lease_owner, lease_until, heartbeat_at, attempts,
+	compile_key, compile_key_parts,
 	created_at, updated_at`
 
 func scanItem(row interface{ Scan(...any) error }) (*store.CompileItem, error) {
@@ -48,6 +49,7 @@ func scanItem(row interface{ Scan(...any) error }) (*store.CompileItem, error) {
 		&it.QueryHitCount, &lq, &pr, &de,
 		&st, &qs,
 		&it.Status, &lo, &lu2, &hb2, &it.Attempts,
+		&it.CompileKey, &it.CompileKeyParts,
 		&created, &updated); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -142,6 +144,26 @@ func (s *itemStore) Upsert(item store.CompileItem) error {
 			nullStr(item.CompileID), nullStr(item.Error), item.ErrorCount, nullStr(item.SummaryPath),
 			item.QueryHitCount, nullRFC(item.LastQueriedAt), nullRFC(item.PromotedAt), nullRFC(item.DemotedAt),
 			item.SourceType, qualityScore, s.nowUTC(), s.nowUTC(), s.nowUTC())
+		return err
+	})
+}
+
+// SetCompileKey stores the computed compile key + preimages (SPEC-04).
+func (s *itemStore) SetCompileKey(path, key, partsJSON string) error {
+	return s.b.WriteTx(func(tx *sql.Tx) error {
+		_, err := tx.Exec(
+			"UPDATE compile_items SET compile_key=$2, compile_key_parts=$3, updated_at=$4 WHERE source_path=$1",
+			path, key, partsJSON, s.nowUTC())
+		return err
+	})
+}
+
+// ClearCompileKey drops a source's stored key (SPEC-04).
+func (s *itemStore) ClearCompileKey(path string) error {
+	return s.b.WriteTx(func(tx *sql.Tx) error {
+		_, err := tx.Exec(
+			"UPDATE compile_items SET compile_key='', compile_key_parts='', updated_at=$2 WHERE source_path=$1",
+			path, s.nowUTC())
 		return err
 	})
 }

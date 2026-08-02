@@ -1,0 +1,130 @@
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"testing"
+	"time"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/xoai/sage-wiki/internal/store"
+)
+
+// TestCompileKeyStore_RoundTripPG is spec test 10's postgres half: the
+// compile_key/compile_key_parts columns round-trip and ClearCompileKey
+// empties them (SPEC-04 F-005: both backends carry the dedup state).
+func TestCompileKeyStore_RoundTripPG(t *testing.T) {
+	dsn := migrationTestDSN(t)
+	dbName := fmt.Sprintf("ckpg_%d", time.Now().UnixNano())
+	boot, err := sql.Open("pgx", swapDB(dsn, "postgres"))
+	if err != nil {
+		t.Fatalf("bootstrap connect: %v", err)
+	}
+	createClone(t, boot, dbName, dsnDB(dsn))
+	boot.Close()
+	t.Cleanup(func() {
+		c, err := sql.Open("pgx", swapDB(dsn, "postgres"))
+		if err == nil {
+			c.Exec("DROP DATABASE " + dbName)
+			c.Close()
+		}
+	})
+
+	b, err := Open(swapDB(dsn, dbName), store.OpenOptions{Mode: store.ModeWriter, VectorDimension: 8})
+	if err != nil {
+		t.Fatalf("open backend: %v", err)
+	}
+	defer b.Close()
+
+	items := b.CompileItems()
+	it := store.CompileItem{
+		SourcePath: "raw/pg.md", Hash: "sha256:pg", FileType: "article",
+		Tier: 3, TierDefault: 3, SourceType: "compiler",
+	}
+	if err := items.Upsert(it); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	got, err := items.GetByPath("raw/pg.md")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got == nil {
+		t.Fatal("row missing after upsert")
+	}
+	if got.CompileKey != "" {
+		t.Errorf("fresh row CompileKey = %q, want empty", got.CompileKey)
+	}
+
+	parts := `{"source":"sha256:pg","pipeline":"1","templates":"","models":"","config":"deadbeef","embed":"openai:m:8"}`
+	if err := items.SetCompileKey("raw/pg.md", "cafebabe5678", parts); err != nil {
+		t.Fatalf("SetCompileKey: %v", err)
+	}
+	got2, err := items.GetByPath("raw/pg.md")
+	if err != nil {
+		t.Fatalf("get 2: %v", err)
+	}
+	if got2.CompileKey != "cafebabe5678" {
+		t.Errorf("CompileKey = %q, want cafebabe5678", got2.CompileKey)
+	}
+	if got2.CompileKeyParts != parts {
+		t.Errorf("CompileKeyParts = %q, want %q", got2.CompileKeyParts, parts)
+	}
+
+	if err := items.ClearCompileKey("raw/pg.md"); err != nil {
+		t.Fatalf("ClearCompileKey: %v", err)
+	}
+	got3, _ := items.GetByPath("raw/pg.md")
+	if got3.CompileKey != "" || got3.CompileKeyParts != "" {
+		t.Errorf("after clear: key=%q parts=%q, want both empty", got3.CompileKey, got3.CompileKeyParts)
+	}
+}
+
+// TestMigrationV9CompileKeyColumns: a pre-v9 database (clone trimmed to v8)
+// gains the columns on open and keeps serving reader opens (the parity rule
+// the other migration legs pin).
+func TestMigrationV9CompileKeyColumns(t *testing.T) {
+	dsn := migrationTestDSN(t)
+	dbName := fmt.Sprintf("ckv9_%d", time.Now().UnixNano())
+	boot, err := sql.Open("pgx", swapDB(dsn, "postgres"))
+	if err != nil {
+		t.Fatalf("bootstrap connect: %v", err)
+	}
+	createClone(t, boot, dbName, dsnDB(dsn))
+	boot.Close()
+	t.Cleanup(func() {
+		c, err := sql.Open("pgx", swapDB(dsn, "postgres"))
+		if err == nil {
+			c.Exec("DROP DATABASE " + dbName)
+			c.Close()
+		}
+	})
+
+	// Trim to v8 state: drop the v9 columns and the version row.
+	trim, err := Open(swapDB(dsn, dbName), store.OpenOptions{Mode: store.ModeWriter, VectorDimension: 8})
+	if err != nil {
+		t.Fatalf("open for trim: %v", err)
+	}
+	pool := trim.(*backend).pool
+	if _, err := pool.ExecContext(context.Background(), "ALTER TABLE compile_items DROP COLUMN IF EXISTS compile_key"); err != nil {
+		t.Fatalf("drop key: %v", err)
+	}
+	if _, err := pool.ExecContext(context.Background(), "ALTER TABLE compile_items DROP COLUMN IF EXISTS compile_key_parts"); err != nil {
+		t.Fatalf("drop parts: %v", err)
+	}
+	if _, err := pool.ExecContext(context.Background(), "DELETE FROM schema_version WHERE version = 9"); err != nil {
+		t.Fatalf("rollback version: %v", err)
+	}
+	trim.Close()
+
+	re, err := Open(swapDB(dsn, dbName), store.OpenOptions{Mode: store.ModeWriter, VectorDimension: 8})
+	if err != nil {
+		t.Fatalf("reopen after trim: %v", err)
+	}
+	defer re.Close()
+	if err := re.CompileItems().SetCompileKey("raw/v9.md", "k", "{}"); err != nil {
+		t.Fatalf("SetCompileKey after re-migration: %v", err)
+	}
+}

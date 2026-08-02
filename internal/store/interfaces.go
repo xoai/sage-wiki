@@ -198,6 +198,9 @@ type CompileItemStore interface {
 	Release(path string, owner string, outcome ReleaseOutcome) error
 	RequeueExpired(now time.Time) (int, error)
 	ResetFailed() (int, error)
+	// SPEC-04 compile-key dedup.
+	SetCompileKey(path, key, partsJSON string) error
+	ClearCompileKey(path string) error
 }
 
 type OutputIndexStore interface {

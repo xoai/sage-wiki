@@ -131,6 +131,7 @@ func TestManager_Workspace_LazyOpen(t *testing.T) {
 func TestManager_Workspace_PreFormatReadOnly(t *testing.T) {
 	root := t.TempDir()
 	copyFixture(t, "testdata/v02x", filepath.Join(root, "legacy"))
+	buildFixtureDB(t, filepath.Join(root, "legacy"))
 
 	m, err := OpenManager(context.Background(), root)
 	if err != nil {

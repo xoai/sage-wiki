@@ -163,7 +163,17 @@ var schemaMigrations = []migration{
 	{sql: migrationV12},
 	{sql: migrationV13},
 	{sql: migrationV14},
+	{sql: migrationV15},
 }
+
+// migrationV15 adds the SPEC-04 compile-key columns: content-addressed
+// dedup state per source doc. Additive — old binaries tolerate the columns
+// (all reads/writes use explicit column lists), and empty keys mark
+// pre-SPEC-04 rows for the adoption path.
+const migrationV15 = `
+ALTER TABLE compile_items ADD COLUMN compile_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE compile_items ADD COLUMN compile_key_parts TEXT NOT NULL DEFAULT '';
+`
 
 // migrationV14 adds graph community storage (P3-5): detected communities
 // plus their entity membership. Membership is derived, rebuilt state —

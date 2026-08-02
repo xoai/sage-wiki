@@ -112,6 +112,7 @@ const compileItemCols = `source_path, hash, file_type, size_bytes,
 	query_hit_count, last_queried_at, promoted_at, demoted_at,
 	source_type, quality_score,
 	status, lease_owner, lease_until, heartbeat_at, attempts,
+	compile_key, compile_key_parts,
 	created_at, updated_at`
 
 // GetByPath returns a single compile item.
@@ -494,6 +495,7 @@ func scanCompileItem(row *sql.Row) (*CompileItem, error) {
 		&item.QueryHitCount, &lastQueried, &promoted, &demoted,
 		&item.SourceType, &qualityScore,
 		&item.Status, &leaseOwner, &leaseUntil, &heartbeatAt, &item.Attempts,
+		&item.CompileKey, &item.CompileKeyParts,
 		&item.CreatedAt, &item.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -537,7 +539,7 @@ func scanCompileItems(rows *sql.Rows) ([]CompileItem, error) {
 		var qualityScore sql.NullFloat64
 		var compileID, errStr, summaryPath, lastQueried, promoted, demoted sql.NullString
 		var leaseOwner, leaseUntil, heartbeatAt sql.NullString
-		var passIdx, passEmbed, passParse, passSum, passExt, passWrite int
+	var passIdx, passEmbed, passParse, passSum, passExt, passWrite int
 
 		err := rows.Scan(
 			&item.SourcePath, &item.Hash, &item.FileType, &item.SizeBytes,
@@ -547,6 +549,7 @@ func scanCompileItems(rows *sql.Rows) ([]CompileItem, error) {
 			&item.QueryHitCount, &lastQueried, &promoted, &demoted,
 			&item.SourceType, &qualityScore,
 			&item.Status, &leaseOwner, &leaseUntil, &heartbeatAt, &item.Attempts,
+			&item.CompileKey, &item.CompileKeyParts,
 			&item.CreatedAt, &item.UpdatedAt,
 		)
 		if err != nil {
@@ -757,6 +760,30 @@ func (s *CompileItemStore) RequeueExpired(now time.Time) (int, error) {
 		return err
 	})
 	return int(n), err
+}
+
+// SetCompileKey stores the computed compile key and its component preimages
+// for a source (SPEC-04). Set at the doc's final-pass completion.
+func (s *CompileItemStore) SetCompileKey(path, key, partsJSON string) error {
+	return s.db.WriteTx(func(tx *sql.Tx) error {
+		_, err := tx.Exec(
+			"UPDATE compile_items SET compile_key = ?, compile_key_parts = ?, updated_at = ? WHERE source_path = ?",
+			key, partsJSON, s.dbNow(), path,
+		)
+		return err
+	})
+}
+
+// ClearCompileKey drops a source's stored key (SPEC-04): called where the
+// existing removal handling runs, so a re-added doc compiles fresh.
+func (s *CompileItemStore) ClearCompileKey(path string) error {
+	return s.db.WriteTx(func(tx *sql.Tx) error {
+		_, err := tx.Exec(
+			"UPDATE compile_items SET compile_key = '', compile_key_parts = '', updated_at = ? WHERE source_path = ?",
+			s.dbNow(), path,
+		)
+		return err
+	})
 }
 
 // ResetFailed revives dead-lettered items with a fresh attempt budget

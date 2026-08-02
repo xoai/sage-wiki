@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/xoai/sage-wiki/internal/manifest"
+	"github.com/xoai/sage-wiki/internal/storage"
 )
 
 // initWorkspace builds a real workspace on disk via InitGreenfield (through
@@ -51,6 +52,24 @@ func copyFixture(t *testing.T, src, dst string) {
 	})
 	if err != nil {
 		t.Fatalf("copy fixture: %v", err)
+	}
+}
+
+// buildFixtureDB creates the fixture's SQLite store at the CURRENT schema
+// version in dst (writer open, then close). The v0.2.x fixture carries only
+// config + manifest in git (the .sage dir is ignored); a read-only engine
+// open needs a present, current-schema DB or it fails with
+// ErrSchemaVersionMismatch. Building it hermetically at test time makes the
+// pre-format tests pass on fresh clones AND after any future migration —
+// the pre-format discriminator is the manifest, never the DB.
+func buildFixtureDB(t *testing.T, dst string) {
+	t.Helper()
+	db, err := storage.Open(filepath.Join(dst, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatalf("build fixture db: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close fixture db: %v", err)
 	}
 }
 
@@ -113,6 +132,7 @@ func TestOpenReadOnlyCoexistsWithWriter(t *testing.T) {
 func TestPreFormatReadOnlyAndUpgrade(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "ws")
 	copyFixture(t, "testdata/v02x", dir)
+	buildFixtureDB(t, dir)
 
 	m, err := manifest.Load(filepath.Join(dir, ".manifest.json"))
 	if err != nil {

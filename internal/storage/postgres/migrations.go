@@ -338,6 +338,13 @@ var schemaMigrations = [][]string{
 		)`,
 		`INSERT INTO schema_version (version) SELECT 8 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = 8)`,
 	},
+	// v9 — SPEC-04 compile-key columns (sqlite twin: migrationV15). Additive;
+	// empty keys mark pre-SPEC-04 rows for the adoption path.
+	{
+		`ALTER TABLE compile_items ADD COLUMN IF NOT EXISTS compile_key TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE compile_items ADD COLUMN IF NOT EXISTS compile_key_parts TEXT NOT NULL DEFAULT ''`,
+		`INSERT INTO schema_version (version) SELECT 9 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = 9)`,
+	},
 }
 
 // migrate applies pending migrations in order, one statement per Exec.
