@@ -33,8 +33,14 @@ func TestLiveAWS_RoundTrip(t *testing.T) {
 		}
 		endpoint = "https://s3." + region + ".amazonaws.com"
 	}
+	// SigV4 validates the scope region: "auto" is fine for R2/MinIO but AWS
+	// 403s it — use the real region for AWS endpoints (F-022).
+	signRegion := "auto"
+	if region != "" {
+		signRegion = region
+	}
 	cfg := Config{
-		Endpoint: endpoint, Bucket: bucket, Prefix: "live-test/", Region: "auto",
+		Endpoint: endpoint, Bucket: bucket, Prefix: "live-test/", Region: signRegion,
 	}
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, ".sage"), 0o755)

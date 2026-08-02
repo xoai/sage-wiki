@@ -220,8 +220,13 @@ func (c *Client) callTimeout(bodyLen int) time.Duration {
 	}
 	d := c.callTimeoutBase
 	if c.rateBytesPerSec > 0 {
-		scaled := 3 * time.Duration(int64(bodyLen)/c.rateBytesPerSec) * time.Second
-		if scaled > d {
+		// Clamp BEFORE multiplying (F-027): an extreme bodyLen/rate ratio
+		// could overflow int64 nanoseconds and silently fall to the base.
+		secs := int64(bodyLen) / c.rateBytesPerSec
+		if secs > int64(c.callTimeoutCap/time.Second)/3 {
+			return c.callTimeoutCap
+		}
+		if scaled := 3 * time.Duration(secs) * time.Second; scaled > d {
 			d = scaled
 		}
 	}

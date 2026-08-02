@@ -30,8 +30,13 @@ func ResolveCredentials(accessKeyEnv, secretKeyEnv, tokenKeyEnv, credentialsFile
 		}
 		if credentialsFile != "" {
 			// Cross-source check: a file carrying a session token while keys
-			// come from env is a misconfiguration — fail loudly.
-			if shape, err := readCredentialsShape(credentialsFile); err == nil && shape.SessionToken != "" {
+			// come from env is a misconfiguration — fail loudly (F-024: an
+			// UNREADABLE or malformed file must not bypass it silently).
+			shape, err := readCredentialsShape(credentialsFile)
+			if err != nil {
+				return s3.Credentials{}, fmt.Errorf("mirror: credentials_file %s unreadable while env keys are set (%v) — pick ONE source", credentialsFile, err)
+			}
+			if shape.SessionToken != "" {
 				return s3.Credentials{}, fmt.Errorf("mirror: credentials from env (%s/%s) but %s carries a session_token — pick ONE source (cross-source pairing is unsupported)", accessKeyEnv, secretKeyEnv, credentialsFile)
 			}
 		}
@@ -44,6 +49,13 @@ func ResolveCredentials(accessKeyEnv, secretKeyEnv, tokenKeyEnv, credentialsFile
 		return s3.Credentials{AccessKey: ak, SecretKey: sk, SessionToken: token}, nil
 	}
 	if credentialsFile != "" {
+		// Reverse cross-source (F-025): file keys + env token is the same
+		// misconfiguration in the other direction — fail loudly too.
+		if tokenKeyEnv != "" {
+			if v, ok := os.LookupEnv(tokenKeyEnv); ok && v != "" {
+				return s3.Credentials{}, fmt.Errorf("mirror: credentials from %s but %s is set — pick ONE source (cross-source pairing is unsupported)", credentialsFile, tokenKeyEnv)
+			}
+		}
 		return readCredentialsFile(credentialsFile)
 	}
 	return s3.Credentials{}, fmt.Errorf("mirror: no credentials: set %s and %s, or configure credentials_file", accessKeyEnv, secretKeyEnv)

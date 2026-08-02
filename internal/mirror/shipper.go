@@ -636,6 +636,12 @@ func (m *Mirror) adoptWAL() (uint64, int64) {
 // hash is interruptible via ctx (item 4: an exhausted drain budget aborts
 // the hash — reference NOT updated, all-or-nothing).
 func (m *Mirror) Quiesce(ctx context.Context) error {
+	// Fail fast on an exhausted budget BEFORE the (uninterruptible) mutex
+	// acquire — the residual overrun is one acquire timeout, documented
+	// (F-029).
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("quiesce: %w", err)
+	}
 	mutex, err := AcquireShipMutex(m.dir, m.cfg.ShipLockTimeout)
 	if err != nil {
 		return fmt.Errorf("quiesce: %w", err)

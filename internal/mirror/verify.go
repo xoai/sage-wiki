@@ -76,8 +76,11 @@ func (o *mirrorOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
 	}
 	// Retention: prefer the STATE's recorded retain (it reflects the
 	// shipper's actual config; local config may differ on this workspace).
+	// A state retain < 1 is treated as ABSENT (F-023): 0 is the omitempty
+	// zero, and a negative (hand-edit/corruption) must never disable ALL
+	// rotated-generation checks silently.
 	retain := st.RetainGenerations
-	if retain == 0 {
+	if retain < 1 {
 		retain = m.cfg.RetainGenerations
 	}
 	rotated := map[int]bool{}

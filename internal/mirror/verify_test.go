@@ -255,15 +255,19 @@ func TestVerify_RetainFallback_LocalConfig(t *testing.T) {
 func TestVerify_RetainFallback_LocalUnsetDefaultsTo2(t *testing.T) {
 	fake := newFakeS3()
 	st := verifyFixture(t, fake)
-	addRotatedGen(t, fake, 1) // live=3; gen 1 is prune-eligible at retain=2 → exempt, no violation
+	addRotatedGen(t, fake, 2) // live=3
+	// gen-2's snapshot deleted: a VIOLATION at retain=2 (retained), exempt
+	// only at retain=0 — this witness distinguishes 0 from the normalized
+	// default 2 (F-026: the old version passed identically under both).
+	delete(fake.objects, "ws/db/generation-2/snapshot.db.zst")
+	// local config UNSET at Open (normalized to 2 by Open's normalize).
 	m := openVerifyMirror(t, fake, st)
-	m.cfg.RetainGenerations = 0 // unset → normalized 2
 	rep, err := m.Verify(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !rep.Valid {
-		t.Fatalf("unset local retain must normalize to 2 (gen 1 exempt): %+v", rep.Violations)
+	if rep.Valid {
+		t.Fatal("missing gen-2 snapshot must violate at the normalized default retain=2")
 	}
 }
 
