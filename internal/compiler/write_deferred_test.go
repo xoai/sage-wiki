@@ -24,6 +24,7 @@ type deferredStub struct {
 	writeDelays map[string]time.Duration // substring of the concept name in the write prompt → delay
 	embedDelays map[string]time.Duration // substring of the chunk text in the embed input → delay
 	requests    *syncCounter
+	embeds      *syncCounter
 }
 
 type syncCounter struct {
@@ -33,6 +34,9 @@ type syncCounter struct {
 
 func (c *syncCounter) inc() { c.mu <- struct{}{}; c.count++; <-c.mu }
 func (c *syncCounter) get() int {
+	if c == nil {
+		return 0
+	}
 	c.mu <- struct{}{}
 	defer func() { <-c.mu }()
 	return c.count
@@ -44,6 +48,9 @@ func (s *deferredStub) handler() http.HandlerFunc {
 		json.NewDecoder(r.Body).Decode(&body)
 
 		if body["input"] != nil {
+			if s.embeds != nil {
+				s.embeds.inc()
+			}
 			input, _ := body["input"].(string)
 			for sub, d := range s.embedDelays {
 				if strings.Contains(input, sub) {
@@ -178,13 +185,13 @@ func TestDeferredWrite_AppliesInInputOrder(t *testing.T) {
 	want := []string{"concept-aaa", "concept-bbb", "concept-ccc"}
 
 	// Run A: bbb responds SLOWLY (completes last despite being second).
-	stubA := &deferredStub{writeDelays: map[string]time.Duration{"concept-bbb": 200 * time.Millisecond}, requests: &syncCounter{mu: make(chan struct{}, 1)}}
+	stubA := &deferredStub{writeDelays: map[string]time.Duration{"concept-bbb": 200 * time.Millisecond}, requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
 	srvA := httptest.NewServer(stubA.handler())
 	dirA := compileDeferredCorpus(t, srvA.URL, nil)
 	srvA.Close()
 
 	// Run B: aaa responds SLOWLY (completes last despite being first).
-	stubB := &deferredStub{writeDelays: map[string]time.Duration{"concept-aaa": 200 * time.Millisecond}, requests: &syncCounter{mu: make(chan struct{}, 1)}}
+	stubB := &deferredStub{writeDelays: map[string]time.Duration{"concept-aaa": 200 * time.Millisecond}, requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
 	srvB := httptest.NewServer(stubB.handler())
 	dirB := compileDeferredCorpus(t, srvB.URL, nil)
 	srvB.Close()
@@ -213,7 +220,7 @@ func TestDeferredWrite_CancelDuringApply(t *testing.T) {
 	}
 	defer func() { writeApplyHookForTest = nil }()
 
-	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}}
+	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
 	srv := httptest.NewServer(stub.handler())
 	dir := compileDeferredCorpus(t, srv.URL, ctx)
 	srv.Close()
@@ -269,12 +276,12 @@ func chunkDocidRowidOrder(t *testing.T, dir string) []string {
 func TestDeferredEmbed_AppliesInInputOrder(t *testing.T) {
 	want := []string{"src:raw/doc1.md", "src:raw/doc2.md", "src:raw/doc3.md"}
 
-	delayA := &deferredStub{embedDelays: map[string]time.Duration{"Deferred Doc 2": 250 * time.Millisecond}, requests: &syncCounter{mu: make(chan struct{}, 1)}}
+	delayA := &deferredStub{embedDelays: map[string]time.Duration{"Deferred Doc 2": 250 * time.Millisecond}, requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
 	srvA := httptest.NewServer(delayA.handler())
 	dirA := compileDeferredCorpus(t, srvA.URL, nil)
 	srvA.Close()
 
-	delayB := &deferredStub{embedDelays: map[string]time.Duration{"Deferred Doc 1": 250 * time.Millisecond}, requests: &syncCounter{mu: make(chan struct{}, 1)}}
+	delayB := &deferredStub{embedDelays: map[string]time.Duration{"Deferred Doc 1": 250 * time.Millisecond}, requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
 	srvB := httptest.NewServer(delayB.handler())
 	dirB := compileDeferredCorpus(t, srvB.URL, nil)
 	srvB.Close()
@@ -303,7 +310,7 @@ func TestDeferredEmbed_CancelDuringApply(t *testing.T) {
 	}
 	defer func() { indexApplyHookForTest = nil }()
 
-	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}}
+	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
 	srv := httptest.NewServer(stub.handler())
 	dir := compileDeferredCorpus(t, srv.URL, ctx)
 	srv.Close()
@@ -332,4 +339,65 @@ func TestDeferredEmbed_CancelDuringApply(t *testing.T) {
 	if embedded != 1 {
 		t.Errorf("pass_embedded=1 rows = %d, want 1 (only the item applied before the cancel)", embedded)
 	}
+}
+
+// newTestServer starts the deferredStub's HTTP server.
+func newTestServer(s *deferredStub) *httptest.Server {
+	return httptest.NewServer(s.handler())
+}
+
+// compileDeferredCorpusOpts is compileDeferredCorpus with explicit CompileOpts.
+func compileDeferredCorpusOpts(t *testing.T, serverURL string, opts CompileOpts) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeDeferredCorpusInto(t, dir, serverURL)
+	if _, err := Compile(dir, opts); err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	return dir
+}
+
+// writeDeferredCorpusInto lays the 3-doc corpus + stub-pointed config into dir.
+func writeDeferredCorpusInto(t *testing.T, dir, serverURL string) {
+	t.Helper()
+	wiki.InitGreenfield(dir, "defer", "gpt-4o-mini")
+	cfg := fmt.Sprintf(`
+version: 1
+project: defer
+sources:
+  - path: raw
+    type: auto
+    watch: false
+output: wiki
+api:
+  provider: openai
+  api_key: sk-test
+  base_url: %s
+models:
+  summarize: gpt-4o-mini
+compiler:
+  max_parallel: 4
+  auto_commit: false
+  summary_max_tokens: 500
+  default_tier: 3
+`, serverURL)
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfg), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for i, name := range []string{"doc1.md", "doc2.md", "doc3.md"} {
+		body := fmt.Sprintf("# Deferred Doc %d\n\nDeferred application corpus content %d.", i+1, i+1)
+		if err := os.WriteFile(filepath.Join(dir, "raw", name), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// compileInDir re-runs Compile in an existing deferred-corpus dir.
+func compileInDir(t *testing.T, dir, serverURL string, opts CompileOpts) *CompileResult {
+	t.Helper()
+	res, err := Compile(dir, opts)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	return res
 }

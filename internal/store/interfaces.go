@@ -201,6 +201,9 @@ type CompileItemStore interface {
 	// SPEC-04 compile-key dedup.
 	SetCompileKey(path, key, partsJSON string) error
 	ClearCompileKey(path string) error
+	// InvalidatePasses zeroes every pass flag so the doc recompiles
+	// (key-drift and --force resets). Queue state is untouched.
+	InvalidatePasses(path string) error
 }
 
 type OutputIndexStore interface {

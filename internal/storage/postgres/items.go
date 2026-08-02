@@ -158,6 +158,17 @@ func (s *itemStore) SetCompileKey(path, key, partsJSON string) error {
 	})
 }
 
+// InvalidatePasses zeroes every pass flag (SPEC-04 R5/R1).
+func (s *itemStore) InvalidatePasses(path string) error {
+	return s.b.WriteTx(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE compile_items SET
+			pass_indexed=0, pass_embedded=0, pass_parsed=0,
+			pass_summarized=0, pass_extracted=0, pass_written=0,
+			updated_at=$2 WHERE source_path=$1`, path, s.nowUTC())
+		return err
+	})
+}
+
 // ClearCompileKey drops a source's stored key (SPEC-04).
 func (s *itemStore) ClearCompileKey(path string) error {
 	return s.b.WriteTx(func(tx *sql.Tx) error {

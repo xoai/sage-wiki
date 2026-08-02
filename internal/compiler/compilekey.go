@@ -90,7 +90,7 @@ func ComputeCompileKeyParts(sourceHash string, tier int, cfg *config.Config, pr 
 		Embed:    resolveEmbedIdentity(cfg),
 	}
 	if pr == nil {
-		pr = prompts.NewRegistry()
+		pr = prompts.DefaultRegistry()
 	}
 	if tier >= 3 {
 		parts.Templates = templateKeyComponent(pr)

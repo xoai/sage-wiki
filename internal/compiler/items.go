@@ -539,7 +539,7 @@ func scanCompileItems(rows *sql.Rows) ([]CompileItem, error) {
 		var qualityScore sql.NullFloat64
 		var compileID, errStr, summaryPath, lastQueried, promoted, demoted sql.NullString
 		var leaseOwner, leaseUntil, heartbeatAt sql.NullString
-	var passIdx, passEmbed, passParse, passSum, passExt, passWrite int
+		var passIdx, passEmbed, passParse, passSum, passExt, passWrite int
 
 		err := rows.Scan(
 			&item.SourcePath, &item.Hash, &item.FileType, &item.SizeBytes,
@@ -770,6 +770,21 @@ func (s *CompileItemStore) SetCompileKey(path, key, partsJSON string) error {
 			"UPDATE compile_items SET compile_key = ?, compile_key_parts = ?, updated_at = ? WHERE source_path = ?",
 			key, partsJSON, s.dbNow(), path,
 		)
+		return err
+	})
+}
+
+// InvalidatePasses zeroes every pass flag (SPEC-04 R5/R1): a key-drifted
+// or --forced doc recompiles all passes. The stored key is LEFT in place —
+// it is the old-value evidence --explain diffs against; the new key
+// overwrites it at completion.
+func (s *CompileItemStore) InvalidatePasses(path string) error {
+	return s.db.WriteTx(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE compile_items SET
+			pass_indexed = 0, pass_embedded = 0, pass_parsed = 0,
+			pass_summarized = 0, pass_extracted = 0, pass_written = 0,
+			updated_at = ?
+			WHERE source_path = ?`, s.dbNow(), path)
 		return err
 	})
 }

@@ -1,0 +1,216 @@
+package compiler
+
+import (
+	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"sort"
+
+	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/manifest"
+	"github.com/xoai/sage-wiki/internal/prompts"
+	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
+)
+
+// SkippedDoc is a doc the compile did not recompile because its compile key
+// matched (or was adopted onto) the current inputs (SPEC-04). Reason is the
+// skip verdict: "unchanged" or "unchanged (adopted)".
+type SkippedDoc struct {
+	Path   string
+	Reason string
+}
+
+// skipClassification is the outcome of the compile-key evaluation over the
+// content-unchanged manifest sources (spec R0-R6).
+type skipClassification struct {
+	skipped []SkippedDoc
+	adopted []SkippedDoc
+	// drifted are unchanged-content docs whose key no longer matches — they
+	// rejoin the work set (appended to diff.Modified by the caller) with
+	// their pass flags reset.
+	drifted []SourceInfo
+	// driftReasons maps drifted path → drift class (pipeline, templates,
+	// models, config, embed) for --explain/diff annotation (Task 12 reads
+	// it from the stored parts; this in-memory copy feeds the compile run).
+	driftReasons map[string]string
+	// resumePending counts docs with incomplete pass flags (R0). Their
+	// recompile runs through the normal claim mechanism — but only if the
+	// nothing-to-compile fast path yields, so the caller must see the count.
+	resumePending int
+	// resume is the R0 work set itself: incomplete-flag docs appended to
+	// diff.Modified by the caller so toProcess picks them up (the CLI's
+	// toProcess is diff-driven; claims alone never reach fullpipeline).
+	resume []SourceInfo
+}
+
+// classifySkips evaluates the skip rule (spec R0-R6) over every tracked
+// source that the content diff left unchanged. The iteration set is
+// compile_items (all tiers), NOT the manifest — tier<3 docs never enter
+// the manifest, so a manifest-driven classification would never see them.
+// It needs the item store BEFORE upsertDiffItems (stored flags/keys are
+// pre-run state). Unless dryRun, it persists adoptions (SetCompileKey) and
+// drift/force flag resets immediately — both are resume-safe: an adopted
+// key only ever asserts the current inputs, and a reset flag recompiles
+// next run.
+func classifySkips(
+	cfg *config.Config,
+	pr *prompts.Registry,
+	items store.CompileItemStore,
+	mf *manifest.Manifest,
+	diff *DiffResult,
+	force, dryRun bool,
+) (*skipClassification, error) {
+	out := &skipClassification{driftReasons: map[string]string{}}
+
+	removed := map[string]bool{}
+	for _, p := range diff.Removed {
+		removed[p] = true
+	}
+	// Docs the diff calls Added/Modified compile regardless — EXCEPT
+	// manifest-untracked steady-state docs (tier<3 never enters the
+	// manifest, so Diff reports them Added on every compile). Those carry a
+	// stored key from a prior run and MUST be key-classified, or drift
+	// never fires for them (and a key match is free either way: complete
+	// flags mean no claims).
+	spuriousAdded := map[string]bool{}
+	for _, s := range diff.Added {
+		spuriousAdded[s.Path] = true
+	}
+	inModified := map[string]bool{}
+	for _, s := range diff.Modified {
+		inModified[s.Path] = true
+	}
+
+	var rows []store.CompileItem
+	for tier := 0; tier <= 3; tier++ {
+		list, err := items.ListByTier(tier)
+		if err != nil {
+			return nil, fmt.Errorf("classify: list tier %d: %w", tier, err)
+		}
+		rows = append(rows, list...)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].SourcePath < rows[j].SourcePath }) // SPEC-04 D1
+
+	for _, item := range rows {
+		path := item.SourcePath
+		if removed[path] || inModified[path] {
+			continue
+		}
+		if spuriousAdded[path] && item.CompileKey == "" {
+			continue // genuinely new (or re-added after removal): Added flow + completion sweep adopts
+		}
+		tier := item.Tier
+
+		// R0 — never skip an incomplete doc, and inject tier-3 LLM-pass
+		// incompletes into the work set (the CLI's toProcess is diff-driven;
+		// claims alone never reach fullpipeline). tier<3 incompletes are the
+		// tier passes' own claim domain (retried every compile by design) —
+		// injecting them would recompile permanently-failing embeds forever.
+		if !tierComplete(&item) {
+			if item.Tier >= 3 && !(item.PassSummarized && item.PassExtracted && item.PassWritten) {
+				out.resumePending++
+				out.resume = append(out.resume, SourceInfo{Path: path, Hash: item.Hash, Type: item.FileType, Size: item.SizeBytes})
+			}
+			continue
+		}
+
+		// R1 — --force short-circuits R2-R5.
+		if force {
+			if !dryRun {
+				if err := items.InvalidatePasses(path); err != nil {
+					return nil, fmt.Errorf("force reset %s: %w", path, err)
+				}
+			}
+			out.drifted = append(out.drifted, SourceInfo{Path: path, Hash: item.Hash, Type: item.FileType, Size: item.SizeBytes})
+			out.driftReasons[path] = "forced"
+			continue
+		}
+
+		current := ComputeCompileKeyParts(item.Hash, tier, cfg, pr)
+
+		// R3 — adopt: compute + store, skip without recompiling.
+		if item.CompileKey == "" {
+			out.adopted = append(out.adopted, SkippedDoc{Path: path, Reason: "unchanged (adopted)"})
+			if !dryRun {
+				if err := items.SetCompileKey(path, current.Key(tier), current.JSON()); err != nil {
+					return nil, fmt.Errorf("adopt key %s: %w", path, err)
+				}
+			}
+			continue
+		}
+
+		// R4 — unchanged.
+		if item.CompileKey == current.Key(tier) {
+			out.skipped = append(out.skipped, SkippedDoc{Path: path, Reason: "unchanged"})
+			continue
+		}
+
+		// R5 — drift: reset flags, rejoin the work set.
+		var stored CompileKeyParts
+		class := "config"
+		if err := json.Unmarshal([]byte(item.CompileKeyParts), &stored); err == nil {
+			if c := DriftClass(stored, current); c != "" && c != "content" {
+				class = c
+			}
+		}
+		if !dryRun {
+			if err := items.InvalidatePasses(path); err != nil {
+				return nil, fmt.Errorf("drift reset %s: %w", path, err)
+			}
+		}
+		out.drifted = append(out.drifted, SourceInfo{Path: path, Hash: item.Hash, Type: item.FileType, Size: item.SizeBytes})
+		out.driftReasons[path] = class
+	}
+
+	return out, nil
+}
+
+// storeCompileKeysForCompleted recomputes and stores keys for every
+// tier-complete row — the single storage point for docs compiled THIS run
+// (spec: "set when the doc's final pass completes"). Recomputing is
+// unconditional: a complete row's artifacts are current on a successful
+// run, so its key must match the CURRENT inputs (empty keys adopt;
+// content-drifted and config-drifted docs get their keys updated — an
+// empty-only sweep would leave stale keys claiming currency forever).
+// Called only on the success path: a cancelled/failed run marks nothing
+// (P1-1), and a doc that failed stays tier-incomplete and untouched here.
+func storeCompileKeysForCompleted(cfg *config.Config, pr *prompts.Registry, items store.CompileItemStore) error {
+	for tier := 0; tier <= 3; tier++ {
+		rows, err := items.ListByTier(tier)
+		if err != nil {
+			return fmt.Errorf("store keys: list tier %d: %w", tier, err)
+		}
+		for _, item := range rows {
+			if !tierComplete(&item) {
+				continue
+			}
+			parts := ComputeCompileKeyParts(item.Hash, item.Tier, cfg, pr)
+			key := parts.Key(item.Tier)
+			if key == item.CompileKey {
+				continue // already current — no write churn
+			}
+			if err := items.SetCompileKey(item.SourcePath, key, parts.JSON()); err != nil {
+				return fmt.Errorf("store key %s: %w", item.SourcePath, err)
+			}
+		}
+	}
+	return nil
+}
+
+// runSkipClassification opens the pre-run item store (backend-supplied when
+// set, else a short-lived sqlite handle) and runs classifySkips for the
+// current diff. It must run BEFORE upsertDiffItems (stored flags/keys are
+// the pre-run evidence R0/R3-R5 read).
+func runSkipClassification(projectDir string, run *compileRun, diff *DiffResult) (*skipClassification, error) {
+	pr := run.opts.Prompts // nil = package default (overrides already loaded)
+	if b := run.opts.Backend; b != nil {
+		return classifySkips(run.cfg, pr, b.CompileItems(), run.mf, diff, run.opts.Force, run.opts.DryRun)
+	}
+	sdb, err := storage.Open(filepath.Join(projectDir, ".sage", "wiki.db"))
+	if err != nil {
+		return nil, fmt.Errorf("skip classification: open db: %w", err)
+	}
+	defer sdb.Close()
+	return classifySkips(run.cfg, pr, NewCompileItemStore(sdb, config.NowUTC), run.mf, diff, run.opts.Force, run.opts.DryRun)
+}

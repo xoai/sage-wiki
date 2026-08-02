@@ -46,6 +46,7 @@ type CompileOpts struct {
 	Ctx     context.Context
 	DryRun  bool
 	Fresh   bool             // ignore checkpoint
+	Force   bool             // SPEC-04 R1: recompile every doc, keys recomputed
 	Batch   bool             // use batch API (async, 50% discount)
 	NoCache bool             // disable prompt caching
 	Prune   bool             // delete orphaned articles when sources removed
@@ -88,6 +89,9 @@ type CompileResult struct {
 	TierIndexed       int             // sources indexed at Tier 0
 	TierEmbedded      int             // sources embedded at Tier 1
 	TierCompiled      int             // sources sent through full pipeline (Tier 3)
+	// SPEC-04: docs skipped/adopted by the compile-key evaluation.
+	Skipped []SkippedDoc
+	Adopted int
 }
 
 // CompileState tracks progress for checkpoint/resume (ADR-018).
@@ -208,6 +212,7 @@ func renderPrompt(pr *prompts.Registry, name string, data any, language string) 
 type compileRun struct {
 	cfg                *config.Config
 	opts               CompileOpts
+	driftReasons       map[string]string
 	result             *CompileResult
 	mf                 *manifest.Manifest
 	mfPath             string
@@ -276,6 +281,26 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		run.progress = NewProgress()
 	}
 
+	// SPEC-04: compile-key classification BEFORE the nothing-to-compile fast
+	// path — adoption and drift recompiles must happen even when the content
+	// diff is empty. Classification reads pre-run compile_items state, so it
+	// opens its own short-lived handle (setupStores runs later).
+	skipCls, err := runSkipClassification(projectDir, run, diff)
+	if err != nil {
+		return nil, err
+	}
+	run.result.Adopted = len(skipCls.adopted)
+	run.result.Skipped = append(skipCls.skipped, skipCls.adopted...)
+	run.driftReasons = skipCls.driftReasons
+	if len(skipCls.drifted) > 0 || len(skipCls.resume) > 0 {
+		diff.Modified = append(diff.Modified, skipCls.drifted...)
+		diff.Modified = append(diff.Modified, skipCls.resume...)
+		run.diff = diff
+		run.result.Modified = len(diff.Modified)
+	}
+
+	// The fast path yields to pending resume work (SPEC-04 R0): resume docs
+	// were appended to Modified above, so an empty set here really is empty.
 	if run.result.Added == 0 && run.result.Modified == 0 && run.result.Removed == 0 {
 		// Queue maintenance still runs on an empty diff (P2-3): --fresh
 		// must revive dead letters even when no source changed, or a
@@ -290,7 +315,11 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 				log.Warn("queue maintenance skipped: open db failed", "error", err)
 			}
 		}
-		fmt.Fprintln(os.Stderr, "✓ Nothing to compile — wiki is up to date.")
+		if len(run.result.Skipped) > 0 || run.result.Adopted > 0 {
+			fmt.Fprintf(os.Stderr, "✓ Nothing to compile — %d unchanged (skipped), %d keys adopted.\n", len(skipCls.skipped), run.result.Adopted)
+		} else {
+			fmt.Fprintln(os.Stderr, "✓ Nothing to compile — wiki is up to date.")
+		}
 		return run.result, nil
 	}
 
@@ -341,11 +370,28 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		return run.result, ErrBudgetExceeded
 	}
 
+	// SPEC-04: persist compile keys for every doc completed this run — the
+	// single storage point, gated on a COMPLETE run (P1-1: a cancelled or
+	// failed run marks nothing, so an interrupted doc recompiles next time).
+	if !run.pipelineIncomplete && !run.opts.DryRun {
+		if err := storeCompileKeysForCompleted(run.cfg, run.opts.Prompts, run.itemStore); err != nil {
+			log.Warn("compile-key storage failed", "error", err)
+		}
+	}
+
 	// Pass 4: Image extraction (placeholder)
 	ExtractImages(projectDir, run.cfg.Output, run.toProcess)
 
 	// Handle removed sources — detect orphans BEFORE removing from manifest
 	handleRemovedSources(projectDir, run.diff.Removed, run.mf, run.memStore, run.vecStore, run.pipelineOntStore, run.opts.Prune)
+
+	// SPEC-04: drop removed sources' compile keys (a re-added doc compiles
+	// fresh — reported as added, never skipped).
+	for _, removedPath := range run.diff.Removed {
+		if err := run.itemStore.ClearCompileKey(removedPath); err != nil {
+			log.Warn("clear compile key failed", "path", removedPath, "error", err)
+		}
+	}
 
 	// Post-compile sweep: strip [[wikilinks]] pointing at concepts that don't
 	// exist on disk after this compile finished. Pass 3's writer prompts the

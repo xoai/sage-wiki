@@ -47,6 +47,9 @@ func CompileTemplateNames() []string {
 // the embedded default. This is the drift channel for overrides and for
 // embedded edits that forgot to bump the version constant.
 func EffectiveTemplateHashes(r *Registry) (map[string]string, error) {
+	if r == nil {
+		r = defaultRegistry
+	}
 	out := make(map[string]string, len(templateVersions))
 	for _, name := range CompileTemplateNames() {
 		var text string
@@ -65,3 +68,9 @@ func EffectiveTemplateHashes(r *Registry) (map[string]string, error) {
 	}
 	return out, nil
 }
+
+// DefaultRegistry exposes the package-level registry (with any prompts/
+// overrides loaded through the package-level LoadFromDir) for callers that
+// must compute effective-template state without holding a *Registry
+// (SPEC-04's CLI compile path).
+func DefaultRegistry() *Registry { return defaultRegistry }
