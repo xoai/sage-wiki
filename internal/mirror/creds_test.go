@@ -12,7 +12,7 @@ import (
 func TestResolveCredentials_FromEnv(t *testing.T) {
 	t.Setenv("TEST_AK", "ak-from-env")
 	t.Setenv("TEST_SK", "sk-from-env")
-	creds, err := ResolveCredentials("TEST_AK", "TEST_SK", "")
+	creds, err := ResolveCredentials("TEST_AK", "TEST_SK", "TEST_AK_TOKEN", "")
 	if err != nil {
 		t.Fatalf("ResolveCredentials: %v", err)
 	}
@@ -25,7 +25,7 @@ func TestResolveCredentials_FromFile(t *testing.T) {
 	dir := t.TempDir()
 	f := filepath.Join(dir, "creds.json")
 	os.WriteFile(f, []byte(`{"access_key":"ak-file","secret_key":"sk-file"}`), 0o600)
-	creds, err := ResolveCredentials("UNSET_AK", "UNSET_SK", f)
+	creds, err := ResolveCredentials("UNSET_AK", "UNSET_SK", "UNSET_AK_TOKEN", f)
 	if err != nil {
 		t.Fatalf("ResolveCredentials: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestResolveCredentials_EnvWins(t *testing.T) {
 	os.WriteFile(f, []byte(`{"access_key":"ak-file","secret_key":"sk-file"}`), 0o600)
 	t.Setenv("TEST_AK", "ak-env")
 	t.Setenv("TEST_SK", "sk-env")
-	creds, err := ResolveCredentials("TEST_AK", "TEST_SK", f)
+	creds, err := ResolveCredentials("TEST_AK", "TEST_SK", "TEST_AK_TOKEN", f)
 	if err != nil {
 		t.Fatalf("ResolveCredentials: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestResolveCredentials_EnvWins(t *testing.T) {
 }
 
 func TestResolveCredentials_Missing(t *testing.T) {
-	_, err := ResolveCredentials("UNSET_AK", "UNSET_SK", "")
+	_, err := ResolveCredentials("UNSET_AK", "UNSET_SK", "UNSET_AK_TOKEN", "")
 	if err == nil {
 		t.Fatal("missing creds should be a hard error")
 	}
@@ -63,7 +63,7 @@ func TestResolveCredentials_Missing(t *testing.T) {
 
 func TestResolveCredentials_PartialEnv(t *testing.T) {
 	t.Setenv("TEST_AK", "ak-only")
-	_, err := ResolveCredentials("TEST_AK", "UNSET_SK", "")
+	_, err := ResolveCredentials("TEST_AK", "UNSET_SK", "TEST_AK_TOKEN", "")
 	if err == nil {
 		t.Fatal("partial env should error naming the missing half")
 	}
@@ -73,7 +73,7 @@ func TestResolveCredentials_BadFile(t *testing.T) {
 	dir := t.TempDir()
 	f := filepath.Join(dir, "creds.json")
 	os.WriteFile(f, []byte(`{"wrong":"shape"}`), 0o600)
-	if _, err := ResolveCredentials("UNSET_AK", "UNSET_SK", f); err == nil {
+	if _, err := ResolveCredentials("UNSET_AK", "UNSET_SK", "UNSET_AK_TOKEN", f); err == nil {
 		t.Fatal("bad credentials file should error")
 	}
 }
@@ -111,3 +111,55 @@ func TestLoadEncryptionKey_Missing(t *testing.T) {
 }
 
 var _ = s3.Credentials{} // type anchor: ResolveCredentials returns s3.Credentials
+
+func TestResolveCredentials_SessionToken(t *testing.T) {
+	t.Setenv("TEST_AK", "ak")
+	t.Setenv("TEST_SK", "sk")
+	t.Setenv("TEST_ST", "session-abc")
+	creds, err := ResolveCredentials("TEST_AK", "TEST_SK", "TEST_ST", "")
+	if err != nil {
+		t.Fatalf("ResolveCredentials: %v", err)
+	}
+	if creds.SessionToken != "session-abc" {
+		t.Fatalf("SessionToken = %q", creds.SessionToken)
+	}
+}
+
+func TestResolveCredentials_EmptyTokenIsAbsent(t *testing.T) {
+	t.Setenv("TEST_AK", "ak")
+	t.Setenv("TEST_SK", "sk")
+	t.Setenv("TEST_ST", "")
+	creds, err := ResolveCredentials("TEST_AK", "TEST_SK", "TEST_ST", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creds.SessionToken != "" {
+		t.Fatalf("empty env token must read as absent, got %q", creds.SessionToken)
+	}
+}
+
+// TestResolveCredentials_CrossSourceRejected: env keys + file token is a
+// LOUD error (signing without a token yields opaque 403s).
+func TestResolveCredentials_CrossSourceRejected(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "creds.json")
+	os.WriteFile(f, []byte(`{"access_key":"ak-file","secret_key":"sk-file","session_token":"st-file"}`), 0o600)
+	t.Setenv("TEST_AK", "ak-env")
+	t.Setenv("TEST_SK", "sk-env")
+	if _, err := ResolveCredentials("TEST_AK", "TEST_SK", "TEST_ST_MISSING", f); err == nil {
+		t.Fatal("env keys + file token must be a loud error")
+	}
+}
+
+func TestResolveCredentials_TokenFromFile(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "creds.json")
+	os.WriteFile(f, []byte(`{"access_key":"ak-file","secret_key":"sk-file","session_token":"st-file"}`), 0o600)
+	creds, err := ResolveCredentials("UNSET_AK", "UNSET_SK", "UNSET_ST", f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creds.SessionToken != "st-file" {
+		t.Fatalf("SessionToken = %q", creds.SessionToken)
+	}
+}

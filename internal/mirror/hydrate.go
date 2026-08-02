@@ -22,7 +22,7 @@ import (
 // built inside (creds resolved by the caller into s3.Credentials via cfg).
 func Hydrate(ctx context.Context, cfg Config, dst string, opts HydrateOpts) (*Report, error) {
 	cfg.normalize()
-	creds, err := ResolveCredentials(cfg.AccessKeyEnv, cfg.SecretKeyEnv, cfg.CredentialsFile)
+	creds, err := ResolveCredentials(cfg.AccessKeyEnv, cfg.SecretKeyEnv, cfg.SessionTokenEnv, cfg.CredentialsFile)
 	if err != nil {
 		return nil, err
 	}

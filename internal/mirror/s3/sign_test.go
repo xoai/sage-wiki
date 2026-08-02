@@ -116,3 +116,27 @@ func sha256hex(b []byte) string {
 }
 
 var _ = url.Values{} // keep url import if needed by future tests
+
+// TestSignRequest_SessionToken: STS token sets X-Amz-Security-Token AND
+// joins SignedHeaders (sorted); absent token → byte-identical to today.
+func TestSignRequest_SessionToken(t *testing.T) {
+	now := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	with := Credentials{AccessKey: "AKIDEXAMPLE", SecretKey: "sekrit", SessionToken: "TOKEN-123"}
+	req, _ := http.NewRequest(http.MethodGet, "https://b.s3.us-east-1.amazonaws.com/k", nil)
+	SignRequest(req, EmptyPayloadHash, with, "us-east-1", "s3", now)
+
+	if got := req.Header.Get("X-Amz-Security-Token"); got != "TOKEN-123" {
+		t.Fatalf("X-Amz-Security-Token = %q", got)
+	}
+	auth := req.Header.Get("Authorization")
+	if !strings.Contains(auth, "SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token") {
+		t.Fatalf("SignedHeaders missing token: %q", auth)
+	}
+
+	// Absent token → identical bytes to the no-token path.
+	req2, _ := http.NewRequest(http.MethodGet, "https://b.s3.us-east-1.amazonaws.com/k", nil)
+	SignRequest(req2, EmptyPayloadHash, testCreds, "us-east-1", "s3", now)
+	if req2.Header.Get("X-Amz-Security-Token") != "" {
+		t.Fatal("no-token request must not carry the header")
+	}
+}
