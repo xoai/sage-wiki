@@ -115,6 +115,9 @@ sage-wiki init my-wiki && cd my-wiki
 cp ~/papers/*.pdf raw/
 # Edit config.yaml to add api key, and pick LLMs
 sage-wiki compile                                  # first compile
+sage-wiki compile                                  # second: zero LLM calls — unchanged docs are skipped
+sage-wiki compile --explain raw/paper.pdf          # why a doc compiles or skips
+sage-wiki compile --force                          # recompile everything regardless
 sage-wiki search "attention mechanism"             # hybrid search
 sage-wiki query "How does flash attention work?"   # cited Q&A
 sage-wiki tui                                      # terminal dashboard

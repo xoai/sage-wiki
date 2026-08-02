@@ -7,7 +7,7 @@ import (
 )
 
 // currentSchemaVersion tracks len(schemaMigrations).
-const currentSchemaVersion = 8
+const currentSchemaVersion = 9
 
 // schemaMigrations is the append-only Postgres V-series. Each entry is ONE
 // statement per Exec (pgx stdlib rejects multi-statement prepared calls).

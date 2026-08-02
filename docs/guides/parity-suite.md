@@ -22,9 +22,10 @@ into a workspace against a record/replay HTTP stub
 
 Determinism is pinned by construction: corpus mtimes at a fixed epoch,
 `SOURCE_DATE_EPOCH` for compile timestamps, `max_parallel: 1`, and a
-far-future search clock (recency bonus underflows to exactly 0). The DB
-bytes and `usage.jsonl` are excluded (DB until SPEC-04; the event log is
-timestamped by design).
+far-future search clock (recency bonus underflows to exactly 0).
+`usage.jsonl` is excluded (the event log is timestamped by design); the
+DB is byte-parity-covered as of SPEC-04 — see `docs/determinism.md` for
+the full determinism + compile-key contract.
 
 ## Add a corpus document
 

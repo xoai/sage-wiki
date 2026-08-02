@@ -4,6 +4,26 @@
 
 ### Added
 
+- **Deterministic artifacts + content-hash dedup (SPEC-04).** Identical
+  inputs now produce byte-identical artifacts — articles, summaries,
+  manifest, `wiki.db`, vector index, and exports are reproducible
+  bit-for-bit (temperature defaults to an explicit 0, map-order iteration
+  is sorted everywhere, parallel results apply in input order, one
+  SDE-aware clock, `PRAGMA secure_delete`, normalized tar headers).
+  Unchanged docs are never recompiled: every tracked doc carries a
+  content-addressed **compile key** (source hash + pipeline version +
+  template versions/hashes + resolved models + resolved config subset +
+  embed identity), and `compile` skips key-matched docs — the first run
+  after upgrading *adopts* keys with zero provider calls, so the
+  "never re-billed" pledge is immediate. `sage-wiki compile --force`
+  bypasses; `sage-wiki compile --explain DOC` prints exactly why a doc
+  would compile or skip; `sage-wiki diff` annotates key drift
+  (pipeline/templates/models/config/embed); skips are reported in
+  `CompileResult`, CLI output, and `compile_skip` engine events.
+  `compiler.temperature` (0–2) overrides the deterministic default.
+  `docs/determinism.md` documents the rules, the excluded-field family,
+  and contributor duties; `scripts/check-determinism.sh` runs in CI.
+
 - **Per-generation object maps — PITR now covers markdown.** Each rotation seals the superseded generation's doc/vector object map into its meta.json, so `hydrate --generation N` and `hydrate --at T` (into a rotated generation) restore a CONSISTENT tree (db chain + docs as of that generation) instead of db@TIME with docs@newest. Docs restore at per-generation granularity (a mid-generation delete may persist, a create may be missing); an --at restore report prints both skews (--generation is seal-consistent). Pre-map mirrors fall back to docs at newest with a printed note. `mirror verify` checks the sealed maps too (invariant (c): a retained generation is FULLY restorable, not just db-restorable).
 
 - **Mirror follow-ups — SigV4 suite, STS, retain-in-state, budgets.** The
