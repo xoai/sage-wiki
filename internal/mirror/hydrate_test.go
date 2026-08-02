@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -530,5 +531,111 @@ func TestHydrate_MetaTombstoneAndLaterDeleteBound(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dst, "wiki/concepts/Foo.md")); !os.IsNotExist(err) {
 		t.Fatal("tombstoned file in the sealed map must stay absent")
+	}
+}
+
+// Pass-4 item 1: per-class fallback advisory on the --at path too (mixed
+// meta: objects present, vectors nil → "no vector map" advisory).
+func TestHydrate_AtPathPerClassFallbackAdvisory(t *testing.T) {
+	h := newHydrateFixture(t)
+	gen2Created := h.src.remoteState(t).DB.CreatedAt
+	// Space the second rotation on the injected clock so --at has a window.
+	h.src.now = gen2Created.Add(2 * time.Second)
+	h.src.dbWrite(t, "row-gen2")
+	h.src.dbClose()
+	ageLocalRotationFile(t, h.src.dir, -2*time.Hour)
+	if res := h.src.pass(t); !res.Rotated {
+		t.Fatal("setup: rotation did not fire")
+	}
+	// Mixed meta: objects present, vectors nil.
+	mb0, _ := h.fake.get(GenerationMetaKey("ws/", 2))
+	meta0, err := UnmarshalMeta(mb0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta0.Vectors = nil
+	mb, _ := MarshalMeta(meta0)
+	h.fake.objects[GenerationMetaKey("ws/", 2)] = mb
+
+	gen3Created := h.src.remoteState(t).DB.CreatedAt
+	dst := filepath.Join(t.TempDir(), "restored")
+	rep, err := Hydrate(context.Background(), h.cfg, dst, HydrateOpts{At: gen3Created.Add(-time.Millisecond)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, a := range rep.Advisories {
+		if strings.Contains(a, "no vector map") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("--at mixed meta must surface the per-class advisory: %v", rep.Advisories)
+	}
+}
+
+// Pass-4 item 2: resurrect guard DEFERS on ReadFile error (vanished mid-pass).
+func TestShipObjects_ResurrectDefersOnVanish(t *testing.T) {
+	f := newShipFixture(t)
+	defer f.dbClose()
+	writeWS(t, f.dir, "wiki/concepts/Foo.md", "# Foo")
+	f.pass(t)
+	deleteWS(t, f.dir, "wiki/concepts/Foo.md")
+	f.pass(t) // tombstoned
+	// Resurrect in the diff set, then VANISH before the guard reads.
+	writeWS(t, f.dir, "wiki/concepts/Foo.md", "# Foo")
+	st := f.remoteState(t)
+	changes := []Change{{Path: "wiki/concepts/Foo.md", Kind: ChangeUpsert, SHA256: shaOf("# Foo")}}
+	deleteWS(t, f.dir, "wiki/concepts/Foo.md")
+	var res shipResult
+	if err := f.m.shipObjects(context.Background(), st, changes, &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.ObjectsResurrected != 0 {
+		t.Fatalf("vanished file must NOT resurrect: %d", res.ObjectsResurrected)
+	}
+	if len(res.Warnings) == 0 {
+		t.Fatal("vanish must warn")
+	}
+	if !st.Objects["wiki/concepts/Foo.md"].Deleted {
+		t.Fatal("vanished file un-tombstoned (should stay tombstoned this pass)")
+	}
+}
+
+// Pass-4 item 3: rep.Checked counts BOTH tuples of a shared key (deterministic
+// slice-vs-map distinguisher — no probabilistic double-run needed).
+func TestVerify_MetaRefsCheckedCountsBothTuples(t *testing.T) {
+	fake := newFakeS3()
+	st := verifyFixture(t, fake)
+	addRotatedGen(t, fake, 2)
+	shaA := sha256HexBytes([]byte("doc-A"))
+	shaB := sha256HexBytes([]byte("doc-B"))
+	key := "ws/objects/docs/" + shaA[:2] + "/" + shaA
+	mk := func(gen int, sha string, created time.Time) {
+		meta := &GenerationMeta{
+			FormatVersion: FormatVersion, Generation: gen,
+			CreatedAt: created, SealedAt: created,
+			Snapshot: "ws/db/generation-" + strconv.Itoa(gen) + "/snapshot.db.zst", SnapshotSHA256: sha256HexBytes([]byte("gen-snap")),
+			WAL:     []WALSegmentRef{},
+			Objects: map[string]ObjectRef{"wiki/a.md": {Key: key, SHA256: sha, ContentSHA256: shaA}},
+		}
+		mb, _ := MarshalMeta(meta)
+		fake.objects[GenerationMetaKey("ws/", gen)] = mb
+		fake.objects["ws/db/generation-"+strconv.Itoa(gen)+"/snapshot.db.zst"] = []byte("gen-snap")
+	}
+	mk(1, shaB, time.Now().Add(-time.Hour).UTC())
+	mk(2, shaA, time.Now().UTC())
+	fake.objects[key] = []byte("doc-A")
+
+	m := openVerifyMirror(t, fake, st)
+	m.cfg.RetainGenerations = 5
+	rep, err := m.Verify(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Base fixture refs (4) + 2 generation snapshots + 2 tuples for the
+	// shared key.
+	if rep.Checked != 8 {
+		t.Fatalf("Checked = %d, want 8 (both tuples of the shared key verified)", rep.Checked)
 	}
 }

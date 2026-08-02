@@ -455,11 +455,13 @@ func (m *Mirror) rotate(ctx context.Context, st *State) error {
 	// 2. meta.json PUT for the superseded generation (derived FROM the
 	// committed mirror-state's wal list — divergence-free by construction).
 	// SealedAt is DETERMINISTIC (F-091): a crash-recovery re-run re-derives
-	// identical bytes — the tail segment's sealed_at, else the state's last
-	// commit time.
+	// identical bytes. It is max(tail segment's sealed_at, state's last
+	// commit time) — docs-only commits advance UpdatedAt WITHOUT a segment,
+	// and the sealed object map is fresh through that commit (pass-4: the
+	// skew note's heuristic must match the map's actual freshness).
 	now := m.now().UTC()
 	sealedAt := st.UpdatedAt
-	if n := len(st.DB.WAL); n > 0 {
+	if n := len(st.DB.WAL); n > 0 && st.DB.WAL[n-1].SealedAt.After(sealedAt) {
 		sealedAt = st.DB.WAL[n-1].SealedAt
 	}
 	meta := &GenerationMeta{

@@ -123,6 +123,7 @@ func (o *mirrorOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
 		}
 		if err := meta.Validate(); err != nil {
 			fail("generation %d: meta.json invalid: %v", gen, err)
+			continue // an invalid meta contributes no references (no cascade of secondary violations)
 		}
 		collect(meta.Snapshot, meta.SnapshotSHA256, meta.WAL, nil, nil)
 		// Invariant (c): the generation's sealed object maps are checked by

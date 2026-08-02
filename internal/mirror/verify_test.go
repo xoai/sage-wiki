@@ -3,6 +3,7 @@ package mirror
 import (
 	"context"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -539,13 +540,13 @@ func TestVerify_MetaRefsDivergentShasDeterministicAttribution(t *testing.T) {
 		meta := &GenerationMeta{
 			FormatVersion: FormatVersion, Generation: gen,
 			CreatedAt: created, SealedAt: created,
-			Snapshot: "ws/db/generation-" + itoa(gen) + "/snapshot.db.zst", SnapshotSHA256: sha256HexBytes([]byte("gen-snap")),
+			Snapshot: "ws/db/generation-" + strconv.Itoa(gen) + "/snapshot.db.zst", SnapshotSHA256: sha256HexBytes([]byte("gen-snap")),
 			WAL:     []WALSegmentRef{},
 			Objects: map[string]ObjectRef{"wiki/a.md": {Key: key, SHA256: sha, ContentSHA256: shaA}},
 		}
 		mb, _ := MarshalMeta(meta)
 		fake.objects[GenerationMetaKey("ws/", gen)] = mb
-		fake.objects["ws/db/generation-"+itoa(gen)+"/snapshot.db.zst"] = []byte("gen-snap")
+		fake.objects["ws/db/generation-"+strconv.Itoa(gen)+"/snapshot.db.zst"] = []byte("gen-snap")
 	}
 	mk(1, shaB, time.Now().Add(-time.Hour).UTC())
 	mk(2, shaA, time.Now().UTC())
@@ -563,11 +564,4 @@ func TestVerify_MetaRefsDivergentShasDeterministicAttribution(t *testing.T) {
 	if !strings.Contains(v1, "generation 1") || strings.Contains(v1, "generation 2: meta-map") {
 		t.Fatalf("attribution must name gen 1 only for the meta-map mismatch: %s", v1)
 	}
-}
-
-func itoa(n int) string {
-	if n == 1 {
-		return "1"
-	}
-	return "2"
 }

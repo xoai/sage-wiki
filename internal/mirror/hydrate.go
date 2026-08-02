@@ -465,26 +465,7 @@ func selectRestorePoint(ctx context.Context, client *s3.Client, prefix, bucket s
 			return nil, err
 		}
 		rp := &restorePoint{generation: meta.Generation, snapshot: meta.Snapshot, snapshotSHA: meta.SnapshotSHA256, wal: meta.WAL, objects: st.Objects, vectors: st.Vectors}
-		// Per-class presence (N-2): a hand-edited mixed meta (one class
-		// nil) must not silently zero that class — it falls back with a
-		// per-class advisory instead of a silent mixed restore.
-		objs, vecs := meta.Objects != nil, meta.Vectors != nil
-		if objs {
-			rp.objects = meta.Objects
-		}
-		if vecs {
-			rp.vectors = meta.Vectors
-		}
-		if objs || vecs {
-			rp.fromMeta = true
-			if !objs {
-				rp.fallbackNote = "note: generation has no object map; docs restored at newest"
-			} else if !vecs {
-				rp.fallbackNote = "note: generation has no vector map; vectors restored at newest"
-			}
-		} else {
-			rp.fallbackNote = "note: generation has no object map; docs restored at newest"
-		}
+		rp.applyMetaMaps(meta, st)
 		return rp, nil
 	}
 
@@ -528,28 +509,46 @@ func selectRestorePoint(ctx context.Context, client *s3.Client, prefix, bucket s
 			}
 		}
 		rp := &restorePoint{generation: best.Generation, snapshot: best.Snapshot, snapshotSHA: best.SnapshotSHA256, wal: wal, objects: st.Objects, vectors: st.Vectors, overshoot: overshoot}
-		objs, vecs := best.Objects != nil, best.Vectors != nil
-		if objs {
-			rp.objects = best.Objects
-		}
-		if vecs {
-			rp.vectors = best.Vectors
-		}
-		if objs || vecs {
-			rp.fromMeta = true
+		rp.applyMetaMaps(best, st)
+		if rp.fromMeta {
 			// Object skew is independent of segment count: the map is at the
 			// generation's seal; the db is at T.
 			if at.Before(best.SealedAt.UTC()) {
 				rp.objectSkew = true
 			}
-		} else {
-			rp.fallbackNote = "note: generation has no object map; docs restored at newest"
 		}
 		return rp, nil
 	}
 
 	// Newest.
 	return &restorePoint{generation: st.Generation, snapshot: st.DB.Snapshot, snapshotSHA: st.DB.SnapshotSHA256, wal: st.DB.WAL, objects: st.Objects, vectors: st.Vectors}, nil
+}
+
+// applyMetaMaps resolves a selected generation's object/vector maps with
+// PER-CLASS presence (one resolver for both --generation and --at, so the
+// branches can't drift): a present class wins; a nil class falls back to
+// live state with a per-class advisory (never a silent mixed restore).
+func (rp *restorePoint) applyMetaMaps(meta *GenerationMeta, st *State) {
+	objs, vecs := meta.Objects != nil, meta.Vectors != nil
+	if objs {
+		rp.objects = meta.Objects
+	}
+	if vecs {
+		rp.vectors = meta.Vectors
+	}
+	switch {
+	case objs && vecs:
+		// full meta maps — nothing to note
+	case objs:
+		rp.fallbackNote = "note: generation has no vector map; vectors restored at newest"
+	case vecs:
+		rp.fallbackNote = "note: generation has no object map; docs restored at newest"
+	default:
+		rp.fallbackNote = "note: generation has no object map; docs restored at newest"
+	}
+	if objs || vecs {
+		rp.fromMeta = true
+	}
 }
 
 func oldestPoint(st *State, metas []*GenerationMeta) string {
