@@ -343,7 +343,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	writeOntStore := opts.OntStore
 	if writeOntStore == nil {
 		writeOntStore = ontology.NewStore(opts.DB, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
-			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
+			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC))
 	}
 
 	// Pass 2b: LLM triple extraction (P3-2, opt-in). Runs BEFORE the

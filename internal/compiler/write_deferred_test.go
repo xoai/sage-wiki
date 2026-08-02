@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 // per-concept delays, so goroutine COMPLETION order can be made to differ
 // from input order. SPEC-04 D3: apply order must follow input order anyway.
 type deferredStub struct {
+	mu          sync.Mutex               // guards writeDelays/embedDelays swaps between runs
 	writeDelays map[string]time.Duration // substring of the concept name in the write prompt → delay
 	embedDelays map[string]time.Duration // substring of the chunk text in the embed input → delay
 	requests    *syncCounter
@@ -52,11 +54,13 @@ func (s *deferredStub) handler() http.HandlerFunc {
 				s.embeds.inc()
 			}
 			input, _ := body["input"].(string)
+			s.mu.Lock()
 			for sub, d := range s.embedDelays {
 				if strings.Contains(input, sub) {
 					time.Sleep(d)
 				}
 			}
+			s.mu.Unlock()
 			// Strongly distinct vectors per text (dominant dimension rotates
 			// with FNV): near-identical embeddings would make dedup merge
 			// distinct concepts (cosine ≥ 0.85).
@@ -93,11 +97,13 @@ func (s *deferredStub) handler() http.HandlerFunc {
 			  {"name": "concept-ccc", "aliases": [], "sources": ["raw/doc3.md"], "type": "concept"}
 			]`
 		case isWrite:
+			s.mu.Lock()
 			for name, d := range s.writeDelays {
 				if strings.Contains(allText, name) {
 					time.Sleep(d)
 				}
 			}
+			s.mu.Unlock()
 			name := "concept-aaa"
 			for _, n := range []string{"concept-aaa", "concept-bbb", "concept-ccc"} {
 				if strings.Contains(allText, n) {
@@ -150,6 +156,7 @@ compiler:
 			t.Fatal(err)
 		}
 	}
+	pinCorpusMtimes(t, dir)
 	opts := CompileOpts{}
 	if ctx != nil {
 		opts.Ctx = ctx
@@ -390,6 +397,7 @@ compiler:
 			t.Fatal(err)
 		}
 	}
+	pinCorpusMtimes(t, dir)
 }
 
 // compileInDir re-runs Compile in an existing deferred-corpus dir.
@@ -400,4 +408,23 @@ func compileInDir(t *testing.T, dir, serverURL string, opts CompileOpts) *Compil
 		t.Fatalf("Compile: %v", err)
 	}
 	return res
+}
+
+// pinCorpusMtimes pins every raw/*.md to a fixed mtime: entry_dates source
+// dates resolve from mtime (frontmatter > mtime > first-seen), and two
+// harness runs write files seconds apart — unpinned, that input metadata
+// (not compile nondeterminism) breaks byte-parity (parity's
+// BuildWorkspaceAuth pins mtimes for the same reason).
+func pinCorpusMtimes(t *testing.T, dir string) {
+	t.Helper()
+	fixed := time.Unix(1700000000, 0)
+	entries, err := os.ReadDir(filepath.Join(dir, "raw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if err := os.Chtimes(filepath.Join(dir, "raw", e.Name()), fixed, fixed); err != nil {
+			t.Fatal(err)
+		}
+	}
 }

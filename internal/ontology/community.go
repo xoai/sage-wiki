@@ -192,7 +192,7 @@ func (s *Store) SetSummary(id, summary, summaryHash, model string) error {
 	return s.db.WriteTx(func(tx *sql.Tx) error {
 		_, err := tx.Exec(
 			`UPDATE communities SET summary=?, summary_hash=?, model=?, updated_at=? WHERE id=?`,
-			summary, summaryHash, model, time.Now().UTC().Format(time.RFC3339), id)
+			summary, summaryHash, model, s.nowUTC().Format(time.RFC3339), id)
 		return err
 	})
 }

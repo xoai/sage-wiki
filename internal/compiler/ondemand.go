@@ -141,7 +141,7 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 		merged := ontology.MergedRelations(cfg.Ontology.Relations)
 		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 		ontStore := ontology.NewStore(opts.DB, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
-			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
+			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC))
 
 		mfPath := filepath.Join(opts.ProjectDir, ".manifest.json")
 		mf, err := manifest.Load(mfPath)

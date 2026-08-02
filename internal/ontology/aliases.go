@@ -65,7 +65,7 @@ func (s *Store) PutAlias(a store.EntityAlias) error {
 		return fmt.Errorf("ontology: entity %q cannot alias itself", a.Alias)
 	}
 	if a.CreatedAt == "" {
-		a.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+		a.CreatedAt = s.nowUTC().Format(time.RFC3339)
 	}
 	if a.Source == "" {
 		a.Source = "llm"
@@ -177,7 +177,7 @@ func (s *Store) IsRejected(a, b string) (bool, error) {
 
 // SetAliasStatus moves one row to a new status, stamping the decision.
 func (s *Store) SetAliasStatus(alias, canonicalID string, status store.AliasStatus, decidedBy string) error {
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := s.nowUTC().Format(time.RFC3339)
 	return s.db.WriteTx(func(tx *sql.Tx) error {
 		res, err := tx.Exec(
 			`UPDATE entity_aliases SET status=?, decided_at=?, decided_by=?
@@ -443,7 +443,7 @@ func (s *Store) UnlinkAlias(alias, canonicalID string) error {
 		_, err := tx.Exec(
 			`UPDATE entity_aliases SET status='rejected', decided_at=?, decided_by='unlink'
 			  WHERE alias=? AND canonical_id=?`,
-			time.Now().UTC().Format(time.RFC3339), alias, canonicalID)
+			s.nowUTC().Format(time.RFC3339), alias, canonicalID)
 		return err
 	})
 	if err != nil {

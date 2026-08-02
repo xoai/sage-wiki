@@ -8,40 +8,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
-
-// TestSpikeDoubleCompile is the SPEC-04 Task-1 spike: compile the same 3-doc
-// corpus into two temp dirs with a deterministic stub provider and pinned
-// SOURCE_DATE_EPOCH, then byte-compare every file pair. It prints the drift
-// inventory (classified by the D-rule expected to fix it) instead of failing
-// on drift — this is the go/no-go measurement for AC-1's byte-parity claim.
-// Task 13 absorbs this harness into the real double-compile AC test, which
-// DOES fail on drift outside the documented exclusion list.
-func TestSpikeDoubleCompile(t *testing.T) {
-	t.Setenv("SOURCE_DATE_EPOCH", "1700000000")
-
-	server := spikeStubProvider(t)
-	defer server.Close()
-
-	dirA := spikeCompileOnce(t, server.URL)
-	dirB := spikeCompileOnce(t, server.URL)
-
-	drift := spikeDiffTrees(t, dirA, dirB)
-	sort.Strings(drift)
-
-	t.Logf("SPIKE drift inventory (%d differing paths):", len(drift))
-	for _, d := range drift {
-		t.Logf("  DRIFT %s", d)
-	}
-	if len(drift) == 0 {
-		t.Log("SPIKE: trees already byte-identical — AC-1 needs no fallback")
-	}
-}
 
 // spikeStubProvider returns deterministic OpenAI-shaped responses: summarize,
 // extract, write, and embeddings. Responses depend only on request content,
@@ -127,6 +98,7 @@ compiler:
 			t.Fatal(err)
 		}
 	}
+	pinCorpusMtimes(t, dir)
 
 	if _, err := Compile(dir, CompileOpts{}); err != nil {
 		t.Fatalf("spike Compile: %v", err)

@@ -91,7 +91,7 @@ func Reconcile(ctx context.Context, projectDir string, cfg *config.Config, db st
 		vec:          vectors.NewStore(db),
 		chunks:       memory.NewChunkStore(db),
 		ont: ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
-			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault())),
+			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC)),
 		oi:       storage.NewOutputIndex(db),
 		embedder: embedder,
 		res:      &ReconcileResult{},

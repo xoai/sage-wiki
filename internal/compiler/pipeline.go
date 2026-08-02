@@ -653,7 +653,7 @@ func setupStores(projectDir string, run *compileRun) error {
 		merged := ontology.MergedRelations(cfg.Ontology.Relations)
 		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 		run.pipelineOntStore = ontology.NewStore(sdb, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
-			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
+			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC))
 	}
 	run.db = db
 
@@ -663,7 +663,7 @@ func setupStores(projectDir string, run *compileRun) error {
 	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 	if run.pipelineOntStore == nil {
 		run.pipelineOntStore = ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
-			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
+			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC))
 	}
 
 	// Backfill chunk index if needed (after migration, before first compile)
@@ -1388,7 +1388,7 @@ func resumeBatch(
 				merged := ontology.MergedRelations(cfg.Ontology.Relations)
 				mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 				ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
-					ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
+					ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC))
 				client.SetPass("write")
 				writeCacheID, _ := client.SetupCache("You are a knowledge base article writer. Write comprehensive, well-structured wiki articles.", writeModel)
 				relPatterns := ontology.RelationPatterns(merged)
@@ -1444,7 +1444,7 @@ func resumeBatch(
 		merged := ontology.MergedRelations(cfg.Ontology.Relations)
 		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 		ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
-			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
+			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC))
 		CommunitiesPass(orBackground(opts.Ctx), projectDir, ontStore, ontStore, memStore, vecStore, embedder, cfg, client)
 	}
 
@@ -1478,7 +1478,7 @@ func resumeBatch(
 		stores := trust.IndexStores{
 			MemStore: memStore, VecStore: vecStore,
 			OntStore: ontology.NewStore(db, ontology.ValidRelationNames(batchMerged), ontology.ValidEntityTypeNames(batchMergedTypes),
-				ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault())),
+				ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC)),
 			ChunkStore: chunkStore, DB: db,
 		}
 		demoted, err := trust.CheckSourceChanges(trustStore, projectDir, &stores)

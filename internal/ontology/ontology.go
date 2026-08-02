@@ -67,6 +67,10 @@ type Store struct {
 	// would otherwise silently disable filtering (spec rev-plan i2/i3).
 	temporalEnabled bool
 	derivedGuard    // alias-derived edges (decision-035); see derived.go
+	// now is the artifact clock (SPEC-04 D4): entity/relation created_at and
+	// updated_at stamp from it so a pinned SOURCE_DATE_EPOCH propagates into
+	// DB bytes. Nil = wall clock (pre-SPEC-04 behavior for read paths).
+	now func() time.Time
 }
 
 // StoreOption configures optional Store behavior (P3-6). Variadic so existing
@@ -76,6 +80,19 @@ type StoreOption func(*Store)
 // WithTemporalEnabled toggles bi-temporal validity filtering (P3-6). Wire it
 // from config.Ontology.Temporal.EnabledOrDefault(); never pass a raw bool
 // literal outside tests.
+// WithNow installs the artifact clock (SPEC-04 D4). Compile paths pass
+// config.NowUTC; read paths leave nil (wall clock).
+func WithNow(now func() time.Time) StoreOption {
+	return func(s *Store) { s.now = now }
+}
+
+func (s *Store) nowUTC() time.Time {
+	if s.now != nil {
+		return s.now().UTC()
+	}
+	return time.Now().UTC()
+}
+
 func WithTemporalEnabled(enabled bool) StoreOption {
 	return func(s *Store) { s.temporalEnabled = enabled }
 }
@@ -132,7 +149,7 @@ func (s *Store) AddEntity(e Entity) error {
 	if s.validEntityTypes != nil && !s.validEntityTypes[e.Type] {
 		return fmt.Errorf("ontology: unknown entity type %q", e.Type)
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := s.nowUTC().Format(time.RFC3339)
 	if e.CreatedAt == "" {
 		e.CreatedAt = now
 	}
@@ -157,7 +174,7 @@ func (s *Store) AddEntity(e Entity) error {
 
 // UpdateEntity updates an existing entity.
 func (s *Store) UpdateEntity(e Entity) error {
-	e.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	e.UpdatedAt = s.nowUTC().Format(time.RFC3339)
 	return s.db.WriteTx(func(tx *sql.Tx) error {
 		_, err := tx.Exec(
 			`UPDATE entities SET name=?, definition=?, article_path=?, updated_at=? WHERE id=?`,
@@ -287,7 +304,7 @@ func (s *Store) AddRelation(r Relation) error {
 		return fmt.Errorf("ontology: unknown relation type %q", r.Relation)
 	}
 	if r.CreatedAt == "" {
-		r.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+		r.CreatedAt = s.nowUTC().Format(time.RFC3339)
 	}
 	return s.db.WriteTx(func(tx *sql.Tx) error {
 		_, err := tx.Exec(
