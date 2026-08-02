@@ -463,7 +463,7 @@ func selectRestorePoint(ctx context.Context, client *s3.Client, prefix, bucket s
 			return nil, err
 		}
 		rp := &restorePoint{generation: meta.Generation, snapshot: meta.Snapshot, snapshotSHA: meta.SnapshotSHA256, wal: meta.WAL, objects: st.Objects, vectors: st.Vectors}
-		if len(meta.Objects) > 0 || len(meta.Vectors) > 0 {
+		if meta.Objects != nil || meta.Vectors != nil {
 			rp.objects = meta.Objects
 			rp.vectors = meta.Vectors
 			rp.fromMeta = true
@@ -513,7 +513,7 @@ func selectRestorePoint(ctx context.Context, client *s3.Client, prefix, bucket s
 			}
 		}
 		rp := &restorePoint{generation: best.Generation, snapshot: best.Snapshot, snapshotSHA: best.SnapshotSHA256, wal: wal, objects: st.Objects, vectors: st.Vectors, overshoot: overshoot}
-		if len(best.Objects) > 0 || len(best.Vectors) > 0 {
+		if best.Objects != nil || best.Vectors != nil {
 			rp.objects = best.Objects
 			rp.vectors = best.Vectors
 			rp.fromMeta = true

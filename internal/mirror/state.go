@@ -62,8 +62,8 @@ type GenerationMeta struct {
 	Snapshot       string               `json:"snapshot"`
 	SnapshotSHA256 string               `json:"snapshot_sha256"`
 	WAL            []WALSegmentRef      `json:"wal"`
-	Objects        map[string]ObjectRef `json:"objects,omitempty"`
-	Vectors        map[string]ObjectRef `json:"vectors,omitempty"`
+	Objects        map[string]ObjectRef `json:"objects"`
+	Vectors        map[string]ObjectRef `json:"vectors"`
 }
 
 // MarshalState serializes deterministically: encoding/json sorts map keys;

@@ -447,6 +447,36 @@ func TestHydrate_OldMirrorFallbackWarning(t *testing.T) {
 
 // AC-4: tombstone in the sealed map stays absent; a file deleted in a LATER
 // generation's lifetime IS restored (the per-generation bound).
+// AC-4 second half: a file deleted in a LATER generation's lifetime IS
+// restored from the pre-delete generation's sealed map.
+func TestHydrate_LaterDeleteRestoredFromEarlierGen(t *testing.T) {
+	h := newHydrateFixture(t) // gen 2 live; Foo shipped in gen 1's map
+	// Rotate to gen 3 (gen 2's map = current, Foo present).
+	h.src.dbWrite(t, "row-gen2")
+	h.src.dbClose()
+	ageLocalRotationFile(t, h.src.dir, -2*time.Hour)
+	if res := h.src.pass(t); !res.Rotated {
+		t.Fatal("setup: rotation did not fire")
+	}
+	// Delete Foo in gen 3's lifetime (live map tombstones it).
+	deleteWS(t, h.src.dir, "wiki/concepts/Foo.md")
+	h.src.pass(t)
+
+	// --generation 2 (sealed BEFORE the delete): Foo must come back with
+	// pre-delete content. Pre-feature code (live tombstoned map) fails this.
+	dst := filepath.Join(t.TempDir(), "restored")
+	if _, err := Hydrate(context.Background(), h.cfg, dst, HydrateOpts{Generation: 2}); err != nil {
+		t.Fatalf("hydrate --generation 2: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dst, "wiki/concepts/Foo.md"))
+	if err != nil {
+		t.Fatalf("file deleted in a LATER generation must be restored from the pre-delete gen: %v", err)
+	}
+	if string(b) != "# Foo" {
+		t.Fatalf("restored content = %q, want pre-delete %q", b, "# Foo")
+	}
+}
+
 func TestHydrate_MetaTombstoneAndLaterDeleteBound(t *testing.T) {
 	h := newHydrateFixture(t)
 	deleteWS(t, h.src.dir, "wiki/concepts/Foo.md")

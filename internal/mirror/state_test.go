@@ -174,10 +174,17 @@ func TestGenerationMeta_MapsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Deterministic across adversarial insertion order (same entries, both orders).
+	// Deterministic across insertion order (≥2 entries, reversed — a
+	// single-entry map cannot detect nondeterminism, review nit).
+	meta.Objects["wiki/concepts/Bar.md"] = meta.Objects["wiki/concepts/Foo.md"]
+	b1, err = MarshalMeta(meta)
+	if err != nil {
+		t.Fatal(err)
+	}
 	meta2 := &GenerationMeta{}
 	*meta2 = *meta
 	meta2.Objects = map[string]ObjectRef{}
+	meta2.Objects["wiki/concepts/Bar.md"] = meta.Objects["wiki/concepts/Bar.md"]
 	meta2.Objects["wiki/concepts/Foo.md"] = meta.Objects["wiki/concepts/Foo.md"]
 	b2, err := MarshalMeta(meta2)
 	if err != nil {

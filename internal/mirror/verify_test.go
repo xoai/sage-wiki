@@ -396,3 +396,49 @@ func TestVerify_MetaMapTombstoneSkipped(t *testing.T) {
 		t.Fatalf("tombstone in meta map must not violate: %+v", rep.Violations)
 	}
 }
+
+// F-013 witness: an object referenced ONLY by a retained generation's
+// sealed map is NOT an orphan (it is a format member); a genuinely
+// unreferenced object IS still flagged.
+func TestVerify_MetaOnlyObjectNotOrphaned(t *testing.T) {
+	fake := newFakeS3()
+	st := verifyFixture(t, fake)
+	addRotatedGen(t, fake, 2)
+	sha := sha256HexBytes([]byte("doc"))
+	meta := &GenerationMeta{
+		FormatVersion: FormatVersion, Generation: 2,
+		CreatedAt: time.Now().UTC(), SealedAt: time.Now().UTC(),
+		Snapshot: "ws/db/generation-2/snapshot.db.zst", SnapshotSHA256: sha256HexBytes([]byte("gen-snap")),
+		WAL: []WALSegmentRef{},
+		Objects: map[string]ObjectRef{
+			"wiki/meta-only.md": {Key: "ws/objects/docs/" + sha[:2] + "/" + sha, SHA256: sha},
+		},
+	}
+	mb, _ := MarshalMeta(meta)
+	fake.objects[GenerationMetaKey("ws/", 2)] = mb
+	// The meta-only object exists in the bucket.
+	fake.objects["ws/objects/docs/"+sha[:2]+"/"+sha] = []byte("doc")
+	// Plus a genuine orphan.
+	orphanSHA := sha256HexBytes([]byte("orphan"))
+	fake.objects["ws/objects/docs/"+orphanSHA[:2]+"/"+orphanSHA] = []byte("orphan")
+
+	m := openVerifyMirror(t, fake, st)
+	rep, err := m.Verify(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range rep.Advisories {
+		if strings.Contains(a, "meta-only") {
+			t.Fatalf("meta-map object must NOT be flagged orphan: %q", a)
+		}
+	}
+	found := false
+	for _, a := range rep.Advisories {
+		if strings.Contains(a, orphanSHA[:16]) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("genuine orphan must still be advisory: %v", rep.Advisories)
+	}
+}

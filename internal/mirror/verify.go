@@ -198,7 +198,9 @@ func (o *mirrorOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
 		}
 	}
 
-	// Orphan advisory: anything under our prefixes not referenced.
+	// Orphan advisory: anything under our prefixes not referenced by live
+	// state OR any retained generation's sealed map (F-013: a meta-only
+	// object is a FORMAT MEMBER, never an orphan).
 	for _, listPrefix := range []string{prefix + "objects/", prefix + "vectors/", prefix + "db/"} {
 		orphans, err := m.client.ListObjects(ctx, m.cfg.Bucket, listPrefix)
 		if err != nil {
@@ -207,6 +209,9 @@ func (o *mirrorOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
 		for _, k := range orphans {
 			if _, ok := referenced[k]; ok {
 				continue
+			}
+			if _, ok := metaRefs[k]; ok {
+				continue // referenced by a retained generation's sealed map
 			}
 			if _, err := ParseGenerationMetaKey(k); err == nil {
 				continue // meta.json is a format member, never an orphan
