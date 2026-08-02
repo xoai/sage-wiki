@@ -310,3 +310,89 @@ func TestVerify_NegativeStateRetain_FallsBack(t *testing.T) {
 		t.Fatal("negative state retain must NOT disable rotated checks (fallback applies)")
 	}
 }
+
+// AC-5 (invariant c): a retained generation's meta-map object that is
+// missing or corrupted is a violation naming generation + key; --fast
+// passes on a flipped byte (existence holds).
+func TestVerify_MetaMapCorruptionFails(t *testing.T) {
+	fake := newFakeS3()
+	st := verifyFixture(t, fake)
+	addRotatedGen(t, fake, 2)
+	// Give gen 2 a meta MAP with one object.
+	sha := sha256HexBytes([]byte("doc"))
+	meta := &GenerationMeta{
+		FormatVersion: FormatVersion, Generation: 2,
+		CreatedAt: time.Now().UTC(), SealedAt: time.Now().UTC(),
+		Snapshot: "ws/db/generation-2/snapshot.db.zst", SnapshotSHA256: sha256HexBytes([]byte("gen-snap")),
+		WAL: []WALSegmentRef{},
+		Objects: map[string]ObjectRef{
+			"wiki/a.md": {Key: "ws/objects/docs/" + sha[:2] + "/" + sha, SHA256: sha},
+		},
+	}
+	mb, _ := MarshalMeta(meta)
+	fake.objects[GenerationMetaKey("ws/", 2)] = mb
+	fake.objects["ws/objects/docs/"+sha[:2]+"/"+sha] = []byte("doc")
+
+	m := openVerifyMirror(t, fake, st)
+	rep, err := m.Verify(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.Valid {
+		t.Fatalf("intact meta map must pass: %+v", rep.Violations)
+	}
+
+	// Flip one byte in the meta-mapped object.
+	fake.objects["ws/objects/docs/"+sha[:2]+"/"+sha] = []byte("Xoc")
+	rep, err = m.Verify(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Valid {
+		t.Fatal("corrupted meta-map object must fail full verify")
+	}
+	found := false
+	for _, v := range rep.Violations {
+		if strings.Contains(v, "generation 2") && strings.Contains(v, "wiki/a.md") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("violation must name generation + key: %v", rep.Violations)
+	}
+	// --fast is existence-only → passes.
+	fast, err := m.VerifyFast(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fast.Valid {
+		t.Fatalf("--fast must pass on flipped byte (existence holds): %+v", fast.Violations)
+	}
+}
+
+func TestVerify_MetaMapTombstoneSkipped(t *testing.T) {
+	fake := newFakeS3()
+	st := verifyFixture(t, fake)
+	addRotatedGen(t, fake, 2)
+	sha := sha256HexBytes([]byte("doc"))
+	meta := &GenerationMeta{
+		FormatVersion: FormatVersion, Generation: 2,
+		CreatedAt: time.Now().UTC(), SealedAt: time.Now().UTC(),
+		Snapshot: "ws/db/generation-2/snapshot.db.zst", SnapshotSHA256: sha256HexBytes([]byte("gen-snap")),
+		WAL: []WALSegmentRef{},
+		Objects: map[string]ObjectRef{
+			"wiki/gone.md": {Key: "ws/objects/docs/" + sha[:2] + "/" + sha, SHA256: sha, Deleted: true},
+		},
+	}
+	mb, _ := MarshalMeta(meta)
+	fake.objects[GenerationMetaKey("ws/", 2)] = mb
+	// NO object present — tombstone must not require one.
+	m := openVerifyMirror(t, fake, st)
+	rep, err := m.Verify(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.Valid {
+		t.Fatalf("tombstone in meta map must not violate: %+v", rep.Violations)
+	}
+}
