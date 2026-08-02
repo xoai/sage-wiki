@@ -14,6 +14,7 @@ import (
 func ConfigFromYAML(wsDir string, mc config.MirrorConfig) (Config, error) {
 	cfg := Config{
 		Endpoint:             mc.Endpoint,
+		Addressing:           mc.Addressing,
 		Bucket:               mc.Bucket,
 		Prefix:               mc.Prefix,
 		Region:               mc.RegionOrDefault(),

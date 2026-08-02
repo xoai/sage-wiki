@@ -110,3 +110,35 @@ func TestChainTailLength_LocalAheadOfRemote(t *testing.T) {
 		t.Fatal("local-ahead-of-remote must return a loud error, not a panic")
 	}
 }
+
+// TestSnapshot_AfterTailCrash_NoWedge (F-114): mirror snapshot after a
+// step-1-crash window must reconcile, not wedge the remote with a
+// duplicate seq.
+func TestSnapshot_AfterTailCrash_NoWedge(t *testing.T) {
+	f := newShipFixture(t)
+	defer f.dbClose()
+	f.dbWrite(t, "row-1")
+	f.pass(t)
+	// Commit the tail remotely (crash: local bookkeeping lost).
+	f.dbWrite(t, "row-2")
+	st := f.remoteState(t)
+	seg, err := SealWALSegment(f.m.walPath(), f.m.local.WALOffset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.m.commitSegment(context.Background(), st, seg, 2); err != nil {
+		t.Fatal(err)
+	}
+	// Snapshot MUST reconcile, not duplicate seq 2.
+	if _, err := f.m.Snapshot(context.Background()); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	st = f.remoteState(t)
+	if err := st.Validate(); err != nil {
+		t.Fatalf("remote wedged after snapshot: %v", err)
+	}
+	rep, _ := f.m.Verify(context.Background())
+	if !rep.Valid {
+		t.Fatalf("verify: %+v", rep.Violations)
+	}
+}

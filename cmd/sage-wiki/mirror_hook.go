@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -49,6 +50,12 @@ func maybeShipAfterCommand() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*mcfg.ShipLockTimeout)
 	defer cancel()
 	if err := m.Ship(ctx, pkmirror.ChangeBatch{}); err != nil {
+		// Expected-quiet (F-117): a pre-db workspace simply has nothing to
+		// ship yet — the pinned flow must not print scary noise.
+		var nr *mirror.NotReadyError
+		if errors.As(err, &nr) {
+			return
+		}
 		fmt.Fprintf(os.Stderr, "mirror: ship pass failed: %v (changes ship on a later pass)\n", err)
 	}
 }

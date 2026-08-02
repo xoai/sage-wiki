@@ -54,6 +54,7 @@ type MirrorEncryptionConfig struct {
 type MirrorConfig struct {
 	Enabled              bool                   `yaml:"enabled,omitempty"`
 	Endpoint             string                 `yaml:"endpoint,omitempty"`
+	Addressing           string                 `yaml:"addressing,omitempty"` // "auto" (default) | "path" | "virtual"
 	Bucket               string                 `yaml:"bucket,omitempty"`
 	Prefix               string                 `yaml:"prefix,omitempty"`
 	Region               string                 `yaml:"region,omitempty"`
@@ -1203,6 +1204,9 @@ func (c *Config) Validate() error {
 					return fmt.Errorf("config: invalid %s %q: %w", name, s, err)
 				}
 			}
+		}
+		if m.Addressing != "" && m.Addressing != "auto" && m.Addressing != "path" && m.Addressing != "virtual" {
+			return fmt.Errorf("config: invalid mirror.addressing %q (valid: auto, path, virtual)", m.Addressing)
 		}
 		if m.RetainGenerations < 0 {
 			return fmt.Errorf("config: mirror.retain_generations must be non-negative")

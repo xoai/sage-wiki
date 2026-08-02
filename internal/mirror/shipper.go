@@ -26,6 +26,92 @@ type shipResult struct {
 	Warnings          []string
 }
 
+// reconcileWalBookkeeping runs pass-entry wal reconciliation (Gate-3
+// F-077/F-078): local wal bookkeeping must agree with the committed remote
+// chain BEFORE any sealing. shipPass AND Snapshot both run it (pass-3
+// F-114: a rotation without it re-seals the committed tail into a
+// duplicate seq and wedges the remote permanently).
+func (m *Mirror) reconcileWalBookkeeping(ctx context.Context, res *shipResult, st *State, local *LocalState, walHdr WALHeader, walSize int64, walPresent bool) error {
+	// (see caller comment)
+	// bookkeeping must agree with the committed remote chain BEFORE any
+	// sealing, on EVERY pass — not only under pending_rotation. The two
+	// crash windows: (i) tail committed remotely but the local write lost
+	// (same generation, stale seq/offset); (ii) rotation step 4 committed
+	// remotely but step 5 lost (generation mismatch, and the on-disk WAL
+	// may still hold pre-restart content that must never seal into the new
+	// generation). ---
+	if local.Generation != st.Generation {
+		// (ii): generation mismatch (rotation step 4 committed remotely,
+		// step 5 lost). The on-disk WAL may be (a) the PRE-restart
+		// incarnation (its content is already in the snapshot — sealing it
+		// would poison the new chain with a second salt), or (b) a
+		// POST-restart incarnation (frames written after the crashed
+		// rotation's checkpoint — they LEGITIMATELY belong to the new
+		// chain and must seal from byte 0 with their header). Distinguish
+		// by salt against the stale bookkeeping; checkpointRestart ONLY in
+		// case (a)/unknown, and re-read identity AFTER it — pass-entry
+		// reads are stale by then (F-093).
+		staleSalt := local.WALSalt
+		staleGen := local.Generation
+		curHdr, curSize, curErr := WALInfoFromFile(m.walPath())
+		local.Generation = st.Generation
+		local.LastSegmentSeq = len(st.DB.WAL)
+		switch {
+		case curErr == nil && staleSalt != 0 && curHdr.SaltID() != staleSalt:
+			// (b): adopt the fresh incarnation at offset 0 — branch (1)
+			// seals from the header; the chain keeps ONE salt.
+			local.WALSalt = curHdr.SaltID()
+			local.WALOffset = 0
+			walHdr, walSize, walPresent = curHdr, curSize, true
+		default:
+			// (a)/unknown: fold the stale incarnation (its content is
+			// either already in the snapshot or handled by the fold rules
+			// below), then adopt whatever fresh WAL exists.
+			if err := m.checkpointRestart(); err != nil {
+				return fmt.Errorf("ship: reconcile generation %d→%d: %w", staleGen, st.Generation, err)
+			}
+			local.WALSalt, local.WALOffset = m.adoptWAL()
+			if hdr2, size2, err2 := WALInfoFromFile(m.walPath()); err2 == nil {
+				walHdr, walSize, walPresent = hdr2, size2, true
+			} else {
+				walPresent = false
+			}
+		}
+		// A pending rotation IS this remote commit — consume it here.
+		if local.PendingRotation {
+			local.PendingRotation = false
+			local.ConsecutiveDefers = 0
+			local.LastRotationAt = st.DB.CreatedAt
+		}
+		// Refresh the hash reference for the adopted generation.
+		if hash, _, herr := hashFile(m.dbPath()); herr == nil {
+			local.LastDBSHA256 = hash
+			res.HashedDB = true
+		}
+		if err := SaveLocalState(localStatePath(m.dir), local); err != nil {
+			return err
+		}
+	} else if local.LastSegmentSeq != len(st.DB.WAL) && walPresent && walHdr.SaltID() == local.WALSalt {
+		// (i): the remote chain has segments our bookkeeping lost. Realign
+		// EXACTLY: the next unsealed byte is the current offset plus the
+		// uncompressed lengths of the segments we missed — NOT walSize
+		// (frames appended between crash and recovery live there and must
+		// seal as the next seq — F-094), and NOT a re-seal of the tail
+		// (a duplicated frame breaks WAL's cumulative checksums and
+		// poisons everything after it — measured).
+		extra, err := m.chainTailLength(ctx, st, local.LastSegmentSeq)
+		if err != nil {
+			return fmt.Errorf("ship: realign offset: %w", err)
+		}
+		local.WALOffset += extra
+		local.LastSegmentSeq = len(st.DB.WAL)
+		if err := SaveLocalState(localStatePath(m.dir), local); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Ship implements the pkg seam: a ChangeBatch is accepted for interface
 // conformance; shipping is diff-driven (spec.md §Ship trigger), so the batch
 // payload is advisory only. Warnings are LOGGED (pass-2 MAJOR-4: prune
@@ -61,6 +147,21 @@ func (o *mirrorOps) Snapshot(ctx context.Context) (pkmirror.SnapshotID, error) {
 	m.local = local
 	st, err := m.remoteState(ctx)
 	if err != nil {
+		return "", err
+	}
+	// F-114: Snapshot rotates directly — it MUST run the same pass-entry
+	// reconciliation or a step-1-crash window wedges the remote with a
+	// duplicate seq (permanent, bucket surgery).
+	walHdr, walSize, walErr := WALInfoFromFile(m.walPath())
+	walPresent := walErr == nil
+	if walErr != nil && !errors.Is(walErr, os.ErrNotExist) {
+		var torn *ErrTornWALHeader
+		if !errors.As(walErr, &torn) {
+			return "", walErr
+		}
+	}
+	var res shipResult
+	if err := m.reconcileWalBookkeeping(ctx, &res, st, local, walHdr, walSize, walPresent); err != nil {
 		return "", err
 	}
 	if err := m.rotate(ctx, st); err != nil {
@@ -100,7 +201,7 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 		if _, serr := os.Stat(m.dbPath()); serr != nil {
 			return res, err // still no db — nothing to bootstrap
 		}
-		if berr := m.bootstrapGeneration1(ctx, "ship bootstrap"); berr != nil {
+		if berr := m.bootstrapGeneration1Locked(ctx, "ship bootstrap"); berr != nil {
 			return res, berr
 		}
 		st, err = m.remoteState(ctx)
@@ -120,83 +221,21 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 		}
 	}
 
-	// --- Pass-entry reconciliation (Gate-3 F-077/F-078): local wal
-	// bookkeeping must agree with the committed remote chain BEFORE any
-	// sealing, on EVERY pass — not only under pending_rotation. The two
-	// crash windows: (i) tail committed remotely but the local write lost
-	// (same generation, stale seq/offset); (ii) rotation step 4 committed
-	// remotely but step 5 lost (generation mismatch, and the on-disk WAL
-	// may still hold pre-restart content that must never seal into the new
-	// generation). ---
-	if local.Generation != st.Generation {
-		// (ii): generation mismatch (rotation step 4 committed remotely,
-		// step 5 lost). The on-disk WAL may be (a) the PRE-restart
-		// incarnation (its content is already in the snapshot — sealing it
-		// would poison the new chain with a second salt), or (b) a
-		// POST-restart incarnation (frames written after the crashed
-		// rotation's checkpoint — they LEGITIMATELY belong to the new
-		// chain and must seal from byte 0 with their header). Distinguish
-		// by salt against the stale bookkeeping; checkpointRestart ONLY in
-		// case (a)/unknown, and re-read identity AFTER it — pass-entry
-		// reads are stale by then (F-093).
-		staleSalt := local.WALSalt
-		staleGen := local.Generation
-		curHdr, curSize, curErr := WALInfoFromFile(m.walPath())
-		local.Generation = st.Generation
-		local.LastSegmentSeq = len(st.DB.WAL)
-		switch {
-		case curErr == nil && staleSalt != 0 && curHdr.SaltID() != staleSalt:
-			// (b): adopt the fresh incarnation at offset 0 — branch (1)
-			// seals from the header; the chain keeps ONE salt.
-			local.WALSalt = curHdr.SaltID()
-			local.WALOffset = 0
-			walHdr, walSize, walPresent = curHdr, curSize, true
-		default:
-			// (a)/unknown: fold the stale incarnation (its content is
-			// either already in the snapshot or handled by the fold rules
-			// below), then adopt whatever fresh WAL exists.
-			if err := m.checkpointRestart(); err != nil {
-				return res, fmt.Errorf("ship: reconcile generation %d→%d: %w", staleGen, st.Generation, err)
-			}
-			local.WALSalt, local.WALOffset = m.adoptWAL()
-			if hdr2, size2, err2 := WALInfoFromFile(m.walPath()); err2 == nil {
-				walHdr, walSize, walPresent = hdr2, size2, true
-			} else {
-				walPresent = false
-			}
-		}
-		// A pending rotation IS this remote commit — consume it here.
-		if local.PendingRotation {
-			local.PendingRotation = false
-			local.ConsecutiveDefers = 0
-			local.LastRotationAt = st.DB.CreatedAt
-		}
-		// Refresh the hash reference for the adopted generation.
-		if hash, _, herr := hashFile(m.dbPath()); herr == nil {
-			local.LastDBSHA256 = hash
-			res.HashedDB = true
-		}
-		if err := SaveLocalState(localStatePath(m.dir), local); err != nil {
-			return res, err
-		}
-	} else if local.LastSegmentSeq != len(st.DB.WAL) && walPresent && walHdr.SaltID() == local.WALSalt {
-		// (i): the remote chain has segments our bookkeeping lost. Realign
-		// EXACTLY: the next unsealed byte is the current offset plus the
-		// uncompressed lengths of the segments we missed — NOT walSize
-		// (frames appended between crash and recovery live there and must
-		// seal as the next seq — F-094), and NOT a re-seal of the tail
-		// (a duplicated frame breaks WAL's cumulative checksums and
-		// poisons everything after it — measured).
-		extra, err := m.chainTailLength(ctx, st, local.LastSegmentSeq)
-		if err != nil {
-			return res, fmt.Errorf("ship: realign offset: %w", err)
-		}
-		local.WALOffset += extra
-		local.LastSegmentSeq = len(st.DB.WAL)
-		if err := SaveLocalState(localStatePath(m.dir), local); err != nil {
-			return res, err
+	// --- Pass-entry reconciliation (shared with Snapshot, F-114) ---
+	if err := m.reconcileWalBookkeeping(ctx, &res, st, local, walHdr, walSize, walPresent); err != nil {
+		return res, err
+	}
+	// Refresh identity post-reconciliation (adoption/checkpoint may have
+	// changed it).
+	walHdr, walSize, walErr = WALInfoFromFile(m.walPath())
+	walPresent = walErr == nil
+	if walErr != nil && !errors.Is(walErr, os.ErrNotExist) {
+		var torn *ErrTornWALHeader
+		if !errors.As(walErr, &torn) {
+			return res, walErr
 		}
 	}
+
 	// --- Step 2: reconcile pending_rotation (spec §Close-fold (5)) ---
 	if local.PendingRotation {
 		if st.Generation > local.Generation {

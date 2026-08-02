@@ -2,6 +2,7 @@ package mirror
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/mirror/s3"
@@ -12,6 +13,7 @@ import (
 // internal/config.MirrorConfig by the cmd layer — see spec.md §APIs).
 type Config struct {
 	Endpoint, Bucket, Prefix, Region string
+	Addressing                       string // "auto" (default) | "path" | "virtual"
 	AccessKeyEnv, SecretKeyEnv       string
 	CredentialsFile                  string
 	ShipInterval                     durationField
@@ -93,6 +95,24 @@ func (c *Config) normalize() {
 	if c.DrainTimeout == 0 {
 		c.DrainTimeout = 10 * time.Second
 	}
+	if c.Addressing == "" {
+		c.Addressing = "auto"
+	}
+}
+
+// pathStyle resolves the addressing mode (F-115): "path" forces path-style,
+// "virtual" forces virtual-host, "auto" selects virtual-host for AWS
+// endpoints (path-style is deprecated there) and path-style otherwise
+// (MinIO/R2 require path-style by default).
+func (c *Config) pathStyle() bool {
+	switch c.Addressing {
+	case "path":
+		return true
+	case "virtual":
+		return false
+	default: // auto
+		return !strings.Contains(c.Endpoint, "amazonaws.com")
+	}
 }
 
 // Open builds a Mirror: resolves credentials, constructs the S3 client,
@@ -103,7 +123,7 @@ func Open(wsDir string, cfg Config, src ChangeSource) (*Mirror, error) {
 	if err != nil {
 		return nil, err
 	}
-	client, err := s3.NewClient(cfg.Endpoint, cfg.Region, creds, s3.WithPathStyle(true))
+	client, err := s3.NewClient(cfg.Endpoint, cfg.Region, creds, s3.WithPathStyle(cfg.pathStyle()))
 	if err != nil {
 		return nil, err
 	}

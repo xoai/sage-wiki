@@ -86,15 +86,22 @@ func (o *mirrorOps) Enable(ctx context.Context) error {
 	return m.bootstrapGeneration1(ctx, "mirror enable")
 }
 
-// bootstrapGeneration1 snapshots the db and commits generation 1 under the
-// ship-mutex (shared by Enable and the first ship pass, F-104).
+// bootstrapGeneration1 is the mutex-taking WRAPPER used by Enable.
+// shipPass calls bootstrapGeneration1Locked directly (it already holds the
+// mutex — re-acquiring self-deadlocks via flock fd contention, F-113).
 func (m *Mirror) bootstrapGeneration1(ctx context.Context, what string) error {
-	prefix := NormalizePrefix(m.cfg.Prefix)
 	mutex, err := AcquireShipMutex(m.dir, m.cfg.ShipLockTimeout)
 	if err != nil {
 		return fmt.Errorf("%s: %w", what, err)
 	}
 	defer mutex.Release()
+	return m.bootstrapGeneration1Locked(ctx, what)
+}
+
+// bootstrapGeneration1Locked snapshots the db and commits generation 1.
+// The caller MUST hold the ship-mutex (wrapper above or shipPass).
+func (m *Mirror) bootstrapGeneration1Locked(ctx context.Context, what string) error {
+	prefix := NormalizePrefix(m.cfg.Prefix)
 
 	// Absence re-check UNDER the mutex (pass-2 MAJOR-3): two concurrent
 	// enables (or an enable racing a first-pass bootstrap) must not
@@ -106,6 +113,20 @@ func (m *Mirror) bootstrapGeneration1(ctx context.Context, what string) error {
 	}
 	if exists {
 		return ErrAlreadyEnabled
+	}
+
+	// Manifest identity check (F-118): never commit a generation under a
+	// foreign manifest (repointed config at someone else's bucket).
+	mb, err := m.client.GetObject(ctx, m.cfg.Bucket, ManifestKey(prefix))
+	if err != nil {
+		return fmt.Errorf("%s: read manifest.json: %w", what, err)
+	}
+	var man MirrorManifest
+	if err := json.Unmarshal(mb, &man); err != nil {
+		return fmt.Errorf("%s: parse manifest.json: %w", what, err)
+	}
+	if man.FormatVersion != FormatVersion {
+		return fmt.Errorf("%s: manifest format_version %d, want %d (foreign or legacy bucket — refusing to commit)", what, man.FormatVersion, FormatVersion)
 	}
 
 	snapBytes, err := snapshotDatabase(ctx, m.dbPath())

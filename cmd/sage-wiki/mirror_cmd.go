@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -91,7 +92,11 @@ func runMirrorEnable(cmd *cobra.Command, args []string) error {
 	if err := ensureMirrorEnabledFlag(dir, cfg); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "mirror enabled: s3://%s/%s (generation 1 bootstrapped)\n", cfg.Mirror.Bucket, mirror.NormalizePrefix(mcfg.Prefix))
+	if _, statErr := os.Stat(filepath.Join(dir, ".sage", "wiki.db")); statErr == nil {
+		fmt.Fprintf(cmd.OutOrStdout(), "mirror enabled: s3://%s/%s (generation 1 bootstrapped)\n", cfg.Mirror.Bucket, mirror.NormalizePrefix(mcfg.Prefix))
+		return nil
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "mirror enabled: s3://%s/%s (manifest written; generation 1 bootstraps on the first pass with a database)\n", cfg.Mirror.Bucket, mirror.NormalizePrefix(mcfg.Prefix))
 	return nil
 }
 

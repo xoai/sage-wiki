@@ -251,3 +251,71 @@ func TestEnable_StateIsZstdDecompressible(t *testing.T) {
 		t.Fatalf("decompressed snapshot lacks SQLite magic: %q", dbBytes[:15])
 	}
 }
+
+// TestBootstrap_PreDBEnableThenShipPass (F-113 regression): enable on a
+// db-less workspace (manifest only), create the db, ONE ship pass must
+// commit generation 1 — this deadlocked via mutex re-acquire before the
+// wrapper/inner split.
+func TestBootstrap_PreDBEnableThenShipPass(t *testing.T) {
+	fake := newFakeS3()
+	_, cfg := setupFakeMirror(t, fake)
+	dir := t.TempDir() // no .sage/wiki.db
+	m, err := Open(dir, cfg, NewDiffChangeSource(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	if _, ok := fake.get("ws/manifest.json"); !ok {
+		t.Fatal("manifest.json missing")
+	}
+	// Create the db now (the pinned pre-compile flow).
+	os.MkdirAll(filepath.Join(dir, ".sage"), 0o755)
+	db, err := sql.Open("sqlite", filepath.Join(dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("PRAGMA journal_mode=WAL; CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('boot')"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	// ONE pass must bootstrap + ship — before F-113 this spun 5s into
+	// ErrShipLocked forever.
+	res, err := m.shipPass(context.Background())
+	if err != nil {
+		t.Fatalf("ship pass after pre-db enable: %v", err)
+	}
+	_ = res
+	sb, ok := fake.get("ws/mirror-state.json")
+	if !ok {
+		t.Fatal("generation 1 never committed after bootstrap pass")
+	}
+	st, err := UnmarshalState(sb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Generation != 1 {
+		t.Fatalf("generation = %d, want 1", st.Generation)
+	}
+	if _, ok := fake.get(st.DB.Snapshot); !ok {
+		t.Fatal("gen-1 snapshot missing after bootstrap")
+	}
+}
+
+// TestBootstrap_ForeignManifestRefused (F-118): a bucket whose manifest
+// carries a different format_version must not receive a gen-1 commit.
+func TestBootstrap_ForeignManifestRefused(t *testing.T) {
+	fake := newFakeS3()
+	_, cfg := setupFakeMirror(t, fake)
+	fake.objects["ws/manifest.json"] = []byte(`{"format_version":99,"tool":"other","workspace":"x","created_at":"2026-08-01T00:00:00Z","encrypted":false}`)
+	dir := makeWorkspaceWithDB(t)
+	m, err := Open(dir, cfg, NewDiffChangeSource(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.shipPass(context.Background()); err == nil {
+		t.Fatal("foreign manifest must refuse bootstrap")
+	}
+}

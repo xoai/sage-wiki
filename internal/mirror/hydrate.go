@@ -26,7 +26,7 @@ func Hydrate(ctx context.Context, cfg Config, dst string, opts HydrateOpts) (*Re
 	if err != nil {
 		return nil, err
 	}
-	client, err := s3.NewClient(cfg.Endpoint, cfg.Region, creds, s3.WithPathStyle(true))
+	client, err := s3.NewClient(cfg.Endpoint, cfg.Region, creds, s3.WithPathStyle(cfg.pathStyle()))
 	if err != nil {
 		return nil, err
 	}

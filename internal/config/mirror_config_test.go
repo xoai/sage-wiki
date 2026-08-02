@@ -143,3 +143,16 @@ func TestMirrorConfig_Defaults(t *testing.T) {
 		t.Fatalf("defers default = %d", m.MaxConsecutiveDefersOrDefault())
 	}
 }
+
+func TestMirrorConfig_AddressingValidation(t *testing.T) {
+	c := mirrorBase()
+	c.Mirror.Addressing = "sideways"
+	if err := c.Validate(); err == nil {
+		t.Fatal("invalid addressing should fail")
+	}
+	c = mirrorBase()
+	c.Mirror.Addressing = "virtual"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("virtual addressing rejected: %v", err)
+	}
+}

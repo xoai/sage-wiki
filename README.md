@@ -598,6 +598,7 @@ workspace or config values:
 mirror:
   enabled: false              # `mirror enable` sets this
   endpoint: ""                # e.g. https://<acct>.r2.cloudflarestorage.com or http://localhost:9000
+  addressing: "auto"          # auto = virtual-host for amazonaws.com, path-style otherwise; "path"/"virtual" force
   bucket: ""
   prefix: ""                  # default: workspace directory name
   region: "auto"              # SigV4 region; "auto" works for R2/MinIO

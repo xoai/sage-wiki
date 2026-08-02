@@ -110,6 +110,9 @@ func (s *State) Validate() error {
 	if s.Generation < 1 {
 		return fmt.Errorf("mirror-state: generation %d < 1", s.Generation)
 	}
+	if s.DB.CreatedAt.IsZero() {
+		return fmt.Errorf("mirror-state: db.created_at missing (F-116)")
+	}
 	return validateDB("mirror-state", s.Generation, s.DB.Snapshot, s.DB.SnapshotSHA256, s.DB.WAL, s.Objects, s.Vectors)
 }
 
@@ -120,6 +123,9 @@ func (m *GenerationMeta) Validate() error {
 	}
 	if m.Generation < 1 {
 		return fmt.Errorf("meta: generation %d < 1", m.Generation)
+	}
+	if m.CreatedAt.IsZero() {
+		return fmt.Errorf("meta: created_at missing (F-116)")
 	}
 	if m.SealedAt.IsZero() {
 		return fmt.Errorf("meta: sealed_at missing")

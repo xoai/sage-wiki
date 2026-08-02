@@ -67,6 +67,10 @@ sage-wiki hydrate s3://bucket/prefix dir --key-file ~/.config/sage/mirror.key
   follow-up.
 - `--partial` writes progress markers and prints when lexical/graph is
   available (before vectors finish); a follow-up `--partial` resumes.
+- Addressing: `mirror.addressing: auto` uses virtual-host style for AWS
+  endpoints (path-style is deprecated there) and path-style elsewhere
+  (MinIO/R2); `path`/`virtual` force a style. Static credentials only
+  (no STS/session-token support).
 - Credentials for hydrate read from `AWS_ACCESS_KEY_ID` /
   `AWS_SECRET_ACCESS_KEY` or `--credentials-file` (no workspace config
   exists yet); `--region` defaults to `auto`, and `--endpoint` is required
