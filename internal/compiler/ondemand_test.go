@@ -29,7 +29,7 @@ func TestCompileTopic_FilterAndPromote(t *testing.T) {
 
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
-	items := NewCompileItemStore(db)
+	items := NewCompileItemStore(db, config.NowUTC)
 
 	// Create source files on disk
 	projectDir := t.TempDir()
@@ -161,7 +161,7 @@ func TestCompileTopic_SkipsCompiledSources(t *testing.T) {
 
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
-	items := NewCompileItemStore(db)
+	items := NewCompileItemStore(db, config.NowUTC)
 
 	projectDir := t.TempDir()
 	os.MkdirAll(filepath.Join(projectDir, "raw"), 0755)
@@ -251,7 +251,7 @@ func TestCompileTopic_AllCompiled(t *testing.T) {
 
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
-	items := NewCompileItemStore(db)
+	items := NewCompileItemStore(db, config.NowUTC)
 
 	projectDir := t.TempDir()
 	os.MkdirAll(filepath.Join(projectDir, "raw"), 0755)

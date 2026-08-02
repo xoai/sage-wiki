@@ -60,6 +60,7 @@ func ReExtract(projectDir string, options ...ReExtractOption) (*CompileResult, e
 	if err != nil {
 		return nil, fmt.Errorf("re-extract: load manifest: %w", err)
 	}
+	mf.SetNow(config.NowUTC)
 	// Merge base (D3): snapshot before mutation so the Save reload-merges the
 	// re-extract run's delta onto any writer that landed during it.
 	base := mf.Clone()
@@ -159,7 +160,7 @@ func ReExtract(projectDir string, options ...ReExtractOption) (*CompileResult, e
 		relPatterns := ontology.RelationPatterns(mergedRels)
 		log.Info("Pass 3: writing articles", "concepts", len(concepts))
 		articles := WriteArticles(ArticleWriteOpts{
-		Prompts:            ro.prompts,
+			Prompts:            ro.prompts,
 			ProjectDir:         projectDir,
 			OutputDir:          cfg.Output,
 			Client:             client,

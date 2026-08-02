@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1038,7 +1039,20 @@ func (c *CompilerConfig) UserTimeLocation() *time.Location {
 
 // UserNow returns the current time formatted in RFC3339 using the configured timezone.
 func (c *CompilerConfig) UserNow() string {
-	return time.Now().In(c.UserTimeLocation()).Format(time.RFC3339)
+	return NowUTC().In(c.UserTimeLocation()).Format(time.RFC3339)
+}
+
+// NowUTC returns the current time in UTC. SOURCE_DATE_EPOCH (the
+// reproducible-builds convention) overrides the clock: with it set, every
+// caller gets the epoch — the single clock behind SPEC-04's deterministic
+// artifacts (frontmatter, manifest, DB rows, compile IDs).
+func NowUTC() time.Time {
+	if s := os.Getenv("SOURCE_DATE_EPOCH"); s != "" {
+		if sec, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return time.Unix(sec, 0).UTC()
+		}
+	}
+	return time.Now().UTC()
 }
 
 // Load reads and parses a config file, expanding environment variables.

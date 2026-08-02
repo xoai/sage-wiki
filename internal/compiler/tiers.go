@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-		"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/internal/store"
 	"gopkg.in/yaml.v3"
 )
 
@@ -103,7 +103,10 @@ func (tm *TierManager) CheckDemotions() ([]string, error) {
 		staleDays = 90
 	}
 
-	staleThreshold := time.Now().AddDate(0, 0, -staleDays).Format(time.RFC3339)
+	// The threshold MUST come from the same clock that stamps created_at
+	// (SPEC-04 D4): with SOURCE_DATE_EPOCH pinned, created_at is the epoch —
+	// comparing it against wall-clock-now would demote every row as stale.
+	staleThreshold := config.NowUTC().AddDate(0, 0, -staleDays).Format(time.RFC3339)
 	return tm.items.ListDemotionCandidates(staleThreshold)
 }
 

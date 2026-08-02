@@ -15,8 +15,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/shopspring/decimal"
 	"github.com/xoai/sage-wiki/internal/compiler"
-	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/storedial"
 	"github.com/xoai/sage-wiki/internal/tui"
 	"github.com/xoai/sage-wiki/internal/tui/components"
@@ -31,10 +31,10 @@ type fileStatus struct {
 
 // CompileCompleteMsg signals a compile finished.
 type CompileCompleteMsg struct {
-	result    *compiler.CompileResult
-	err       error
-	costInfo  string // formatted cost summary (single line)
-	tierInfo  string // formatted tier distribution (single line)
+	result   *compiler.CompileResult
+	err      error
+	costInfo string // formatted cost summary (single line)
+	tierInfo string // formatted tier distribution (single line)
 }
 
 // fileChangeMsg signals output files changed (for watch mode).
@@ -108,17 +108,17 @@ func New(projectDir, outputDir string, sourcePaths []string, debounce int) Model
 	events, _ := progress.Subscribe(64)
 
 	return Model{
-		spinner:     s,
-		preview:     vp,
-		statusBar:   sb,
-		projectDir:  projectDir,
-		outputDir:   outputDir,
-		sourcePaths: sourcePaths,
-		debounce:    debounce,
-		focused:     paneFiles,
-		progress:    progress,
+		spinner:        s,
+		preview:        vp,
+		statusBar:      sb,
+		projectDir:     projectDir,
+		outputDir:      outputDir,
+		sourcePaths:    sourcePaths,
+		debounce:       debounce,
+		focused:        paneFiles,
+		progress:       progress,
 		progressEvents: events,
-		compileOpts: compiler.CompileOpts{Progress: progress},
+		compileOpts:    compiler.CompileOpts{Progress: progress},
 	}
 }
 
@@ -272,8 +272,8 @@ func (m Model) View() string {
 
 // --- Layout ---
 
-func (m Model) listWidth() int  { return m.width * 2 / 5 }
-func (m Model) previewWidth() int { return m.width - m.listWidth() }
+func (m Model) listWidth() int     { return m.width * 2 / 5 }
+func (m Model) previewWidth() int  { return m.width - m.listWidth() }
 func (m Model) contentHeight() int { return m.height - 3 }
 
 // --- Rendering ---
@@ -410,7 +410,7 @@ func queryTierLine(projectDir string) string {
 	}
 	defer db.Close()
 
-	items := compiler.NewCompileItemStore(db)
+	items := compiler.NewCompileItemStore(db, config.NowUTC)
 	stats, err := items.Stats()
 	if err != nil || stats.TotalSources == 0 {
 		return ""
@@ -511,4 +511,3 @@ func (m Model) dirSnapshot() string {
 	}
 	return fmt.Sprintf("%d", total)
 }
-

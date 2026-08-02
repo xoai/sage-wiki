@@ -96,7 +96,7 @@ func CommunitiesPass(
 				Level:       li,
 				ParentID:    parent,
 				MemberCount: len(members),
-				UpdatedAt:   time.Now().UTC().Format(time.RFC3339),
+				UpdatedAt:   config.NowUTC().Format(time.RFC3339),
 			})
 			membersOf[id] = members
 		}

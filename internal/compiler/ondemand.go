@@ -80,7 +80,7 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 	}
 
 	// Filter to uncompiled sources (Tier < 3)
-	items := NewCompileItemStore(opts.DB)
+	items := NewCompileItemStore(opts.DB, config.NowUTC)
 	var uncompiled []SourceInfo
 	seen := make(map[string]bool)
 
@@ -148,6 +148,7 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 		if err != nil {
 			return fmt.Errorf("on-demand: load manifest: %w", err)
 		}
+		mf.SetNow(config.NowUTC)
 		// Merge base (D3): snapshot before mutation so the Save reload-merges the
 		// on-demand run's delta onto any writer that landed during it.
 		base := mf.Clone()

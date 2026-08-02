@@ -501,7 +501,7 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("re-embed: load config: %w", err)
 		}
-		backend, err := storedial.Open(cfg.Storage, store.OpenOptions{Mode: store.ModeWriter, ProjectDir: dir, TemporalEnabled: cfg.Ontology.Temporal.Enabled})
+		backend, err := storedial.Open(cfg.Storage, store.OpenOptions{Mode: store.ModeWriter, ProjectDir: dir, TemporalEnabled: cfg.Ontology.Temporal.Enabled, Now: config.NowUTC})
 		if err != nil {
 			return fmt.Errorf("re-embed: open db: %w", err)
 		}

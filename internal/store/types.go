@@ -47,6 +47,11 @@ type OpenOptions struct {
 	// plain bool would silently DISABLE filtering in every unset literal
 	// (OpenConcrete, test/hub opens), inverting the spec default.
 	TemporalEnabled *bool
+	// Now is the artifact clock (SPEC-04 D4). Compile paths pass
+	// config.NowUTC (SOURCE_DATE_EPOCH-aware) so DB bytes are reproducible;
+	// nil keeps the wall clock, which is only acceptable on opens that never
+	// serve the compile path.
+	Now func() time.Time
 }
 
 // Learning mirrors the learnings table (and linter.Learning) for

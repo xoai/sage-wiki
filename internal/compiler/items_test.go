@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/storage"
 )
 
@@ -27,7 +28,7 @@ func TestCompileItemStore_UpsertAndGet(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	store := NewCompileItemStore(db)
+	store := NewCompileItemStore(db, config.NowUTC)
 
 	item := CompileItem{
 		SourcePath:  "raw/docs/test.md",
@@ -82,7 +83,7 @@ func TestCompileItemStore_GetByPath_NotFound(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	store := NewCompileItemStore(db)
+	store := NewCompileItemStore(db, config.NowUTC)
 	got, err := store.GetByPath("nonexistent")
 	if err != nil {
 		t.Fatalf("get: %v", err)
@@ -96,18 +97,18 @@ func TestCompileItemStore_ListByTier(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	store := NewCompileItemStore(db)
+	store := NewCompileItemStore(db, config.NowUTC)
 
 	for i := 0; i < 5; i++ {
 		store.Upsert(CompileItem{
 			SourcePath: fmt.Sprintf("raw/t0_%d.json", i),
-			Tier: 0, TierDefault: 0, SourceType: "compiler",
+			Tier:       0, TierDefault: 0, SourceType: "compiler",
 		})
 	}
 	for i := 0; i < 3; i++ {
 		store.Upsert(CompileItem{
 			SourcePath: fmt.Sprintf("raw/t1_%d.md", i),
-			Tier: 1, TierDefault: 1, SourceType: "compiler",
+			Tier:       1, TierDefault: 1, SourceType: "compiler",
 		})
 	}
 
@@ -129,7 +130,7 @@ func TestCompileItemStore_ListPending(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	store := NewCompileItemStore(db)
+	store := NewCompileItemStore(db, config.NowUTC)
 
 	// Tier 1 source, not yet embedded
 	store.Upsert(CompileItem{
@@ -166,7 +167,7 @@ func TestCompileItemStore_MarkPass(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	store := NewCompileItemStore(db)
+	store := NewCompileItemStore(db, config.NowUTC)
 	store.Upsert(CompileItem{
 		SourcePath: "raw/test.md", Tier: 1, SourceType: "compiler",
 	})
@@ -190,7 +191,7 @@ func TestCompileItemStore_SetTier_Idempotent(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	store := NewCompileItemStore(db)
+	store := NewCompileItemStore(db, config.NowUTC)
 	store.Upsert(CompileItem{
 		SourcePath: "raw/test.md", Tier: 1, TierDefault: 1,
 		PassIndexed: true, PassEmbedded: true, SourceType: "compiler",
@@ -220,7 +221,7 @@ func TestCompileItemStore_IncrementQueryHits(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	store := NewCompileItemStore(db)
+	store := NewCompileItemStore(db, config.NowUTC)
 	store.Upsert(CompileItem{
 		SourcePath: "raw/test.md", Tier: 1, SourceType: "compiler",
 	})
@@ -245,7 +246,7 @@ func TestCompileItemStore_IncrementQueryHits_MultiplePaths(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	store := NewCompileItemStore(db)
+	store := NewCompileItemStore(db, config.NowUTC)
 	store.Upsert(CompileItem{SourcePath: "raw/a.md", Tier: 1, SourceType: "compiler"})
 	store.Upsert(CompileItem{SourcePath: "raw/b.md", Tier: 1, SourceType: "compiler"})
 	store.Upsert(CompileItem{SourcePath: "raw/c.md", Tier: 1, SourceType: "compiler"})
@@ -288,7 +289,7 @@ func TestCompileItemStore_MarkError(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	store := NewCompileItemStore(db)
+	store := NewCompileItemStore(db, config.NowUTC)
 	store.Upsert(CompileItem{
 		SourcePath: "raw/test.md", Tier: 1, SourceType: "compiler",
 	})
@@ -309,7 +310,7 @@ func TestCompileItemStore_Stats(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	store := NewCompileItemStore(db)
+	store := NewCompileItemStore(db, config.NowUTC)
 	store.Upsert(CompileItem{SourcePath: "a.json", Tier: 0, SourceType: "compiler"})
 	store.Upsert(CompileItem{SourcePath: "b.md", Tier: 1, SourceType: "compiler"})
 	store.Upsert(CompileItem{SourcePath: "c.md", Tier: 3, PassWritten: true, SourceType: "compiler"})
@@ -340,7 +341,7 @@ func TestCompileItemStore_DeleteByPaths(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	store := NewCompileItemStore(db)
+	store := NewCompileItemStore(db, config.NowUTC)
 	store.Upsert(CompileItem{SourcePath: "a.md", Tier: 1, SourceType: "compiler"})
 	store.Upsert(CompileItem{SourcePath: "b.md", Tier: 1, SourceType: "compiler"})
 
@@ -358,7 +359,7 @@ func TestCompileItemStore_DeleteByPaths_MultiplePaths(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	store := NewCompileItemStore(db)
+	store := NewCompileItemStore(db, config.NowUTC)
 	store.Upsert(CompileItem{SourcePath: "a.md", Tier: 1, SourceType: "compiler"})
 	store.Upsert(CompileItem{SourcePath: "b.md", Tier: 1, SourceType: "compiler"})
 	store.Upsert(CompileItem{SourcePath: "c.md", Tier: 1, SourceType: "compiler"})
@@ -397,7 +398,7 @@ func TestCompileItemStore_DeleteByPaths_MultiplePaths(t *testing.T) {
 func TestUpsert_PreservesPassFlags_WhenHashUnchanged(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
-	store := NewCompileItemStore(db)
+	store := NewCompileItemStore(db, config.NowUTC)
 
 	// Simulate a previous compile that completed tier 0 + tier 1
 	if err := store.Upsert(CompileItem{
@@ -442,7 +443,7 @@ func TestUpsert_PreservesPassFlags_WhenHashUnchanged(t *testing.T) {
 func TestUpsert_ResetsPassFlags_WhenHashChanged(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
-	store := NewCompileItemStore(db)
+	store := NewCompileItemStore(db, config.NowUTC)
 
 	if err := store.Upsert(CompileItem{
 		SourcePath:     "raw/docs/test.md",
@@ -484,7 +485,7 @@ func TestUpsert_ResetsPassFlags_WhenHashChanged(t *testing.T) {
 func TestUpsert_NewRowGetsPassFlagsFromValues(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
-	store := NewCompileItemStore(db)
+	store := NewCompileItemStore(db, config.NowUTC)
 
 	if err := store.Upsert(CompileItem{
 		SourcePath:  "raw/docs/new.md",

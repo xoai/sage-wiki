@@ -20,11 +20,11 @@ var EngineVersion = "dev"
 
 // Manifest tracks sources, concepts, and their relationships.
 type Manifest struct {
-	Version  int                 `json:"version"`
-	Sources  map[string]Source   `json:"sources"`
-	Concepts map[string]Concept  `json:"concepts"`
-	EmbedModel string            `json:"embed_model,omitempty"`
-	EmbedDim   int               `json:"embed_dim,omitempty"`
+	Version    int                `json:"version"`
+	Sources    map[string]Source  `json:"sources"`
+	Concepts   map[string]Concept `json:"concepts"`
+	EmbedModel string             `json:"embed_model,omitempty"`
+	EmbedDim   int                `json:"embed_dim,omitempty"`
 
 	// FormatVersion is the workspace format discriminator (SPEC-01). Zero
 	// (absent on disk) = v0.2.x workspace: opens read-only until adopted
@@ -34,6 +34,24 @@ type Manifest struct {
 	Engine string `json:"engine_version,omitempty"`
 	// CreatedAt is the workspace creation time (RFC3339), set at init.
 	CreatedAt string `json:"created_at,omitempty"`
+
+	// now is the injectable clock (SPEC-04 D4): timestamps stamp from it so a
+	// pinned SOURCE_DATE_EPOCH propagates into the manifest. Never serialized.
+	now func() time.Time
+}
+
+// SetNow installs the clock used for every subsequent timestamp this
+// manifest stamps (AddSource, MarkCompiled, AddConcept). The default is
+// time.Now; compile paths inject the SDE-aware config.NowUTC.
+func (m *Manifest) SetNow(now func() time.Time) {
+	m.now = now
+}
+
+func (m *Manifest) nowUTC() time.Time {
+	if m.now != nil {
+		return m.now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 // IsPreFormat reports whether the manifest predates format versioning —
@@ -48,19 +66,19 @@ type Source struct {
 	Type             string   `json:"type"`
 	SizeBytes        int64    `json:"size_bytes"`
 	AddedAt          string   `json:"added_at"`
-	CompiledAt       string   `json:"compiled_at,omitempty"`  // Deprecated: use compile_items table
+	CompiledAt       string   `json:"compiled_at,omitempty"` // Deprecated: use compile_items table
 	SummaryPath      string   `json:"summary_path,omitempty"`
 	ConceptsProduced []string `json:"concepts_produced,omitempty"`
 	ChunkCount       int      `json:"chunk_count,omitempty"`
-	Status           string   `json:"status"`                   // Deprecated: use compile_items table
-	Tier             int      `json:"tier,omitempty"`            // 0-3, compilation tier
-	SourceType       string   `json:"source_type,omitempty"`     // compiler, scribe, manual
+	Status           string   `json:"status"`                // Deprecated: use compile_items table
+	Tier             int      `json:"tier,omitempty"`        // 0-3, compilation tier
+	SourceType       string   `json:"source_type,omitempty"` // compiler, scribe, manual
 }
 
 // Concept represents a tracked concept.
 type Concept struct {
-	ArticlePath  string   `json:"article_path"`
-	Sources      []string `json:"sources"`
+	ArticlePath string   `json:"article_path"`
+	Sources     []string `json:"sources"`
 	// Aliases carries the concept's extracted alias names (issue #128).
 	// omitempty + additive: old binaries ignore it on read; an old binary's
 	// Load+Save silently strips it on any manifest write (documented).
@@ -70,14 +88,22 @@ type Concept struct {
 
 // New creates an empty manifest stamped with the current workspace format.
 func New() *Manifest {
-	return &Manifest{
+	return NewWithClock(nil)
+}
+
+// NewWithClock is New with an injectable clock (SPEC-04 D4); nil keeps the
+// wall-clock default.
+func NewWithClock(now func() time.Time) *Manifest {
+	m := &Manifest{
 		Version:       2,
 		Sources:       make(map[string]Source),
 		Concepts:      make(map[string]Concept),
 		FormatVersion: CurrentFormatVersion,
 		Engine:        EngineVersion,
-		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
 	}
+	m.now = now
+	m.CreatedAt = m.nowUTC().Format(time.RFC3339)
+	return m
 }
 
 // Load reads a manifest from disk.
@@ -164,7 +190,7 @@ func (m *Manifest) AddSource(path string, hash string, typ string, size int64) {
 		Hash:      hash,
 		Type:      typ,
 		SizeBytes: size,
-		AddedAt:   time.Now().UTC().Format(time.RFC3339),
+		AddedAt:   m.nowUTC().Format(time.RFC3339),
 		Status:    "pending",
 	}
 }
@@ -172,7 +198,7 @@ func (m *Manifest) AddSource(path string, hash string, typ string, size int64) {
 // MarkCompiled marks a source as compiled.
 func (m *Manifest) MarkCompiled(path string, summaryPath string, concepts []string) {
 	if s, ok := m.Sources[path]; ok {
-		s.CompiledAt = time.Now().UTC().Format(time.RFC3339)
+		s.CompiledAt = m.nowUTC().Format(time.RFC3339)
 		s.SummaryPath = summaryPath
 		s.ConceptsProduced = concepts
 		s.Status = "compiled"
@@ -204,7 +230,7 @@ func (m *Manifest) AddConcept(name string, articlePath string, sources []string,
 		// Every compile re-adds every extracted concept; bumping the
 		// timestamp unconditionally dirtied the manifest for AutoCommit
 		// vaults on no-change recompiles (review).
-		c.LastCompiled = time.Now().UTC().Format(time.RFC3339)
+		c.LastCompiled = m.nowUTC().Format(time.RFC3339)
 	}
 	m.Concepts[name] = c
 }

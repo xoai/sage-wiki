@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/xoai/sage-wiki/internal/app"
+	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/store"
@@ -157,6 +158,7 @@ func Open(ctx context.Context, dir string, optFns ...Option) (*Workspace, error)
 	if err != nil {
 		return nil, fmt.Errorf("engine: load workspace manifest: %w", err)
 	}
+	mf.SetNow(config.NowUTC)
 	preFormat := mf.IsPreFormat()
 
 	if err := ctx.Err(); err != nil {

@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"time"
-	"strconv"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -338,7 +338,7 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 			GraphWeight:          s.cfg.Search.HybridWeightGraph,
 			GraphRelationWeights: s.cfg.Search.GraphRelationWeights,
 			IncludeDoc:           includeDoc,
-			Now:                 sourceDateEpoch(),
+			Now:                  sourceDateEpoch(),
 		}, search.Request{
 			Query:             query,
 			Limit:             limit,
@@ -396,7 +396,7 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 
 	// Record query hits for promotion tracking
 	if uncompiledCount > 0 {
-		items := compiler.NewCompileItemStore(s.db)
+		items := compiler.NewCompileItemStore(s.db, config.NowUTC)
 		tierMgr := compiler.NewTierManager(&s.cfg.Compiler, items)
 		var hitPaths []string
 		for _, r := range docResults {
@@ -589,6 +589,7 @@ func (s *Server) handleProvenance(ctx context.Context, req mcp.CallToolRequest) 
 	if err != nil {
 		return errorResult(fmt.Sprintf("load manifest: %v", err)), nil
 	}
+	mf.SetNow(config.NowUTC)
 
 	var result map[string]any
 

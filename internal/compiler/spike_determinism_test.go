@@ -131,6 +131,18 @@ compiler:
 	if _, err := Compile(dir, CompileOpts{}); err != nil {
 		t.Fatalf("spike Compile: %v", err)
 	}
+	if keep := os.Getenv("SAGE_SPIKE_KEEP"); keep != "" {
+		dst := filepath.Join(keep, filepath.Base(dir))
+		if err := os.MkdirAll(dst, 0755); err == nil {
+			for _, f := range []string{".sage/wiki.db", ".manifest.json", ".sage/usage.jsonl"} {
+				b, rerr := os.ReadFile(filepath.Join(dir, f))
+				if rerr == nil {
+					os.MkdirAll(filepath.Join(dst, filepath.Dir(f)), 0755)
+					os.WriteFile(filepath.Join(dst, f), b, 0644)
+				}
+			}
+		}
+	}
 	return dir
 }
 

@@ -52,7 +52,7 @@ func openWorkerTestStore(t *testing.T) *CompileItemStore {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	return NewCompileItemStore(db)
+	return NewCompileItemStore(db, config.NowUTC)
 }
 
 func TestWorker_IdleLoop(t *testing.T) {

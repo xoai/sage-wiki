@@ -22,7 +22,7 @@ func TestTierManager_ResolveTier_ConfigDefaults(t *testing.T) {
 			"go":   1,
 		},
 	}
-	items := NewCompileItemStore(db)
+	items := NewCompileItemStore(db, config.NowUTC)
 	tm := NewTierManager(cfg, items)
 
 	tests := []struct {
@@ -49,7 +49,7 @@ func TestTierManager_ResolveTier_Frontmatter(t *testing.T) {
 	defer cleanup()
 
 	cfg := &config.CompilerConfig{DefaultTier: 1}
-	items := NewCompileItemStore(db)
+	items := NewCompileItemStore(db, config.NowUTC)
 	tm := NewTierManager(cfg, items)
 
 	// Frontmatter overrides config default
@@ -78,7 +78,7 @@ func TestTierManager_ResolveTier_WikiTier(t *testing.T) {
 	os.WriteFile(filepath.Join(rawDir, ".wikitier"), []byte("\"*.json\": 0\n\"*.md\": 3\n\"README.md\": 0\n"), 0644)
 
 	cfg := &config.CompilerConfig{DefaultTier: 1}
-	items := NewCompileItemStore(db)
+	items := NewCompileItemStore(db, config.NowUTC)
 	tm := NewTierManager(cfg, items)
 
 	tests := []struct {
@@ -111,7 +111,7 @@ func TestTierManager_ResolveTier_WikiTierParentWalk(t *testing.T) {
 	os.WriteFile(filepath.Join(rawDir, ".wikitier"), []byte("\"*.md\": 3\n"), 0644)
 
 	cfg := &config.CompilerConfig{DefaultTier: 1}
-	items := NewCompileItemStore(db)
+	items := NewCompileItemStore(db, config.NowUTC)
 	tm := NewTierManager(cfg, items)
 
 	// File in nested subdir should inherit parent .wikitier
@@ -142,7 +142,7 @@ func TestTierManager_ResolveTier_WikiTierPrecedence(t *testing.T) {
 	os.WriteFile(filepath.Join(docsDir, ".wikitier"), []byte("\"*.md\": 0\n"), 0644)
 
 	cfg := &config.CompilerConfig{DefaultTier: 1}
-	items := NewCompileItemStore(db)
+	items := NewCompileItemStore(db, config.NowUTC)
 	tm := NewTierManager(cfg, items)
 
 	// File in docs/ should use child .wikitier (tier 0), not parent (tier 3)
@@ -168,7 +168,7 @@ func TestTierManager_CheckPromotions(t *testing.T) {
 			QueryHitCount: 3,
 		},
 	}
-	items := NewCompileItemStore(db)
+	items := NewCompileItemStore(db, config.NowUTC)
 	tm := NewTierManager(cfg, items)
 
 	// Source with enough hits to promote
@@ -204,7 +204,7 @@ func TestTierManager_CheckDemotions(t *testing.T) {
 			StaleDays: 90,
 		},
 	}
-	items := NewCompileItemStore(db)
+	items := NewCompileItemStore(db, config.NowUTC)
 	tm := NewTierManager(cfg, items)
 
 	// Dates are relative to now (not hardcoded) so the test can't rot: the SUT
@@ -248,7 +248,7 @@ func TestTierManager_ConfigDefault(t *testing.T) {
 			"lock": 0,
 		},
 	}
-	items := NewCompileItemStore(db)
+	items := NewCompileItemStore(db, config.NowUTC)
 	tm := NewTierManager(cfg, items)
 
 	if got := tm.ConfigDefault("data.json"); got != 0 {

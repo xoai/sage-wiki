@@ -1334,7 +1334,7 @@ func applyClusters(
 	rej *rejectionIndex,
 	stats *resolveStats,
 ) {
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := config.NowUTC().Format(time.RFC3339)
 
 	// No canonical-first reordering here, deliberately. normalizeClusters'
 	// `claimed` map makes surviving clusters disjoint, so within one call no

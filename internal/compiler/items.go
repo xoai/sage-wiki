@@ -18,11 +18,22 @@ type CompileStats = store.CompileStats
 // CompileItemStore provides CRUD operations for the compile_items table.
 type CompileItemStore struct {
 	db store.DBHandle
+	// now is the REQUIRED injected clock (SPEC-04 D4/F-032): there is no
+	// time.Now default precisely so no caller can silently leak wall-clock
+	// past the SDE-aware clock into DB bytes. Callers pass config.NowUTC.
+	now func() time.Time
 }
 
-// NewCompileItemStore creates a new CompileItemStore.
-func NewCompileItemStore(db store.DBHandle) *CompileItemStore {
-	return &CompileItemStore{db: db}
+// NewCompileItemStore creates a new CompileItemStore. The clock is mandatory;
+// compile paths pass config.NowUTC (SOURCE_DATE_EPOCH-aware).
+func NewCompileItemStore(db store.DBHandle, now func() time.Time) *CompileItemStore {
+	return &CompileItemStore{db: db, now: now}
+}
+
+// dbNow renders the injected clock in SQLite's datetime('now') text format,
+// keeping old and new rows lexicographically comparable.
+func (s *CompileItemStore) dbNow() string {
+	return s.now().UTC().Format("2006-01-02 15:04:05")
 }
 
 // Upsert inserts or updates a compile item.
@@ -44,8 +55,8 @@ func (s *CompileItemStore) Upsert(item CompileItem) error {
 				pass_summarized, pass_extracted, pass_written,
 				compile_id, error, error_count, summary_path,
 				query_hit_count, last_queried_at, promoted_at, demoted_at,
-				source_type, quality_score, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+				source_type, quality_score, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(source_path) DO UPDATE SET
 				hash=excluded.hash, file_type=excluded.file_type, size_bytes=excluded.size_bytes,
 				tier=excluded.tier, tier_default=excluded.tier_default, tier_override=excluded.tier_override,
@@ -68,7 +79,7 @@ func (s *CompileItemStore) Upsert(item CompileItem) error {
 					THEN 1 ELSE excluded.pass_written END,
 			compile_id=excluded.compile_id, error=excluded.error, error_count=excluded.error_count,
 			summary_path=excluded.summary_path, source_type=excluded.source_type,
-			quality_score=excluded.quality_score, updated_at=datetime('now'),
+			quality_score=excluded.quality_score, updated_at=?,
 			-- Queue revival (P2-3): a hash change means new content — reset the
 			-- item to pending with a fresh attempt budget and no lease, so a
 			-- fixed dead-lettered source retries. Same-hash upserts never
@@ -85,7 +96,7 @@ func (s *CompileItemStore) Upsert(item CompileItem) error {
 			boolToInt(item.PassSummarized), boolToInt(item.PassExtracted), boolToInt(item.PassWritten),
 			item.CompileID, item.Error, item.ErrorCount, item.SummaryPath,
 			item.QueryHitCount, nilIfEmpty(item.LastQueriedAt), nilIfEmpty(item.PromotedAt), nilIfEmpty(item.DemotedAt),
-			item.SourceType, qualityScore,
+			item.SourceType, qualityScore, s.dbNow(), s.dbNow(), s.dbNow(),
 		)
 		return err
 	})
@@ -150,8 +161,8 @@ func (s *CompileItemStore) MarkPass(path string, pass string) error {
 	}
 	return s.db.WriteTx(func(tx *sql.Tx) error {
 		_, err := tx.Exec(fmt.Sprintf(
-			"UPDATE compile_items SET %s = 1, updated_at = datetime('now') WHERE source_path = ?", col,
-		), path)
+			"UPDATE compile_items SET %s = 1, updated_at = ? WHERE source_path = ?", col,
+		), s.dbNow(), path)
 		return err
 	})
 }
@@ -160,7 +171,7 @@ func (s *CompileItemStore) MarkPass(path string, pass string) error {
 // A source promoted from Tier 1 to Tier 3 keeps pass_indexed=1, pass_embedded=1.
 func (s *CompileItemStore) SetTier(path string, tier int, reason string) error {
 	return s.db.WriteTx(func(tx *sql.Tx) error {
-		now := time.Now().UTC().Format(time.RFC3339)
+		now := s.now().UTC().Format(time.RFC3339)
 		// Determine if this is promotion or demotion for timestamp fields
 		var currentTier int
 		err := tx.QueryRow("SELECT tier FROM compile_items WHERE source_path = ?", path).Scan(&currentTier)
@@ -178,9 +189,9 @@ func (s *CompileItemStore) SetTier(path string, tier int, reason string) error {
 
 		_, err = tx.Exec(`
 			UPDATE compile_items SET tier = ?, promoted_at = COALESCE(?, promoted_at),
-				demoted_at = COALESCE(?, demoted_at), updated_at = datetime('now')
+				demoted_at = COALESCE(?, demoted_at), updated_at = ?
 			WHERE source_path = ?
-		`, tier, promotedAt, demotedAt, path)
+		`, tier, promotedAt, demotedAt, s.dbNow(), path)
 		return err
 	})
 }
@@ -190,8 +201,8 @@ func (s *CompileItemStore) MarkError(path string, compileErr error) error {
 	return s.db.WriteTx(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`
 			UPDATE compile_items SET error = ?, error_count = error_count + 1,
-				updated_at = datetime('now') WHERE source_path = ?
-		`, compileErr.Error(), path)
+				updated_at = ? WHERE source_path = ?
+		`, compileErr.Error(), s.dbNow(), path)
 		return err
 	})
 }
@@ -204,16 +215,16 @@ func (s *CompileItemStore) IncrementQueryHits(paths []string) error {
 		return nil
 	}
 	return s.db.WriteTx(func(tx *sql.Tx) error {
-		now := time.Now().UTC().Format(time.RFC3339)
+		now := s.now().UTC().Format(time.RFC3339)
 		for _, chunk := range chunkStrings(paths, 500) {
 			placeholders, args := buildInClause(chunk)
 			// Prepend now to args (for last_queried_at)
-			allArgs := make([]interface{}, 0, 1+len(args))
-			allArgs = append(allArgs, now)
+			allArgs := make([]interface{}, 0, 2+len(args))
+			allArgs = append(allArgs, now, s.dbNow())
 			allArgs = append(allArgs, args...)
 			_, err := tx.Exec(`
 				UPDATE compile_items SET query_hit_count = query_hit_count + 1,
-					last_queried_at = ?, updated_at = datetime('now')
+					last_queried_at = ?, updated_at = ?
 				WHERE source_path IN (`+placeholders+`)
 			`, allArgs...)
 			if err != nil {
@@ -366,8 +377,8 @@ func chunkStrings(s []string, n int) [][]string {
 func (s *CompileItemStore) SetQualityScore(path string, score float64) error {
 	return s.db.WriteTx(func(tx *sql.Tx) error {
 		_, err := tx.Exec(
-			"UPDATE compile_items SET quality_score = ?, updated_at = datetime('now') WHERE source_path = ?",
-			score, path,
+			"UPDATE compile_items SET quality_score = ?, updated_at = ? WHERE source_path = ?",
+			score, s.dbNow(), path,
 		)
 		return err
 	})
@@ -597,7 +608,7 @@ func (s *CompileItemStore) Claim(tier int, owner string, ttl time.Duration, limi
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC()
+	now := s.now().UTC()
 	nowStr := now.Format(time.RFC3339)
 	untilStr := now.Add(ttl).Format(time.RFC3339)
 
@@ -621,10 +632,10 @@ func (s *CompileItemStore) Claim(tier int, owner string, ttl time.Duration, limi
 			res, err := tx.Exec(`
 				UPDATE compile_items SET status = 'leased', lease_owner = ?,
 					lease_until = ?, heartbeat_at = ?,
-					updated_at = datetime('now')
+					updated_at = ?
 				WHERE source_path = ?
 					AND (lease_until IS NULL OR lease_until < ? OR lease_owner = ?)
-			`, owner, untilStr, nowStr, c.SourcePath, nowStr, owner)
+			`, owner, untilStr, nowStr, s.dbNow(), c.SourcePath, nowStr, owner)
 			if err != nil {
 				return err
 			}
@@ -646,16 +657,16 @@ func (s *CompileItemStore) Heartbeat(owner string, paths []string, ttl time.Dura
 	if len(paths) == 0 {
 		return nil
 	}
-	now := time.Now().UTC()
+	now := s.now().UTC()
 	nowStr := now.Format(time.RFC3339)
 	untilStr := now.Add(ttl).Format(time.RFC3339)
 	return s.db.WriteTx(func(tx *sql.Tx) error {
 		for _, chunk := range chunkStrings(paths, 500) {
 			placeholders, args := buildInClause(chunk)
-			allArgs := append([]interface{}{nowStr, untilStr, owner}, args...)
+			allArgs := append([]interface{}{nowStr, untilStr, s.dbNow(), owner}, args...)
 			if _, err := tx.Exec(`
 				UPDATE compile_items SET heartbeat_at = ?, lease_until = ?,
-					updated_at = datetime('now')
+					updated_at = ?
 				WHERE lease_owner = ? AND source_path IN (`+placeholders+`)
 			`, allArgs...); err != nil {
 				return err
@@ -722,9 +733,9 @@ func (s *CompileItemStore) Release(path string, owner string, outcome store.Rele
 		}
 		_, err := tx.Exec(fmt.Sprintf(`
 			UPDATE compile_items SET status = ?, lease_owner = NULL,
-				lease_until = NULL, heartbeat_at = NULL, %s, updated_at = datetime('now')
+				lease_until = NULL, heartbeat_at = NULL, %s, updated_at = ?
 			WHERE source_path = ? AND lease_owner = ?
-		`, attemptsSQL), status, path, owner)
+		`, attemptsSQL), status, s.dbNow(), path, owner)
 		return err
 	})
 }
@@ -736,9 +747,9 @@ func (s *CompileItemStore) RequeueExpired(now time.Time) (int, error) {
 	err := s.db.WriteTx(func(tx *sql.Tx) error {
 		res, err := tx.Exec(`
 			UPDATE compile_items SET status = 'pending', lease_owner = NULL,
-				lease_until = NULL, heartbeat_at = NULL, updated_at = datetime('now')
+				lease_until = NULL, heartbeat_at = NULL, updated_at = ?
 			WHERE status = 'leased' AND lease_until < ?
-		`, now.UTC().Format(time.RFC3339))
+		`, s.dbNow(), now.UTC().Format(time.RFC3339))
 		if err != nil {
 			return err
 		}
@@ -756,9 +767,9 @@ func (s *CompileItemStore) ResetFailed() (int, error) {
 		res, err := tx.Exec(`
 			UPDATE compile_items SET status = 'pending', attempts = 0,
 				lease_owner = NULL, lease_until = NULL, heartbeat_at = NULL,
-				updated_at = datetime('now')
+				updated_at = ?
 			WHERE status = 'failed'
-		`)
+		`, s.dbNow())
 		if err != nil {
 			return err
 		}

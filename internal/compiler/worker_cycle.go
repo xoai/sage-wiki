@@ -54,6 +54,7 @@ func (w *Worker) openCycleRun(ctx context.Context) (*cycleRun, error) {
 	if err != nil {
 		return nil, fmt.Errorf("worker: load manifest: %w", err)
 	}
+	mf.SetNow(config.NowUTC)
 	client, _, err := newTrackedClient(projectDir, cfg, &CompileOpts{})
 	if err != nil {
 		return nil, fmt.Errorf("worker: create LLM client: %w", err)

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/storage"
 )
 
@@ -166,7 +167,7 @@ func TestCompile_FailedSourceStaysPending_NoLegacyJSON(t *testing.T) {
 	// Failed source still pending in compile_items.
 	db := openTestProjectDB(t, dir)
 	defer db.Close()
-	items := NewCompileItemStore(db)
+	items := NewCompileItemStore(db, config.NowUTC)
 	b, err := items.GetByPath("raw/b.md")
 	if err != nil || b == nil {
 		t.Fatalf("raw/b.md missing from compile_items: %v", err)

@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -285,7 +284,7 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 			if b := run.opts.Backend; b != nil {
 				maintainQueue(run, b.CompileItems())
 			} else if sdb, err := storage.Open(filepath.Join(projectDir, ".sage", "wiki.db")); err == nil {
-				maintainQueue(run, NewCompileItemStore(sdb))
+				maintainQueue(run, NewCompileItemStore(sdb, config.NowUTC))
 				sdb.Close()
 			} else {
 				log.Warn("queue maintenance skipped: open db failed", "error", err)
@@ -459,6 +458,7 @@ func loadInputs(projectDir string, opts *CompileOpts, run *compileRun) (done boo
 	if err != nil {
 		return false, nil, fmt.Errorf("compile: load manifest: %w", err)
 	}
+	mf.SetNow(config.NowUTC)
 	run.mf = mf
 
 	// Snapshot the manifest at Load as the merge base (D3). At Save time the
@@ -630,7 +630,7 @@ func setupStores(projectDir string, run *compileRun) error {
 
 	// Initialize compile_items store and tier manager
 	if run.itemStore == nil {
-		run.itemStore = NewCompileItemStore(db)
+		run.itemStore = NewCompileItemStore(db, config.NowUTC)
 	}
 	run.tierMgr = NewTierManager(&cfg.Compiler, run.itemStore)
 	run.bp = NewBackpressureController(cfg.Compiler.MaxParallel)
@@ -894,7 +894,7 @@ func runTiers(projectDir string, run *compileRun) {
 // with their resolved tiers. Shared by runTiers (CLI) and the worker's
 // enqueue scan (P2-3) so the two paths can never diverge.
 func upsertDiffItems(run *compileRun, projectDir string, allSources []SourceInfo) {
-	run.compileID = time.Now().Format("20060102-150405")
+	run.compileID = config.NowUTC().Format("20060102-150405")
 	for _, src := range allSources {
 		tier := run.tierMgr.ResolveTier(src.Path, projectDir, nil)
 		run.itemStore.Upsert(CompileItem{
@@ -1029,9 +1029,9 @@ func submitBatch(
 
 	// Save the batch checkpoint — the ONLY checkpoint written on this path
 	// (P1-3; no compile-state.json anywhere).
-	utcNow := time.Now().UTC().Format(time.RFC3339)
+	utcNow := config.NowUTC().Format(time.RFC3339)
 	bcp := &BatchCheckpoint{
-		CompileID: time.Now().Format("20060102-150405"),
+		CompileID: config.NowUTC().Format("20060102-150405"),
 		StartedAt: utcNow,
 		Batch: &BatchState{
 			BatchID:     batchID,
@@ -1120,7 +1120,7 @@ func resumeBatch(
 	// (result.Errors++ below), not missing data.
 	{
 		expected := map[string]string{} // wire id → path (for the error message)
-		legacy := bs.PathByID == nil // same predicate the processing loop uses
+		legacy := bs.PathByID == nil    // same predicate the processing loop uses
 		if !legacy {
 			for id, path := range bs.PathByID {
 				expected[id] = path
@@ -1511,17 +1511,12 @@ func convertSignals(typeSignals []config.TypeSignal) []extract.TypeSignal {
 }
 
 // timeNow returns the current time in RFC3339 using the given timezone.
-// Used for user-facing timestamps (frontmatter, changelog).
-// SOURCE_DATE_EPOCH (the reproducible-builds convention) overrides the
-// clock: with it set, every compile timestamp is the epoch — the seed of
+// Used for user-facing timestamps (frontmatter, changelog). It delegates to
+// the single SDE-aware clock (config.NowUTC, SPEC-04 D4): with
+// SOURCE_DATE_EPOCH set, every compile timestamp is the epoch — the seed of
 // SPEC-04's deterministic artifacts and what the parity suite pins.
 func timeNow(loc *time.Location) string {
-	if s := os.Getenv("SOURCE_DATE_EPOCH"); s != "" {
-		if sec, err := strconv.ParseInt(s, 10, 64); err == nil {
-			return time.Unix(sec, 0).In(loc).Format(time.RFC3339)
-		}
-	}
-	return time.Now().In(loc).Format(time.RFC3339)
+	return config.NowUTC().In(loc).Format(time.RFC3339)
 }
 
 func filterSuccessful(summaries []SummaryResult) []SummaryResult {
