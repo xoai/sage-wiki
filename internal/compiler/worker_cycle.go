@@ -291,6 +291,17 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 		tier3Incomplete = panicked || pipelineResult == nil || !pipelineResult.Pass23Completed
 	}
 
+	// SPEC-04 (review F2): the worker stores keys at the same completion
+	// gate as the CLI — a serve-built workspace must not stay key-blind
+	// (its first CLI compile would otherwise misreport everything as
+	// "adopted" instead of the true drift class). Same P1-1 rule: an
+	// incomplete cycle stores nothing.
+	if !tier3Incomplete {
+		if err := storeCompileKeysForCompleted(run.cfg, run.opts.Prompts, run.itemStore); err != nil {
+			log.Warn("worker: compile-key storage failed", "error", err)
+		}
+	}
+
 	// Release each claimed item once: errored items burn attempt budget
 	// (dead-letter at cap); the rest release done — tier-complete items
 	// become done, items owing more passes return to pending with the

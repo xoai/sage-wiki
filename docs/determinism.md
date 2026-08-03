@@ -162,7 +162,23 @@ non-reproducing until re-baselined.
   their own flows (no injected clock yet) — they are operational state,
   not compile artifacts. A byte-parity comparison assumes no non-compile
   writes between the two compiles.
+- **Drift-triggered recompiles on the serve worker path.** The serve
+  worker stores compile keys at its completion gate (same rule as the
+  CLI), so serve-built workspaces carry correct keys — but the worker's
+  enqueue scan does not yet *act* on key drift the way CLI compile does
+  (model/template/config/PipelineVersion changes trigger recompiles on
+  the next CLI compile, not inside serve). The never-re-bill pledge is
+  never violated on either path; the drift-detection half is
+  CLI-compile-only today (tracked follow-up).
 - **Other writers of the same DB.** `PRAGMA secure_delete=ON` is set by
   the current binary's writer connection; an old binary or a hand-run
   `sqlite3` writing the same file reintroduces freed-cell garbage. The
   parity guarantee holds when every writer runs the new binary.
+- **In-flight embedding cancellation.** `Embedder.Embed` predates this
+  work and takes no `context.Context`; the deferred-application passes
+  honor cancellation between items, but an in-flight embed call runs to
+  completion (tracked interface follow-up).
+- **`PipelineVersion` is honor-system.** A code edit that changes compile
+  output without a bump reads as "unchanged". Template and override edits
+  are caught by the content hash automatically; code edits rely on the
+  contributor duty above plus code review.
