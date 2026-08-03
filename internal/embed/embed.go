@@ -191,13 +191,31 @@ type APIEmbedder struct {
 	model    string
 	apiKey   string
 	baseURL  string
-	dims     int
-	client   http.Client
-	limiter  *embedRateLimiter
+	// dims is written by the auto-detect paths on first successful embed —
+	// concurrent compiles call Embed from many goroutines (SPEC-04's own
+	// drift test proved the unlocked check+set races).
+	dimsMu  sync.RWMutex
+	dims    int
+	client  http.Client
+	limiter *embedRateLimiter
 }
 
 func (e *APIEmbedder) Name() string    { return fmt.Sprintf("%s/%s", e.provider, e.model) }
-func (e *APIEmbedder) Dimensions() int { return e.dims }
+func (e *APIEmbedder) Dimensions() int {
+	e.dimsMu.RLock()
+	defer e.dimsMu.RUnlock()
+	return e.dims
+}
+
+// setDims records an embedding dimensionality (auto-detect paths).
+func (e *APIEmbedder) setDims(d int) {
+	e.dimsMu.Lock()
+	defer e.dimsMu.Unlock()
+	if e.dims == 0 {
+		e.dims = d
+		log.Info("auto-detected embedding dimensions", "model", e.model, "dims", e.dims)
+	}
+}
 
 // maxEmbedChars is the per-request input cap (in runes) for OpenAI-compatible
 // embedding endpoints. 5000 runes ≈ 4K tokens, leaving headroom for 8K-token
@@ -325,10 +343,7 @@ func (e *APIEmbedder) embedOpenAI(text string) ([]float32, error) {
 	embedding := result.Data[0].Embedding
 
 	// Auto-detect dimensions from first response
-	if e.dims == 0 {
-		e.dims = len(embedding)
-		log.Info("auto-detected embedding dimensions", "model", e.model, "dims", e.dims)
-	}
+	e.setDims(len(embedding))
 
 	return embedding, nil
 }
@@ -384,7 +399,7 @@ func (e *APIEmbedder) embedGemini(text string) ([]float32, error) {
 		return nil, fmt.Errorf("embed: empty embedding in response")
 	}
 
-	e.dims = len(result.Embedding.Values)
+	e.setDims(len(result.Embedding.Values))
 	return result.Embedding.Values, nil
 }
 
@@ -406,13 +421,26 @@ func (e *APIEmbedder) embeddingURL() string {
 // OllamaEmbedder uses a local Ollama instance.
 type OllamaEmbedder struct {
 	model   string
+	dimsMu  sync.RWMutex
 	dims    int
 	client  http.Client
 	limiter *embedRateLimiter
 }
 
-func (e *OllamaEmbedder) Name() string    { return fmt.Sprintf("ollama/%s", e.model) }
-func (e *OllamaEmbedder) Dimensions() int { return e.dims }
+func (e *OllamaEmbedder) Name() string { return fmt.Sprintf("ollama/%s", e.model) }
+func (e *OllamaEmbedder) Dimensions() int {
+	e.dimsMu.RLock()
+	defer e.dimsMu.RUnlock()
+	return e.dims
+}
+
+func (e *OllamaEmbedder) setDims(d int) {
+	e.dimsMu.Lock()
+	defer e.dimsMu.Unlock()
+	if e.dims == 0 {
+		e.dims = d
+	}
+}
 
 func (e *OllamaEmbedder) Embed(text string) ([]float32, error) {
 	if e.limiter != nil {
@@ -455,7 +483,7 @@ func (e *OllamaEmbedder) embedOllama(text string) ([]float32, error) {
 		return nil, fmt.Errorf("ollama embed: empty embedding")
 	}
 
-	e.dims = len(result.Embedding)
+	e.setDims(len(result.Embedding))
 	return result.Embedding, nil
 }
 

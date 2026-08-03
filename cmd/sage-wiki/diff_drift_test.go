@@ -257,3 +257,36 @@ func TestExplain_ForceKeepsResumeAttribution(t *testing.T) {
 		t.Errorf("--explain --force on interrupted doc must NOT say forced:\n%s", out)
 	}
 }
+
+// TestExplain_ForceKeepsNewDocAttribution pins the verifier's NEW-1: a
+// never-compiled doc under --explain --force keeps 'compile: content (new)'.
+func TestExplain_ForceKeepsNewDocAttribution(t *testing.T) {
+	dir := writeCompileableWorkspace(t)
+	compileWorkspaceForTest(t, dir)
+
+	// Add a brand-new doc (no compile_items row).
+	if err := os.WriteFile(filepath.Join(dir, "raw", "new.md"), []byte("# Brand New\n\nNever compiled content."), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	old := projectDir
+	projectDir = dir
+	defer func() { projectDir = old }()
+	if err := compileCmd.Flags().Set("explain", "raw/new.md"); err != nil {
+		t.Fatal(err)
+	}
+	defer compileCmd.Flags().Set("explain", "")
+	if err := compileCmd.Flags().Set("force", "true"); err != nil {
+		t.Fatal(err)
+	}
+	defer compileCmd.Flags().Set("force", "false")
+
+	out := captureStdout(t, func() {
+		if err := runCompile(compileCmd, nil); err != nil {
+			t.Fatalf("runCompile --explain --force: %v", err)
+		}
+	})
+	if !strings.Contains(out, "compile: content (new)") {
+		t.Errorf("--explain --force on a new doc should keep 'compile: content (new)':\n%s", out)
+	}
+}

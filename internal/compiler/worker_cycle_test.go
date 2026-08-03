@@ -454,3 +454,26 @@ func TestWorker_EmitsQueueEvents(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkerCycle_StoresCompileKeys pins review F2: a completed worker
+// cycle stores compile keys (the worker must not be key-blind).
+func TestWorkerCycle_StoresCompileKeys(t *testing.T) {
+	h := newWorkerHarness(t, 3, http.StatusOK)
+	h.writeSource(t, "a.md", "# Alpha\n\nAlpha content for the worker key sweep.")
+	h.newWorker(t, 20*time.Millisecond, 5*time.Millisecond, 3)
+
+	if _, err := h.worker.cycle(context.Background()); err != nil {
+		t.Fatalf("cycle: %v", err)
+	}
+
+	got, err := h.items.GetByPath("raw/a.md")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got == nil {
+		t.Fatal("no compile_items row after completed cycle")
+	}
+	if got.CompileKey == "" {
+		t.Error("F2: worker cycle left compile_key empty — serve-built workspaces stay key-blind")
+	}
+}

@@ -813,3 +813,50 @@ func TestSkip_GhostAfterPersistedRemoval(t *testing.T) {
 		t.Errorf("NEW-1: Added=%d Modified=%d, want 0/0 — ghost must not enter the work set", res.Added, res.Modified)
 	}
 }
+
+// TestClassifySkipsForDiff_ReturnsDriftOnly pins review F1: the returned map
+// must contain ONLY drift classes (pipeline/templates/models/config/embed),
+// never content/content (new)/forced/resume entries — `sage-wiki diff`
+// prints it verbatim, so a new or modified doc must not appear as "drift".
+func TestClassifySkipsForDiff_ReturnsDriftOnly(t *testing.T) {
+	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
+	srv := newTestServer(stub)
+	defer srv.Close()
+
+	dir := compileDeferredCorpusOpts(t, srv.URL, CompileOpts{})
+
+	// One new doc (no row → content (new)) + one content edit (→ content).
+	os.WriteFile(filepath.Join(dir, "raw", "doc4.md"), []byte("# New Doc 4\n\nBrand new content."), 0644)
+	os.WriteFile(filepath.Join(dir, "raw", "doc1.md"), []byte("# Deferred Doc 1\n\nEDITED content here."), 0644)
+
+	cfg, err := loadConfigFromDir(t, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sdb, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sdb.Close()
+	items := NewCompileItemStore(sdb, config.NowUTC)
+	mf, err := manifest.Load(filepath.Join(dir, ".manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff, err := Diff(dir, cfg, mf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drift, err := ClassifySkipsForDiff(cfg, items, mf, diff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, class := range drift {
+		switch class {
+		case "pipeline", "templates", "models", "config", "embed":
+			// legitimate drift entries
+		default:
+			t.Errorf("diff map contains non-drift entry %s → %q (F1: mislabeled surface)", path, class)
+		}
+	}
+}

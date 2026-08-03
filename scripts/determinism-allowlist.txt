@@ -7,16 +7,17 @@ internal/compiler/communities.go:113 populates keyed lookup maps only (commOfEnt
 internal/compiler/worker_cycle.go:230 claimed[3] is a fixed-key lookup, not a map-order iteration
 internal/compiler/worker_cycle.go:272 claimed[3] is a fixed-key lookup, not a map-order iteration
 internal/compiler/worker_cycle.go:283 claimed[3] is a fixed-key lookup, not a map-order iteration
-internal/compiler/worker_cycle.go:377 heartbeat write order — operational lease columns, not artifacts
-internal/compiler/worker_cycle.go:402 error-set construction order — readback is keyed by path
-internal/compiler/worker_cycle.go:425 claimedItemFor is a membership scan, first match wins regardless of order
-internal/compiler/worker_cycle.go:439 claimedItemFor is a membership scan, first match wins regardless of order
+internal/compiler/worker_cycle.go:388 heartbeat write order — operational lease columns, not artifacts
+internal/compiler/worker_cycle.go:413 error-set construction order — readback is keyed by path
+internal/compiler/worker_cycle.go:436 claimedItemFor is a membership scan, first match wins regardless of order
+internal/compiler/worker_cycle.go:450 claimedItemFor is a membership scan, first match wins regardless of order
+internal/compiler/worker_cycle.go:310 heartbeat path list feeds one IN-clause UPDATE (set semantics)
 internal/compiler/worker_cycle.go:160 heartbeat path list feeds one IN-clause UPDATE (set semantics)
 internal/compiler/worker_cycle.go:299 heartbeat path list feeds one IN-clause UPDATE (set semantics)
-internal/compiler/worker_cycle.go:322 error-report log order only (stderr text)
+internal/compiler/worker_cycle.go:333 error-report log order only (stderr text)
 internal/compiler/compilekey.go:202 sort.Strings(names) immediately after the loop
-internal/compiler/pipeline.go:1211 sort.Strings(missing) immediately after the loop (SPEC-04 Task 3)
-internal/compiler/pipeline.go:1097 batch results: per-path independent atomic writes + manifest is a json-sorted map
+internal/compiler/pipeline.go:1210 sort.Strings(missing) immediately after the loop (SPEC-04 Task 3)
+internal/compiler/pipeline.go:1096 batch results: per-path independent atomic writes + manifest is a json-sorted map
 internal/compiler/write.go:523 prefix-match membership loop, produces no ordered output
 internal/compiler/write.go:826 sort.Slice(related) immediately after the shared-count loop
 internal/compiler/write.go:837 same: the related slice is sorted by count desc, name asc right below
@@ -35,7 +36,7 @@ internal/compiler/resolve_entities.go:492 byType[seed.Type] is a slice lookup, n
 internal/compiler/diff.go:128 Added/Modified sorted at :140-141, Removed at :149 (pre-existing AGENTS.md rule 6)
 internal/compiler/diff.go:144 Removed sorted at :149 (pre-existing AGENTS.md rule 6)
 internal/compiler/migrate_checkpoint.go:169 sources sorted at :61-64 before upserts (SPEC-04 D1 fix)
-internal/compiler/fullpipeline.go:482 mf.Concepts[name].Sources is a slice lookup, not a map-order iteration
+internal/compiler/fullpipeline.go:488 mf.Concepts[name].Sources is a slice lookup, not a map-order iteration
 internal/compiler/dedup.go:142 canonical tie-break (Task 3) makes the result order-independent
 internal/manifest/merge.go:24 copy loop into a keyed map (json-sorted on save)
 internal/manifest/merge.go:32 copy loop into a keyed map (json-sorted on save)

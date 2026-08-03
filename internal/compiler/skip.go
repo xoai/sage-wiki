@@ -35,10 +35,6 @@ type skipClassification struct {
 	// models, config, embed) for --explain/diff annotation (Task 12 reads
 	// it from the stored parts; this in-memory copy feeds the compile run).
 	driftReasons map[string]string
-	// resumePending counts docs with incomplete pass flags (R0). Their
-	// recompile runs through the normal claim mechanism — but only if the
-	// nothing-to-compile fast path yields, so the caller must see the count.
-	resumePending int
 	// resume is the R0 work set itself: incomplete-flag docs appended to
 	// diff.Modified by the caller so toProcess picks them up (the CLI's
 	// toProcess is diff-driven; claims alone never reach fullpipeline).
@@ -144,7 +140,6 @@ func classifySkips(
 		if !tierComplete(&item) {
 			llmPassesDone := item.PassSummarized && item.PassExtracted && item.PassWritten
 			if item.Tier >= 3 && !llmPassesDone {
-				out.resumePending++
 				out.resume = append(out.resume, SourceInfo{Path: path, Hash: item.Hash, Type: item.FileType, Size: item.SizeBytes})
 				if _, ok := spuriousAdded[path]; ok {
 					out.classifiedSpuriousAdded = append(out.classifiedSpuriousAdded, path)
@@ -361,11 +356,15 @@ func fillExplanation(ex *CompileExplanation, parts CompileKeyParts, stored strin
 // populateDiffReasons writes the classification onto the DiffResult the
 // caller already holds (spec §APIs): Unchanged = skipped + adopted,
 // Reason per compiling entry (content / content (new) / incomplete
-// (resume) / forced / drift class). One implementation, two call sites
-// (pipeline.go's compile path and ClassifySkipsForDiff).
+// (resume) / forced / drift class). diff.Reason is a SEPARATE map from
+// cls.driftReasons (review F1 — mutating the shared map made
+// ClassifySkipsForDiff's "drift only" return a lie).
 func populateDiffReasons(diff *DiffResult, cls *skipClassification) {
 	diff.Unchanged = append(append([]SkippedDoc{}, cls.skipped...), cls.adopted...)
-	diff.Reason = cls.driftReasons
+	diff.Reason = make(map[string]string, len(cls.driftReasons)+len(cls.resume)+len(diff.Added)+len(diff.Modified))
+	for path, class := range cls.driftReasons {
+		diff.Reason[path] = class
+	}
 	for _, s := range diff.Added {
 		if cls.hasRow[s.Path] {
 			diff.Reason[s.Path] = "content"

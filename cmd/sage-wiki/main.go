@@ -609,9 +609,9 @@ func runCompile(cmd *cobra.Command, args []string) error {
 			return cli.CLIError(outputFormat, err)
 		}
 		force, _ := cmd.Flags().GetBool("force")
-		if force && ex.Verdict != "compile: incomplete (resume)" {
-			// R0 wins over force for interrupted docs (spec skip rule) — the
-			// same attribution real compiles use (pass-3 review obs 5).
+		if force && ex.Verdict != "compile: incomplete (resume)" && ex.Verdict != "compile: content" && ex.Verdict != "compile: content (new)" {
+			// R0 wins over force for interrupted docs, and content-changed/new
+			// docs keep their content verdicts (the real compile's attribution).
 			ex.Verdict = "compile: forced"
 		}
 		if outputFormat == "json" {

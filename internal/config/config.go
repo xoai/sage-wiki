@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -1061,15 +1062,22 @@ func (c *CompilerConfig) CompileTemperature() *float64 {
 // NowUTC returns the current time in UTC. SOURCE_DATE_EPOCH (the
 // reproducible-builds convention) overrides the clock: with it set, every
 // caller gets the epoch — the single clock behind SPEC-04's deterministic
-// artifacts (frontmatter, manifest, DB rows, compile IDs).
+// artifacts (frontmatter, manifest, DB rows, compile IDs). An unparseable
+// SDE falls back to wall clock — warned once, never silently (an SDE typo
+// must not quietly disable pinning).
 func NowUTC() time.Time {
 	if s := os.Getenv("SOURCE_DATE_EPOCH"); s != "" {
 		if sec, err := strconv.ParseInt(s, 10, 64); err == nil {
 			return time.Unix(sec, 0).UTC()
 		}
+		sdeWarnOnce.Do(func() {
+			log.Printf("config: ignoring unparseable SOURCE_DATE_EPOCH %q — timestamps are NOT pinned", s)
+		})
 	}
 	return time.Now().UTC()
 }
+
+var sdeWarnOnce sync.Once
 
 // Load reads and parses a config file, expanding environment variables.
 // If the config contains an "extends" field, the base config is loaded first

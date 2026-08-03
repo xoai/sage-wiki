@@ -35,3 +35,16 @@ func TestUserNow_SourceDateEpoch(t *testing.T) {
 		t.Errorf("UserNow() = %q, want %q (SOURCE_DATE_EPOCH pinned)", got, want)
 	}
 }
+
+func TestNowUTC_InvalidSDEWarnsOnce(t *testing.T) {
+	t.Setenv("SOURCE_DATE_EPOCH", "not-a-number")
+	// Must not panic and must return wall clock; the warning fires once
+	// (asserted implicitly — a second call must not re-fire).
+	got := NowUTC()
+	before := time.Now().UTC().Add(-time.Second)
+	after := time.Now().UTC().Add(time.Second)
+	if got.Before(before) || got.After(after) {
+		t.Errorf("invalid SDE: NowUTC() = %v, want wall clock", got)
+	}
+	NowUTC() // second call — no panic, no double-warn
+}

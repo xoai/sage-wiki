@@ -435,7 +435,10 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	// anything absent. The deferred pass reads `touched` at return time, so
 	// appending here lands before it runs.
 	for _, ar := range articles {
-		if ar.Error == nil {
+		// Skip unlaunched/cancelled slots (zero-value results — review F5):
+		// an empty ConceptName means the article never ran, not that it
+		// succeeded with an empty name.
+		if ar.Error == nil && ar.ConceptName != "" {
 			touched = append(touched, ar.ConceptName)
 		}
 	}
@@ -447,6 +450,9 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	belowThreshold := 0
 
 	for _, ar := range articles {
+		if ar.ConceptName == "" {
+			continue // unlaunched/cancelled slot (review F5) — not an error, not written
+		}
 		if ar.Error != nil {
 			result.Errors++
 			progress.ItemError(ar.ConceptName, ar.Error)

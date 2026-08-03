@@ -212,7 +212,6 @@ func renderPrompt(pr *prompts.Registry, name string, data any, language string) 
 type compileRun struct {
 	cfg                *config.Config
 	opts               CompileOpts
-	driftReasons       map[string]string
 	result             *CompileResult
 	mf                 *manifest.Manifest
 	mfPath             string
@@ -291,7 +290,6 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	}
 	run.result.Adopted = len(skipCls.adopted)
 	run.result.Skipped = append(skipCls.skipped, skipCls.adopted...)
-	run.driftReasons = skipCls.driftReasons
 	// Review M1: key-classified spurious-Added docs (manifest-untracked
 	// tier<3) LEAVE diff.Added — otherwise they double-count (Added AND
 	// Modified when drifted/resumed) and the all-skip fast path can never
