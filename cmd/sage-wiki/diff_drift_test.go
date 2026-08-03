@@ -216,3 +216,44 @@ func captureStdout(t *testing.T, fn func()) string {
 	}
 	return buf.String()
 }
+
+// TestExplain_ForceKeepsResumeAttribution pins pass-3 obs 5: --explain
+// --force on an interrupted doc reports 'compile: incomplete (resume)'
+// (R0 wins over force), not 'compile: forced'.
+func TestExplain_ForceKeepsResumeAttribution(t *testing.T) {
+	dir := writeCompileableWorkspace(t)
+	compileWorkspaceForTest(t, dir)
+
+	db, err := sql.Open("sqlite", filepath.Join(dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("UPDATE compile_items SET pass_written = 0 WHERE source_path = 'raw/a.md'"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	old := projectDir
+	projectDir = dir
+	defer func() { projectDir = old }()
+	if err := compileCmd.Flags().Set("explain", "raw/a.md"); err != nil {
+		t.Fatal(err)
+	}
+	defer compileCmd.Flags().Set("explain", "")
+	if err := compileCmd.Flags().Set("force", "true"); err != nil {
+		t.Fatal(err)
+	}
+	defer compileCmd.Flags().Set("force", "false")
+
+	out := captureStdout(t, func() {
+		if err := runCompile(compileCmd, nil); err != nil {
+			t.Fatalf("runCompile --explain --force: %v", err)
+		}
+	})
+	if !strings.Contains(out, "compile: incomplete (resume)") {
+		t.Errorf("--explain --force on interrupted doc should keep resume verdict:\n%s", out)
+	}
+	if strings.Contains(out, "compile: forced") {
+		t.Errorf("--explain --force on interrupted doc must NOT say forced:\n%s", out)
+	}
+}

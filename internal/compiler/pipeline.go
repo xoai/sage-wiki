@@ -407,9 +407,10 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	handleRemovedSources(projectDir, run.diff.Removed, run.mf, run.memStore, run.vecStore, run.pipelineOntStore, run.opts.Prune)
 
 	// SPEC-04: drop removed sources' compile keys AND their pass flags — a
-	// re-added doc compiles fresh (reported as added, never adopted/skipped;
-	// flags reset is what makes the spec's re-add promise true and what
-	// distinguishes it from an upgrade-time empty-key row, which ADOPTS).
+	// re-added doc recompiles via R0 (verdict `compile: incomplete (resume)`,
+	// never adopted/skipped; flags reset is what makes the spec's re-add
+	// promise true and what distinguishes it from an upgrade-time empty-key
+	// row, which ADOPTS).
 	for _, removedPath := range run.diff.Removed {
 		if err := run.itemStore.ClearCompileKey(removedPath); err != nil {
 			log.Warn("clear compile key failed", "path", removedPath, "error", err)
