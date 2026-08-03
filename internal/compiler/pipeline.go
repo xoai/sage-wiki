@@ -292,6 +292,24 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	run.result.Adopted = len(skipCls.adopted)
 	run.result.Skipped = append(skipCls.skipped, skipCls.adopted...)
 	run.driftReasons = skipCls.driftReasons
+	// Review M1: key-classified spurious-Added docs (manifest-untracked
+	// tier<3) LEAVE diff.Added — otherwise they double-count (Added AND
+	// Modified when drifted/resumed) and the all-skip fast path can never
+	// fire for tier<3 corpora.
+	if len(skipCls.classifiedSpuriousAdded) > 0 {
+		remove := map[string]bool{}
+		for _, p := range skipCls.classifiedSpuriousAdded {
+			remove[p] = true
+		}
+		kept := diff.Added[:0]
+		for _, s := range diff.Added {
+			if !remove[s.Path] {
+				kept = append(kept, s)
+			}
+		}
+		diff.Added = kept
+		run.result.Added = len(diff.Added)
+	}
 	// SPEC-04 §APIs: the classification lands on DiffResult (Unchanged +
 	// per-entry Reason) for the engine/CLI surfaces.
 	populateDiffReasons(diff, skipCls)

@@ -139,3 +139,30 @@ not a proof — the proofs are the double-compile tests. Run it via
 - **`secure_delete` is forward-only** (`PRAGMA secure_delete=ON`, D7):
   freed-cell garbage in DB files written before SPEC-04 stays where it is
   until those pages are rewritten.
+
+## Adoption and provenance
+
+The first compile after upgrading to SPEC-04 **adopts** keys for unchanged
+docs without recompiling (R3). Adopted artifacts were produced by
+pre-SPEC-04 code — provider-default temperature, pre-sort prompts — so an
+adopted doc's key asserts the *current* pipeline's identity over artifacts
+the current pipeline did not make. For dedup this is sound and deliberate:
+the never-re-bill pledge applies from run one. But adopted artifacts are
+not reproducible artifacts until they next genuinely recompile (content,
+model, or config drift; or a deliberate re-baseline). If you want a
+provably deterministic tree, run `sage-wiki compile --force` once — every
+key is then stamped by the deterministic pipeline. Any future
+"reproduce-and-verify" tooling should treat adopted docs as
+non-reproducing until re-baselined.
+
+## What determinism does not cover
+
+- **Non-compile writers.** MCP capture, the session scribe, on-demand
+  query paths, and trust review files stamp wall-clock timestamps from
+  their own flows (no injected clock yet) — they are operational state,
+  not compile artifacts. A byte-parity comparison assumes no non-compile
+  writes between the two compiles.
+- **Other writers of the same DB.** `PRAGMA secure_delete=ON` is set by
+  the current binary's writer connection; an old binary or a hand-run
+  `sqlite3` writing the same file reintroduces freed-cell garbage. The
+  parity guarantee holds when every writer runs the new binary.

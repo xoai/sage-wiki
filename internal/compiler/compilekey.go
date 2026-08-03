@@ -80,40 +80,75 @@ func DriftClass(stored, current CompileKeyParts) string {
 	return ""
 }
 
+// KeyContext is the per-run part of the compile key (everything except the
+// source hash), computed ONCE — not per doc (review M3: on a 5k-doc
+// workspace per-doc computation re-read template files ~30k times).
+type KeyContext struct {
+	Templates string
+	Models    string
+	Config    string // tier≥3 full-subset hash
+	Chunk     string // tier<3 chunk-subset hash
+	Embed     string
+}
+
+// NewKeyContext computes the run-level key components. pr may be nil
+// (package-default registry). cfg must be the compile-time resolved config
+// (per-run overrides already applied by the caller).
+func NewKeyContext(cfg *config.Config, pr *prompts.Registry) (*KeyContext, error) {
+	if pr == nil {
+		pr = prompts.DefaultRegistry()
+	}
+	tmpl, err := templateKeyComponent(pr)
+	if err != nil {
+		return nil, fmt.Errorf("compile key: templates: %w", err)
+	}
+	full, err := canonicalSubsetJSON(compileConfigSubset(cfg))
+	if err != nil {
+		return nil, fmt.Errorf("compile key: config subset: %w", err)
+	}
+	chunk, err := canonicalSubsetJSON(chunkConfigSubset(cfg))
+	if err != nil {
+		return nil, fmt.Errorf("compile key: chunk subset: %w", err)
+	}
+	return &KeyContext{
+		Templates: tmpl,
+		Models:    modelKeyComponent(cfg),
+		Config:    sha256Hex(full),
+		Chunk:     sha256Hex(chunk),
+		Embed:     resolveEmbedIdentity(cfg),
+	}, nil
+}
+
+// Parts assembles the per-doc parts from the run context + source hash
+// (tier selects the shape, spec R6).
+func (kc *KeyContext) Parts(sourceHash string, tier int) CompileKeyParts {
+	parts := CompileKeyParts{
+		Source:   sourceHash,
+		Pipeline: PipelineVersion,
+		Embed:    kc.Embed,
+	}
+	if tier >= 3 {
+		parts.Templates = kc.Templates
+		parts.Models = kc.Models
+		parts.Config = kc.Config
+	} else {
+		parts.Config = kc.Chunk
+	}
+	return parts
+}
+
 // ComputeCompileKeyParts resolves every key component for one source doc.
 // pr may be nil (package-default registry). cfg must be the compile-time
 // resolved config (per-run overrides already applied by the caller, as
 // pipeline.go does for CompileOpts.Model/Tier). Errors propagate (Gate-3
-// review): key material must never embed error text.
+// review): key material must never embed error text. Callers handling many
+// docs should prefer NewKeyContext + Parts (one computation per run).
 func ComputeCompileKeyParts(sourceHash string, tier int, cfg *config.Config, pr *prompts.Registry) (CompileKeyParts, error) {
-	parts := CompileKeyParts{
-		Source:   sourceHash,
-		Pipeline: PipelineVersion,
-		Embed:    resolveEmbedIdentity(cfg),
+	kc, err := NewKeyContext(cfg, pr)
+	if err != nil {
+		return CompileKeyParts{}, err
 	}
-	if pr == nil {
-		pr = prompts.DefaultRegistry()
-	}
-	if tier >= 3 {
-		tmpl, err := templateKeyComponent(pr)
-		if err != nil {
-			return parts, fmt.Errorf("compile key: templates: %w", err)
-		}
-		parts.Templates = tmpl
-		parts.Models = modelKeyComponent(cfg)
-		subset, err := canonicalSubsetJSON(compileConfigSubset(cfg))
-		if err != nil {
-			return parts, fmt.Errorf("compile key: config subset: %w", err)
-		}
-		parts.Config = sha256Hex(subset)
-	} else {
-		subset, err := canonicalSubsetJSON(chunkConfigSubset(cfg))
-		if err != nil {
-			return parts, fmt.Errorf("compile key: chunk subset: %w", err)
-		}
-		parts.Config = sha256Hex(subset)
-	}
-	return parts, nil
+	return kc.Parts(sourceHash, tier), nil
 }
 
 // templateKeyComponent joins "name@version:hash16" sorted by name.
@@ -224,6 +259,7 @@ func compileConfigSubset(cfg *config.Config) map[string]any {
 
 	put("language", cfg.Language)
 	put("version", cfg.Version)
+	put("output", cfg.Output) // article_path strings embed it (review M5)
 	put("api.provider", cfg.API.Provider)
 	put("api.extra_params", cfg.API.ExtraParams)
 
@@ -500,7 +536,7 @@ var subsetPolicy = map[string]string{
 	"project":     "project metadata, not output",
 	"extends":     "config inheritance mechanism; resolved values are already in the key",
 	"ignore":      "membership is Diff's domain (a newly-included file arrives as Added)",
-	"output":      "output root path, not content identity",
+	"output":      "",
 	"sources":     "source type changes are Diff's Modified classification (diff.go:121-128)",
 	"vault.root":  "hub/vault runtime",
 

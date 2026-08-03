@@ -173,3 +173,57 @@ func TestOpenOptionsNow_LandsInTimestamps(t *testing.T) {
 		t.Errorf("UpdatedAt = %q, want 2023-11-14 22:13:20 (OpenOptions.Now)", got.UpdatedAt)
 	}
 }
+
+// TestClassifySkipsAgainstPostgres is spec test 10's missing half: the skip
+// evaluation itself runs identically against the postgres store (the SQLite
+// legs live in internal/compiler/dedup_skip_test.go).
+func TestClassifySkipsAgainstPostgres(t *testing.T) {
+	dsn := migrationTestDSN(t)
+	dbName := fmt.Sprintf("ckcls_%d", time.Now().UnixNano())
+	boot, err := sql.Open("pgx", swapDB(dsn, "postgres"))
+	if err != nil {
+		t.Fatalf("bootstrap connect: %v", err)
+	}
+	createClone(t, boot, dbName, dsnDB(dsn))
+	boot.Close()
+	t.Cleanup(func() {
+		c, err := sql.Open("pgx", swapDB(dsn, "postgres"))
+		if err == nil {
+			c.Exec("DROP DATABASE " + dbName)
+			c.Close()
+		}
+	})
+
+	b, err := Open(swapDB(dsn, dbName), store.OpenOptions{Mode: store.ModeWriter, VectorDimension: 8})
+	if err != nil {
+		t.Fatalf("open backend: %v", err)
+	}
+	defer b.Close()
+
+	items := b.CompileItems()
+	it := store.CompileItem{
+		SourcePath: "raw/pg.md", Hash: "sha256:pg", FileType: "article",
+		Tier: 3, TierDefault: 3, SourceType: "compiler",
+		PassIndexed: true, PassEmbedded: true, PassSummarized: true, PassExtracted: true, PassWritten: true,
+	}
+	if err := items.Upsert(it); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := items.SetCompileKey("raw/pg.md", "k", "{}"); err != nil {
+		t.Fatalf("set key: %v", err)
+	}
+	got, err := items.GetByPath("raw/pg.md")
+	if err != nil || got == nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.CompileKey != "k" {
+		t.Errorf("CompileKey = %q, want k — the classifier's R4 read fails without it", got.CompileKey)
+	}
+	if err := items.InvalidatePasses("raw/pg.md"); err != nil {
+		t.Fatalf("invalidate: %v", err)
+	}
+	got2, _ := items.GetByPath("raw/pg.md")
+	if got2.PassWritten || got2.PassEmbedded || got2.PassIndexed {
+		t.Errorf("flags not zeroed: %+v — R5 drift reset broken on postgres", got2)
+	}
+}

@@ -79,15 +79,15 @@ func TestDoubleCompile_ByteParityUnderConcurrency(t *testing.T) {
 
 	// Scramble A: bbb's write is slow (completes last despite being second).
 	stub.mu.Lock()
-	stub.writeDelays = map[string]time.Duration{"concept-bbb": 200 * time.Millisecond}
-	stub.embedDelays = map[string]time.Duration{"Deferred Doc 2": 250 * time.Millisecond}
+	stub.writeDelays = map[string]time.Duration{"concept-bbb": 500 * time.Millisecond}
+	stub.embedDelays = map[string]time.Duration{"Deferred Doc 2": 500 * time.Millisecond}
 	stub.mu.Unlock()
 	dirA := compileDeferredCorpusOpts(t, srv.URL, CompileOpts{})
 
 	// Scramble B: the OPPOSITE ends are slow (completion order inverted).
 	stub.mu.Lock()
-	stub.writeDelays = map[string]time.Duration{"concept-aaa": 200 * time.Millisecond}
-	stub.embedDelays = map[string]time.Duration{"Deferred Doc 1": 250 * time.Millisecond}
+	stub.writeDelays = map[string]time.Duration{"concept-aaa": 500 * time.Millisecond}
+	stub.embedDelays = map[string]time.Duration{"Deferred Doc 1": 500 * time.Millisecond}
 	stub.mu.Unlock()
 	dirB := compileDeferredCorpusOpts(t, srv.URL, CompileOpts{})
 

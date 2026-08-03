@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/storage"
@@ -42,6 +43,12 @@ type skipClassification struct {
 	// diff.Modified by the caller so toProcess picks them up (the CLI's
 	// toProcess is diff-driven; claims alone never reach fullpipeline).
 	resume []SourceInfo
+	// classifiedSpuriousAdded lists the manifest-untracked docs (tier<3,
+	// diff-reported Added on every compile) that went through key
+	// classification. The caller REMOVES them from diff.Added — otherwise
+	// they double-count (Added AND Modified when drifted/resumed) and the
+	// all-skip fast path can never fire for tier<3 corpora (review M1).
+	classifiedSpuriousAdded []string
 }
 
 // classifySkips evaluates the skip rule (spec R0-R6) over every tracked
@@ -62,6 +69,12 @@ func classifySkips(
 	force, dryRun bool,
 ) (*skipClassification, error) {
 	out := &skipClassification{driftReasons: map[string]string{}}
+
+	// One computation per run, not per doc (review M3).
+	kc, err := NewKeyContext(cfg, pr)
+	if err != nil {
+		return nil, fmt.Errorf("classify: key context: %w", err)
+	}
 
 	removed := map[string]bool{}
 	for _, p := range diff.Removed {
@@ -112,6 +125,9 @@ func classifySkips(
 			if item.Tier >= 3 && !llmPassesDone {
 				out.resumePending++
 				out.resume = append(out.resume, SourceInfo{Path: path, Hash: item.Hash, Type: item.FileType, Size: item.SizeBytes})
+				if spuriousAdded[path] {
+					out.classifiedSpuriousAdded = append(out.classifiedSpuriousAdded, path)
+				}
 			}
 			continue
 		}
@@ -125,17 +141,20 @@ func classifySkips(
 			}
 			out.drifted = append(out.drifted, SourceInfo{Path: path, Hash: item.Hash, Type: item.FileType, Size: item.SizeBytes})
 			out.driftReasons[path] = "forced"
+			if spuriousAdded[path] {
+				out.classifiedSpuriousAdded = append(out.classifiedSpuriousAdded, path)
+			}
 			continue
 		}
 
-		current, err := ComputeCompileKeyParts(item.Hash, tier, cfg, pr)
-		if err != nil {
-			return nil, fmt.Errorf("classify %s: %w", path, err)
-		}
+		current := kc.Parts(item.Hash, tier)
 
 		// R3 — adopt: compute + store, skip without recompiling.
 		if item.CompileKey == "" {
 			out.adopted = append(out.adopted, SkippedDoc{Path: path, Reason: "unchanged (adopted)"})
+			if spuriousAdded[path] {
+				out.classifiedSpuriousAdded = append(out.classifiedSpuriousAdded, path)
+			}
 			if !dryRun {
 				if err := items.SetCompileKey(path, current.Key(tier), current.JSON()); err != nil {
 					return nil, fmt.Errorf("adopt key %s: %w", path, err)
@@ -145,8 +164,11 @@ func classifySkips(
 		}
 
 		// R4 — unchanged.
-		if item.CompileKey == current.Key(tier) {
+		if item.CompileKey == current.Key(item.Tier) {
 			out.skipped = append(out.skipped, SkippedDoc{Path: path, Reason: "unchanged"})
+			if spuriousAdded[path] {
+				out.classifiedSpuriousAdded = append(out.classifiedSpuriousAdded, path)
+			}
 			continue
 		}
 
@@ -157,6 +179,11 @@ func classifySkips(
 			if c := DriftClass(stored, current); c != "" && c != "content" {
 				class = c
 			}
+		} else {
+			// Corrupt stored parts: fall back to the catch-all class and
+			// recompile once (the new key overwrites) — the lenient story,
+			// surfaced, never silent (review M10).
+			log.Warn("compile: stored key parts unreadable — recompiling with config drift class", "path", path, "error", err)
 		}
 		if !dryRun {
 			if err := items.InvalidatePasses(path); err != nil {
@@ -165,6 +192,9 @@ func classifySkips(
 		}
 		out.drifted = append(out.drifted, SourceInfo{Path: path, Hash: item.Hash, Type: item.FileType, Size: item.SizeBytes})
 		out.driftReasons[path] = class
+		if spuriousAdded[path] {
+			out.classifiedSpuriousAdded = append(out.classifiedSpuriousAdded, path)
+		}
 	}
 
 	return out, nil
@@ -180,6 +210,10 @@ func classifySkips(
 // Called only on the success path: a cancelled/failed run marks nothing
 // (P1-1), and a doc that failed stays tier-incomplete and untouched here.
 func storeCompileKeysForCompleted(cfg *config.Config, pr *prompts.Registry, items store.CompileItemStore) error {
+	kc, err := NewKeyContext(cfg, pr)
+	if err != nil {
+		return fmt.Errorf("store keys: key context: %w", err)
+	}
 	for tier := 0; tier <= 3; tier++ {
 		rows, err := items.ListByTier(tier)
 		if err != nil {
@@ -189,10 +223,7 @@ func storeCompileKeysForCompleted(cfg *config.Config, pr *prompts.Registry, item
 			if !tierComplete(&item) {
 				continue
 			}
-			parts, err := ComputeCompileKeyParts(item.Hash, item.Tier, cfg, pr)
-			if err != nil {
-				return fmt.Errorf("store keys: %s: %w", item.SourcePath, err)
-			}
+			parts := kc.Parts(item.Hash, item.Tier)
 			key := parts.Key(item.Tier)
 			if key == item.CompileKey {
 				continue // already current — no write churn
@@ -255,23 +286,24 @@ func ExplainCompileKey(projectDir, doc string, cfg *config.Config, pr *prompts.R
 
 	ex := &CompileExplanation{Path: doc, SourceHash: diskHash, Pipeline: PipelineVersion}
 
+	kc, err := NewKeyContext(cfg, pr)
+	if err != nil {
+		return nil, fmt.Errorf("explain %s: %w", doc, err)
+	}
 	if item == nil {
-		// Never compiled: the computed key still describes what a compile
-		// would produce (tier from the config default chain — ResolveTier is
-		// the pipeline's own call, but Explain keeps it simple: tier 3).
-		parts, err := ComputeCompileKeyParts(diskHash, 3, cfg, pr)
-		if err != nil {
-			return nil, fmt.Errorf("explain %s: %w", doc, err)
+		// Never compiled: tier from the config default chain (review M4 —
+		// was hardcoded 3, wrong shape for tier<3 workspaces).
+		tier := cfg.Compiler.DefaultTier
+		if tier <= 0 {
+			tier = 3
 		}
-		fillExplanation(ex, parts, "", 3)
+		parts := kc.Parts(diskHash, tier)
+		fillExplanation(ex, parts, "", tier)
 		ex.Verdict = "compile: content (new)"
 		return ex, nil
 	}
 
-	parts, err := ComputeCompileKeyParts(diskHash, item.Tier, cfg, pr)
-	if err != nil {
-		return nil, fmt.Errorf("explain %s: %w", doc, err)
-	}
+	parts := kc.Parts(diskHash, item.Tier)
 	fillExplanation(ex, parts, item.CompileKey, item.Tier)
 	if err := json.Unmarshal([]byte(item.CompileKeyParts), &ex.StoredParts); err != nil && item.CompileKeyParts != "" {
 		return nil, fmt.Errorf("explain %s: stored parts: %w", doc, err)

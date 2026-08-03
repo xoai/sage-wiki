@@ -516,8 +516,7 @@ func TestSkip_DependentsEnumeration(t *testing.T) {
 	}
 	ch1Before := chunkTextBefore("raw/doc1.md")
 	ch2Before := chunkTextBefore("raw/doc2.md")
-	ch3Before := chunkTextBefore("raw/doc2.md")
-	_ = ch3Before
+	ch3Before := chunkTextBefore("raw/doc3.md")
 
 	if err := os.WriteFile(filepath.Join(dir, "raw", "doc2.md"), []byte("# Deferred Doc 2\n\nEDITED substantially, entirely new content about gardening."), 0644); err != nil {
 		t.Fatal(err)
@@ -572,6 +571,9 @@ func TestSkip_DependentsEnumeration(t *testing.T) {
 	if chunkTextBefore("raw/doc1.md") != ch1Before {
 		t.Error("untouched doc1's chunk content changed")
 	}
+	if chunkTextBefore("raw/doc3.md") != ch3Before {
+		t.Error("untouched doc3's chunk content changed (the QA round's dead assertion, review M2)")
+	}
 }
 
 func loadConfigFromDir(t *testing.T, dir string) (*config.Config, error) {
@@ -581,4 +583,32 @@ func loadConfigFromDir(t *testing.T, dir string) (*config.Config, error) {
 		return &c, nil
 	}
 	return config.Load(filepath.Join(dir, "config.yaml"))
+}
+
+// TestSkip_TierLowNoopCounts pins review M1: a no-op tier-1 compile reports
+// Added=0 (no spurious re-Add) and the CHANGELOG gains no phantom entry.
+func TestSkip_TierLowNoopCounts(t *testing.T) {
+	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
+	srv := newTestServer(stub)
+	defer srv.Close()
+
+	dir := t.TempDir()
+	writeDeferredCorpusInto(t, dir, srv.URL)
+	raw, _ := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	raw = []byte(strings.Replace(string(raw), "default_tier: 3", "default_tier: 1", 1))
+	os.WriteFile(filepath.Join(dir, "config.yaml"), raw, 0644)
+
+	if _, err := Compile(dir, CompileOpts{}); err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	changelogBefore, _ := os.ReadFile(filepath.Join(dir, "wiki", "CHANGELOG.md"))
+
+	res := compileInDir(t, dir, srv.URL, CompileOpts{})
+	if res.Added != 0 {
+		t.Errorf("no-op tier-1 compile Added = %d, want 0 (spurious re-Add of key-classified docs)", res.Added)
+	}
+	changelogAfter, _ := os.ReadFile(filepath.Join(dir, "wiki", "CHANGELOG.md"))
+	if len(changelogBefore) != len(changelogAfter) {
+		t.Errorf("CHANGELOG grew on a no-op compile (%d → %d bytes)", len(changelogBefore), len(changelogAfter))
+	}
 }

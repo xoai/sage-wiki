@@ -14,9 +14,9 @@ internal/compiler/worker_cycle.go:439 claimedItemFor is a membership scan, first
 internal/compiler/worker_cycle.go:160 heartbeat path list feeds one IN-clause UPDATE (set semantics)
 internal/compiler/worker_cycle.go:299 heartbeat path list feeds one IN-clause UPDATE (set semantics)
 internal/compiler/worker_cycle.go:322 error-report log order only (stderr text)
-internal/compiler/compilekey.go:167 sort.Strings(names) immediately after the loop
-internal/compiler/pipeline.go:1200 sort.Strings(missing) immediately after the loop (SPEC-04 Task 3)
-internal/compiler/pipeline.go:1086 batch results: per-path independent atomic writes + manifest is a json-sorted map
+internal/compiler/compilekey.go:202 sort.Strings(names) immediately after the loop
+internal/compiler/pipeline.go:1206 sort.Strings(missing) immediately after the loop (SPEC-04 Task 3)
+internal/compiler/pipeline.go:1092 batch results: per-path independent atomic writes + manifest is a json-sorted map
 internal/compiler/write.go:523 prefix-match membership loop, produces no ordered output
 internal/compiler/write.go:826 sort.Slice(related) immediately after the shared-count loop
 internal/compiler/write.go:837 same: the related slice is sorted by count desc, name asc right below

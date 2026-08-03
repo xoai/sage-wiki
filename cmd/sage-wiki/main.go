@@ -653,8 +653,14 @@ func runCompile(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Compile complete: +%d added, ~%d modified, -%d removed, %d summarized, %d concepts, %d articles",
 		result.Added, result.Modified, result.Removed, result.Summarized,
 		result.ConceptsExtracted, result.ArticlesWritten)
-	if len(result.Skipped) > 0 || result.Adopted > 0 {
-		fmt.Printf(", %d unchanged (skipped), %d keys adopted", len(result.Skipped), result.Adopted)
+	unchanged := 0
+	for _, s := range result.Skipped {
+		if s.Reason == "unchanged" {
+			unchanged++
+		}
+	}
+	if unchanged > 0 || result.Adopted > 0 {
+		fmt.Printf(", %d unchanged (skipped), %d keys adopted", unchanged, result.Adopted)
 	}
 	if result.Errors > 0 {
 		fmt.Printf(", %d errors", result.Errors)
