@@ -174,10 +174,11 @@ func TestOpenOptionsNow_LandsInTimestamps(t *testing.T) {
 	}
 }
 
-// TestClassifySkipsAgainstPostgres is spec test 10's missing half: the skip
-// evaluation itself runs identically against the postgres store (the SQLite
-// legs live in internal/compiler/dedup_skip_test.go).
-func TestClassifySkipsAgainstPostgres(t *testing.T) {
+// TestPostgresStore_ClassifyPrimitives proves the store primitives the
+// skip classifier depends on (GetByPath key read, InvalidatePasses flag
+// zeroing) work on postgres — the classifier itself is exercised in
+// internal/compiler/dedup_skip_test.go against SQLite (same interface).
+func TestPostgresStore_ClassifyPrimitives(t *testing.T) {
 	dsn := migrationTestDSN(t)
 	dbName := fmt.Sprintf("ckcls_%d", time.Now().UnixNano())
 	boot, err := sql.Open("pgx", swapDB(dsn, "postgres"))

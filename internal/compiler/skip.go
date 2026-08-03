@@ -80,15 +80,15 @@ func classifySkips(
 	for _, p := range diff.Removed {
 		removed[p] = true
 	}
-	// Docs the diff calls Added/Modified compile regardless — EXCEPT
-	// manifest-untracked steady-state docs (tier<3 never enters the
-	// manifest, so Diff reports them Added on every compile). Those carry a
-	// stored key from a prior run and MUST be key-classified, or drift
-	// never fires for them (and a key match is free either way: complete
-	// flags mean no claims).
-	spuriousAdded := map[string]bool{}
+	// Manifest-untracked docs (tier<3 never enters the manifest, so Diff
+	// reports them Added on every compile). The set carries each doc's FRESH
+	// content hash (review N1): a key comparison made against the STORED row
+	// hash silently swallows edits — the stored key always matches itself.
+	// Content-changed docs are R2's domain: they stay in diff.Added, where
+	// the upsert's hash-change flag reset reprocesses them.
+	spuriousAdded := map[string]string{}
 	for _, s := range diff.Added {
-		spuriousAdded[s.Path] = true
+		spuriousAdded[s.Path] = s.Hash
 	}
 	inModified := map[string]bool{}
 	for _, s := range diff.Modified {
@@ -110,8 +110,11 @@ func classifySkips(
 		if removed[path] || inModified[path] {
 			continue
 		}
-		if spuriousAdded[path] && item.CompileKey == "" {
-			continue // genuinely new (or re-added after removal): Added flow + completion sweep adopts
+		if fresh, isSpurious := spuriousAdded[path]; isSpurious && item.Hash != fresh {
+			// Content changed (review N1): R2's domain — the Added flow's
+			// hash-change flag reset reprocesses the doc. Never key-compare
+			// against the stale stored hash.
+			continue
 		}
 		tier := item.Tier
 
@@ -125,7 +128,7 @@ func classifySkips(
 			if item.Tier >= 3 && !llmPassesDone {
 				out.resumePending++
 				out.resume = append(out.resume, SourceInfo{Path: path, Hash: item.Hash, Type: item.FileType, Size: item.SizeBytes})
-				if spuriousAdded[path] {
+				if _, ok := spuriousAdded[path]; ok {
 					out.classifiedSpuriousAdded = append(out.classifiedSpuriousAdded, path)
 				}
 			}
@@ -141,7 +144,7 @@ func classifySkips(
 			}
 			out.drifted = append(out.drifted, SourceInfo{Path: path, Hash: item.Hash, Type: item.FileType, Size: item.SizeBytes})
 			out.driftReasons[path] = "forced"
-			if spuriousAdded[path] {
+			if _, ok := spuriousAdded[path]; ok {
 				out.classifiedSpuriousAdded = append(out.classifiedSpuriousAdded, path)
 			}
 			continue
@@ -152,7 +155,7 @@ func classifySkips(
 		// R3 — adopt: compute + store, skip without recompiling.
 		if item.CompileKey == "" {
 			out.adopted = append(out.adopted, SkippedDoc{Path: path, Reason: "unchanged (adopted)"})
-			if spuriousAdded[path] {
+			if _, ok := spuriousAdded[path]; ok {
 				out.classifiedSpuriousAdded = append(out.classifiedSpuriousAdded, path)
 			}
 			if !dryRun {
@@ -166,7 +169,7 @@ func classifySkips(
 		// R4 — unchanged.
 		if item.CompileKey == current.Key(item.Tier) {
 			out.skipped = append(out.skipped, SkippedDoc{Path: path, Reason: "unchanged"})
-			if spuriousAdded[path] {
+			if _, ok := spuriousAdded[path]; ok {
 				out.classifiedSpuriousAdded = append(out.classifiedSpuriousAdded, path)
 			}
 			continue
@@ -192,7 +195,7 @@ func classifySkips(
 		}
 		out.drifted = append(out.drifted, SourceInfo{Path: path, Hash: item.Hash, Type: item.FileType, Size: item.SizeBytes})
 		out.driftReasons[path] = class
-		if spuriousAdded[path] {
+		if _, ok := spuriousAdded[path]; ok {
 			out.classifiedSpuriousAdded = append(out.classifiedSpuriousAdded, path)
 		}
 	}
@@ -291,12 +294,11 @@ func ExplainCompileKey(projectDir, doc string, cfg *config.Config, pr *prompts.R
 		return nil, fmt.Errorf("explain %s: %w", doc, err)
 	}
 	if item == nil {
-		// Never compiled: tier from the config default chain (review M4 —
-		// was hardcoded 3, wrong shape for tier<3 workspaces).
-		tier := cfg.Compiler.DefaultTier
-		if tier <= 0 {
-			tier = 3
-		}
+		// Never compiled: tier from the pipeline's own default chain —
+		// tier_defaults[ext] first, then default_tier, else 1
+		// (TierManager.ConfigDefault; was hardcoded 3, then a cfg-only
+		// approximation — N3).
+		tier := NewTierManager(&cfg.Compiler, items).ConfigDefault(doc)
 		parts := kc.Parts(diskHash, tier)
 		fillExplanation(ex, parts, "", tier)
 		ex.Verdict = "compile: content (new)"

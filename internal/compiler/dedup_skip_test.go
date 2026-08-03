@@ -504,7 +504,7 @@ func TestSkip_DependentsEnumeration(t *testing.T) {
 	sum1Before, _ := os.ReadFile(filepath.Join(dir, "wiki", "summaries", "raw-doc1.md"))
 	sum2Before, _ := os.ReadFile(filepath.Join(dir, "wiki", "summaries", "raw-doc2.md"))
 	sum3Before, _ := os.ReadFile(filepath.Join(dir, "wiki", "summaries", "raw-doc3.md"))
-	chunkTextBefore := func(doc string) string {
+	chunkText := func(doc string) string {
 		db, err := sql.Open("sqlite", filepath.Join(dir, ".sage", "wiki.db"))
 		if err != nil {
 			t.Fatal(err)
@@ -514,9 +514,9 @@ func TestSkip_DependentsEnumeration(t *testing.T) {
 		db.QueryRow("SELECT GROUP_CONCAT(content, '') FROM chunks_meta WHERE doc_id = ?", "src:"+doc).Scan(&content)
 		return content
 	}
-	ch1Before := chunkTextBefore("raw/doc1.md")
-	ch2Before := chunkTextBefore("raw/doc2.md")
-	ch3Before := chunkTextBefore("raw/doc3.md")
+	ch1Before := chunkText("raw/doc1.md")
+	ch2Before := chunkText("raw/doc2.md")
+	ch3Before := chunkText("raw/doc3.md")
 
 	if err := os.WriteFile(filepath.Join(dir, "raw", "doc2.md"), []byte("# Deferred Doc 2\n\nEDITED substantially, entirely new content about gardening."), 0644); err != nil {
 		t.Fatal(err)
@@ -565,13 +565,13 @@ func TestSkip_DependentsEnumeration(t *testing.T) {
 	}
 
 	// Dependent 4: index rows — the touched doc's chunks changed, others did not.
-	if chunkTextBefore("raw/doc2.md") == ch2Before {
+	if chunkText("raw/doc2.md") == ch2Before {
 		t.Error("touched doc's chunk content unchanged — index rows should rebuild")
 	}
-	if chunkTextBefore("raw/doc1.md") != ch1Before {
+	if chunkText("raw/doc1.md") != ch1Before {
 		t.Error("untouched doc1's chunk content changed")
 	}
-	if chunkTextBefore("raw/doc3.md") != ch3Before {
+	if chunkText("raw/doc3.md") != ch3Before {
 		t.Error("untouched doc3's chunk content changed (the QA round's dead assertion, review M2)")
 	}
 }
@@ -610,5 +610,133 @@ func TestSkip_TierLowNoopCounts(t *testing.T) {
 	changelogAfter, _ := os.ReadFile(filepath.Join(dir, "wiki", "CHANGELOG.md"))
 	if len(changelogBefore) != len(changelogAfter) {
 		t.Errorf("CHANGELOG grew on a no-op compile (%d → %d bytes)", len(changelogBefore), len(changelogAfter))
+	}
+}
+
+// TestSkip_TierLowContentEditRecompiles pins review N1 (CRITICAL): a tier-1
+// doc whose CONTENT changed must re-embed — never be reported "unchanged
+// (skipped)". The stored key matches the STORED hash; the fresh hash must
+// drive the decision.
+func TestSkip_TierLowContentEditRecompiles(t *testing.T) {
+	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
+	srv := newTestServer(stub)
+	defer srv.Close()
+
+	dir := t.TempDir()
+	writeDeferredCorpusInto(t, dir, srv.URL)
+	raw, _ := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	raw = []byte(strings.Replace(string(raw), "default_tier: 3", "default_tier: 1", 1))
+	os.WriteFile(filepath.Join(dir, "config.yaml"), raw, 0644)
+
+	if _, err := Compile(dir, CompileOpts{}); err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+
+	// Edit content of one tier-1 doc.
+	if err := os.WriteFile(filepath.Join(dir, "raw", "doc2.md"), []byte("# Deferred Doc 2\n\nCOMPLETELY NEW content about astrophysics and stellar formation."), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	embedBefore := stub.embeds.get()
+	res := compileInDir(t, dir, srv.URL, CompileOpts{})
+	if got := stub.embeds.get() - embedBefore; got == 0 {
+		t.Error("N1: tier-1 content edit made zero embed requests — stale content swallowed as 'unchanged'")
+	}
+	for _, s := range res.Skipped {
+		if s.Path == "raw/doc2.md" {
+			t.Errorf("N1: content-edited doc reported skipped (reason %q)", s.Reason)
+		}
+	}
+
+	// And it must not stay stale: a second no-op compile now skips it cleanly.
+	embedBefore = stub.embeds.get()
+	res2 := compileInDir(t, dir, srv.URL, CompileOpts{})
+	if got := stub.embeds.get() - embedBefore; got != 0 {
+		t.Errorf("second compile re-embedded %d docs, want 0 (new key stored)", got)
+	}
+	found := false
+	for _, s := range res2.Skipped {
+		if s.Path == "raw/doc2.md" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("second compile should skip the edited doc with its new key")
+	}
+}
+
+// TestSkip_TierLowUpgradeAdoptionReported pins review N2: the upgrade run on
+// a tier-1 workspace reports Adopted (not Added + silence) — the never-
+// re-bill proof is observable for tier<3 docs too.
+func TestSkip_TierLowUpgradeAdoptionReported(t *testing.T) {
+	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
+	srv := newTestServer(stub)
+	defer srv.Close()
+
+	dir := t.TempDir()
+	writeDeferredCorpusInto(t, dir, srv.URL)
+	raw, _ := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	raw = []byte(strings.Replace(string(raw), "default_tier: 3", "default_tier: 1", 1))
+	os.WriteFile(filepath.Join(dir, "config.yaml"), raw, 0644)
+
+	if _, err := Compile(dir, CompileOpts{}); err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+
+	// Simulate the pre-SPEC-04 upgrade state.
+	db, err := sql.Open("sqlite", filepath.Join(dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("UPDATE compile_items SET compile_key = '', compile_key_parts = ''"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	before := stub.requests.get()
+	embedBefore := stub.embeds.get()
+	res := compileInDir(t, dir, srv.URL, CompileOpts{})
+	if got := stub.requests.get() - before; got != 0 {
+		t.Errorf("tier-1 adoption run made %d chat requests, want 0", got)
+	}
+	if got := stub.embeds.get() - embedBefore; got != 0 {
+		t.Errorf("tier-1 adoption run made %d embed requests, want 0", got)
+	}
+	if res.Adopted != 3 {
+		t.Errorf("N2: tier-1 upgrade run Adopted = %d, want 3 (adoption must be observable)", res.Adopted)
+	}
+	if res.Added != 0 {
+		t.Errorf("N2: tier-1 upgrade run Added = %d, want 0 (no phantom additions)", res.Added)
+	}
+}
+
+// TestSkip_RemovedThenReaddedCompilesFresh pins the re-add path (vs upgrade):
+// removal clears key + flags, so a re-added doc recompiles — never adopted.
+func TestSkip_RemovedThenReaddedCompilesFresh(t *testing.T) {
+	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
+	srv := newTestServer(stub)
+	defer srv.Close()
+
+	dir := compileDeferredCorpusOpts(t, srv.URL, CompileOpts{})
+
+	// Remove then re-add the same content.
+	content, _ := os.ReadFile(filepath.Join(dir, "raw", "doc2.md"))
+	if err := os.Remove(filepath.Join(dir, "raw", "doc2.md")); err != nil {
+		t.Fatal(err)
+	}
+	compileInDir(t, dir, srv.URL, CompileOpts{})
+	if err := os.WriteFile(filepath.Join(dir, "raw", "doc2.md"), content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	before := stub.requests.get()
+	res := compileInDir(t, dir, srv.URL, CompileOpts{})
+	if got := stub.requests.get() - before; got == 0 {
+		t.Error("re-added doc made zero requests — must recompile fresh (removal resets flags)")
+	}
+	for _, s := range res.Skipped {
+		if s.Path == "raw/doc2.md" {
+			t.Errorf("re-added doc reported skipped/adopted (reason %q) — must compile fresh", s.Reason)
+		}
 	}
 }
