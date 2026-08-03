@@ -120,10 +120,12 @@ func classifySkips(
 		_, inManifest := mf.Sources[path]
 		_, isSpurious := spuriousAdded[path]
 		if !inManifest && !isSpurious {
-			// Ghost row (NEW-1): file deleted and the removal persisted (or
-			// is pending) — a stale row must never be classified, or R0 would
-			// inject the deleted file into the work set on every compile
-			// (claims reprocess it until dead-letter; the fast path dies).
+			// Ghost row (NEW-1): file deleted and the removal PERSISTED — a
+			// stale row must never be classified, or R0 would inject the
+			// deleted file into the work set on every compile (claims
+			// reprocess it until dead-letter; the fast path dies). A removal
+			// still deferred by the orphan rule never reaches this guard —
+			// removed[] catches it first.
 			continue
 		}
 		if isSpurious && item.Hash != spuriousAdded[path] {

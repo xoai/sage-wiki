@@ -741,10 +741,10 @@ func TestSkip_RemovedThenReaddedCompilesFresh(t *testing.T) {
 	}
 }
 
-// TestSkip_PureRemovalLeavesNoGhost pins NEW-1: after a pure removal (no
-// re-add), the next compile must not resurrect the ghost row — the
-// nothing-to-compile fast path fires, the deleted file is never claimed or
-// reported "incomplete (resume)".
+// TestSkip_PureRemovalLeavesNoGhost covers the deferred-removal interim:
+// while the sole-source orphan rule keeps the doc in the manifest, the
+// removed[] check (not the ghost guard) keeps it out of the work set. The
+// ghost guard itself is pinned by TestSkip_GhostAfterPersistedRemoval.
 func TestSkip_PureRemovalLeavesNoGhost(t *testing.T) {
 	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
 	srv := newTestServer(stub)
