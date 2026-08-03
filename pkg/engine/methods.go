@@ -1,12 +1,10 @@
 package engine
 
 import (
-	"archive/tar"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -14,7 +12,10 @@ import (
 
 	"github.com/xoai/sage-wiki/internal/capturefmt"
 	"github.com/xoai/sage-wiki/internal/compiler"
+	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/export"
 	"github.com/xoai/sage-wiki/internal/wiki"
+	"github.com/xoai/sage-wiki/pkg/events"
 )
 
 // DocID identifies a captured source: the source's path RELATIVE to the
@@ -153,6 +154,7 @@ type CompileRequest struct {
 	// Run-mode flags (map onto the compiler's options).
 	DryRun  bool
 	Fresh   bool // ignore checkpoint
+	Force   bool // SPEC-04 R1: recompile every doc regardless of compile keys
 	Batch   bool // batch API
 	NoCache bool // disable prompt caching
 	Prune   bool // delete orphaned articles
@@ -171,6 +173,18 @@ type CompileResult struct {
 	Cost                                    *decimal.Decimal `json:"cost"`
 	Assumptions                             []string         `json:"assumptions,omitempty"`
 	UnknownModels                           []string         `json:"unknown_models,omitempty"`
+
+	// SPEC-04: docs the compile-key evaluation skipped (unchanged) or
+	// adopted (first run after upgrade — key computed without recompiling).
+	Skipped []SkippedDoc `json:"skipped,omitempty"`
+	Adopted int          `json:"adopted"`
+}
+
+// SkippedDoc is a doc the compile did not recompile because its compile key
+// matched (or was adopted onto) the current inputs (SPEC-04).
+type SkippedDoc struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"` // "unchanged" | "unchanged (adopted)"
 }
 
 // Compile runs the pipeline over the pending diff.
@@ -202,6 +216,7 @@ func (w *Workspace) Compile(ctx context.Context, req CompileRequest) (*CompileRe
 		Ctx:      ctx,
 		DryRun:   req.DryRun,
 		Fresh:    req.Fresh,
+		Force:    req.Force,
 		Batch:    req.Batch,
 		NoCache:  req.NoCache,
 		Prune:    req.Prune,
@@ -218,7 +233,26 @@ func (w *Workspace) Compile(ctx context.Context, req CompileRequest) (*CompileRe
 	if errors.Is(err, compiler.ErrBudgetExceeded) {
 		return mapCompileResult(res), fmt.Errorf("%w (partial result returned)", ErrBudgetExceeded)
 	}
-	return mapCompileResult(res), nil
+	out := mapCompileResult(res)
+	w.emitCompileSkips(out)
+	return out, nil
+}
+
+// emitCompileSkips fans one compile_skip event per skipped doc into the
+// installed sink (SPEC-04: the pledge must be observable). No sink = no-op.
+func (w *Workspace) emitCompileSkips(res *CompileResult) {
+	if w.opts.sink == nil || res == nil {
+		return
+	}
+	for _, s := range res.Skipped {
+		w.opts.sink.Emit(events.Event{
+			Kind:      events.KindCompileSkip,
+			TS:        config.NowUTC(),
+			Workspace: w.dir,
+			Path:      s.Path,
+			Reason:    s.Reason,
+		})
+	}
 }
 
 func mapCompileResult(res *compiler.CompileResult) *CompileResult {
@@ -230,6 +264,10 @@ func mapCompileResult(res *compiler.CompileResult) *CompileResult {
 		Summarized: res.Summarized, ConceptsExtracted: res.ConceptsExtracted,
 		ArticlesWritten: res.ArticlesWritten, Errors: res.Errors, EmbedErrors: res.EmbedErrors,
 		TierIndexed: res.TierIndexed, TierEmbedded: res.TierEmbedded, TierCompiled: res.TierCompiled,
+		Adopted: res.Adopted,
+	}
+	for _, s := range res.Skipped {
+		out.Skipped = append(out.Skipped, SkippedDoc{Path: s.Path, Reason: s.Reason})
 	}
 	if res.CostReport != nil {
 		out.Cost = res.CostReport.Cost
@@ -284,50 +322,25 @@ func (w *Workspace) Export(ctx context.Context, dst io.Writer) error {
 	if err := w.checkOpen(); err != nil {
 		return err
 	}
+	// Shared deterministic exporter (SPEC-04 D5): normalized headers,
+	// symlinks and engine.lock skipped. The live DB caveat from the pre-D5
+	// implementation is unchanged (documented in internal/export).
+	return export.Tar(ctx, w.dir, dst)
+}
 
-	tw := tar.NewWriter(dst)
-	walkErr := filepath.WalkDir(w.dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if path == w.dir {
-			return nil
-		}
-		rel, err := filepath.Rel(w.dir, path)
-		if err != nil {
-			return err
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		hdr, err := tar.FileInfoHeader(info, "")
-		if err != nil {
-			return err
-		}
-		hdr.Name = filepath.ToSlash(rel)
-		if err := tw.WriteHeader(hdr); err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		f, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		_, copyErr := io.Copy(tw, f)
-		closeErr := f.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		return closeErr
-	})
-	if err := tw.Close(); walkErr == nil {
-		walkErr = err
+// CompileExplanation is the --explain report for one doc (SPEC-04 AC-5).
+// Alias of the compiler's explanation so CLI/engine share one shape.
+type CompileExplanation = compiler.CompileExplanation
+
+// ExplainCompile reports why a doc would compile or skip on the next run:
+// every compile-key component, stored-vs-current parts, and the verdict
+// (side-effect free — no adoptions, no resets).
+func (w *Workspace) ExplainCompile(ctx context.Context, doc string) (*CompileExplanation, error) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if err := w.checkOpen(); err != nil {
+		return nil, err
 	}
-	return walkErr
+	items := compiler.NewCompileItemStore(w.app.DB, config.NowUTC)
+	return compiler.ExplainCompileKey(w.dir, doc, w.app.Config, w.prompts, items)
 }

@@ -167,6 +167,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	warnSummaryNameCollisions(sourceInfoPaths(sources), sourceRoots, summaryNaming)
 
 	summaries := Summarize(SummarizeOpts{
+		Temperature: cfg.Compiler.CompileTemperature(),
 		Prompts:      opts.Prompts,
 		Ctx:           opts.Ctx,
 		ProjectDir:    opts.ProjectDir,
@@ -266,7 +267,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		extCacheID, _ = client.SetupCache("You are an expert knowledge organizer. Extract structured concepts from source summaries.", extractModel)
 	}
 	progress.StartPhase("Pass 2: Extract concepts", len(successfulSummaries))
-	concepts, err := ExtractConcepts(opts.Ctx, successfulSummaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel, opts.Prompts)
+	concepts, err := ExtractConcepts(opts.Ctx, successfulSummaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel, opts.Prompts, cfg.Compiler.CompileTemperature())
 	if err != nil {
 		progress.ItemError("concept extraction", err)
 		result.Errors++
@@ -287,12 +288,9 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	if opts.Embedder != nil && cfg.Compiler.DedupStrategy != "llm" {
 		dc := NewDedupCache(opts.Embedder, opts.VecStore, cfg.Compiler.DedupThreshold)
 
-		// Seed with existing concepts
-		var existingNames []string
-		for name := range mf.Concepts {
-			existingNames = append(existingNames, name)
-		}
-		dc.Seed(existingNames)
+		// Seed with existing concepts (SPEC-04 D1: sorted — seed order must
+		// not depend on map iteration)
+		dc.Seed(sortedConceptNames(mf.Concepts))
 
 		// Check new concepts for duplicates
 		var dedupedConcepts []ExtractedConcept
@@ -345,7 +343,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	writeOntStore := opts.OntStore
 	if writeOntStore == nil {
 		writeOntStore = ontology.NewStore(opts.DB, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
-			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
+			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC))
 	}
 
 	// Pass 2b: LLM triple extraction (P3-2, opt-in). Runs BEFORE the
@@ -403,6 +401,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	relPatterns := ontology.RelationPatterns(merged)
 	progress.StartPhase("Pass 3: Write articles", len(concepts))
 	articles := WriteArticles(ArticleWriteOpts{
+		Temperature: cfg.Compiler.CompileTemperature(),
 		Prompts:            opts.Prompts,
 		Ctx:                opts.Ctx,
 		ProjectDir:         opts.ProjectDir,

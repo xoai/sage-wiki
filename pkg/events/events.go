@@ -22,6 +22,10 @@ type Kind string
 const (
 	// KindUsage is an LLM usage event (SPEC-05).
 	KindUsage Kind = "usage"
+	// KindCompileSkip is a per-doc compile-skip event (SPEC-04): the pledge
+	// "unchanged docs are never recompiled" made observable. Fields:
+	// Workspace, Path, Reason ("unchanged" | "unchanged (adopted)").
+	KindCompileSkip Kind = "compile_skip"
 )
 
 // Event is the engine's event envelope. Fields not relevant to the Kind
@@ -43,4 +47,9 @@ type Event struct {
 	OutputTokens     int
 	Cost             *decimal.Decimal // nil when unknown — never a fabricated zero
 	PriceSource      string
+
+	// Compile-skip payload (Kind == KindCompileSkip): the doc skipped and
+	// the skip verdict.
+	Path   string
+	Reason string
 }

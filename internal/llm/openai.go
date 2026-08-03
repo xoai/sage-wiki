@@ -76,8 +76,8 @@ func (p *openaiProvider) formatBody(messages []Message, opts CallOpts, stream bo
 		}
 	}
 
-	if opts.Temperature > 0 {
-		body["temperature"] = opts.Temperature
+	if opts.Temperature != nil {
+		body["temperature"] = *opts.Temperature
 	}
 	return body
 }

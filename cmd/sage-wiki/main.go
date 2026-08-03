@@ -200,6 +200,8 @@ func init() {
 	compileCmd.Flags().Bool("batch", false, "Use batch API for 50% cost reduction (async)")
 	compileCmd.Flags().Bool("no-cache", false, "Disable prompt caching for this run")
 	compileCmd.Flags().Bool("prune", false, "Delete orphaned articles when their sole source is removed")
+	compileCmd.Flags().Bool("force", false, "Recompile every doc regardless of compile keys (SPEC-04)")
+	compileCmd.Flags().String("explain", "", "Print the compile-key inputs for one doc (why it would compile or skip) and exit")
 
 	// Reindex flags
 	reindexCmd.Flags().Bool("drop-chunk-vectors", false, "Rebuild the text index without an embedder — chunk vectors are deleted, not rebuilt")
@@ -501,7 +503,7 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("re-embed: load config: %w", err)
 		}
-		backend, err := storedial.Open(cfg.Storage, store.OpenOptions{Mode: store.ModeWriter, ProjectDir: dir, TemporalEnabled: cfg.Ontology.Temporal.Enabled})
+		backend, err := storedial.Open(cfg.Storage, store.OpenOptions{Mode: store.ModeWriter, ProjectDir: dir, TemporalEnabled: cfg.Ontology.Temporal.Enabled, Now: config.NowUTC})
 		if err != nil {
 			return fmt.Errorf("re-embed: open db: %w", err)
 		}
@@ -600,11 +602,43 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		return cli.CLIError(outputFormat, fmt.Errorf("workspace predates format versioning (v0.2.x) — re-run with --upgrade to adopt it (one-way); reads still work"))
 	}
 
+	explain, _ := cmd.Flags().GetString("explain")
+	if explain != "" {
+		ex, err := w.ExplainCompile(ctx, explain)
+		if err != nil {
+			return cli.CLIError(outputFormat, err)
+		}
+		force, _ := cmd.Flags().GetBool("force")
+		if force && ex.Verdict != "compile: incomplete (resume)" {
+			// R0 wins over force for interrupted docs (spec skip rule) — the
+			// same attribution real compiles use (pass-3 review obs 5).
+			ex.Verdict = "compile: forced"
+		}
+		if outputFormat == "json" {
+			fmt.Println(cli.FormatJSON(true, ex, ""))
+			return nil
+		}
+		fmt.Printf("Doc:          %s\n", ex.Path)
+		fmt.Printf("Source hash:  %s\n", ex.SourceHash)
+		fmt.Printf("Pipeline:     %s\n", ex.Pipeline)
+		fmt.Printf("Templates:    %s\n", ex.Templates)
+		fmt.Printf("Models:       %s\n", ex.Models)
+		fmt.Printf("Config hash:  %s\n", ex.ConfigHash)
+		fmt.Printf("Embed:        %s\n", ex.Embed)
+		fmt.Printf("Key:          %s\n", ex.Key)
+		fmt.Printf("Stored key:   %s\n", ex.StoredKey)
+		printPartsDiff(ex)
+		fmt.Printf("Verdict:      %s\n", ex.Verdict)
+		return nil
+	}
+
+	force, _ := cmd.Flags().GetBool("force")
 	result, err := w.Compile(ctx, engine.CompileRequest{
 		Selector: "pending",
 		Tier:     engine.TierUseConfig,
 		DryRun:   dryRun,
 		Fresh:    fresh,
+		Force:    force,
 		Batch:    batch,
 		NoCache:  noCache,
 		Prune:    prune,
@@ -621,6 +655,15 @@ func runCompile(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Compile complete: +%d added, ~%d modified, -%d removed, %d summarized, %d concepts, %d articles",
 		result.Added, result.Modified, result.Removed, result.Summarized,
 		result.ConceptsExtracted, result.ArticlesWritten)
+	unchanged := 0
+	for _, s := range result.Skipped {
+		if s.Reason == "unchanged" {
+			unchanged++
+		}
+	}
+	if unchanged > 0 || result.Adopted > 0 {
+		fmt.Printf(", %d unchanged (skipped), %d keys adopted", unchanged, result.Adopted)
+	}
 	if result.Errors > 0 {
 		fmt.Printf(", %d errors", result.Errors)
 	}
@@ -1528,4 +1571,26 @@ func runServeMulti(cmd *cobra.Command, root, addr string) error {
 	}
 	fmt.Fprintf(os.Stderr, "sage-wiki serve (multi-workspace) listening on %s — root %s, workspaces at /w/{name}/, list at /v1/workspaces\n", addr, abs)
 	return ms.Serve(ctx, addr)
+}
+
+// printPartsDiff prints old→new for each differing key component (spec
+// §Observability's human-table line item).
+func printPartsDiff(ex *engine.CompileExplanation) {
+	diffs := []struct{ name, old, new string }{
+		{"source", ex.StoredParts.Source, ex.CurrentParts.Source},
+		{"pipeline", ex.StoredParts.Pipeline, ex.CurrentParts.Pipeline},
+		{"templates", ex.StoredParts.Templates, ex.CurrentParts.Templates},
+		{"models", ex.StoredParts.Models, ex.CurrentParts.Models},
+		{"config", ex.StoredParts.Config, ex.CurrentParts.Config},
+		{"embed", ex.StoredParts.Embed, ex.CurrentParts.Embed},
+	}
+	for _, d := range diffs {
+		if d.old != d.new {
+			old := d.old
+			if old == "" {
+				old = "(none)"
+			}
+			fmt.Printf("  %s: %s → %s\n", d.name, old, d.new)
+		}
+	}
 }

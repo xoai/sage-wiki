@@ -29,9 +29,12 @@ type Message struct {
 
 // CallOpts configures an LLM call.
 type CallOpts struct {
-	Model       string
-	MaxTokens   int
-	Temperature float64
+	Model     string
+	MaxTokens int
+	// Temperature (SPEC-04 D2): nil omits the field (provider server-side
+	// default); non-nil sends it explicitly — compile passes always send 0
+	// unless compiler.temperature overrides.
+	Temperature *float64
 	// RawFallback (P2-4, spec §4 amendment): StructuredCompletion's fallback
 	// returns raw completion text for the site's own parser instead of the
 	// shared fence-strip parse.
@@ -617,3 +620,7 @@ func jsonBody(v any) *bytes.Buffer {
 	}
 	return bytes.NewBuffer(data)
 }
+
+// Float64 returns a pointer to v — the CallOpts.Temperature literal helper
+// (SPEC-04 D2 made the field a pointer).
+func Float64(v float64) *float64 { return &v }

@@ -299,6 +299,11 @@ jobs:
       - name: Lint (new issues)
         run: golangci-lint run --new-from-merge-base=origin/main --timeout=5m ./...
 
+      # SPEC-04 D1 tripwire: unsorted map-range loops feeding serializers.
+      # Best-effort grep + allowlist (limits documented in docs/determinism.md).
+      - name: Determinism check
+        run: bash scripts/check-determinism.sh
+
   vuln:
     name: Vuln scan (advisory)
     runs-on: ubuntu-latest

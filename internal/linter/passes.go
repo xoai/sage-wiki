@@ -2,15 +2,16 @@ package linter
 
 import (
 	"fmt"
-	"sort"
 	"math"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/compiler"
+	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
@@ -19,8 +20,8 @@ import (
 
 type CompletenessPass struct{}
 
-func (p *CompletenessPass) Name() string       { return "completeness" }
-func (p *CompletenessPass) CanAutoFix() bool    { return false }
+func (p *CompletenessPass) Name() string                          { return "completeness" }
+func (p *CompletenessPass) CanAutoFix() bool                      { return false }
 func (p *CompletenessPass) Fix(_ *LintContext, _ []Finding) error { return nil }
 
 func (p *CompletenessPass) Run(ctx *LintContext) ([]Finding, error) {
@@ -70,8 +71,8 @@ func (p *CompletenessPass) Run(ctx *LintContext) ([]Finding, error) {
 
 type StylePass struct{}
 
-func (p *StylePass) Name() string       { return "style" }
-func (p *StylePass) CanAutoFix() bool    { return true }
+func (p *StylePass) Name() string     { return "style" }
+func (p *StylePass) CanAutoFix() bool { return true }
 
 func (p *StylePass) Run(ctx *LintContext) ([]Finding, error) {
 	var findings []Finding
@@ -136,8 +137,8 @@ func (p *StylePass) Fix(ctx *LintContext, findings []Finding) error {
 
 type OrphansPass struct{}
 
-func (p *OrphansPass) Name() string       { return "orphans" }
-func (p *OrphansPass) CanAutoFix() bool    { return false }
+func (p *OrphansPass) Name() string                          { return "orphans" }
+func (p *OrphansPass) CanAutoFix() bool                      { return false }
 func (p *OrphansPass) Fix(_ *LintContext, _ []Finding) error { return nil }
 
 func (p *OrphansPass) Run(ctx *LintContext) ([]Finding, error) {
@@ -182,8 +183,8 @@ func (p *OrphansPass) Run(ctx *LintContext) ([]Finding, error) {
 
 type ConsistencyPass struct{}
 
-func (p *ConsistencyPass) Name() string       { return "consistency" }
-func (p *ConsistencyPass) CanAutoFix() bool    { return false }
+func (p *ConsistencyPass) Name() string                          { return "consistency" }
+func (p *ConsistencyPass) CanAutoFix() bool                      { return false }
 func (p *ConsistencyPass) Fix(_ *LintContext, _ []Finding) error { return nil }
 
 func (p *ConsistencyPass) Run(ctx *LintContext) ([]Finding, error) {
@@ -216,8 +217,8 @@ func (p *ConsistencyPass) Run(ctx *LintContext) ([]Finding, error) {
 
 type ConnectionsPass struct{}
 
-func (p *ConnectionsPass) Name() string       { return "connections" }
-func (p *ConnectionsPass) CanAutoFix() bool    { return false }
+func (p *ConnectionsPass) Name() string                          { return "connections" }
+func (p *ConnectionsPass) CanAutoFix() bool                      { return false }
 func (p *ConnectionsPass) Fix(_ *LintContext, _ []Finding) error { return nil }
 
 func (p *ConnectionsPass) Run(ctx *LintContext) ([]Finding, error) {
@@ -304,8 +305,8 @@ func decodeFloat32s(buf []byte) []float32 {
 
 type ImputePass struct{}
 
-func (p *ImputePass) Name() string       { return "impute" }
-func (p *ImputePass) CanAutoFix() bool    { return false }
+func (p *ImputePass) Name() string                          { return "impute" }
+func (p *ImputePass) CanAutoFix() bool                      { return false }
 func (p *ImputePass) Fix(_ *LintContext, _ []Finding) error { return nil }
 
 func (p *ImputePass) Run(ctx *LintContext) ([]Finding, error) {
@@ -360,8 +361,8 @@ func (p *ImputePass) Run(ctx *LintContext) ([]Finding, error) {
 
 type StalenessPass struct{}
 
-func (p *StalenessPass) Name() string       { return "staleness" }
-func (p *StalenessPass) CanAutoFix() bool    { return false }
+func (p *StalenessPass) Name() string                          { return "staleness" }
+func (p *StalenessPass) CanAutoFix() bool                      { return false }
 func (p *StalenessPass) Fix(_ *LintContext, _ []Finding) error { return nil }
 
 func (p *StalenessPass) Run(ctx *LintContext) ([]Finding, error) {
@@ -400,8 +401,8 @@ type QualityPass struct {
 	Threshold float64 // quality_score threshold (default 0.5)
 }
 
-func (p *QualityPass) Name() string       { return "quality" }
-func (p *QualityPass) CanAutoFix() bool    { return false }
+func (p *QualityPass) Name() string                          { return "quality" }
+func (p *QualityPass) CanAutoFix() bool                      { return false }
 func (p *QualityPass) Fix(_ *LintContext, _ []Finding) error { return nil }
 
 func (p *QualityPass) Run(ctx *LintContext) ([]Finding, error) {
@@ -426,7 +427,7 @@ func (p *QualityPass) Run(ctx *LintContext) ([]Finding, error) {
 	}
 
 	// Check for low quality articles (P2-1: via the CompileItemStore seam)
-	items := compiler.NewCompileItemStore(ctx.DB)
+	items := compiler.NewCompileItemStore(ctx.DB, config.NowUTC)
 	lowQ, err := items.ListBelowQualityScore(threshold)
 	if err != nil {
 		return findings, nil // table may not exist

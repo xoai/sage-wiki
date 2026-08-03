@@ -20,6 +20,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/vectors"
+	"sort"
 )
 
 // ReconcileResult summarizes a reconcile pass.
@@ -90,11 +91,11 @@ func Reconcile(ctx context.Context, projectDir string, cfg *config.Config, db st
 		mem:          memory.NewStore(db),
 		vec:          vectors.NewStore(db),
 		chunks:       memory.NewChunkStore(db),
-		ont:          ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
-			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault())),
-		oi:           storage.NewOutputIndex(db),
-		embedder:     embedder,
-		res:          &ReconcileResult{},
+		ont: ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
+			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC)),
+		oi:       storage.NewOutputIndex(db),
+		embedder: embedder,
+		res:      &ReconcileResult{},
 	}
 	return rc.run(ctx)
 }
@@ -130,6 +131,7 @@ func (rc *reconciler) run(ctx context.Context) (*ReconcileResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reconcile: load manifest: %w", err)
 	}
+	mf.SetNow(config.NowUTC)
 
 	expected := rc.expectedOutputs(mf)
 	seen := make(map[string]bool, len(expected))
@@ -187,6 +189,8 @@ func (rc *reconciler) expectedOutputs(mf *manifest.Manifest) []expectedOutput {
 		}
 		out = append(out, expectedOutput{path: s.SummaryPath, kind: "summary", ftsID: src})
 	}
+	// SPEC-04 D1: heal/replace order is observable (FTS delete+re-add rowids).
+	sort.Slice(out, func(i, j int) bool { return out[i].path < out[j].path })
 	return out
 }
 

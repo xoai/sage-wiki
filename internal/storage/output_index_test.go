@@ -55,6 +55,11 @@ func TestMigrationV7OnOldSchema(t *testing.T) {
 			t.Fatalf("drop v9 column %s: %v", col, err)
 		}
 	}
+	for _, col := range []string{"compile_key", "compile_key_parts"} {
+		if _, err := db.WriteDB().Exec("ALTER TABLE compile_items DROP COLUMN " + col); err != nil {
+			t.Fatalf("drop v15 column %s: %v", col, err)
+		}
+	}
 	for _, col := range []string{"evidence", "confidence", "source_doc", "valid_from", "valid_to", "invalidated_by"} {
 		if _, err := db.WriteDB().Exec("ALTER TABLE relations DROP COLUMN " + col); err != nil {
 			t.Fatalf("drop v10 column %s: %v", col, err)

@@ -20,6 +20,13 @@ type DiffResult struct {
 	Added    []SourceInfo
 	Modified []SourceInfo
 	Removed  []string // paths of removed sources
+	// Unchanged lists docs the compile-key evaluation skipped/adopted
+	// (SPEC-04; populated by the Compile classification, not Diff itself).
+	Unchanged []SkippedDoc
+	// Reason annotates per-entry WHY a Modified entry is compiling:
+	// "content", "content (new)", "incomplete (resume)", "forced", or the
+	// drift class (pipeline/templates/models/config/embed). "" = content.
+	Reason map[string]string
 }
 
 // SourceInfo describes a source file.

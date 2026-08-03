@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/store"
+	"sort"
 )
 
 // P3-6: bi-temporal edge validity.
@@ -67,6 +68,9 @@ func idForms(id string, edges map[string]string) []string {
 	for f := range forms {
 		out = append(out, f)
 	}
+	// SPEC-04 D1: the caller processes forms in order, so the order is
+	// observable — make it canonical.
+	sort.Strings(out)
 	return out
 }
 

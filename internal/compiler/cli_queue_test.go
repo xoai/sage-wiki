@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/storage"
@@ -24,7 +25,7 @@ func seedFailedItem(t *testing.T, h *workerHarness, path string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	items := NewCompileItemStore(db)
+	items := NewCompileItemStore(db, config.NowUTC)
 	if err := items.Upsert(CompileItem{SourcePath: path, Hash: "stale-hash", FileType: "md", Tier: 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +53,7 @@ func TestCompile_CLIGoldenUnchanged(t *testing.T) {
 	// Queue settled: both items done, no leases left behind.
 	db, _ := storage.Open(filepath.Join(h.dir, ".sage", "wiki.db"))
 	defer db.Close()
-	items := NewCompileItemStore(db)
+	items := NewCompileItemStore(db, config.NowUTC)
 	for _, p := range []string{"raw/a.md", "raw/b.md"} {
 		got, _ := items.GetByPath(p)
 		if got == nil {
@@ -82,7 +83,7 @@ func TestCompile_FreshResetsFailed(t *testing.T) {
 	}
 	db, _ := storage.Open(filepath.Join(h.dir, ".sage", "wiki.db"))
 	defer db.Close()
-	got, _ := NewCompileItemStore(db).GetByPath("raw/a.md")
+	got, _ := NewCompileItemStore(db, config.NowUTC).GetByPath("raw/a.md")
 	if got.Status != "done" {
 		t.Errorf("status = %q, want done (--fresh reset the dead letter)", got.Status)
 	}
@@ -99,7 +100,7 @@ func TestCompile_HashChangeRevivesFailed(t *testing.T) {
 	}
 	db, _ := storage.Open(filepath.Join(h.dir, ".sage", "wiki.db"))
 	defer db.Close()
-	got, _ := NewCompileItemStore(db).GetByPath("raw/a.md")
+	got, _ := NewCompileItemStore(db, config.NowUTC).GetByPath("raw/a.md")
 	if got.Status != "done" {
 		t.Errorf("status = %q, want done (hash change revived the dead letter)", got.Status)
 	}
@@ -113,7 +114,7 @@ func TestCompile_FailedItemsSkipped(t *testing.T) {
 	// Compile with nothing new: the dead-lettered item must NOT be retried
 	// (the hash matches after the seed's hash is refreshed by a first scan).
 	db, _ := storage.Open(filepath.Join(h.dir, ".sage", "wiki.db"))
-	items := NewCompileItemStore(db)
+	items := NewCompileItemStore(db, config.NowUTC)
 	// Simulate the first scan having already adopted the real hash while
 	// keeping the dead letter (same-hash upsert preserves queue state).
 	if _, err := Compile(h.dir, CompileOpts{DryRun: true}); err != nil {
@@ -158,7 +159,7 @@ func newTestBackend(db *storage.DB) *testBackend {
 	mergedTypes := ontology.MergedEntityTypes(nil)
 	return &testBackend{
 		db:      db,
-		items:   NewCompileItemStore(db),
+		items:   NewCompileItemStore(db, config.NowUTC),
 		entries: memory.NewStore(db),
 		chunks:  memory.NewChunkStore(db),
 		vecs:    vectors.NewStore(db),
@@ -181,12 +182,12 @@ func (b *testBackend) WriteTx(fn func(tx *sql.Tx) error) error {
 	return b.db.WriteTx(fn)
 }
 func (b *testBackend) BeginWrite() (*store.Tx, error) { return nil, errors.New("unsupported") }
-func (b *testBackend) ReadDB() *sql.DB                 { return b.db.ReadDB() }
-func (b *testBackend) WriteDB() *sql.DB                { return b.db.WriteDB() }
-func (b *testBackend) Health(context.Context) error    { return nil }
-func (b *testBackend) SchemaReady() bool               { return true }
-func (b *testBackend) Location() string                { return "test" }
-func (b *testBackend) Close() error                    { return nil }
+func (b *testBackend) ReadDB() *sql.DB                { return b.db.ReadDB() }
+func (b *testBackend) WriteDB() *sql.DB               { return b.db.WriteDB() }
+func (b *testBackend) Health(context.Context) error   { return nil }
+func (b *testBackend) SchemaReady() bool              { return true }
+func (b *testBackend) Location() string               { return "test" }
+func (b *testBackend) Close() error                   { return nil }
 
 // erroringClaimStore wraps a real queue store and fails every Claim —
 // proving a broken queue store surfaces on the CLI path instead of
@@ -264,7 +265,7 @@ func TestCompile_PromotedItemNotBurned(t *testing.T) {
 		t.Fatalf("compile 2: %v", err)
 	}
 
-	got, _ := NewCompileItemStore(db).GetByPath("raw/a.md")
+	got, _ := NewCompileItemStore(db, config.NowUTC).GetByPath("raw/a.md")
 	if got.Attempts != 0 {
 		t.Errorf("attempts = %d, want 0 — unprocessed claimed item must not burn budget", got.Attempts)
 	}
@@ -296,7 +297,7 @@ func TestCompile_FreshRevivesOnEmptyDiff(t *testing.T) {
 	if _, err := Compile(h.dir, CompileOpts{Fresh: true}); err != nil {
 		t.Fatalf("compile --fresh: %v", err)
 	}
-	got, _ := NewCompileItemStore(db).GetByPath("raw/a.md")
+	got, _ := NewCompileItemStore(db, config.NowUTC).GetByPath("raw/a.md")
 	if got.Status != "pending" || got.Attempts != 0 {
 		t.Errorf("status = %q attempts = %d, want pending/0 — --fresh must revive on empty diff", got.Status, got.Attempts)
 	}

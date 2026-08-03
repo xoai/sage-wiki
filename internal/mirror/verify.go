@@ -107,7 +107,12 @@ func (o *mirrorOps) VerifyMode(ctx context.Context, fast bool) (Report, error) {
 			rotated[gen] = true
 		}
 	}
+	gens := make([]int, 0, len(rotated))
 	for gen := range rotated {
+		gens = append(gens, gen)
+	}
+	sort.Ints(gens) // deterministic violation/report order (SPEC-04 D1)
+	for _, gen := range gens {
 		mb, err := m.client.GetObject(ctx, m.cfg.Bucket, GenerationMetaKey(prefix, gen))
 		if err != nil {
 			if errors.Is(err, s3.ErrNotFound) {

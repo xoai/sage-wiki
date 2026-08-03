@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -88,6 +89,7 @@ func runSourceList(cmd *cobra.Command, args []string) error {
 			Type:     src.Type,
 		})
 	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Path < rows[j].Path }) // SPEC-04 D1
 
 	if outputFormat == "json" {
 		fmt.Println(cli.FormatJSON(true, rows, ""))

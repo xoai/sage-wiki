@@ -1,11 +1,13 @@
 package compiler
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/vectors"
@@ -16,7 +18,7 @@ func TestIndexRawSources_SkipsCompiledEntry(t *testing.T) {
 	defer cleanup()
 
 	memStore := memory.NewStore(db)
-	items := NewCompileItemStore(db)
+	items := NewCompileItemStore(db, config.NowUTC)
 
 	// Create a temporary source file
 	projectDir := t.TempDir()
@@ -77,7 +79,7 @@ func TestIndexRawSources_IndexesNewSource(t *testing.T) {
 	defer cleanup()
 
 	memStore := memory.NewStore(db)
-	items := NewCompileItemStore(db)
+	items := NewCompileItemStore(db, config.NowUTC)
 
 	// Create a source file with no compiled entry
 	projectDir := t.TempDir()
@@ -136,12 +138,12 @@ func TestIndexAndEmbedSources_ChunkLongSource(t *testing.T) {
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
 	chunkStore := memory.NewChunkStore(db)
-	itemStore := NewCompileItemStore(db)
+	itemStore := NewCompileItemStore(db, config.NowUTC)
 	embedder := &mockEmbedder{embeddings: map[string][]float32{}}
 
 	sources := []CompileItem{{SourcePath: "raw/long.md", FileType: "article"}}
 
-	indexed, embedded := indexAndEmbedSources(dir, sources, memStore, vecStore, embedder, itemStore, nil, chunkStore, 800, 0, db)
+	indexed, embedded := indexAndEmbedSources(context.Background(), dir, sources, memStore, vecStore, embedder, itemStore, nil, chunkStore, 800, 0, db)
 
 	if indexed != 1 {
 		t.Errorf("expected 1 indexed, got %d", indexed)
@@ -188,11 +190,11 @@ func TestIndexAndEmbedSources_ShortSource(t *testing.T) {
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
 	chunkStore := memory.NewChunkStore(db)
-	itemStore := NewCompileItemStore(db)
+	itemStore := NewCompileItemStore(db, config.NowUTC)
 	embedder := &mockEmbedder{embeddings: map[string][]float32{}}
 
 	sources := []CompileItem{{SourcePath: "raw/short.md", FileType: "article"}}
-	_, embedded := indexAndEmbedSources(dir, sources, memStore, vecStore, embedder, itemStore, nil, chunkStore, 800, 0, db)
+	_, embedded := indexAndEmbedSources(context.Background(), dir, sources, memStore, vecStore, embedder, itemStore, nil, chunkStore, 800, 0, db)
 
 	if embedded != 1 {
 		t.Errorf("expected 1 embedded, got %d", embedded)
@@ -220,11 +222,11 @@ func TestIndexAndEmbedSources_EmptyText(t *testing.T) {
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
 	chunkStore := memory.NewChunkStore(db)
-	itemStore := NewCompileItemStore(db)
+	itemStore := NewCompileItemStore(db, config.NowUTC)
 	embedder := &mockEmbedder{embeddings: map[string][]float32{}}
 
 	sources := []CompileItem{{SourcePath: "raw/empty.md", FileType: "article"}}
-	_, embedded := indexAndEmbedSources(dir, sources, memStore, vecStore, embedder, itemStore, nil, chunkStore, 800, 0, db)
+	_, embedded := indexAndEmbedSources(context.Background(), dir, sources, memStore, vecStore, embedder, itemStore, nil, chunkStore, 800, 0, db)
 
 	if embedded != 0 {
 		t.Errorf("expected 0 embedded for empty source, got %d", embedded)
@@ -246,11 +248,11 @@ func TestIndexAndEmbedSources_NilChunkStore(t *testing.T) {
 
 	memStore := memory.NewStore(db)
 	vecStore := vectors.NewStore(db)
-	itemStore := NewCompileItemStore(db)
+	itemStore := NewCompileItemStore(db, config.NowUTC)
 	embedder := &mockEmbedder{embeddings: map[string][]float32{}}
 
 	sources := []CompileItem{{SourcePath: "raw/doc.md", FileType: "article"}}
-	_, embedded := indexAndEmbedSources(dir, sources, memStore, vecStore, embedder, itemStore, nil, nil, 800, 0, nil)
+	_, embedded := indexAndEmbedSources(context.Background(), dir, sources, memStore, vecStore, embedder, itemStore, nil, nil, 800, 0, nil)
 
 	if embedded != 1 {
 		t.Errorf("expected 1 embedded (legacy path), got %d", embedded)

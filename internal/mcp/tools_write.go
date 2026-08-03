@@ -622,6 +622,7 @@ func (s *Server) handleCompileDiff(ctx context.Context, req mcplib.CallToolReque
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
+	mf.SetNow(config.NowUTC)
 
 	// Run the real diff: walk configured source directories, compute hashes,
 	// and compare against the manifest. Previously this handler only counted

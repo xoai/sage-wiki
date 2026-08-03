@@ -125,8 +125,8 @@ func (p *geminiProvider) formatBody(messages []Message, opts CallOpts) (map[stri
 	if opts.MaxTokens > 0 {
 		config["maxOutputTokens"] = opts.MaxTokens
 	}
-	if opts.Temperature > 0 {
-		config["temperature"] = opts.Temperature
+	if opts.Temperature != nil {
+		config["temperature"] = *opts.Temperature
 	}
 	if len(config) > 0 {
 		body["generationConfig"] = config

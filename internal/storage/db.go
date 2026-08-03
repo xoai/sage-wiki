@@ -43,6 +43,12 @@ func Open(path string) (*DB, error) {
 		"PRAGMA busy_timeout=5000",
 		"PRAGMA foreign_keys=ON",
 		"PRAGMA synchronous=NORMAL",
+		// SPEC-04 D7: zero freed-cell content on delete/update. Without it,
+		// overwritten values (e.g. a released lease's pid+nonce owner token)
+		// survive as garbage bytes in pages, and two logically-identical DBs
+		// still differ at the byte level — the last blocker for AC-1's
+		// byte-identical wiki.db. Cost is minor write amplification.
+		"PRAGMA secure_delete=ON",
 	} {
 		if _, err := writeDB.Exec(pragma); err != nil {
 			writeDB.Close()
@@ -157,7 +163,17 @@ var schemaMigrations = []migration{
 	{sql: migrationV12},
 	{sql: migrationV13},
 	{sql: migrationV14},
+	{sql: migrationV15},
 }
+
+// migrationV15 adds the SPEC-04 compile-key columns: content-addressed
+// dedup state per source doc. Additive — old binaries tolerate the columns
+// (all reads/writes use explicit column lists), and empty keys mark
+// pre-SPEC-04 rows for the adoption path.
+const migrationV15 = `
+ALTER TABLE compile_items ADD COLUMN compile_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE compile_items ADD COLUMN compile_key_parts TEXT NOT NULL DEFAULT '';
+`
 
 // migrationV14 adds graph community storage (P3-5): detected communities
 // plus their entity membership. Membership is derived, rebuilt state —

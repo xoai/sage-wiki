@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/xoai/sage-wiki/internal/config"
 	gitpkg "github.com/xoai/sage-wiki/internal/git"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
@@ -445,7 +446,7 @@ func writeEmptyManifest(path string, force bool) error {
 			fmt.Fprintf(os.Stderr, ".manifest.json is corrupt — reinitializing (back it up if needed)\n")
 		}
 	}
-	data, err := json.Marshal(manifest.New())
+	data, err := json.Marshal(manifest.NewWithClock(config.NowUTC))
 	if err != nil {
 		return fmt.Errorf("init: marshal manifest: %w", err)
 	}

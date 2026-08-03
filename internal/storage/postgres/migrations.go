@@ -7,7 +7,7 @@ import (
 )
 
 // currentSchemaVersion tracks len(schemaMigrations).
-const currentSchemaVersion = 8
+const currentSchemaVersion = 9
 
 // schemaMigrations is the append-only Postgres V-series. Each entry is ONE
 // statement per Exec (pgx stdlib rejects multi-statement prepared calls).
@@ -337,6 +337,13 @@ var schemaMigrations = [][]string{
 			PRIMARY KEY (community_id, entity_id)
 		)`,
 		`INSERT INTO schema_version (version) SELECT 8 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = 8)`,
+	},
+	// v9 — SPEC-04 compile-key columns (sqlite twin: migrationV15). Additive;
+	// empty keys mark pre-SPEC-04 rows for the adoption path.
+	{
+		`ALTER TABLE compile_items ADD COLUMN IF NOT EXISTS compile_key TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE compile_items ADD COLUMN IF NOT EXISTS compile_key_parts TEXT NOT NULL DEFAULT ''`,
+		`INSERT INTO schema_version (version) SELECT 9 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = 9)`,
 	},
 }
 

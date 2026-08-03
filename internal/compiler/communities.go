@@ -96,7 +96,7 @@ func CommunitiesPass(
 				Level:       li,
 				ParentID:    parent,
 				MemberCount: len(members),
-				UpdatedAt:   time.Now().UTC().Format(time.RFC3339),
+				UpdatedAt:   config.NowUTC().Format(time.RFC3339),
 			})
 			membersOf[id] = members
 		}
@@ -195,7 +195,7 @@ func CommunitiesPass(
 		if c.SummaryHash == hash && c.Model == model {
 			continue // cached, unchanged
 		}
-		summary := summarizeCommunity(ctx, client, model, ccfg.MaxTokensOrDefault(), c, members, allRels)
+		summary := summarizeCommunity(ctx, client, model, ccfg.MaxTokensOrDefault(), cfg.Compiler.CompileTemperature(), c, members, allRels)
 		if summary == "" {
 			continue // empty/failed — retried next compile (hash still stale)
 		}
@@ -250,7 +250,7 @@ func communityModel(cfg *config.Config) string {
 
 // summarizeCommunity generates one ~150-word theme summary. Empty on any
 // failure — the caller treats empty as "retry next compile".
-func summarizeCommunity(ctx context.Context, client *llm.Client, model string, maxTokens int, c store.Community, members []string, all []store.Relation) string {
+func summarizeCommunity(ctx context.Context, client *llm.Client, model string, maxTokens int, temp *float64, c store.Community, members []string, all []store.Relation) string {
 	// Intra-community edges with evidence (truncated) ground the summary,
 	// filtered to live edges — the same LiveAt rule detection used.
 	var lines []string
@@ -258,7 +258,7 @@ func summarizeCommunity(ctx context.Context, client *llm.Client, model string, m
 	for _, m := range members {
 		set[m] = true
 	}
-	now := time.Now().UTC()
+	now := config.NowUTC()
 	for _, r := range all {
 		if !set[r.SourceID] || !set[r.TargetID] {
 			continue
@@ -295,7 +295,7 @@ Respond with the summary paragraph, then "Keywords:" followed by a comma-separat
 
 	resp, err := client.ChatCompletionCtx(ctx, []llm.Message{
 		{Role: "user", Content: prompt},
-	}, llm.CallOpts{Model: model, MaxTokens: maxTokens})
+	}, llm.CallOpts{Model: model, MaxTokens: maxTokens, Temperature: temp})
 	if err != nil {
 		log.Warn("communities: summary LLM failed", "id", c.ID, "error", err)
 		return ""

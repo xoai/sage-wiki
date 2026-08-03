@@ -30,6 +30,7 @@ test:
 # Full report incl. the pre-existing backlog — for chipping away at it locally.
 lint:
 	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...
+	bash scripts/check-determinism.sh
 
 # Only NEW issues vs $(LINT_BASE) — exactly what CI gates. Green on unmodified main.
 lint-new:

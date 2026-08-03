@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/compiler"
+	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/store"
 	"path/filepath"
@@ -21,7 +22,7 @@ func TestWikiStatusCompileQueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	items := compiler.NewCompileItemStore(db)
+	items := compiler.NewCompileItemStore(db, config.NowUTC)
 	items.Upsert(compiler.CompileItem{SourcePath: "pending.md", Hash: "h", Tier: 1})
 	items.Upsert(compiler.CompileItem{SourcePath: "leased.md", Hash: "h", Tier: 1})
 	items.Upsert(compiler.CompileItem{SourcePath: "done.md", Hash: "h", Tier: 1, PassIndexed: true})

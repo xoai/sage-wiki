@@ -309,6 +309,12 @@ type CompileItem struct {
 	PromotedAt    string
 	DemotedAt     string
 
+	// Compile-key dedup (SPEC-04): the content-addressed compile key and its
+	// component preimages. Empty = never computed (pre-SPEC-04 row → the
+	// adoption path).
+	CompileKey      string
+	CompileKeyParts string
+
 	// Quality tracking
 	SourceType   string
 	QualityScore *float64

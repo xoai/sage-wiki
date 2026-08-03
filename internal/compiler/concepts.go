@@ -35,10 +35,23 @@ type ExtractedConcept struct {
 // existing concepts' aliases.
 func manifestConceptRefs(m map[string]manifest.Concept) []ExtractedConcept {
 	refs := make([]ExtractedConcept, 0, len(m))
-	for name, c := range m {
+	for _, name := range sortedConceptNames(m) {
+		c := m[name]
 		refs = append(refs, ExtractedConcept{Name: name, Sources: c.Sources, Aliases: c.Aliases})
 	}
 	return refs
+}
+
+// sortedConceptNames returns the map keys in canonical (ascending) order.
+// SPEC-04 D1: any slice derived from map iteration that feeds bytes,
+// prompts, merge decisions, or output order is sorted before use.
+func sortedConceptNames(m map[string]manifest.Concept) []string {
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // ExtractConcepts runs Pass 2: concept extraction from summaries.
@@ -57,6 +70,7 @@ func ExtractConcepts(
 	maxTokens int,
 	concurrency int,
 	pr *prompts.Registry,
+	temp *float64,
 ) ([]ExtractedConcept, error) {
 	defer metrics.ObserveDuration(metrics.HistogramNamed("compile_pass_duration_seconds", metrics.CompileBuckets(), "pass", "extract"), time.Now())
 	if ctx == nil {
@@ -87,11 +101,8 @@ func ExtractConcepts(
 	}
 
 	// Build existing concept list for dedup context (shared snapshot for all batches)
-	var existingList []string
-	for name := range existingConcepts {
-		existingList = append(existingList, name)
-	}
-	dedupSnapshot := strings.Join(existingList, ", ")
+	// SPEC-04 D1: sorted — map iteration order must not leak into prompt bytes.
+	dedupSnapshot := strings.Join(sortedConceptNames(existingConcepts), ", ")
 
 	// Split into batches
 	type batchWork struct {
@@ -175,7 +186,7 @@ func ExtractConcepts(
 			payload, _, err := client.StructuredCompletion(ctx, []llm.Message{
 				{Role: "system", Content: "You are a concept extraction system for a knowledge wiki. Output valid JSON only."},
 				{Role: "user", Content: prompt},
-			}, ConceptsSchema, llm.CallOpts{Model: model, MaxTokens: maxTokens})
+			}, ConceptsSchema, llm.CallOpts{Model: model, MaxTokens: maxTokens, Temperature: temp})
 			if err != nil {
 				recordFailure(fmt.Errorf("batch %d: %w", b.index+1, err))
 				log.Error("concept extraction batch failed", "batch", b.index+1, "error", err)

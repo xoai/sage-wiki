@@ -15,6 +15,8 @@ import (
 	"testing"
 
 	"github.com/shopspring/decimal"
+
+	"github.com/xoai/sage-wiki/internal/export"
 )
 
 // stubLLM serves one completion shape for any request.
@@ -227,5 +229,28 @@ func TestBatchMaxCostRejected(t *testing.T) {
 	mc := decimal.NewFromFloat(1)
 	if _, err := w.Compile(context.Background(), CompileRequest{Batch: true, MaxCost: &mc}); err == nil {
 		t.Error("Batch+MaxCost must be rejected")
+	}
+}
+
+// TestExport_MatchesSharedExporter pins SPEC-04 D5: the engine's Export is
+// byte-identical to the shared deterministic exporter over the same tree.
+func TestExport_MatchesSharedExporter(t *testing.T) {
+	dir := initWorkspace(t)
+	w, err := Open(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+
+	var engineBuf bytes.Buffer
+	if err := w.Export(context.Background(), &engineBuf); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	var sharedBuf bytes.Buffer
+	if err := export.Tar(context.Background(), dir, &sharedBuf); err != nil {
+		t.Fatalf("export.Tar: %v", err)
+	}
+	if !bytes.Equal(engineBuf.Bytes(), sharedBuf.Bytes()) {
+		t.Fatal("engine.Export bytes differ from shared exporter bytes")
 	}
 }

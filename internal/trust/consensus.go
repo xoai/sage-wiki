@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/xoai/sage-wiki/internal/embed"
-	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/llm"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 func (s *Store) EmbedAndStoreQuestion(tx *sql.Tx, questionHash string, embedding []float32) error {
@@ -105,7 +105,7 @@ Respond with exactly one word: "agree" if they state the same facts, "disagree" 
 
 	resp, err := client.ChatCompletion([]llm.Message{
 		{Role: "user", Content: prompt},
-	}, llm.CallOpts{Model: model, MaxTokens: 16, Temperature: 0.01})
+	}, llm.CallOpts{Model: model, MaxTokens: 16, Temperature: llm.Float64(0.01)})
 	if err != nil {
 		return false, fmt.Errorf("trust: compare answers: %w", err)
 	}

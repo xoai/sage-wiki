@@ -148,7 +148,9 @@ func (dc *DedupCache) CheckDuplicate(name string) (match string, score float64, 
 			continue
 		}
 		s := vectors.CosineSimilarity(vec, existingVec)
-		if s > bestScore {
+		// SPEC-04 D1: on exact score ties the canonically-first name wins —
+		// the merge target must never depend on Go map iteration order.
+		if s > bestScore || (s == bestScore && bestMatch != "" && existing < bestMatch) {
 			bestScore = s
 			bestMatch = existing
 		}

@@ -44,14 +44,43 @@ type CanonicalResponse struct {
 // artifacts carry wall-clock `created_at` until SPEC-04 lands, and
 // fixtures must match across different compile times. The recorded
 // response (computed from the timestamped text at record time) is the
-// STABLE value goldens compare against.
+// STABLE value goldens compare against. Sampling parameters (temperature,
+// top-level and provider-nested) are stripped: request matching must not
+// depend on them — SPEC-04 D2 makes temperature:0 explicit on the wire and
+// every committed fixture predates it.
 func canonicalKey(method, path string, body []byte) (string, error) {
-	canon, err := canonicalJSON(rfc3339Re.ReplaceAll(body, []byte("<TS>")))
+	canon, err := canonicalJSON(stripSamplingParams(rfc3339Re.ReplaceAll(body, []byte("<TS>"))))
 	if err != nil {
 		return "", err
 	}
 	h := sha256.Sum256(append([]byte(method+" "+path+"\n"), canon...))
 	return hex.EncodeToString(h[:]), nil
+}
+
+// stripSamplingParams removes temperature from the top level and from a
+// nested generationConfig object (gemini shape). Non-JSON bodies pass
+// through untouched.
+func stripSamplingParams(body []byte) []byte {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return body
+	}
+	var v any
+	if err := json.Unmarshal(body, &v); err != nil {
+		return body
+	}
+	obj, ok := v.(map[string]any)
+	if !ok {
+		return body
+	}
+	delete(obj, "temperature")
+	if gc, ok := obj["generationConfig"].(map[string]any); ok {
+		delete(gc, "temperature")
+	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return body
+	}
+	return out
 }
 
 // canonicalJSON produces the stable form: parsed and re-marshaled (Go's

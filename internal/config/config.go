@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -251,19 +252,23 @@ type EmbedConfig struct {
 }
 
 type CompilerConfig struct {
-	MaxParallel        int     `yaml:"max_parallel"`
-	DebounceSeconds    int     `yaml:"debounce_seconds"`
-	SummaryMaxTokens   int     `yaml:"summary_max_tokens"`
-	ArticleMaxTokens   int     `yaml:"article_max_tokens"`
-	ExtractMaxTokens   int     `yaml:"extract_max_tokens,omitempty"` // max output tokens for concept extraction (default: 8192)
-	ExtractBatchSize   int     `yaml:"extract_batch_size,omitempty"` // summaries per concept extraction call (default: 20)
-	AutoCommit         bool    `yaml:"auto_commit"`
-	AutoLint           bool    `yaml:"auto_lint"`
-	Mode               string  `yaml:"mode,omitempty"`                    // standard, batch, or auto
-	EstimateBefore     bool    `yaml:"estimate_before,omitempty"`         // prompt with cost estimate before compiling
-	PromptCache        *bool   `yaml:"prompt_cache,omitempty"`            // enable prompt caching (default: true)
-	BatchThreshold     int     `yaml:"batch_threshold,omitempty"`         // min sources to auto-select batch mode
-	TokenPriceOverride float64 `yaml:"token_price_per_million,omitempty"` // override price per 1M input tokens
+	MaxParallel      int `yaml:"max_parallel"`
+	DebounceSeconds  int `yaml:"debounce_seconds"`
+	SummaryMaxTokens int `yaml:"summary_max_tokens"`
+	ArticleMaxTokens int `yaml:"article_max_tokens"`
+	ExtractMaxTokens int `yaml:"extract_max_tokens,omitempty"` // max output tokens for concept extraction (default: 8192)
+	ExtractBatchSize int `yaml:"extract_batch_size,omitempty"` // summaries per concept extraction call (default: 20)
+	// Temperature (SPEC-04 D2): sampling temperature for compile passes.
+	// *float64 so nil means "compile default 0"; pointer distinguishes
+	// "unset" from an explicit 0 the same way llm.CallOpts does.
+	Temperature        *float64 `yaml:"temperature,omitempty"`
+	AutoCommit         bool     `yaml:"auto_commit"`
+	AutoLint           bool     `yaml:"auto_lint"`
+	Mode               string   `yaml:"mode,omitempty"`                    // standard, batch, or auto
+	EstimateBefore     bool     `yaml:"estimate_before,omitempty"`         // prompt with cost estimate before compiling
+	PromptCache        *bool    `yaml:"prompt_cache,omitempty"`            // enable prompt caching (default: true)
+	BatchThreshold     int      `yaml:"batch_threshold,omitempty"`         // min sources to auto-select batch mode
+	TokenPriceOverride float64  `yaml:"token_price_per_million,omitempty"` // override price per 1M input tokens
 	// PriceTable is an optional JSON price-table path (PERF-04): entries
 	// override built-in prices per provider/model; built-ins cover the rest.
 	// Relative paths resolve against the project dir.
@@ -1038,7 +1043,32 @@ func (c *CompilerConfig) UserTimeLocation() *time.Location {
 
 // UserNow returns the current time formatted in RFC3339 using the configured timezone.
 func (c *CompilerConfig) UserNow() string {
-	return time.Now().In(c.UserTimeLocation()).Format(time.RFC3339)
+	return NowUTC().In(c.UserTimeLocation()).Format(time.RFC3339)
+}
+
+// CompileTemperature resolves the sampling temperature compile passes send
+// on the wire (SPEC-04 D2): the configured value when set, else explicit 0
+// (the provider's most-deterministic setting). Always non-nil so compile
+// requests always carry the field.
+func (c *CompilerConfig) CompileTemperature() *float64 {
+	if c.Temperature != nil {
+		return c.Temperature
+	}
+	zero := 0.0
+	return &zero
+}
+
+// NowUTC returns the current time in UTC. SOURCE_DATE_EPOCH (the
+// reproducible-builds convention) overrides the clock: with it set, every
+// caller gets the epoch — the single clock behind SPEC-04's deterministic
+// artifacts (frontmatter, manifest, DB rows, compile IDs).
+func NowUTC() time.Time {
+	if s := os.Getenv("SOURCE_DATE_EPOCH"); s != "" {
+		if sec, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return time.Unix(sec, 0).UTC()
+		}
+	}
+	return time.Now().UTC()
 }
 
 // Load reads and parses a config file, expanding environment variables.
@@ -1151,6 +1181,9 @@ func (c *Config) Validate() error {
 	}
 	if b := c.Vectors.Backend; b != "" && b != "memory" && b != "mmap" {
 		return fmt.Errorf("config: invalid vectors.backend %q (valid: memory, mmap)", b)
+	}
+	if t := c.Compiler.Temperature; t != nil && (*t < 0 || *t > 2) {
+		return fmt.Errorf("config: invalid compiler.temperature %v (valid: 0-2)", *t)
 	}
 	if q := c.Vectors.Quantization; q != "" && q != "none" && q != "int8" {
 		return fmt.Errorf("config: invalid vectors.quantization %q (valid: none, int8)", q)

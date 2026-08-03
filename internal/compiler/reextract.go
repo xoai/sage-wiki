@@ -60,6 +60,7 @@ func ReExtract(projectDir string, options ...ReExtractOption) (*CompileResult, e
 	if err != nil {
 		return nil, fmt.Errorf("re-extract: load manifest: %w", err)
 	}
+	mf.SetNow(config.NowUTC)
 	// Merge base (D3): snapshot before mutation so the Save reload-merges the
 	// re-extract run's delta onto any writer that landed during it.
 	base := mf.Clone()
@@ -113,7 +114,7 @@ func ReExtract(projectDir string, options ...ReExtractOption) (*CompileResult, e
 	mergedRels := ontology.MergedRelations(cfg.Ontology.Relations)
 	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 	ontStore := ontology.NewStore(db, ontology.ValidRelationNames(mergedRels), ontology.ValidEntityTypeNames(mergedTypes),
-		ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
+		ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC))
 	embedder := embed.NewFromConfig(cfg)
 	chunkStore := memory.NewChunkStore(db)
 
@@ -126,7 +127,7 @@ func ReExtract(projectDir string, options ...ReExtractOption) (*CompileResult, e
 	log.Info("Pass 2: extracting concepts", "from_summaries", len(summaries))
 	// ReExtract has no cancellation context of its own; --re-extract cancellation
 	// is a follow-up. Use a background context so the LLM calls still function.
-	concepts, err := ExtractConcepts(context.Background(), summaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel, ro.prompts)
+	concepts, err := ExtractConcepts(context.Background(), summaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel, ro.prompts, cfg.Compiler.CompileTemperature())
 	if err != nil {
 		return nil, fmt.Errorf("re-extract: concept extraction: %w", err)
 	}
@@ -159,7 +160,8 @@ func ReExtract(projectDir string, options ...ReExtractOption) (*CompileResult, e
 		relPatterns := ontology.RelationPatterns(mergedRels)
 		log.Info("Pass 3: writing articles", "concepts", len(concepts))
 		articles := WriteArticles(ArticleWriteOpts{
-		Prompts:            ro.prompts,
+			Temperature:        cfg.Compiler.CompileTemperature(),
+			Prompts:            ro.prompts,
 			ProjectDir:         projectDir,
 			OutputDir:          cfg.Output,
 			Client:             client,

@@ -70,9 +70,23 @@ type ArticleWriteOpts struct {
 	// Ctx carries compile cancellation; nil = background. When cancelled, the
 	// write loop stops launching new articles and in-flight LLM calls abort.
 	Ctx context.Context
+	// Temperature (SPEC-04 D2): the compile sampling temperature.
+	Temperature *float64
 }
 
+// writeApplyHookForTest is the fault-injection seam for the
+// cancel-during-apply witness (SPEC-04 D3, spec test 6). Called with each
+// item's input index immediately BEFORE that item's apply step. Nil in
+// production; test-only, same precedent as ShuffleSourcesForTest.
+var writeApplyHookForTest func(idx int)
+
 // WriteArticles runs Pass 3: write concept articles with ontology edges.
+//
+// SPEC-04 D3 (deferred application): the LLM fan-out only PREPARES payloads
+// (prompt, article bytes, embeddings, chunk rows) — every store mutation and
+// file write happens in a sequential post-join apply loop in INPUT order, so
+// SQLite rowid order (and everything derived from it: SWVI bytes, FTS
+// layout) is independent of goroutine completion order.
 func WriteArticles(opts ArticleWriteOpts, concepts []ExtractedConcept) []ArticleResult {
 	defer metrics.ObserveDuration(metrics.HistogramNamed("compile_pass_duration_seconds", metrics.CompileBuckets(), "pass", "write"), time.Now())
 	maxParallel := opts.MaxParallel
@@ -81,6 +95,7 @@ func WriteArticles(opts ArticleWriteOpts, concepts []ExtractedConcept) []Article
 	}
 
 	results := make([]ArticleResult, len(concepts))
+	prepared := make([]*articlePayload, len(concepts))
 	var wg sync.WaitGroup
 	var done atomic.Int32
 	total := len(concepts)
@@ -124,7 +139,8 @@ func WriteArticles(opts ArticleWriteOpts, concepts []ExtractedConcept) []Article
 			defer wg.Done()
 			defer release()
 
-			result := writeOneArticle(opts, c, aliasMap, relatedIndex[c.Name])
+			payload, result := prepareArticle(opts, c, aliasMap, relatedIndex[c.Name])
+			prepared[idx] = payload
 			results[idx] = result
 
 			n := int(done.Add(1))
@@ -139,16 +155,58 @@ func WriteArticles(opts ArticleWriteOpts, concepts []ExtractedConcept) []Article
 				if opts.Backpressure != nil {
 					opts.Backpressure.OnSuccess()
 				}
-				log.Info("article written", "progress", fmt.Sprintf("%d/%d", n, total), "concept", c.Name)
+				log.Info("article prepared", "progress", fmt.Sprintf("%d/%d", n, total), "concept", c.Name)
 			}
 		}(i, concept)
 	}
 
 	wg.Wait()
+
+	// Apply phase: sequential, input order. A cancel observed here stops the
+	// loop — the run is incomplete, so the caller's final manifest/checkpoint
+	// save is skipped (P1-1: an incomplete run persists no new CLAIMS; rows
+	// already applied are content-identical on the next run's rewrite).
+	for i, payload := range prepared {
+		if payload == nil {
+			continue // prepare failed — results[i] already carries the error
+		}
+		if writeApplyHookForTest != nil {
+			writeApplyHookForTest(i)
+		}
+		if opts.Ctx != nil && opts.Ctx.Err() != nil {
+			log.Warn("write pass: cancel observed during apply — remaining articles deferred to next compile", "applied", i, "total", len(prepared))
+			break
+		}
+		applyArticlePayload(opts, payload, &results[i])
+	}
+
 	return results
 }
 
+// articlePayload is everything the apply phase needs, computed in the
+// concurrent phase without touching any store (SPEC-04 D3).
+type articlePayload struct {
+	concept         ExtractedConcept
+	articlePath     string
+	absPath         string
+	content         string
+	entityType      string
+	conceptVec      []float32 // nil when the concept embed failed (logged in prepare)
+	chunks          []extract.Chunk
+	chunkEmbeddings [][]float32
+}
+
 func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap map[string]string, relatedNames []string) ArticleResult {
+	payload, result := prepareArticle(opts, concept, aliasMap, relatedNames)
+	if payload != nil {
+		applyArticlePayload(opts, payload, &result)
+	}
+	return result
+}
+
+// prepareArticle does the LLM call and all pure computation for one
+// article. It performs NO store mutations and NO file writes.
+func prepareArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap map[string]string, relatedNames []string) (*articlePayload, ArticleResult) {
 	result := ArticleResult{ConceptName: concept.Name}
 
 	// Check for existing article
@@ -179,23 +237,23 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap m
 	}, opts.Language)
 	if err != nil {
 		result.Error = fmt.Errorf("render write_article prompt: %w", err)
-		return result
+		return nil, result
 	}
 
 	resp, err := opts.Client.ChatCompletionCtx(opts.Ctx, []llm.Message{
 		{Role: "system", Content: "You are a wiki author writing comprehensive, precise articles for a personal knowledge base. Use [[wikilinks]] for cross-references. Do not include YAML frontmatter."},
 		{Role: "user", Content: prompt},
-	}, llm.CallOpts{Model: opts.Model, MaxTokens: opts.MaxTokens})
+	}, llm.CallOpts{Model: opts.Model, MaxTokens: opts.MaxTokens, Temperature: opts.Temperature})
 	if err != nil {
 		result.Error = fmt.Errorf("llm call: %w", err)
-		return result
+		return nil, result
 	}
 
 	// Guard before writing: an empty/reasoning-truncated response must fail the
 	// concept (retried next compile) rather than write a hollow article.
 	if gErr := emptyContentError(resp, "article", concept.Name); gErr != nil {
 		result.Error = gErr
-		return result
+		return nil, result
 	}
 
 	articleContent := resp.Content
@@ -227,9 +285,57 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap m
 	// Build frontmatter: ground-truth fields + LLM-judged fields
 	articleContent = buildFrontmatter(concept, entityType, fields, opts.ArticleFields, opts.UserTZ) + "\n\n" + articleContent
 
-	// Note: wikilinks are kept even if targets don't exist yet.
-	// Future compiles will create the missing articles, and the links
-	// will resolve naturally. Broken links are surfaced by `sage-wiki lint`.
+	payload := &articlePayload{
+		concept:     concept,
+		articlePath: articlePath,
+		absPath:     absPath,
+		content:     articleContent,
+		entityType:  entityType,
+	}
+
+	// Concept embedding (network call — concurrent phase)
+	if opts.Embedder != nil {
+		vec, err := opts.Embedder.Embed(articleContent)
+		if err != nil {
+			log.Warn("embedding failed for article", "concept", concept.Name, "error", err)
+		} else {
+			payload.conceptVec = vec
+		}
+	}
+
+	// Chunk text + chunk embeddings (network calls — concurrent phase)
+	if opts.ChunkStore != nil && opts.DB != nil {
+		chunkSize := opts.ChunkSize
+		if chunkSize <= 0 {
+			chunkSize = 800
+		}
+		payload.chunks = extract.ChunkText(articleContent, chunkSize, opts.ChunkOverlap)
+		if opts.Embedder != nil {
+			payload.chunkEmbeddings = make([][]float32, len(payload.chunks))
+			for i, c := range payload.chunks {
+				vec, err := opts.Embedder.Embed(c.Text)
+				if err != nil {
+					log.Warn("chunk embedding failed", "concept", concept.Name, "chunk", i, "error", err)
+				} else {
+					payload.chunkEmbeddings[i] = vec
+				}
+			}
+		}
+	}
+
+	return payload, result
+}
+
+// applyArticlePayload performs every store mutation and the file write for
+// one prepared article. Called sequentially in input order from WriteArticles
+// (SPEC-04 D3). Error semantics preserved from the pre-D3 code: a file-write
+// failure fails the article; store-mutation failures log and continue.
+func applyArticlePayload(opts ArticleWriteOpts, payload *articlePayload, result *ArticleResult) {
+	concept := payload.concept
+	articleContent := payload.content
+	articlePath := payload.articlePath
+	absPath := payload.absPath
+	entityType := payload.entityType
 
 	// Canonical write-then-index order (I2): (1) write the article file
 	// atomically, (2) index into the DB (ontology + FTS + vectors, below),
@@ -239,7 +345,7 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap m
 
 	if err := fsutil.WriteFileAtomic(absPath, []byte(articleContent), 0644); err != nil {
 		result.Error = fmt.Errorf("write file: %w", err)
-		return result
+		return
 	}
 	result.ArticlePath = articlePath
 
@@ -300,38 +406,18 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap m
 		}
 	}
 
-	// Generate embedding
-	if opts.Embedder != nil {
-		vec, err := opts.Embedder.Embed(articleContent)
-		if err != nil {
-			log.Warn("embedding failed for article", "concept", concept.Name, "error", err)
-		} else {
-			opts.VecStore.Upsert("concept:"+concept.Name, vec)
+	// Concept vector (computed in prepare)
+	if payload.conceptVec != nil {
+		if err := opts.VecStore.Upsert("concept:"+concept.Name, payload.conceptVec); err != nil {
+			log.Warn("concept vector upsert failed", "concept", concept.Name, "error", err)
 		}
 	}
 
 	// Index chunks for enhanced search
 	if opts.ChunkStore != nil && opts.DB != nil {
-		chunkSize := opts.ChunkSize
-		if chunkSize <= 0 {
-			chunkSize = 800
-		}
 		docID := "concept:" + concept.Name
-		chunks := extract.ChunkText(articleContent, chunkSize, opts.ChunkOverlap)
-
-		// Embed all chunks FIRST (API calls outside transaction)
-		var chunkEmbeddings [][]float32
-		if opts.Embedder != nil {
-			chunkEmbeddings = make([][]float32, len(chunks))
-			for i, c := range chunks {
-				vec, err := opts.Embedder.Embed(c.Text)
-				if err != nil {
-					log.Warn("chunk embedding failed", "concept", concept.Name, "chunk", i, "error", err)
-				} else {
-					chunkEmbeddings[i] = vec
-				}
-			}
-		}
+		chunks := payload.chunks
+		chunkEmbeddings := payload.chunkEmbeddings
 
 		// Single WriteTx: delete old + insert new
 		if err := opts.DB.WriteTx(func(tx *sql.Tx) error {
@@ -371,13 +457,15 @@ func writeOneArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap m
 			opts.VecStore.InvalidateChunkCache() // chunk cache invalidation (P1-5): caller-tx writes are invisible to vectors.Store until post-commit
 		}
 	}
-
-	return result
 }
 
 func buildFrontmatter(concept ExtractedConcept, entityType string, fields map[string]string, fieldOrder []string, loc *time.Location) string {
-	aliases := quoteYAMLList(concept.Aliases)
-	sources := quoteYAMLList(concept.Sources)
+	// SPEC-04 D1 (plan-review F-035): aliases/sources are SETS serialized as
+	// lists — emit them sorted so frontmatter bytes are canonical regardless
+	// of LLM/merge slice order. The manifest's internal order is unchanged
+	// (LLM-derived content order, like prose).
+	aliases := quoteYAMLList(sortedCopy(concept.Aliases))
+	sources := quoteYAMLList(sortedCopy(concept.Sources))
 
 	confidence := fields["confidence"]
 	if confidence == "" {
@@ -672,6 +760,13 @@ func quoteYAMLList(items []string) string {
 		quoted[i] = fmt.Sprintf("%q", item)
 	}
 	return "[" + strings.Join(quoted, ", ") + "]"
+}
+
+// sortedCopy returns an ascending-sorted copy of the input (SPEC-04 D1).
+func sortedCopy(items []string) []string {
+	out := append([]string(nil), items...)
+	sort.Strings(out)
+	return out
 }
 
 // maxRelatedConcepts caps how many "See also" links each article is seeded

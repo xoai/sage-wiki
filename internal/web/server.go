@@ -1225,6 +1225,7 @@ func (s *WebServer) handleProvenance(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to load manifest", http.StatusInternalServerError)
 		return
 	}
+	mf.SetNow(config.NowUTC)
 
 	if source != "" {
 		articles := mf.ArticlesFromSource(source)

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/xoai/sage-wiki/internal/compiler"
+	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/linter"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
@@ -100,9 +101,9 @@ func newBackend(db *storage.DB, path string, mode store.Mode, o Options) *backen
 		vec: vectors.NewStore(db, vectors.WithANN(o.ANN),
 			vectors.WithVectorBackend(o.VectorBackend),
 			vectors.WithIndexDir(filepath.Dir(path))),
-		ont:    ontology.NewStore(db, o.ValidRelations, o.ValidEntityTypes, ontology.WithTemporalEnabled(temporalEnabledOrDefault(o.TemporalEnabled))),
+		ont:    ontology.NewStore(db, o.ValidRelations, o.ValidEntityTypes, ontology.WithTemporalEnabled(temporalEnabledOrDefault(o.TemporalEnabled)), ontology.WithNow(config.NowUTC)),
 		trustS: trust.NewStore(db),
-		items:  compiler.NewCompileItemStore(db),
+		items:  compiler.NewCompileItemStore(db, config.NowUTC),
 		outIdx: storage.NewOutputIndex(db),
 		learn:  &learningStore{db: db},
 	}

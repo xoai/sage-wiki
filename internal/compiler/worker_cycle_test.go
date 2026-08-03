@@ -7,12 +7,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/wiki"
 )
@@ -105,7 +106,7 @@ compiler:
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	h.items = NewCompileItemStore(db)
+	h.items = NewCompileItemStore(db, config.NowUTC)
 	return h
 }
 
@@ -300,7 +301,7 @@ func TestWorker_HeartbeatRefreshes(t *testing.T) {
 	// Slow the tier-1 pass so the heartbeat loop ticks mid-cycle.
 	h.worker.hooks.indexTier1 = func(projectDir string, items []CompileItem, cr *compileRun) (int, int) {
 		time.Sleep(1200 * time.Millisecond)
-		return indexAndEmbedSources(projectDir, items, cr.memStore, cr.vecStore, cr.embedder,
+		return indexAndEmbedSources(context.Background(), projectDir, items, cr.memStore, cr.vecStore, cr.embedder,
 			cr.itemStore, cr.bp, cr.chunkStore, cr.cfg.Search.ChunkSizeOrDefault(), cr.cfg.Search.ChunkOverlapOrDefault(), cr.db, cr.exOpts...)
 	}
 

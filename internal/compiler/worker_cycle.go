@@ -26,7 +26,7 @@ func defaultPassHooks() passHooks {
 			return indexRawSources(projectDir, items, cr.memStore, cr.itemStore, cr.exOpts...)
 		},
 		indexTier1: func(projectDir string, items []CompileItem, cr *compileRun) (int, int) {
-			return indexAndEmbedSources(projectDir, items, cr.memStore, cr.vecStore, cr.embedder,
+			return indexAndEmbedSources(cr.opts.Ctx, projectDir, items, cr.memStore, cr.vecStore, cr.embedder,
 				cr.itemStore, cr.bp, cr.chunkStore, cr.cfg.Search.ChunkSizeOrDefault(), cr.cfg.Search.ChunkOverlapOrDefault(), cr.db, cr.exOpts...)
 		},
 		fullPipeline: runFullPipeline,
@@ -54,6 +54,7 @@ func (w *Worker) openCycleRun(ctx context.Context) (*cycleRun, error) {
 	if err != nil {
 		return nil, fmt.Errorf("worker: load manifest: %w", err)
 	}
+	mf.SetNow(config.NowUTC)
 	client, _, err := newTrackedClient(projectDir, cfg, &CompileOpts{})
 	if err != nil {
 		return nil, fmt.Errorf("worker: create LLM client: %w", err)

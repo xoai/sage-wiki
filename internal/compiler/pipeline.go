@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -47,6 +46,7 @@ type CompileOpts struct {
 	Ctx     context.Context
 	DryRun  bool
 	Fresh   bool             // ignore checkpoint
+	Force   bool             // SPEC-04 R1: recompile every doc, keys recomputed
 	Batch   bool             // use batch API (async, 50% discount)
 	NoCache bool             // disable prompt caching
 	Prune   bool             // delete orphaned articles when sources removed
@@ -89,6 +89,9 @@ type CompileResult struct {
 	TierIndexed       int             // sources indexed at Tier 0
 	TierEmbedded      int             // sources embedded at Tier 1
 	TierCompiled      int             // sources sent through full pipeline (Tier 3)
+	// SPEC-04: docs skipped/adopted by the compile-key evaluation.
+	Skipped []SkippedDoc
+	Adopted int
 }
 
 // CompileState tracks progress for checkpoint/resume (ADR-018).
@@ -209,6 +212,7 @@ func renderPrompt(pr *prompts.Registry, name string, data any, language string) 
 type compileRun struct {
 	cfg                *config.Config
 	opts               CompileOpts
+	driftReasons       map[string]string
 	result             *CompileResult
 	mf                 *manifest.Manifest
 	mfPath             string
@@ -277,6 +281,47 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		run.progress = NewProgress()
 	}
 
+	// SPEC-04: compile-key classification BEFORE the nothing-to-compile fast
+	// path — adoption and drift recompiles must happen even when the content
+	// diff is empty. Classification reads pre-run compile_items state, so it
+	// opens its own short-lived handle (setupStores runs later).
+	skipCls, err := runSkipClassification(projectDir, run, diff)
+	if err != nil {
+		return nil, err
+	}
+	run.result.Adopted = len(skipCls.adopted)
+	run.result.Skipped = append(skipCls.skipped, skipCls.adopted...)
+	run.driftReasons = skipCls.driftReasons
+	// Review M1: key-classified spurious-Added docs (manifest-untracked
+	// tier<3) LEAVE diff.Added — otherwise they double-count (Added AND
+	// Modified when drifted/resumed) and the all-skip fast path can never
+	// fire for tier<3 corpora.
+	if len(skipCls.classifiedSpuriousAdded) > 0 {
+		remove := map[string]bool{}
+		for _, p := range skipCls.classifiedSpuriousAdded {
+			remove[p] = true
+		}
+		kept := diff.Added[:0]
+		for _, s := range diff.Added {
+			if !remove[s.Path] {
+				kept = append(kept, s)
+			}
+		}
+		diff.Added = kept
+		run.result.Added = len(diff.Added)
+	}
+	// SPEC-04 §APIs: the classification lands on DiffResult (Unchanged +
+	// per-entry Reason) for the engine/CLI surfaces.
+	populateDiffReasons(diff, skipCls)
+	if len(skipCls.drifted) > 0 || len(skipCls.resume) > 0 {
+		diff.Modified = append(diff.Modified, skipCls.drifted...)
+		diff.Modified = append(diff.Modified, skipCls.resume...)
+		run.diff = diff
+		run.result.Modified = len(diff.Modified)
+	}
+
+	// The fast path yields to pending resume work (SPEC-04 R0): resume docs
+	// were appended to Modified above, so an empty set here really is empty.
 	if run.result.Added == 0 && run.result.Modified == 0 && run.result.Removed == 0 {
 		// Queue maintenance still runs on an empty diff (P2-3): --fresh
 		// must revive dead letters even when no source changed, or a
@@ -285,13 +330,17 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 			if b := run.opts.Backend; b != nil {
 				maintainQueue(run, b.CompileItems())
 			} else if sdb, err := storage.Open(filepath.Join(projectDir, ".sage", "wiki.db")); err == nil {
-				maintainQueue(run, NewCompileItemStore(sdb))
+				maintainQueue(run, NewCompileItemStore(sdb, config.NowUTC))
 				sdb.Close()
 			} else {
 				log.Warn("queue maintenance skipped: open db failed", "error", err)
 			}
 		}
-		fmt.Fprintln(os.Stderr, "✓ Nothing to compile — wiki is up to date.")
+		if len(run.result.Skipped) > 0 || run.result.Adopted > 0 {
+			fmt.Fprintf(os.Stderr, "✓ Nothing to compile — %d unchanged (skipped), %d keys adopted.\n", len(skipCls.skipped), run.result.Adopted)
+		} else {
+			fmt.Fprintln(os.Stderr, "✓ Nothing to compile — wiki is up to date.")
+		}
 		return run.result, nil
 	}
 
@@ -342,11 +391,34 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 		return run.result, ErrBudgetExceeded
 	}
 
+	// SPEC-04: persist compile keys for every doc completed this run — the
+	// single storage point, gated on a COMPLETE run (P1-1: a cancelled or
+	// failed run marks nothing, so an interrupted doc recompiles next time).
+	if !run.pipelineIncomplete && !run.opts.DryRun {
+		if err := storeCompileKeysForCompleted(run.cfg, run.opts.Prompts, run.itemStore); err != nil {
+			log.Warn("compile-key storage failed", "error", err)
+		}
+	}
+
 	// Pass 4: Image extraction (placeholder)
 	ExtractImages(projectDir, run.cfg.Output, run.toProcess)
 
 	// Handle removed sources — detect orphans BEFORE removing from manifest
 	handleRemovedSources(projectDir, run.diff.Removed, run.mf, run.memStore, run.vecStore, run.pipelineOntStore, run.opts.Prune)
+
+	// SPEC-04: drop removed sources' compile keys AND their pass flags — a
+	// re-added doc recompiles via R0 (verdict `compile: incomplete (resume)`,
+	// never adopted/skipped; flags reset is what makes the spec's re-add
+	// promise true and what distinguishes it from an upgrade-time empty-key
+	// row, which ADOPTS).
+	for _, removedPath := range run.diff.Removed {
+		if err := run.itemStore.ClearCompileKey(removedPath); err != nil {
+			log.Warn("clear compile key failed", "path", removedPath, "error", err)
+		}
+		if err := run.itemStore.InvalidatePasses(removedPath); err != nil {
+			log.Warn("invalidate passes on removal failed", "path", removedPath, "error", err)
+		}
+	}
 
 	// Post-compile sweep: strip [[wikilinks]] pointing at concepts that don't
 	// exist on disk after this compile finished. Pass 3's writer prompts the
@@ -459,6 +531,7 @@ func loadInputs(projectDir string, opts *CompileOpts, run *compileRun) (done boo
 	if err != nil {
 		return false, nil, fmt.Errorf("compile: load manifest: %w", err)
 	}
+	mf.SetNow(config.NowUTC)
 	run.mf = mf
 
 	// Snapshot the manifest at Load as the merge base (D3). At Save time the
@@ -607,7 +680,7 @@ func setupStores(projectDir string, run *compileRun) error {
 		merged := ontology.MergedRelations(cfg.Ontology.Relations)
 		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 		run.pipelineOntStore = ontology.NewStore(sdb, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
-			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
+			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC))
 	}
 	run.db = db
 
@@ -617,7 +690,7 @@ func setupStores(projectDir string, run *compileRun) error {
 	mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 	if run.pipelineOntStore == nil {
 		run.pipelineOntStore = ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
-			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
+			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC))
 	}
 
 	// Backfill chunk index if needed (after migration, before first compile)
@@ -630,7 +703,7 @@ func setupStores(projectDir string, run *compileRun) error {
 
 	// Initialize compile_items store and tier manager
 	if run.itemStore == nil {
-		run.itemStore = NewCompileItemStore(db)
+		run.itemStore = NewCompileItemStore(db, config.NowUTC)
 	}
 	run.tierMgr = NewTierManager(&cfg.Compiler, run.itemStore)
 	run.bp = NewBackpressureController(cfg.Compiler.MaxParallel)
@@ -749,7 +822,7 @@ func runTiers(projectDir string, run *compileRun) {
 		stopHB := startItemHeartbeat(run.itemStore, cliToken, tier1Claimed, cliHeartbeatInterval, cliLeaseTTL)
 		func() {
 			defer stopHB()
-			indexed, embedded = indexAndEmbedSources(projectDir, tier1Claimed, run.memStore, run.vecStore, run.embedder, run.itemStore, run.bp, run.chunkStore, cfg.Search.ChunkSizeOrDefault(), cfg.Search.ChunkOverlapOrDefault(), run.db, run.exOpts...)
+			indexed, embedded = indexAndEmbedSources(run.opts.Ctx, projectDir, tier1Claimed, run.memStore, run.vecStore, run.embedder, run.itemStore, run.bp, run.chunkStore, cfg.Search.ChunkSizeOrDefault(), cfg.Search.ChunkOverlapOrDefault(), run.db, run.exOpts...)
 		}()
 		releaseClaimed(run.itemStore, cliToken, tier1Claimed, erroredSinceClaim(run.itemStore, tier1Claimed), wc.MaxAttempts)
 		run.result.TierIndexed += indexed
@@ -894,7 +967,7 @@ func runTiers(projectDir string, run *compileRun) {
 // with their resolved tiers. Shared by runTiers (CLI) and the worker's
 // enqueue scan (P2-3) so the two paths can never diverge.
 func upsertDiffItems(run *compileRun, projectDir string, allSources []SourceInfo) {
-	run.compileID = time.Now().Format("20060102-150405")
+	run.compileID = config.NowUTC().Format("20060102-150405")
 	for _, src := range allSources {
 		tier := run.tierMgr.ResolveTier(src.Path, projectDir, nil)
 		run.itemStore.Upsert(CompileItem{
@@ -1003,7 +1076,7 @@ func submitBatch(
 				{Role: "system", Content: "You are a research assistant creating structured summaries for a personal knowledge wiki."},
 				{Role: "user", Content: prompt + "\n\n" + prompts.WrapUntrusted(content.Text)},
 			},
-			Opts: llm.CallOpts{Model: model, MaxTokens: maxTokens},
+			Opts: llm.CallOpts{Model: model, MaxTokens: maxTokens, Temperature: cfg.Compiler.CompileTemperature()},
 		})
 	}
 
@@ -1029,9 +1102,9 @@ func submitBatch(
 
 	// Save the batch checkpoint — the ONLY checkpoint written on this path
 	// (P1-3; no compile-state.json anywhere).
-	utcNow := time.Now().UTC().Format(time.RFC3339)
+	utcNow := config.NowUTC().Format(time.RFC3339)
 	bcp := &BatchCheckpoint{
-		CompileID: time.Now().Format("20060102-150405"),
+		CompileID: config.NowUTC().Format("20060102-150405"),
 		StartedAt: utcNow,
 		Batch: &BatchState{
 			BatchID:     batchID,
@@ -1120,7 +1193,7 @@ func resumeBatch(
 	// (result.Errors++ below), not missing data.
 	{
 		expected := map[string]string{} // wire id → path (for the error message)
-		legacy := bs.PathByID == nil // same predicate the processing loop uses
+		legacy := bs.PathByID == nil    // same predicate the processing loop uses
 		if !legacy {
 			for id, path := range bs.PathByID {
 				expected[id] = path
@@ -1144,6 +1217,7 @@ func resumeBatch(
 			}
 		}
 		if len(missing) > 0 {
+			sort.Strings(missing) // SPEC-04 D1: deterministic error text
 			return nil, fmt.Errorf("compile: batch returned %d of %d expected results — missing: %s (batch state kept for re-poll)",
 				matched, len(expected), strings.Join(missing, ", "))
 		}
@@ -1308,7 +1382,7 @@ func resumeBatch(
 		client.SetPass("extract")
 		extCacheID, _ := client.SetupCache("You are an expert knowledge organizer. Extract structured concepts from source summaries.", model)
 		progress.StartPhase("Pass 2: Extract concepts", len(successfulSummaries))
-		concepts, err := ExtractConcepts(opts.Ctx, successfulSummaries, mf.Concepts, client, model, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel, opts.Prompts)
+		concepts, err := ExtractConcepts(opts.Ctx, successfulSummaries, mf.Concepts, client, model, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel, opts.Prompts, cfg.Compiler.CompileTemperature())
 		if err != nil {
 			progress.ItemError("concept extraction", err)
 			result.Errors++
@@ -1341,12 +1415,13 @@ func resumeBatch(
 				merged := ontology.MergedRelations(cfg.Ontology.Relations)
 				mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 				ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
-					ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
+					ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC))
 				client.SetPass("write")
 				writeCacheID, _ := client.SetupCache("You are a knowledge base article writer. Write comprehensive, well-structured wiki articles.", writeModel)
 				relPatterns := ontology.RelationPatterns(merged)
 				progress.StartPhase("Pass 3: Write articles", len(concepts))
 				articles := WriteArticles(ArticleWriteOpts{
+					Temperature:        cfg.Compiler.CompileTemperature(),
 					Prompts:            opts.Prompts,
 					Ctx:                opts.Ctx,
 					ProjectDir:         projectDir,
@@ -1396,7 +1471,7 @@ func resumeBatch(
 		merged := ontology.MergedRelations(cfg.Ontology.Relations)
 		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 		ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
-			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()))
+			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC))
 		CommunitiesPass(orBackground(opts.Ctx), projectDir, ontStore, ontStore, memStore, vecStore, embedder, cfg, client)
 	}
 
@@ -1416,6 +1491,12 @@ func resumeBatch(
 		log.Info("batch compile interrupted before Pass 2/3 completed — manifest not saved; sources will reprocess on next compile")
 	} else if err := manifest.MergeSave(orBackground(opts.Ctx), mfPath, base, mf); err != nil {
 		return nil, fmt.Errorf("compile: save manifest: %w", err)
+	} else {
+		// SPEC-04: batch compiles store keys at the same completion point as
+		// standard compiles (spec edge case — Gate-1 review F-5).
+		if err := storeCompileKeysForCompleted(cfg, opts.Prompts, NewCompileItemStore(db, config.NowUTC)); err != nil {
+			log.Warn("compile-key storage failed (batch)", "error", err)
+		}
 	}
 
 	if err := writeChangelog(projectDir, cfg.Output, result, cfg.Compiler.UserTimeLocation()); err != nil {
@@ -1430,7 +1511,7 @@ func resumeBatch(
 		stores := trust.IndexStores{
 			MemStore: memStore, VecStore: vecStore,
 			OntStore: ontology.NewStore(db, ontology.ValidRelationNames(batchMerged), ontology.ValidEntityTypeNames(batchMergedTypes),
-				ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault())),
+				ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC)),
 			ChunkStore: chunkStore, DB: db,
 		}
 		demoted, err := trust.CheckSourceChanges(trustStore, projectDir, &stores)
@@ -1511,17 +1592,12 @@ func convertSignals(typeSignals []config.TypeSignal) []extract.TypeSignal {
 }
 
 // timeNow returns the current time in RFC3339 using the given timezone.
-// Used for user-facing timestamps (frontmatter, changelog).
-// SOURCE_DATE_EPOCH (the reproducible-builds convention) overrides the
-// clock: with it set, every compile timestamp is the epoch — the seed of
+// Used for user-facing timestamps (frontmatter, changelog). It delegates to
+// the single SDE-aware clock (config.NowUTC, SPEC-04 D4): with
+// SOURCE_DATE_EPOCH set, every compile timestamp is the epoch — the seed of
 // SPEC-04's deterministic artifacts and what the parity suite pins.
 func timeNow(loc *time.Location) string {
-	if s := os.Getenv("SOURCE_DATE_EPOCH"); s != "" {
-		if sec, err := strconv.ParseInt(s, 10, 64); err == nil {
-			return time.Unix(sec, 0).In(loc).Format(time.RFC3339)
-		}
-	}
-	return time.Now().In(loc).Format(time.RFC3339)
+	return config.NowUTC().In(loc).Format(time.RFC3339)
 }
 
 func filterSuccessful(summaries []SummaryResult) []SummaryResult {

@@ -30,6 +30,10 @@ func init() {
 // state. Build with NewRegistry.
 type Registry struct {
 	templates *template.Template
+	// overrides records which template names came from which on-disk file
+	// (SPEC-04): the effective-bytes hash reads the override file's raw
+	// bytes, not the parse tree.
+	overrides map[string]string
 }
 
 // NewRegistry returns a Registry holding the embedded default templates.
@@ -69,6 +73,7 @@ func (r *Registry) LoadFromDir(dir string) error {
 	}
 
 	loaded := 0
+	loadedOverrides := map[string]string{}
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -95,13 +100,27 @@ func (r *Registry) LoadFromDir(dir string) error {
 			return fmt.Errorf("prompts: parse %s: %w", entry.Name(), err)
 		}
 		loaded++
+		loadedOverrides[templateName] = filepath.Join(dir, entry.Name())
 	}
 
 	if loaded > 0 {
+		// Templates and provenance swap atomically (NEW-2: a mid-load parse
+		// error must not leave overrides pointing at templates that render
+		// the old body); each call rebuilds both from scratch.
 		r.templates = merged
+		r.overrides = loadedOverrides
 	}
 
 	return nil
+}
+
+// OverridePath returns the on-disk file backing an override template, or ""
+// when the template is the embedded default (SPEC-04).
+func (r *Registry) OverridePath(templateName string) string {
+	if r == nil {
+		return ""
+	}
+	return r.overrides[templateName]
 }
 
 // Render renders a named template with the given data from this registry.
@@ -293,7 +312,7 @@ type WriteArticleData struct {
 	RelatedList     string
 	Confidence      string
 	MaxTokens       int
-	SourceContext    string // relevant source sections (from document splitting)
+	SourceContext   string // relevant source sections (from document splitting)
 }
 
 // CaptionData holds data for image captioning template.
@@ -315,5 +334,13 @@ func Available() []string {
 
 // Reset restores the DEFAULT registry to embedded defaults (useful for testing).
 func Reset() {
+	defaultRegistry = NewRegistry()
+}
+
+// ResetDefaultRegistryForTest restores the package-default registry to the
+// embedded templates (drops any prompts/ overrides loaded via the
+// package-level LoadFromDir). Test-only seam — production code never calls
+// it (the override state is deliberately process-global, matching compile).
+func ResetDefaultRegistryForTest() {
 	defaultRegistry = NewRegistry()
 }

@@ -60,8 +60,8 @@ func TestMigrationV14Upgrade(t *testing.T) {
 	defer db.Close()
 
 	var version int
-	if err := db.ReadDB().QueryRow(`SELECT MAX(version) FROM schema_version`).Scan(&version); err != nil || version != 14 {
-		t.Fatalf("schema version = %d, want 14 (err %v)", version, err)
+	if err := db.ReadDB().QueryRow(`SELECT MAX(version) FROM schema_version`).Scan(&version); err != nil || version != 15 {
+		t.Fatalf("schema version = %d, want 15 (err %v)", version, err)
 	}
 	for _, table := range []string{"communities", "community_members"} {
 		var name string

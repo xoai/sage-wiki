@@ -1,0 +1,59 @@
+# check-determinism allowlist — one justified line per verified-safe site.
+# Format: <file>:<line> <justification>
+# Re-run after editing nearby code: line numbers rot; a stale entry here is
+# itself a finding (the lint fails on it when the site moves).
+
+internal/compiler/communities.go:113 populates keyed lookup maps only (commOfEntity/counts); output rows come from an ordered SELECT
+internal/compiler/worker_cycle.go:230 claimed[3] is a fixed-key lookup, not a map-order iteration
+internal/compiler/worker_cycle.go:272 claimed[3] is a fixed-key lookup, not a map-order iteration
+internal/compiler/worker_cycle.go:283 claimed[3] is a fixed-key lookup, not a map-order iteration
+internal/compiler/worker_cycle.go:377 heartbeat write order — operational lease columns, not artifacts
+internal/compiler/worker_cycle.go:402 error-set construction order — readback is keyed by path
+internal/compiler/worker_cycle.go:425 claimedItemFor is a membership scan, first match wins regardless of order
+internal/compiler/worker_cycle.go:439 claimedItemFor is a membership scan, first match wins regardless of order
+internal/compiler/worker_cycle.go:160 heartbeat path list feeds one IN-clause UPDATE (set semantics)
+internal/compiler/worker_cycle.go:299 heartbeat path list feeds one IN-clause UPDATE (set semantics)
+internal/compiler/worker_cycle.go:322 error-report log order only (stderr text)
+internal/compiler/compilekey.go:202 sort.Strings(names) immediately after the loop
+internal/compiler/pipeline.go:1211 sort.Strings(missing) immediately after the loop (SPEC-04 Task 3)
+internal/compiler/pipeline.go:1097 batch results: per-path independent atomic writes + manifest is a json-sorted map
+internal/compiler/write.go:523 prefix-match membership loop, produces no ordered output
+internal/compiler/write.go:826 sort.Slice(related) immediately after the shared-count loop
+internal/compiler/write.go:837 same: the related slice is sorted by count desc, name asc right below
+internal/compiler/concepts.go:407 purge-and-re-register over map keys — set semantics, all keys handled regardless of order
+internal/compiler/resolve_entities.go:207 populates keyed df-count maps only (lookups by key)
+internal/compiler/resolve_entities.go:229 membership map (ok[tok]) — read back by key only
+internal/compiler/resolve_entities.go:400 claimed-set membership writes
+internal/compiler/resolve_entities.go:429 range over SLICE (shadowed `out`), not the map of the same name
+internal/compiler/resolve_entities.go:434 range over SLICE `labels` (shadow), not a map
+internal/compiler/resolve_entities.go:544 norm[id] slice membership compare
+internal/compiler/resolve_entities.go:548 norm[id] slice membership compare
+internal/compiler/resolve_entities.go:579 labels slice already sorted at :577 immediately before
+internal/compiler/resolve_entities.go:1264 adj[cur] is a slice lookup; BFS result sorted at :1273
+internal/compiler/watch.go:206 sort.Strings(changed) after both snapshot loops (SPEC-04 Task 3)
+internal/compiler/resolve_entities.go:492 byType[seed.Type] is a slice lookup, not a map-order iteration
+internal/compiler/diff.go:128 Added/Modified sorted at :140-141, Removed at :149 (pre-existing AGENTS.md rule 6)
+internal/compiler/diff.go:144 Removed sorted at :149 (pre-existing AGENTS.md rule 6)
+internal/compiler/migrate_checkpoint.go:169 sources sorted at :61-64 before upserts (SPEC-04 D1 fix)
+internal/compiler/fullpipeline.go:482 mf.Concepts[name].Sources is a slice lookup, not a map-order iteration
+internal/compiler/dedup.go:142 canonical tie-break (Task 3) makes the result order-independent
+internal/manifest/merge.go:24 copy loop into a keyed map (json-sorted on save)
+internal/manifest/merge.go:32 copy loop into a keyed map (json-sorted on save)
+internal/manifest/manifest.go:273 returns a map (PendingSources) — no slice order to leak
+internal/manifest/manifest.go:284 ArticlesFromSource sorted before return (SPEC-04 Task 3)
+internal/ontology/community.go:101 delete-by-key set semantics inside one tx
+internal/ontology/temporal.go:62 edges map read; forms sorted at return (SPEC-04 D1 fix)
+internal/ontology/temporal.go:68 forms slice sorted at return (SPEC-04 D1 fix)
+internal/mirror/changes.go:242 changes slice sorted by Path at :271
+internal/mirror/changes.go:256 changes slice sorted by Path at :271
+internal/mirror/changes.go:273 cache prune by key delete (set semantics)
+internal/mirror/verify.go:153 keys sorted immediately after (sort.Strings)
+internal/mirror/verify.go:111 gens sorted immediately after this loop (SPEC-04 D1 fix)
+internal/pack/merge.go:518 files is a []string parameter (slice), not a map
+internal/wiki/reconcile.go:180 expectedOutputs sorted by path before return (SPEC-04 D1 fix)
+internal/wiki/reconcile.go:186 expectedOutputs sorted by path before return (SPEC-04 D1 fix)
+internal/sourcedate/backfill.go:175 this IS the sort helper (sortedSourcePaths)
+internal/sourcedate/backfill.go:184 this IS the sort helper (sortedConceptNames)
+internal/parity/normalize.go:79 zeroing timestamps in a keyed map (normalized output is json-sorted)
+internal/parity/normalize.go:84 zeroing timestamps in a keyed map (normalized output is json-sorted)
+internal/compiler/migrate_checkpoint.go:61 paths slice sorted at :62 before upserts (SPEC-04 D1 fix)

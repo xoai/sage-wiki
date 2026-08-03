@@ -83,6 +83,7 @@ func OpenWithOptions(projectDir, configPath string, mode store.Mode) (*App, erro
 		ANN:              cfg.Search.ANNEnabled(),
 		TemporalEnabled:  cfg.Ontology.Temporal.Enabled,
 		VectorBackend:    cfg.VectorBackend(),
+		Now:              config.NowUTC, // SPEC-04 D4 artifact clock
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)

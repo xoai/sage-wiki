@@ -33,7 +33,7 @@ Respond with ONLY valid JSON, no markdown fencing.`
 	// RawFallback keeps this site's exact no-bracket-hunt parse tolerance.
 	payload, rawText, err := client.StructuredCompletion(context.Background(), []llm.Message{
 		{Role: "user", Content: prompt},
-	}, ClaimsSchema, llm.CallOpts{Model: model, MaxTokens: 1024, Temperature: 0.01, RawFallback: true})
+	}, ClaimsSchema, llm.CallOpts{Model: model, MaxTokens: 1024, Temperature: llm.Float64(0.01), RawFallback: true})
 	if err != nil {
 		return nil, fmt.Errorf("trust: extract claims: %w", err)
 	}
@@ -89,7 +89,7 @@ Respond with exactly one word:
 
 	resp, err := client.ChatCompletion([]llm.Message{
 		{Role: "user", Content: prompt},
-	}, llm.CallOpts{Model: model, MaxTokens: 16, Temperature: 0.01})
+	}, llm.CallOpts{Model: model, MaxTokens: 16, Temperature: llm.Float64(0.01)})
 	if err != nil {
 		return ScoreUngrounded, fmt.Errorf("trust: check entailment: %w", err)
 	}

@@ -115,6 +115,7 @@ func ExtractTriples(
 	validTypes, validPredicates []string,
 	client *llm.Client,
 	pr *prompts.Registry,
+	temp *float64,
 ) (ExtractedGraph, error) {
 	var graph ExtractedGraph
 
@@ -138,7 +139,7 @@ func ExtractTriples(
 	payload, _, err := client.StructuredCompletion(ctx, []llm.Message{
 		{Role: "system", Content: "You are a knowledge-graph extraction system. Output valid JSON only."},
 		{Role: "user", Content: prompt},
-	}, TriplesSchema, llm.CallOpts{Model: model, MaxTokens: tcfg.MaxTokens})
+	}, TriplesSchema, llm.CallOpts{Model: model, MaxTokens: tcfg.MaxTokens, Temperature: temp})
 	if err != nil {
 		return graph, err
 	}
@@ -393,7 +394,7 @@ func emitEdgeConflict(h temporalHooks, sourceDoc, question, answer string) {
 		State:        store.StateConflict,
 		SourcesUsed:  string(sourcesUsed),
 		SourcesHash:  trust.ComputeSourcesHash(h.projectDir, string(sourcesUsed)),
-		CreatedAt:    time.Now().UTC(),
+		CreatedAt:    config.NowUTC(),
 	}
 	if err := h.trust.InsertPending(o); err != nil {
 		// Duplicate under a concurrent writer, or a store failure: either way
@@ -541,7 +542,7 @@ func persistGraph(ont store.OntologyStore, g ExtractedGraph, concepts []Extracte
 		if r.Confidence >= hooks.threshold {
 			vf := validFrom
 			if vf == "" {
-				vf = time.Now().UTC().Format(time.RFC3339)
+				vf = config.NowUTC().Format(time.RFC3339)
 			}
 			if _, err := ont.InvalidateFunctional(r.Source, r.Predicate, r.Target, vf, edgeID); err != nil {
 				// Best-effort like every write in this pass: the compile must
@@ -724,7 +725,7 @@ func ExtractTriplesPass(
 			doc := s
 			doc.Summary = body
 
-			graph, err := ExtractTriples(ctx, doc, tcfg, model, validTypes, validPredicates, client, pr)
+			graph, err := ExtractTriples(ctx, doc, tcfg, model, validTypes, validPredicates, client, pr, cfg.Compiler.CompileTemperature())
 			if err != nil {
 				// Every early exit either records a failure or fills its slot.
 				// A cancel mid-flight surfaces as an error here; classify it as

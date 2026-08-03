@@ -2,6 +2,7 @@ package sourcedate
 
 import (
 	"path/filepath"
+	"sort"
 
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
@@ -16,11 +17,12 @@ import (
 // F-064 — never keyed off FTS IDs, which differ per tier). Dateless
 // chains stay absent. Returns how many dates were set.
 func Backfill(projectDir string, mem store.EntryStore, m *manifest.Manifest) (int, error) {
+	// SPEC-04 D1: sorted candidates — deterministic DB write order.
 	var candidates []string
-	for path := range m.Sources {
+	for _, path := range sortedSourcePaths(m) {
 		candidates = append(candidates, path, "src:"+path)
 	}
-	for name := range m.Concepts {
+	for _, name := range sortedConceptNames(m) {
 		candidates = append(candidates, "concept:"+name)
 	}
 	have, err := mem.GetSourceDates(candidates)
@@ -30,7 +32,8 @@ func Backfill(projectDir string, mem store.EntryStore, m *manifest.Manifest) (in
 
 	set := 0
 	// Pass 1: sources (both identities share one resolution).
-	for path, src := range m.Sources {
+	for _, path := range sortedSourcePaths(m) {
+		src := m.Sources[path]
 		_, haveBare := have[path]
 		_, haveSrc := have["src:"+path]
 		if haveBare && haveSrc {
@@ -40,7 +43,14 @@ func Backfill(projectDir string, mem store.EntryStore, m *manifest.Manifest) (in
 		if ts <= 0 {
 			continue
 		}
-		for id, present := range map[string]bool{path: haveBare, "src:" + path: haveSrc} {
+		// SPEC-04 D1 (Gate-2 review): fixed-order identity iteration — a
+		// 2-key inline map literal iterates in random order and entry_dates
+		// rowids follow it.
+		for _, id := range []string{path, "src:" + path} {
+			present := haveBare
+			if id != path {
+				present = haveSrc
+			}
 			if present {
 				continue
 			}
@@ -53,7 +63,8 @@ func Backfill(projectDir string, mem store.EntryStore, m *manifest.Manifest) (in
 		}
 	}
 	// Pass 2: concepts (max over contributing sources, populated above).
-	for name, c := range m.Concepts {
+	for _, name := range sortedConceptNames(m) {
+		c := m.Concepts[name]
 		id := "concept:" + name
 		if _, ok := have[id]; ok {
 			continue
@@ -155,4 +166,24 @@ func BackfillOutputs(mem store.EntryStore, trust store.TrustStore) (int, error) 
 		set++
 	}
 	return set, nil
+}
+
+// sortedSourcePaths / sortedConceptNames: SPEC-04 D1 — every map-derived
+// slice that feeds write order is sorted.
+func sortedSourcePaths(m *manifest.Manifest) []string {
+	paths := make([]string, 0, len(m.Sources))
+	for p := range m.Sources {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func sortedConceptNames(m *manifest.Manifest) []string {
+	names := make([]string, 0, len(m.Concepts))
+	for n := range m.Concepts {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
 }

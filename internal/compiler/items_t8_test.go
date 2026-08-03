@@ -1,11 +1,15 @@
 package compiler
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/xoai/sage-wiki/internal/config"
+)
 
 func TestListBelowQualityScore(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
-	s := NewCompileItemStore(db)
+	s := NewCompileItemStore(db, config.NowUTC)
 
 	low := 0.3
 	high := 0.9

@@ -69,7 +69,7 @@ func TestExtractTriplesParsesGraph(t *testing.T) {
 	got, err := ExtractTriples(context.Background(),
 		SummaryResult{SourcePath: "raw/a.md", Summary: "Backpressure extends flow control."},
 		config.TriplesConfig{MaxTokens: 4096}, "m",
-		[]string{"concept", "technique"}, []string{"extends", "implements"}, client, nil)
+		[]string{"concept", "technique"}, []string{"extends", "implements"}, client, nil, nil)
 	if err != nil {
 		t.Fatalf("ExtractTriples: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestExtractTriplesNeutralizesSpoofedDelimiter(t *testing.T) {
 	if _, err := ExtractTriples(context.Background(),
 		SummaryResult{SourcePath: "raw/evil.md", Summary: hostile},
 		config.TriplesConfig{MaxTokens: 4096}, "m",
-		[]string{"concept"}, []string{"extends"}, client, nil); err != nil {
+		[]string{"concept"}, []string{"extends"}, client, nil, nil); err != nil {
 		t.Fatalf("ExtractTriples: %v", err)
 	}
 
@@ -137,7 +137,7 @@ func TestExtractTriplesSurfacesProviderError(t *testing.T) {
 	_, err := ExtractTriples(context.Background(),
 		SummaryResult{SourcePath: "raw/a.md", Summary: "text"},
 		config.TriplesConfig{MaxTokens: 4096}, "m",
-		[]string{"concept"}, []string{"extends"}, triplesClient(t, srv.URL), nil)
+		[]string{"concept"}, []string{"extends"}, triplesClient(t, srv.URL), nil, nil)
 	if err == nil {
 		t.Fatal("expected an error from the provider failure — the per-document " +
 			"function must stay honest; only the pass wrapper swallows")
@@ -155,7 +155,7 @@ func TestExtractTriplesWrapsSourcePathInUntrustedFrame(t *testing.T) {
 	if _, err := ExtractTriples(context.Background(),
 		SummaryResult{SourcePath: hostilePath, Summary: "Backpressure extends flow control."},
 		config.TriplesConfig{MaxTokens: 4096}, "m",
-		[]string{"concept"}, []string{"extends"}, client, nil); err != nil {
+		[]string{"concept"}, []string{"extends"}, client, nil, nil); err != nil {
 		t.Fatalf("ExtractTriples: %v", err)
 	}
 

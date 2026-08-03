@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/pkg/engine"
 )
 
@@ -156,7 +157,15 @@ func TestStack_PreFormatWorkspace(t *testing.T) {
 	ctx := context.Background()
 	// Pre-format fixture: config + stripped manifest, like engine's v02x.
 	fixtureSrc := filepath.Join("..", "..", "pkg", "engine", "testdata", "v02x")
-	copyDir(t, fixtureSrc, filepath.Join(root, "legacy"))
+	legacyDir := filepath.Join(root, "legacy")
+	copyDir(t, fixtureSrc, legacyDir)
+	// The fixture's .sage dir is gitignored — build the db hermetically at
+	// the current schema (the pre-format discriminator is the manifest).
+	if db, err := storage.Open(filepath.Join(legacyDir, ".sage", "wiki.db")); err != nil {
+		t.Fatalf("build fixture db: %v", err)
+	} else {
+		db.Close()
+	}
 
 	reg := newStackRegistry(ctx, 2)
 	mgr, err := engine.OpenManager(ctx, root, engine.WithOnEvict(reg.evict))
