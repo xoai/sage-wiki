@@ -437,7 +437,9 @@ func (e *OllamaEmbedder) Dimensions() int {
 func (e *OllamaEmbedder) setDims(d int) {
 	e.dimsMu.Lock()
 	defer e.dimsMu.Unlock()
-	e.dims = d
+	if e.dims == 0 {
+		e.dims = d
+	}
 }
 
 func (e *OllamaEmbedder) Embed(text string) ([]float32, error) {
