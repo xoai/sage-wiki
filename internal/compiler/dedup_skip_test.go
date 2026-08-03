@@ -740,3 +740,76 @@ func TestSkip_RemovedThenReaddedCompilesFresh(t *testing.T) {
 		}
 	}
 }
+
+// TestSkip_PureRemovalLeavesNoGhost pins NEW-1: after a pure removal (no
+// re-add), the next compile must not resurrect the ghost row — the
+// nothing-to-compile fast path fires, the deleted file is never claimed or
+// reported "incomplete (resume)".
+func TestSkip_PureRemovalLeavesNoGhost(t *testing.T) {
+	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
+	srv := newTestServer(stub)
+	defer srv.Close()
+
+	dir := compileDeferredCorpusOpts(t, srv.URL, CompileOpts{})
+
+	// Pure removal, two compiles: the removal run settles, the next must be quiet.
+	if err := os.Remove(filepath.Join(dir, "raw", "doc2.md")); err != nil {
+		t.Fatal(err)
+	}
+	compileInDir(t, dir, srv.URL, CompileOpts{})
+
+	before := stub.requests.get()
+	embedBefore := stub.embeds.get()
+	res := compileInDir(t, dir, srv.URL, CompileOpts{})
+	if got := stub.requests.get() - before; got != 0 {
+		t.Errorf("compile after pure removal made %d chat requests, want 0 (no ghost resurrection)", got)
+	}
+	if got := stub.embeds.get() - embedBefore; got != 0 {
+		t.Errorf("compile after pure removal made %d embed requests, want 0", got)
+	}
+	if res.Added != 0 || res.Modified != 0 {
+		t.Errorf("compile after pure removal: Added=%d Modified=%d, want 0/0 (ghost must not enter the work set)", res.Added, res.Modified)
+	}
+}
+
+// TestSkip_GhostAfterPersistedRemoval pins NEW-1's true chain: once the
+// removal is persisted (a compile with real work saves the manifest), the
+// deleted doc's row must never re-enter the work set — no claims, no
+// "incomplete (resume)", and the fast path keeps firing.
+func TestSkip_GhostAfterPersistedRemoval(t *testing.T) {
+	stub := &deferredStub{requests: &syncCounter{mu: make(chan struct{}, 1)}, embeds: &syncCounter{mu: make(chan struct{}, 1)}}
+	srv := newTestServer(stub)
+	defer srv.Close()
+
+	dir := compileDeferredCorpusOpts(t, srv.URL, CompileOpts{})
+
+	// Remove doc2 AND edit doc1 (so the compile has work and persists the removal).
+	if err := os.Remove(filepath.Join(dir, "raw", "doc2.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "raw", "doc1.md"), []byte("# Deferred Doc 1\n\nEDITED to force a persisting compile."), 0644); err != nil {
+		t.Fatal(err)
+	}
+	compileInDir(t, dir, srv.URL, CompileOpts{Prune: true}) // sole-source orphan protection defers removal without it
+
+	mf, err := manifest.Load(filepath.Join(dir, ".manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, stillThere := mf.Sources["raw/doc2.md"]; stillThere {
+		t.Fatal("precondition failed: removal was not persisted in the manifest")
+	}
+
+	before := stub.requests.get()
+	embedBefore := stub.embeds.get()
+	res := compileInDir(t, dir, srv.URL, CompileOpts{})
+	if got := stub.requests.get() - before; got != 0 {
+		t.Errorf("NEW-1: compile after persisted removal made %d chat requests, want 0", got)
+	}
+	if got := stub.embeds.get() - embedBefore; got != 0 {
+		t.Errorf("NEW-1: compile after persisted removal made %d embed requests, want 0", got)
+	}
+	if res.Added != 0 || res.Modified != 0 {
+		t.Errorf("NEW-1: Added=%d Modified=%d, want 0/0 — ghost must not enter the work set", res.Added, res.Modified)
+	}
+}

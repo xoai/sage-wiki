@@ -49,6 +49,10 @@ type skipClassification struct {
 	// they double-count (Added AND Modified when drifted/resumed) and the
 	// all-skip fast path can never fire for tier<3 corpora (review M1).
 	classifiedSpuriousAdded []string
+	// hasRow marks diff.Added paths that already have a compile_items row —
+	// they are modifications (reason "content"), not new docs
+	// ("content (new)").
+	hasRow map[string]bool
 }
 
 // classifySkips evaluates the skip rule (spec R0-R6) over every tracked
@@ -68,7 +72,7 @@ func classifySkips(
 	diff *DiffResult,
 	force, dryRun bool,
 ) (*skipClassification, error) {
-	out := &skipClassification{driftReasons: map[string]string{}}
+	out := &skipClassification{driftReasons: map[string]string{}, hasRow: map[string]bool{}}
 
 	// One computation per run, not per doc (review M3).
 	kc, err := NewKeyContext(cfg, pr)
@@ -103,6 +107,9 @@ func classifySkips(
 		}
 		rows = append(rows, list...)
 	}
+	for _, item := range rows {
+		out.hasRow[item.SourcePath] = true
+	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].SourcePath < rows[j].SourcePath }) // SPEC-04 D1
 
 	for _, item := range rows {
@@ -110,7 +117,16 @@ func classifySkips(
 		if removed[path] || inModified[path] {
 			continue
 		}
-		if fresh, isSpurious := spuriousAdded[path]; isSpurious && item.Hash != fresh {
+		_, inManifest := mf.Sources[path]
+		_, isSpurious := spuriousAdded[path]
+		if !inManifest && !isSpurious {
+			// Ghost row (NEW-1): file deleted and the removal persisted (or
+			// is pending) — a stale row must never be classified, or R0 would
+			// inject the deleted file into the work set on every compile
+			// (claims reprocess it until dead-letter; the fast path dies).
+			continue
+		}
+		if isSpurious && item.Hash != spuriousAdded[path] {
 			// Content changed (review N1): R2's domain — the Added flow's
 			// hash-change flag reset reprocesses the doc. Never key-compare
 			// against the stale stored hash.
@@ -349,7 +365,11 @@ func populateDiffReasons(diff *DiffResult, cls *skipClassification) {
 	diff.Unchanged = append(append([]SkippedDoc{}, cls.skipped...), cls.adopted...)
 	diff.Reason = cls.driftReasons
 	for _, s := range diff.Added {
-		diff.Reason[s.Path] = "content (new)"
+		if cls.hasRow[s.Path] {
+			diff.Reason[s.Path] = "content"
+		} else {
+			diff.Reason[s.Path] = "content (new)"
+		}
 	}
 	for _, s := range diff.Modified {
 		if _, ok := diff.Reason[s.Path]; !ok {
