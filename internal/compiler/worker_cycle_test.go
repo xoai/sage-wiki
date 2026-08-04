@@ -9,13 +9,16 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/wiki"
+	"github.com/xoai/sage-wiki/pkg/events"
 )
 
 // workerHarness bundles a mock-LLM project, the queue store, and a worker.
@@ -475,5 +478,93 @@ func TestWorkerCycle_StoresCompileKeys(t *testing.T) {
 	}
 	if got.CompileKey == "" {
 		t.Error("F2: worker cycle left compile_key empty — serve-built workspaces stay key-blind")
+	}
+}
+
+// TestWorker_EmitsLifecycleEvents (SPEC-07 §4 + QA F-002): a worker cycle
+// runs inside the workspace event plane — compile lifecycle + per-doc
+// outcomes reach the sink installed via SetEventSink.
+func TestWorker_EmitsLifecycleEvents(t *testing.T) {
+	metrics.ResetForTest()
+	h := newWorkerHarness(t, 1, http.StatusOK)
+	h.writeSource(t, "a.md", "# Alpha\n\nAlpha content for indexing.")
+	h.newWorker(t, 50*time.Millisecond, time.Second, 5)
+
+	sink := &workerCaptureSink{}
+	h.worker.SetEventSink(sink)
+
+	if err := h.items.Upsert(CompileItem{SourcePath: "raw/a.md", Hash: "h1", FileType: "md", Tier: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.worker.cycle(context.Background()); err != nil {
+		t.Fatalf("cycle: %v", err)
+	}
+
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	types := map[events.Type]int{}
+	for _, ev := range sink.events {
+		types[ev.Type]++
+	}
+	if types[events.TypeCompileStarted] != 1 || types[events.TypeCompileFinished] != 1 {
+		t.Errorf("lifecycle events = %v, want one started + one finished", types)
+	}
+	if types[events.TypeCompileDocFinished] == 0 {
+		t.Error("no compile_doc_finished events from the worker cycle")
+	}
+
+	// SPEC-07 metrics: a worker cycle is a compile job — it bumps
+	// compiles_total exactly once (verification review F-003).
+	got := int64(-1)
+	snap := metrics.Snapshot()
+	for i := 0; i+1 < len(snap); i += 2 {
+		if key, _ := snap[i].(string); strings.HasPrefix(key, "compiles_total") {
+			got = snap[i+1].(int64)
+		}
+	}
+	if got != 1 {
+		t.Errorf("compiles_total = %d, want 1 for the worker cycle", got)
+	}
+}
+
+type workerCaptureSink struct {
+	mu     sync.Mutex
+	events []events.Event
+}
+
+func (s *workerCaptureSink) Emit(ev events.Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, ev)
+}
+
+// TestWorker_EmitsUsageEvents (verification pass 2 F-011): a tier-3 worker
+// cycle bridges LLM usage to the installed sink — the cycle client must be
+// built with the sink, not an empty opts.
+func TestWorker_EmitsUsageEvents(t *testing.T) {
+	h := newWorkerHarness(t, 3, http.StatusOK)
+	h.writeSource(t, "a.md", "# Alpha\n\nAlpha content for a full tier-3 compile.")
+	h.newWorker(t, 50*time.Millisecond, time.Second, 5)
+
+	sink := &workerCaptureSink{}
+	h.worker.SetEventSink(sink)
+
+	if err := h.items.Upsert(CompileItem{SourcePath: "raw/a.md", Hash: "h1", FileType: "md", Tier: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.worker.cycle(context.Background()); err != nil {
+		t.Fatalf("cycle: %v", err)
+	}
+
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	usage := 0
+	for _, ev := range sink.events {
+		if ev.Type == events.TypeUsage {
+			usage++
+		}
+	}
+	if usage == 0 {
+		t.Fatal("no usage events reached the sink from the tier-3 worker cycle")
 	}
 }

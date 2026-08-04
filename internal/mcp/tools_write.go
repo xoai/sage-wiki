@@ -722,8 +722,9 @@ func (s *Server) CompileTopic(ctx context.Context, topic string, maxSources int)
 	if err != nil {
 		return nil, fmt.Errorf("create LLM client: %v", err)
 	}
-	// SPEC-05 usage ledger: compile-on-demand spend is recorded.
-	client.SetRecorder(llm.NewFileRecorder(s.projectDir))
+	// SPEC-05 usage ledger: compile-on-demand spend is recorded —
+	// bridged to the workspace event sink when one is installed (SPEC-07).
+	client.SetRecorder(llm.NewBridgedRecorder(s.projectDir, s.eventSink()))
 	client.SetTier(3)
 	client.SetPriceOverride(cfg.Compiler.TokenPriceOverride)
 	client.SetPriceTable(cfg.Compiler.PriceTable)
@@ -739,6 +740,7 @@ func (s *Server) CompileTopic(ctx context.Context, topic string, maxSources int)
 		Embedder:    s.embedder,
 		Client:      client,
 		Coordinator: s.coordinator,
+		Sink:        s.eventSink(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("compile topic: %v", err)

@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/pkg/events"
 )
 
 // workerSettings is WorkerConfig with defaults resolved (spec C5:
@@ -87,6 +89,25 @@ type Worker struct {
 	token      string
 	hooks      passHooks
 	failStreak int // consecutive all-failed cycles (hibernation backoff)
+
+	// SPEC-07: the workspace event sink, installed post-construction by
+	// the serve wiring (Deps.SetEventSink) — the worker is built in
+	// AssembleDeps, before the bus exists.
+	sinkMu sync.Mutex
+	sink   events.Sink
+}
+
+// SetEventSink installs the workspace event sink for worker cycles.
+func (w *Worker) SetEventSink(s events.Sink) {
+	w.sinkMu.Lock()
+	defer w.sinkMu.Unlock()
+	w.sink = events.NilSafe(s) // typed-nil guard — see events.NilSafe
+}
+
+func (w *Worker) eventSink() events.Sink {
+	w.sinkMu.Lock()
+	defer w.sinkMu.Unlock()
+	return w.sink
 }
 
 // NewWorker constructs a Worker with a unique lease-owner token

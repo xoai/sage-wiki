@@ -17,6 +17,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/pkg/events"
 )
 
 // resolveServer replies with a fixed clusters payload and records every prompt
@@ -40,9 +41,9 @@ func resolveServer(t *testing.T, payload string) (*httptest.Server, *atomic.Int6
 		}
 		mu.Unlock()
 		json.NewEncoder(w).Encode(map[string]any{
-			"choices":	[]map[string]any{{"message": map[string]string{"content": payload}}},
-			"model":	"m",
-			"usage":	map[string]int{"total_tokens": 10},
+			"choices": []map[string]any{{"message": map[string]string{"content": payload}}},
+			"model":   "m",
+			"usage":   map[string]int{"total_tokens": 10},
 		})
 	}))
 	t.Cleanup(srv.Close)
@@ -71,8 +72,8 @@ func resolveCfg(threshold float64) *config.Config {
 func addEnt(t *testing.T, s *ontology.Store, id, name, def, article string) {
 	t.Helper()
 	if err := s.AddEntity(ontology.Entity{
-		ID:	id, Type: ontology.TypeConcept, Name: name,
-		Definition:	def, ArticlePath: article,
+		ID: id, Type: ontology.TypeConcept, Name: name,
+		Definition: def, ArticlePath: article,
 	}); err != nil {
 		t.Fatalf("AddEntity %s: %v", id, err)
 	}
@@ -150,8 +151,8 @@ func TestResolvePassLinksVariants(t *testing.T) {
 	addEnt(t, ont, "Buzz Aldrin", "Buzz Aldrin", "Apollo 11 lunar module pilot", "")
 	addEnt(t, ont, "apollo-11", "Apollo 11", "", "")
 	if err := ont.AddRelation(ontology.Relation{
-		ID:	"r1", SourceID: "Buzz Aldrin", TargetID: "apollo-11",
-		Relation:	ontology.RelExtends, Confidence: 0.8}); err != nil {
+		ID: "r1", SourceID: "Buzz Aldrin", TargetID: "apollo-11",
+		Relation: ontology.RelExtends, Confidence: 0.8}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -293,15 +294,15 @@ func TestResolvePassSweepCopiesNewEdgesWithoutLLM(t *testing.T) {
 	addEnt(t, ont, "alias", "Alias", "the alias", "")
 	addEnt(t, ont, "target", "Target", "", "")
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias:	"alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
-		Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias: "alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// An edge appears on the alias AFTER the link was applied.
 	if err := ont.AddRelation(ontology.Relation{
-		ID:	"late", SourceID: "alias", TargetID: "target",
-		Relation:	ontology.RelExtends, Confidence: 0.5}); err != nil {
+		ID: "late", SourceID: "alias", TargetID: "target",
+		Relation: ontology.RelExtends, Confidence: 0.5}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -325,8 +326,8 @@ func TestResolvePassSweepSurvivesPrunedCanonical(t *testing.T) {
 	ont := passStore(t)
 	addEnt(t, ont, "alias", "Alias", "", "")
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias:	"alias", CanonicalID: "gone", EntityType: ontology.TypeConcept,
-		Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias: "alias", CanonicalID: "gone", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -352,9 +353,9 @@ func TestResolvePassRejectedPairNotRelinked(t *testing.T) {
 	addEnt(t, ont, "armstrong-a", "Neil Armstrong", "an astronaut", "wiki/a.md")
 	addEnt(t, ont, "armstrong-b", "Louis Armstrong", "a trumpeter", "")
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias:	"armstrong-b", CanonicalID: "armstrong-a", EntityType: ontology.TypeConcept,
-		Status:	store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
-		DecidedBy:	"user",
+		Alias: "armstrong-b", CanonicalID: "armstrong-a", EntityType: ontology.TypeConcept,
+		Status: store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		DecidedBy: "user",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -401,13 +402,13 @@ func TestResolvePassCrossRunActiveAliasNotReproposed(t *testing.T) {
 	addEnt(t, ont, "seed", "Buzz Aldrin", "an astronaut", "wiki/seed.md")
 	addEnt(t, ont, "tgt", "Apollo", "", "")
 	if err := ont.AddRelation(ontology.Relation{
-		ID:	"r", SourceID: "seed", TargetID: "tgt",
-		Relation:	ontology.RelExtends, Confidence: 0.7}); err != nil {
+		ID: "r", SourceID: "seed", TargetID: "tgt",
+		Relation: ontology.RelExtends, Confidence: 0.7}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias:	"moved", CanonicalID: "canon-1", EntityType: ontology.TypeConcept,
-		Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias: "moved", CanonicalID: "canon-1", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -518,23 +519,23 @@ func TestResolvePassRejectionSurvivesChainResolution(t *testing.T) {
 	addEnt(t, ont, "c-row", "Buzz Aldrin", "an astronaut", "")
 	addEnt(t, ont, "edge-target", "Apollo", "", "")
 	if err := ont.AddRelation(ontology.Relation{
-		ID:	"r", SourceID: "a-row", TargetID: "edge-target",
-		Relation:	ontology.RelExtends, Confidence: 0.7}); err != nil {
+		ID: "r", SourceID: "a-row", TargetID: "edge-target",
+		Relation: ontology.RelExtends, Confidence: 0.7}); err != nil {
 		t.Fatal(err)
 	}
 
 	// b-row is itself an alias of c-row.
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias:	"b-row", CanonicalID: "c-row", EntityType: ontology.TypeConcept,
-		Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias: "b-row", CanonicalID: "c-row", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// The user rejected a-row <-> c-row specifically.
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias:	"a-row", CanonicalID: "c-row", EntityType: ontology.TypeConcept,
-		Status:	store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
-		DecidedBy:	"user",
+		Alias: "a-row", CanonicalID: "c-row", EntityType: ontology.TypeConcept,
+		Status: store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		DecidedBy: "user",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -565,20 +566,20 @@ func TestLinkAliasFailsWhenAuditWriteSuppressed(t *testing.T) {
 	addEnt(t, ont, "canon", "Canon", "", "")
 	addEnt(t, ont, "tgt", "Target", "", "")
 	if err := ont.AddRelation(ontology.Relation{
-		ID:	"r", SourceID: "alias", TargetID: "tgt",
-		Relation:	ontology.RelExtends, Confidence: 0.7}); err != nil {
+		ID: "r", SourceID: "alias", TargetID: "tgt",
+		Relation: ontology.RelExtends, Confidence: 0.7}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias:	"alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
-		Status:	store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias: "alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
+		Status: store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	_, err := ont.LinkAlias(store.EntityAlias{
-		Alias:	"alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
-		Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias: "alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	})
 	if err == nil {
 		t.Fatal("LinkAlias over a rejected row returned nil; the audit write was suppressed")
@@ -593,9 +594,9 @@ func TestLinkAliasFailsWhenAuditWriteSuppressed(t *testing.T) {
 // --- GATE-3: coverage the reviewer found missing ---
 
 type stubEmbedder struct {
-	calls	int
-	fail	bool
-	vec	map[string][]float32
+	calls int
+	fail  bool
+	vec   map[string][]float32
 }
 
 func (s *stubEmbedder) Embed(text string) ([]float32, error) {
@@ -610,8 +611,8 @@ func (s *stubEmbedder) Embed(text string) ([]float32, error) {
 	}
 	return []float32{0, 0, 1}, nil
 }
-func (s *stubEmbedder) Dimensions() int	{ return 3 }
-func (s *stubEmbedder) Name() string	{ return "stub" }
+func (s *stubEmbedder) Dimensions() int { return 3 }
+func (s *stubEmbedder) Name() string    { return "stub" }
 
 // An embedding outage must not cost the vault its resolution: lexical blocking
 // stands on its own.
@@ -689,7 +690,7 @@ func TestResolvePassSourceTypeExcluded(t *testing.T) {
 	ont := passStore(t)
 	for _, id := range []string{"raw/2024/notes.md", "raw/2025/notes.md"} {
 		if err := ont.AddEntity(ontology.Entity{
-			ID:	id, Type: ontology.TypeSource, Name: "notes.md",
+			ID: id, Type: ontology.TypeSource, Name: "notes.md",
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -757,8 +758,8 @@ func TestResolvePassLinksAgainstEntityFromAnEarlierCompile(t *testing.T) {
 	addEnt(t, ont, "Self Attention", "Self Attention", "an attention mechanism", "")
 	addEnt(t, ont, "tgt", "Transformers", "", "")
 	if err := ont.AddRelation(ontology.Relation{
-		ID:	"old", SourceID: "Self Attention", TargetID: "tgt",
-		Relation:	ontology.RelExtends, Confidence: 0.6}); err != nil {
+		ID: "old", SourceID: "Self Attention", TargetID: "tgt",
+		Relation: ontology.RelExtends, Confidence: 0.6}); err != nil {
 		t.Fatal(err)
 	}
 	// Written by THIS compile.
@@ -793,9 +794,9 @@ func TestResolvePassRejectedPairNotCoAbsorbedAcrossBlocks(t *testing.T) {
 	addEnt(t, ont, "b-row", "Buzz Aldrin", "a jazz musician", "")
 	addEnt(t, ont, "c-canon", "Buzz Aldrin", "an astronaut", "wiki/c.md")
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias:	"a-row", CanonicalID: "b-row", EntityType: ontology.TypeConcept,
-		Status:	store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
-		DecidedBy:	"user",
+		Alias: "a-row", CanonicalID: "b-row", EntityType: ontology.TypeConcept,
+		Status: store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		DecidedBy: "user",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -827,24 +828,24 @@ func TestResolvePassRejectedPairNotCoAbsorbedThroughAChain(t *testing.T) {
 	}
 	// z-row wins the election.
 	if err := ont.UpdateEntity(ontology.Entity{
-		ID:	"z-row", Name: "Buzz Aldrin", Definition: "an astronaut",
-		ArticlePath:	"wiki/z.md"}); err != nil {
+		ID: "z-row", Name: "Buzz Aldrin", Definition: "an astronaut",
+		ArticlePath: "wiki/z.md"}); err != nil {
 		t.Fatal(err)
 	}
 	// x -> y -> z, applied, never rewritten to the terminal.
 	for _, p := range [][2]string{{"x-row", "y-row"}, {"y-row", "z-row"}} {
 		if err := ont.PutAlias(store.EntityAlias{
-			Alias:	p[0], CanonicalID: p[1], EntityType: ontology.TypeConcept,
-			Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+			Alias: p[0], CanonicalID: p[1], EntityType: ontology.TypeConcept,
+			Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// The user separated a-row from x-row, which now sits under z-row.
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias:	"a-row", CanonicalID: "x-row", EntityType: ontology.TypeConcept,
-		Status:	store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
-		DecidedBy:	"user",
+		Alias: "a-row", CanonicalID: "x-row", EntityType: ontology.TypeConcept,
+		Status: store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		DecidedBy: "user",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -903,8 +904,8 @@ func TestResolvePassUnloadableTargetGoesToReview(t *testing.T) {
 	addEnt(t, ont, "b-row", "Buzz Aldrin", "", "wiki/b.md")
 	// b-row points at a canonical that no longer exists (pruned).
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias:	"b-row", CanonicalID: "c-gone", EntityType: ontology.TypeConcept,
-		Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias: "b-row", CanonicalID: "c-gone", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -951,16 +952,16 @@ func TestResolvePassDoesNotAutoApplyAPairAwaitingReview(t *testing.T) {
 
 	// Run 1 already queued the pair for a human.
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias:	"a-row", CanonicalID: "b-row", EntityType: ontology.TypeConcept,
-		Status:	store.AliasPending, Confidence: 0.95, Source: "llm",
-		CreatedAt:	"2026-07-26T00:00:00Z",
+		Alias: "a-row", CanonicalID: "b-row", EntityType: ontology.TypeConcept,
+		Status: store.AliasPending, Confidence: 0.95, Source: "llm",
+		CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// Run 2: a-row acquires an article, so it now wins electCanonical.
 	if err := ont.AddEntity(ontology.Entity{
-		ID:	"a-row", Type: ontology.TypeConcept, Name: "Buzz Aldrin",
-		ArticlePath:	"wiki/a.md"}); err != nil {
+		ID: "a-row", Type: ontology.TypeConcept, Name: "Buzz Aldrin",
+		ArticlePath: "wiki/a.md"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -987,23 +988,23 @@ func TestResolveSweepHonoursRejections(t *testing.T) {
 	addEnt(t, ont, "canon", "Canon", "", "")
 	addEnt(t, ont, "tgt", "Target", "", "")
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias:	"alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
-		Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias: "alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// The user then rejects the pair in the other direction.
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias:	"canon", CanonicalID: "alias", EntityType: ontology.TypeConcept,
-		Status:	store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
-		DecidedBy:	"user",
+		Alias: "canon", CanonicalID: "alias", EntityType: ontology.TypeConcept,
+		Status: store.AliasRejected, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		DecidedBy: "user",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// A new edge lands on the alias afterwards.
 	if err := ont.AddRelation(ontology.Relation{
-		ID:	"late", SourceID: "alias", TargetID: "tgt",
-		Relation:	ontology.RelExtends, Confidence: 0.5}); err != nil {
+		ID: "late", SourceID: "alias", TargetID: "tgt",
+		Relation: ontology.RelExtends, Confidence: 0.5}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1034,8 +1035,8 @@ func TestResolvePassDoesNotCreateACycle(t *testing.T) {
 	addEnt(t, ont, "x-canon", "Buzz Aldrin", "an astronaut", "")
 	addEnt(t, ont, "y-alias", "Buzz Aldrin", "an astronaut", "wiki/y.md")
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias:	"y-alias", CanonicalID: "x-canon", EntityType: ontology.TypeConcept,
-		Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias: "y-alias", CanonicalID: "x-canon", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1065,22 +1066,22 @@ func TestResolvePassPendingPairNotConsummatedTransitively(t *testing.T) {
 	addEnt(t, ont, "T", "Buzz Aldrin", "an astronaut", "")
 	addEnt(t, ont, "edge-tgt", "Apollo", "", "")
 	if err := ont.AddRelation(ontology.Relation{
-		ID:	"r", SourceID: "B", TargetID: "edge-tgt",
-		Relation:	ontology.RelExtends, Confidence: 0.7}); err != nil {
+		ID: "r", SourceID: "B", TargetID: "edge-tgt",
+		Relation: ontology.RelExtends, Confidence: 0.7}); err != nil {
 		t.Fatal(err)
 	}
 	// B is already absorbed into T.
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias:	"B", CanonicalID: "T", EntityType: ontology.TypeConcept,
-		Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias: "B", CanonicalID: "T", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// A <-> B is awaiting a human.
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias:	"A", CanonicalID: "B", EntityType: ontology.TypeConcept,
-		Status:	store.AliasPending, Confidence: 0.9, Source: "llm",
-		CreatedAt:	"2026-07-26T00:00:00Z",
+		Alias: "A", CanonicalID: "B", EntityType: ontology.TypeConcept,
+		Status: store.AliasPending, Confidence: 0.9, Source: "llm",
+		CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1187,8 +1188,8 @@ func TestResolvePassDoesNotLeakThroughAWithinRunChain(t *testing.T) {
 // For an applied link that repeats on every compile, forever.
 func TestResolvePassDoesNotArbitrateAlreadyDecidedPairs(t *testing.T) {
 	for _, tc := range []struct {
-		name	string
-		status	store.AliasStatus
+		name   string
+		status store.AliasStatus
 	}{
 		{"applied", store.AliasApplied},
 		{"pending", store.AliasPending},
@@ -1199,9 +1200,9 @@ func TestResolvePassDoesNotArbitrateAlreadyDecidedPairs(t *testing.T) {
 			addEnt(t, ont, "seed", "Buzz Aldrin", "an astronaut", "wiki/s.md")
 			addEnt(t, ont, "alias-row", "Buzz Aldrin", "an astronaut", "")
 			if err := ont.PutAlias(store.EntityAlias{
-				Alias:	"alias-row", CanonicalID: "seed", EntityType: ontology.TypeConcept,
-				Status:	tc.status, Confidence: 0.9, Source: "llm",
-				CreatedAt:	"2026-07-26T00:00:00Z",
+				Alias: "alias-row", CanonicalID: "seed", EntityType: ontology.TypeConcept,
+				Status: tc.status, Confidence: 0.9, Source: "llm",
+				CreatedAt: "2026-07-26T00:00:00Z",
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -1225,14 +1226,14 @@ func TestSweepAliasesNormalisesNilArguments(t *testing.T) {
 	addEnt(t, ont, "canon", "Canon", "", "")
 	addEnt(t, ont, "tgt", "Target", "", "")
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias:	"alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
-		Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
+		Alias: "alias", CanonicalID: "canon", EntityType: ontology.TypeConcept,
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-26T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ont.AddRelation(ontology.Relation{
-		ID:	"e", SourceID: "alias", TargetID: "tgt",
-		Relation:	ontology.RelExtends, Confidence: 0.5}); err != nil {
+		ID: "e", SourceID: "alias", TargetID: "tgt",
+		Relation: ontology.RelExtends, Confidence: 0.5}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1266,8 +1267,8 @@ func TestResolvePassAutoAppliesByDefault(t *testing.T) {
 	addEnt(t, ont, "Buzz Aldrin", "Buzz Aldrin", "Apollo 11 lunar module pilot", "")
 	addEnt(t, ont, "apollo-11", "Apollo 11", "", "")
 	if err := ont.AddRelation(ontology.Relation{
-		ID:	"r1", SourceID: "Buzz Aldrin", TargetID: "apollo-11",
-		Relation:	ontology.RelExtends, Confidence: 0.8}); err != nil {
+		ID: "r1", SourceID: "Buzz Aldrin", TargetID: "apollo-11",
+		Relation: ontology.RelExtends, Confidence: 0.8}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1373,9 +1374,9 @@ func captureWarns(t *testing.T) func() string {
 func seedPending(t *testing.T, ont store.OntologyStore, alias, canonical string) {
 	t.Helper()
 	if err := ont.PutAlias(store.EntityAlias{
-		Alias:	alias, CanonicalID: canonical, EntityType: "concept",
-		Status:	store.AliasPending, Source: "llm",
-		CreatedAt:	"2026-07-01T00:00:00Z",
+		Alias: alias, CanonicalID: canonical, EntityType: "concept",
+		Status: store.AliasPending, Source: "llm",
+		CreatedAt: "2026-07-01T00:00:00Z",
 	}); err != nil {
 		t.Fatalf("seed pending alias: %v", err)
 	}
@@ -1385,7 +1386,7 @@ func seedPending(t *testing.T, ont store.OntologyStore, alias, canonical string)
 // still works, so the test isolates the backlog query's error path.
 type errPendingStore struct {
 	store.OntologyStore
-	err	error
+	err error
 }
 
 func (e errPendingStore) ListAliases(s store.AliasStatus) ([]store.EntityAlias, error) {
@@ -1520,4 +1521,59 @@ func TestResolvePassWarnsWhenSweepPanics(t *testing.T) {
 	if got := out(); !strings.Contains(got, "--review") {
 		t.Errorf("a panic in the sweep must not lose the backlog warning:\n%s", got)
 	}
+}
+
+// TestResolvePassEmitsEntityResolved (SPEC-07 §4): an auto-applied merge
+// emits entity_resolved through the pass's sink — the seam the pipeline's
+// FullPipelineOpts.Sink threads (QA F-001 wiring test).
+func TestResolvePassEmitsEntityResolved(t *testing.T) {
+	srv, calls, _ := resolveServer(t, certainCluster)
+	ont := passStore(t)
+	addEnt(t, ont, "buzz-aldrin", "Buzz Aldrin", "Apollo 11 pilot", "wiki/concepts/buzz-aldrin.md")
+	addEnt(t, ont, "Buzz Aldrin", "Buzz Aldrin", "Apollo 11 lunar module pilot", "")
+
+	cfg := &config.Config{}
+	cfg.Ontology.Resolve.Enabled = true
+	cfg.Ontology.Triples.Enabled = true
+	cfg.Models.Extract = "m"
+
+	sink := &resolveCaptureSink{}
+	ResolveEntitiesPass(context.Background(), ont,
+		[]string{"Buzz Aldrin"}, cfg, triplesClient(t, srv.URL), nil, nil, sink)
+
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("LLM calls = %d, want 1", got)
+	}
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	var found *events.EntityResolved
+	for _, ev := range sink.events {
+		if ev.Type == events.TypeEntityResolved {
+			d := ev.Data.(events.EntityResolved)
+			found = &d
+		}
+	}
+	if found == nil {
+		t.Fatalf("no entity_resolved event reached the sink (events: %d)", len(sink.events))
+	}
+	if found.Alias == "" || found.Canonical == "" {
+		t.Errorf("payload = %+v, want alias + canonical", found)
+	}
+	if !found.Auto {
+		t.Error("Auto = false, want true (auto-applied merge)")
+	}
+	if found.Confidence <= 0 {
+		t.Errorf("Confidence = %v, want the cluster confidence", found.Confidence)
+	}
+}
+
+type resolveCaptureSink struct {
+	mu     sync.Mutex
+	events []events.Event
+}
+
+func (s *resolveCaptureSink) Emit(ev events.Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, ev)
 }

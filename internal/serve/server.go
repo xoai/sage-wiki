@@ -22,6 +22,7 @@ import (
 	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/pkg/engine"
+	"github.com/xoai/sage-wiki/pkg/events"
 	"net"
 )
 
@@ -39,6 +40,9 @@ type Config struct {
 	CompileSem chan struct{}
 	// ReadyFn reports store-open completion for /readyz. Required.
 	ReadyFn func() bool
+	// Bus, when non-nil, serves GET /events/stream (SPEC-07 SSE). Nil =
+	// the route returns 503 (events disabled).
+	Bus *events.Bus
 }
 
 // Server is the SPEC-02 unified serve process.
@@ -52,7 +56,14 @@ type Server struct {
 	mcpStream *mcpserver.StreamableHTTPServer
 	ws        *engine.Workspace // held for the workspace lock (§2.0)
 	srvMu     sync.Mutex        // guards httpSrv (Serve writes, Shutdown reads)
-	httpSrv   *http.Server
+	// SPEC-07 (verification pass 2): active SSE streams, cancelled at
+	// shutdown start — an open stream must not consume the whole drain
+	// budget (http.Server.Shutdown waits for it) and starve the job
+	// queue's drain.
+	sseMu      sync.Mutex
+	sseNextID  int64
+	sseCancels map[int64]context.CancelFunc
+	httpSrv    *http.Server
 }
 
 // New builds the server: job ledger + queue, routes, MCP mount.
@@ -73,7 +84,7 @@ func New(deps *Deps, mcpSrv *mcppkg.Server, cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, mcp: mcpSrv, deps: deps, ledger: ledger}
+	s := &Server{cfg: cfg, mcp: mcpSrv, deps: deps, ledger: ledger, sseCancels: map[int64]context.CancelFunc{}}
 	s.queue = NewQueue(ledger, cfg.MaxConcurrentCompiles, semaphoreWrap(cfg.CompileSem, s.execCompile), nil)
 	s.routes()
 	s.mcpStream = s.mountMCP()
@@ -156,6 +167,11 @@ func (s *Server) Serve(ctx context.Context, addr string) error {
 func (s *Server) Shutdown() error {
 	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.DrainTimeout)
 	defer cancel()
+	// SPEC-07 (verification pass 2): end SSE streams BEFORE the HTTP
+	// drain — Shutdown waits for active connections, and a stream never
+	// goes idle on its own; leaving one open would consume the entire
+	// drain budget and leave the job queue an expired ctx.
+	s.cancelSSEStreams()
 	var firstErr error
 	s.srvMu.Lock()
 	httpSrv := s.httpSrv
@@ -208,6 +224,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /docs/{path...}", s.handleDoc)
 	s.mux.HandleFunc("GET /export", s.handleExport)
 	s.mux.Handle("GET /metrics", metrics.Handler())
+	s.mux.HandleFunc("GET /events/stream", s.handleEventsStream)
 	// Envelope 404 for unmatched paths (spec §2.2 error contract).
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_found", r.Method+" "+r.URL.Path+": no such route")
@@ -219,6 +236,112 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"ok"}`))
 }
 
+// cancelSSEStreams ends every active event stream (shutdown start). The
+// nil map marks "shutdown swept" so late registrations cancel themselves.
+func (s *Server) cancelSSEStreams() {
+	s.sseMu.Lock()
+	cancels := make([]context.CancelFunc, 0, len(s.sseCancels))
+	for _, c := range s.sseCancels {
+		cancels = append(cancels, c)
+	}
+	s.sseCancels = nil
+	s.sseMu.Unlock()
+	for _, c := range cancels {
+		c()
+	}
+}
+
+// registerSSE tracks an active stream; unregister removes it by id. A
+// registration that lands after cancelSSEStreams swept the map is cancelled
+// immediately (TOCTOU guard — verification pass 3): a late connection must
+// not outlive the sweep and pin the HTTP drain.
+func (s *Server) registerSSE(c context.CancelFunc) int64 {
+	s.sseMu.Lock()
+	defer s.sseMu.Unlock()
+	if s.sseCancels == nil { // shutdown already swept the map
+		c()
+		return -1
+	}
+	s.sseNextID++
+	s.sseCancels[s.sseNextID] = c
+	return s.sseNextID
+}
+
+func (s *Server) unregisterSSE(id int64) {
+	if id < 0 {
+		return
+	}
+	s.sseMu.Lock()
+	defer s.sseMu.Unlock()
+	delete(s.sseCancels, id)
+}
+
+// serveEventsStream is the bus-facing core of the SSE surface, shared by
+// the single-workspace route and the multi-workspace registry path (which
+// serves it WITHOUT a stack ref — the bus is registry-owned and outlives
+// stacks, so a stream must not pin one).
+func serveEventsStream(w http.ResponseWriter, r *http.Request, bus *events.Bus, register func(context.CancelFunc) int64, unregister func(int64)) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeErr(w, http.StatusInternalServerError, "streaming_unsupported", "response writer does not support streaming")
+		return
+	}
+	streamCtx, streamCancel := context.WithCancel(r.Context())
+	defer streamCancel()
+	if register != nil {
+		id := register(streamCancel)
+		defer unregister(id)
+	}
+	ch, unsub := bus.Subscribe(256)
+	defer unsub()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, ": connected\n\n")
+	flusher.Flush()
+
+	keepalive := time.NewTicker(15 * time.Second)
+	defer keepalive.Stop()
+	for {
+		select {
+		case <-streamCtx.Done():
+			return
+		case <-keepalive.C:
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		case ev, ok := <-ch:
+			if !ok {
+				// Subscribe's contract for a closed bus: a closed channel,
+				// never zero-value events in a tight loop.
+				return
+			}
+			raw, err := json.Marshal(ev)
+			if err != nil {
+				continue
+			}
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", raw); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+// handleEventsStream is the SPEC-07 SSE surface: one `data:` line per
+// event, a `: keepalive` comment every 15s, unsubscribe on disconnect.
+// Token-gated like every non-health route (authMiddleware). Local UIs are
+// the consumer; the stream is per-workspace by construction.
+func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Bus == nil {
+		writeErr(w, http.StatusServiceUnavailable, "events_disabled", "event stream is not enabled for this workspace")
+		return
+	}
+	serveEventsStream(w, r, s.cfg.Bus, s.registerSSE, s.unregisterSSE)
+}
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.ReadyFn != nil && s.cfg.ReadyFn() {
 		w.Header().Set("Content-Type", "application/json")

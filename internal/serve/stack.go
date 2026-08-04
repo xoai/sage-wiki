@@ -9,6 +9,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/log"
 	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
 	"github.com/xoai/sage-wiki/pkg/engine"
+	"github.com/xoai/sage-wiki/pkg/events"
 )
 
 // workspaceStack is one workspace's full serve surface in multi-workspace
@@ -23,6 +24,12 @@ type workspaceStack struct {
 	mcp     *mcppkg.Server
 	srv     *Server
 	handler http.Handler
+
+	// SPEC-07: the stack REFERENCES the workspace's registry-owned bus
+	// (built by the Manager's per-workspace options). The registry owns
+	// the plane's lifetime — closeAll ends it; the stack never closes it.
+	// Test-only handle: production reads go through srv's Config.Bus.
+	bus *events.Bus
 
 	mu      sync.Mutex
 	refs    int
@@ -70,6 +77,10 @@ func (st *workspaceStack) close() error {
 			firstErr = err
 		}
 	}
+	// SPEC-07: the bus is REGISTRY-OWNED — it outlives this stack and
+	// serves the next open of the workspace. Teardown must not close it
+	// (closing it would hand a dead bus to the re-open, and a concurrent
+	// racer may still be emitting into it). closeAll ends every plane.
 	return firstErr
 }
 
@@ -85,11 +96,18 @@ type stackRegistry struct {
 	mgr    *engine.Manager // set after OpenManager (hook needs the registry first)
 	mu     sync.Mutex
 	stacks map[string]*workspaceStack
+	// SPEC-07 handoff: the Manager's per-workspace options build the bus
+	// at engine-open time (get-or-create); the registry holds the plane
+	// for the workspace's lifetime, stacks reference it, closeAll ends it.
+	buses    map[string]*events.Bus
+	busStops map[string][]func()
 }
 
 func newStackRegistry(rootCtx context.Context, maxCompiles int) *stackRegistry {
 	return &stackRegistry{
 		rootCtx:     rootCtx,
+		buses:       map[string]*events.Bus{},
+		busStops:    map[string][]func(){},
 		maxCompiles: maxCompiles,
 		stacks:      map[string]*workspaceStack{},
 	}
@@ -124,6 +142,15 @@ func (r *stackRegistry) acquire(ctx context.Context, name string) (*workspaceSta
 	if ws2 != st.ws {
 		st.ws = ws2
 		st.srv.SetWorkspace(ws2)
+		// SPEC-07: no bus swap needed in the ordinary case — the
+		// registry's get-or-create handed the re-opened handle the SAME
+		// bus this stack serves. One narrow compound fault exists: this
+		// stack assembled nil-bus (its hook run failed to build a plane)
+		// and the re-open's hook succeeded — the handle then emits into
+		// a bus this stack does not serve (SSE 503, serve-path compile
+		// events dropped) until the next eviction re-assembles. Accepted:
+		// self-healing, audit trail intact, requires a config-state flip
+		// between two hook runs microseconds apart.
 	}
 	r.mu.Lock()
 	// Lost an assembly race: adopt the winner, tear our duplicate down.
@@ -153,6 +180,9 @@ func (r *stackRegistry) acquire(ctx context.Context, name string) (*workspaceSta
 func (r *stackRegistry) assemble(ctx context.Context, name string) (*workspaceStack, error) {
 	ws, err := r.mgr.Workspace(ctx, name)
 	if err != nil {
+		// The registered bus STAYS: a concurrent racer may have bound it
+		// to a winning handle, and the next open attempt reuses it
+		// (get-or-create) — one bus per name keeps this bounded.
 		return nil, err
 	}
 	if ws.RequiresUpgrade() {
@@ -160,20 +190,33 @@ func (r *stackRegistry) assemble(ctx context.Context, name string) (*workspaceSt
 			"adopt it first (e.g. sage-wiki compile --upgrade --project %s)", name, ws.Dir())
 	}
 	dir := ws.Dir()
+	// SPEC-07: REFERENCE the workspace's bus — the registry owns it for
+	// the workspace's lifetime (handles and stacks come and go; the bus
+	// persists and is reused across re-opens; closeAll ends it). Taking
+	// ownership created pairing hazards under racing assembles; a shared
+	// reference cannot be closed out from under a live handle.
+	r.mu.Lock()
+	bus := r.buses[name]
+	r.mu.Unlock()
 	deps, err := AssembleDeps(dir)
 	if err != nil {
+		// SPEC-07: the bus stays registered (registry-owned) — a
+		// concurrent racer may share it, and the next open reuses it.
 		return nil, err
 	}
+	deps.SetEventSink(bus) // serve-path compiles bypass the engine
 	mcpSrv, err := mcppkg.NewServer(dir, deps.Coordinator())
 	if err != nil {
 		deps.Close()
 		return nil, err
 	}
+	mcpSrv.SetEventSink(bus) // on-demand compiles join the plane (SPEC-07)
 	srv, err := New(deps, mcpSrv, Config{
 		Workspace:             dir,
 		MaxConcurrentCompiles: r.maxCompiles,
 		CompileSem:            r.compileSem,
 		ReadyFn:               func() bool { return true }, // assembled = ready
+		Bus:                   bus,
 	})
 	if err != nil {
 		deps.Close()
@@ -188,6 +231,7 @@ func (r *stackRegistry) assemble(ctx context.Context, name string) (*workspaceSt
 		mcp:     mcpSrv,
 		srv:     srv,
 		handler: srv.Handler(),
+		bus:     bus,
 	}
 	st.drained = sync.NewCond(&st.mu)
 	return st, nil
@@ -203,6 +247,9 @@ func (r *stackRegistry) evict(name string, ws *engine.Workspace) error {
 	r.mu.Lock()
 	st, ok := r.stacks[name]
 	delete(r.stacks, name)
+	// SPEC-07: the bus STAYS registered — it is the workspace's plane,
+	// reused by the next open (get-or-create). Eviction ends the handle
+	// and the stack, never the event plane.
 	r.mu.Unlock()
 	if !ok {
 		// No stack for this handle (shouldn't happen — every Manager
@@ -217,6 +264,8 @@ func (r *stackRegistry) closeAll() error {
 	r.mu.Lock()
 	stacks := r.stacks
 	r.stacks = map[string]*workspaceStack{}
+	buses, busStops := r.buses, r.busStops
+	r.buses, r.busStops = map[string]*events.Bus{}, map[string][]func(){}
 	r.mu.Unlock()
 	var firstErr error
 	for _, st := range stacks {
@@ -224,5 +273,23 @@ func (r *stackRegistry) closeAll() error {
 			firstErr = err
 		}
 	}
+	// Close EVERY registered plane: stack teardown deliberately never
+	// closes its registry-owned bus, so closeAll is the sole terminator
+	// (covers both stack-owned references and opens that never assembled).
+	for name, bus := range buses {
+		closeBusPlane(bus, busStops[name])
+	}
 	return firstErr
+}
+
+// closeBusPlane ends an event plane — the bus drains first, then the
+// stops dead-letter the dispatcher residue. Called only by closeAll's
+// shutdown sweep (planes are registry-owned; nothing else ends them).
+func closeBusPlane(bus *events.Bus, stops []func()) {
+	if bus != nil {
+		bus.Close()
+	}
+	for _, stop := range stops {
+		stop()
+	}
 }

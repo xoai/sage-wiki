@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/xoai/sage-wiki/internal/config"
@@ -13,6 +14,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/vectors"
+	"github.com/xoai/sage-wiki/pkg/events"
 )
 
 // TestCompileTopic_FilterAndPromote verifies the on-demand flow:
@@ -292,4 +294,82 @@ func TestCompileTopic_AllCompiled(t *testing.T) {
 	if result.Message == "" {
 		t.Error("expected status message for all-compiled case")
 	}
+}
+
+// TestCompileTopic_EmitsPromotionEvents (SPEC-07 §4 + QA F-003): an
+// on-demand compile emits promotion_triggered{trigger:compile-on-demand}
+// through OnDemandOpts.Sink with the true from/to tiers.
+func TestCompileTopic_EmitsPromotionEvents(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	memStore := memory.NewStore(db)
+	vecStore := vectors.NewStore(db)
+	items := NewCompileItemStore(db, config.NowUTC)
+
+	projectDir := t.TempDir()
+	os.MkdirAll(filepath.Join(projectDir, "raw"), 0755)
+	os.WriteFile(filepath.Join(projectDir, "raw/attention.md"),
+		[]byte("# Flash Attention\n\nFlash attention optimizes memory access patterns for transformer models."), 0644)
+	items.Upsert(CompileItem{
+		SourcePath: "raw/attention.md", Hash: "aaa", FileType: "md",
+		Tier: 1, SourceType: "compiler",
+	})
+	memStore.Add(memory.Entry{
+		ID:      "src:raw/attention.md",
+		Content: "Flash attention optimizes memory access patterns for transformer models.",
+		Tags:    []string{"md", "tier:1"},
+	})
+
+	searcher := hybrid.NewSearcher(memStore, vecStore)
+	cfg := &config.Config{Compiler: config.CompilerConfig{MaxParallel: 4}}
+
+	stubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"message":"stub: no real LLM"}}`, http.StatusUnauthorized)
+	}))
+	defer stubServer.Close()
+	stubClient, err := llm.NewClient("openai", "fake-key", stubServer.URL, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sink := &ondemandCaptureSink{}
+	_, _ = CompileTopic(context.Background(), OnDemandOpts{ // pipeline errors (stub LLM); promotions emit before it
+		Topic:      "attention transformer",
+		MaxSources: 10,
+		ProjectDir: projectDir,
+		Config:     cfg,
+		DB:         db,
+		Searcher:   searcher,
+		Embedder:   nil,
+		Client:     stubClient,
+		Sink:       sink,
+	})
+
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	var found *events.PromotionTriggered
+	for _, ev := range sink.events {
+		if ev.Type == events.TypePromotionTriggered {
+			d := ev.Data.(events.PromotionTriggered)
+			found = &d
+		}
+	}
+	if found == nil {
+		t.Fatalf("no promotion_triggered event reached the sink (events: %d)", len(sink.events))
+	}
+	if found.DocID != "raw/attention.md" || found.FromTier != 1 || found.ToTier != 3 || found.Trigger != "compile-on-demand" {
+		t.Errorf("payload = %+v, want raw/attention.md 1→3 compile-on-demand", found)
+	}
+}
+
+type ondemandCaptureSink struct {
+	mu     sync.Mutex
+	events []events.Event
+}
+
+func (s *ondemandCaptureSink) Emit(ev events.Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, ev)
 }

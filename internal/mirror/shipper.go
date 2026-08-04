@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+
+	"github.com/xoai/sage-wiki/pkg/events"
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/mirror/s3"
@@ -21,6 +23,7 @@ import (
 // never fail the invoking command).
 type shipResult struct {
 	SealedSegments     int
+	BytesShipped       int64 // WAL bytes sealed into segments this pass
 	Rotated            bool
 	PendingRotation    bool
 	HashedDB           bool // the full db hash ran this pass (cost observability)
@@ -143,13 +146,19 @@ func (o *mirrorOps) Ship(ctx context.Context, batch pkmirror.ChangeBatch) error 
 	for _, w := range res.Warnings {
 		slog.Warn("mirror ship", "warning", w)
 	}
+	if err == nil {
+		o.m.emitShipped(res)
+	}
 	return err
 }
 
 // ShipPass exposes the result for callers that surface warnings themselves
 // (serve drain).
 func (m *Mirror) ShipPass(ctx context.Context) error {
-	_, err := m.shipPass(ctx)
+	res, err := m.shipPass(ctx)
+	if err == nil {
+		m.emitShipped(res)
+	}
 	return err
 }
 
@@ -180,6 +189,7 @@ func (o *mirrorOps) Snapshot(ctx context.Context) (pkmirror.SnapshotID, error) {
 	if err := m.rotate(ctx, st); err != nil {
 		return "", err
 	}
+	m.emitSnapshot(int64(st.Generation + 1))
 	return pkmirror.SnapshotID(fmt.Sprintf("generation-%d", st.Generation+1)), nil
 }
 
@@ -282,6 +292,7 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 			}
 			res.Rotated = true
 			res.Warnings = m.lastPruneWarnings
+			m.emitSnapshot(int64(st.Generation + 1))
 			return res, nil
 		} else {
 			// Still debouncing — nothing else to do this pass.
@@ -332,6 +343,7 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 				return res, err
 			}
 			res.SealedSegments++
+			res.BytesShipped += int64(len(seg))
 			local.LastSegmentSeq++
 			local.WALOffset += int64(len(seg))
 			if err := SaveLocalState(localStatePath(m.dir), local); err != nil {
@@ -396,6 +408,7 @@ func (m *Mirror) shipPass(ctx context.Context) (shipResult, error) {
 			}
 			res.Rotated = true
 			res.Warnings = m.lastPruneWarnings
+			m.emitSnapshot(int64(st.Generation + 1))
 			return res, nil
 		}
 		// Defer: persist pending_rotation, KEEP pre-fold bookkeeping so the
@@ -504,6 +517,7 @@ func (m *Mirror) rotate(ctx context.Context, st *State) error {
 		local:       local,
 		localPath:   localStatePath(m.dir),
 	})
+	m.lastSnapshotBytes.Store(int64(len(snapBytes)))
 	var deferral *DeferredError
 	if errors.As(err, &deferral) {
 		return err // counter already incremented inside snapshotForRotation
@@ -750,4 +764,33 @@ func (m *Mirror) remoteState(ctx context.Context) (*State, error) {
 		return nil, fmt.Errorf("ship: remote state invalid: %w", err)
 	}
 	return st, nil
+}
+
+// emitShipped fans one mirror_shipped event per successful ship pass
+// (SPEC-07). Generation is the local generation after the pass; Bytes the
+// WAL bytes sealed into segments on this pass (0 = nothing new shipped).
+func (m *Mirror) emitShipped(res shipResult) {
+	if m.sink == nil {
+		return
+	}
+	gen := int64(0)
+	if m.local != nil {
+		gen = int64(m.local.Generation)
+	}
+	m.sink.Emit(events.NewEvent(filepath.Base(m.dir), events.TypeMirrorShipped, events.MirrorShipped{
+		Generation: gen,
+		Bytes:      res.BytesShipped,
+	}))
+}
+
+// emitSnapshot fans one mirror_snapshot event after a generation rotation.
+// Bytes carries the size rotate() recorded for the snapshot it just PUT.
+func (m *Mirror) emitSnapshot(generation int64) {
+	if m.sink == nil {
+		return
+	}
+	m.sink.Emit(events.NewEvent(filepath.Base(m.dir), events.TypeMirrorSnapshot, events.MirrorSnapshot{
+		Generation: generation,
+		Bytes:      m.lastSnapshotBytes.Load(),
+	}))
 }

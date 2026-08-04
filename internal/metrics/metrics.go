@@ -157,6 +157,21 @@ func (g *Gauge) Set(v int64) {
 	register(g.self)
 }
 
+// Inc adds 1. Nil-safe.
+func (g *Gauge) Inc() { g.Add(1) }
+
+// Dec subtracts 1. Nil-safe.
+func (g *Gauge) Dec() { g.Add(-1) }
+
+// Add adds n. Nil-safe.
+func (g *Gauge) Add(n int64) {
+	if g == nil {
+		return
+	}
+	g.v.Add(n)
+	register(g.self)
+}
+
 // Histogram is a fixed-bucket latency distribution.
 type Histogram struct {
 	buckets []float64
@@ -314,17 +329,25 @@ func registered(s *series) bool {
 // helpText derives a HELP line; families without an entry get a
 // placeholder (Prometheus requires the line, spec §6).
 var helpTexts = map[string]string{
-	"compile_pass_duration_seconds":  "Compile pass wall-clock duration in seconds.",
-	"llm_tokens_total":               "LLM tokens by provider, pass, and direction.",
-	"llm_retries_total":              "LLM retry attempts.",
-	"llm_rate_limited_total":         "LLM HTTP 429 responses.",
-	"compile_backpressure_limit":     "Current backpressure concurrency limit.",
-	"compile_backpressure_in_flight": "Current backpressure in-flight count.",
-	"search_duration_seconds":        "Search stage latency in seconds.",
-	"query_duration_seconds":         "End-to-end query latency in seconds.",
-	"embed_calls_total":              "Embedding API calls.",
-	"vector_cache_hits_total":        "Vector cache searches served from the loaded matrix.",
-	"vector_cache_misses_total":      "Vector cache reloads triggered.",
+	"compile_pass_duration_seconds":   "Compile pass wall-clock duration in seconds.",
+	"llm_tokens_total":                "LLM tokens by provider, model, pass, and direction.",
+	"llm_retries_total":               "LLM retry attempts.",
+	"llm_rate_limited_total":          "LLM HTTP 429 responses.",
+	"compile_backpressure_limit":      "Current backpressure concurrency limit.",
+	"compile_backpressure_in_flight":  "Current backpressure in-flight count.",
+	"search_duration_seconds":         "Search stage latency in seconds.",
+	"search_channel_duration_seconds": "Search channel leg latency in seconds.",
+	"query_duration_seconds":          "End-to-end query latency in seconds.",
+	"embed_calls_total":               "Embedding API calls.",
+	"vector_cache_hits_total":         "Vector cache searches served from the loaded matrix.",
+	"vector_cache_misses_total":       "Vector cache reloads triggered.",
+	// SPEC-07 series.
+	"compiles_total":           "Compile jobs by tier and outcome.",
+	"compile_duration_seconds": "End-to-end compile job duration in seconds.",
+	"workspaces_open":          "Currently open workspaces (engine Manager).",
+	"job_queue_depth":          "Pending jobs in the serve compile queue.",
+	"events_dropped_total":     "Events dropped by bounded event buffers.",
+	"mirror_ship_lag_seconds":  "Seconds since the last successful mirror ship pass.",
 }
 
 func helpText(name string) string {
@@ -345,6 +368,13 @@ var allowedLabelKV = map[string]map[string]bool{
 	"cache":     {"doc": true, "chunk": true},
 	// provider values come from the config enum and are validated by key only.
 	"provider": nil,
+	// SPEC-07 additions.
+	"tier":    {"0": true, "1": true, "2": true, "3": true},
+	"outcome": {"completed": true, "failed": true, "interrupted": true, "cancelled": true},
+	"channel": {"bm25": true, "vector": true, "graph": true},
+	// model names are provider-defined and unbounded — validated by key
+	// only, exactly like provider.
+	"model": nil,
 }
 
 // ValidateLabels returns an error for every registered series whose labels

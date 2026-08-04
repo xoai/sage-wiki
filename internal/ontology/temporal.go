@@ -175,6 +175,14 @@ func (s *Store) InvalidateFunctional(sourceID, predicate, keepTargetID, newValid
 	if err != nil {
 		return nil, err
 	}
+	// SPEC-07: report every invalidated edge. The winner's start is the
+	// effective invalidation boundary; per-row valid_from is not read back
+	// (reported as unknown rather than faked).
+	if validTo := parseValid(newValidFrom); len(invalidated) > 0 {
+		for _, id := range invalidated {
+			s.emitEdgeInvalidated(id, invalidatedBy, validTo)
+		}
+	}
 	return invalidated, nil
 }
 

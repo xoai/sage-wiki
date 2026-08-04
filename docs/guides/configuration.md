@@ -300,6 +300,54 @@ serve:
 A source that keeps failing is dead-lettered after `max_attempts` failures;
 `sage-wiki compile --fresh` (or editing the source) re-queues it.
 
+## events
+
+**Event stream (SPEC-07).** The engine emits a typed event stream for
+everything meaningful it does — captures, compile lifecycle, per-doc
+outcomes, graph edge changes, entity resolution, searches, mirror passes,
+and LLM usage. Delivery is non-blocking: a bounded in-process bus
+(drop-oldest under backpressure, drops counted) fans out to the sinks
+below. Events never contain document content, raw query text (hashed by
+default), or filesystem paths — the workspace is carried as a name only.
+
+```yaml
+events:
+  enable: true        # default true; master emit switch
+  dir: events         # default "events"; JSONL audit trail, workspace-relative
+  buffer_size: 1024   # default 1024; bus ring capacity (events)
+  stdout: false       # default false; tee events to stdout for piping
+  raw_queries: false  # default false; include raw query text in
+                      # search_performed (local debug only)
+```
+
+With `enable: true`, every compile/capture/search run appends one JSON
+object per event to rotating generation files under `events/` (10 MiB per
+file, 5 generations kept) — the durable audit trail. Serve mode adds
+webhooks and an SSE stream on top of the same bus (see
+[serve mode](serve-mode.md) and [webhooks](../webhooks.md)).
+
+## serve.webhooks
+
+**Event delivery to your endpoints (SPEC-07).** Each entry POSTs every
+event (or a filtered subset) as JSON, signed with HMAC-SHA256 — see
+[webhooks](../webhooks.md) for the signature recipe.
+
+```yaml
+serve:
+  webhooks:
+    - url: https://example.com/hooks/sage-wiki
+      secret_env: SAGE_WEBHOOK_SECRET   # OR secret_file: /run/secrets/sage-webhook
+      types: [compile_finished]         # omit for all event types
+      timeout_seconds: 5                # default 5
+      max_retries: 3                    # default 3; 0 = no retries
+```
+
+The secret comes from an environment variable or a file — never inline in
+config. Failed deliveries retry with exponential backoff (1s/2s/4s) on
+5xx, timeouts, and connection errors; 4xx is permanent. Anything still
+failing lands in `.sage/webhooks-deadletter.jsonl` (one JSON record per
+event, with attempts and last error). Delivery is at-least-once.
+
 ## Price registry
 
 Cost accounting prices every LLM call through a **registry keyed by

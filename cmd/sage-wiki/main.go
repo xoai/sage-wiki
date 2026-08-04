@@ -47,6 +47,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/web"
 	"github.com/xoai/sage-wiki/internal/wiki"
 	"github.com/xoai/sage-wiki/pkg/engine"
+	"github.com/xoai/sage-wiki/pkg/events"
 )
 
 var (
@@ -591,6 +592,9 @@ func runCompile(cmd *cobra.Command, args []string) error {
 	if upgrade {
 		openOpts = append(openOpts, engine.WithUpgrade())
 	}
+	evOpts, evClose := cliEventPlane(ctx, dir)
+	defer evClose()
+	openOpts = append(openOpts, evOpts...)
 	w, err := engine.Open(ctx, dir, openOpts...)
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
@@ -721,6 +725,27 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	defer deps.Close()
 
+	// SPEC-07: the long-lived non-HTTP surfaces (web UI, stdio/sse MCP)
+	// join the event plane too — worker compiles, mirror passes, and
+	// on-demand compiles emit into the same audit trail.
+	var planeBus *events.Bus
+	if planeCfg, cfgErr := config.Load(resolveConfigPath(dir)); cfgErr == nil {
+		var planeStops []func()
+		planeBus, planeStops, err = serve.BuildEventSurfaces(cmd.Context(), dir, planeCfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: webhooks unavailable — audit trail only: %v\n", err)
+		}
+		if planeBus != nil {
+			deps.SetEventSink(planeBus)
+			defer func() {
+				planeBus.Close() // drain first, then stop the dispatchers
+				for _, stop := range planeStops {
+					stop()
+				}
+			}()
+		}
+	}
+
 	// Web UI mode
 	ui, _ := cmd.Flags().GetBool("ui")
 	if ui {
@@ -758,6 +783,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		mcpSrv.SetEventSink(planeBus) // SPEC-07
 		defer mcpSrv.Close()
 		webSrv.SetV1Handler(api.New(mcpSrv, webSrv.Config(), dir, serve.NewJobRunner(deps, mcpSrv), deps.Progress()).Handler())
 
@@ -788,6 +814,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// MCP server mode
 	srv, err := mcppkg.NewServer(dir, deps.Coordinator())
+	if err == nil {
+		srv.SetEventSink(planeBus) // SPEC-07
+	}
 	if err != nil {
 		return err
 	}
@@ -940,7 +969,11 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 		// P1-8 degrade, engine flavor (F-018/F-026): ONLY a config-load
 		// failure with no explicit --config falls back to the legacy path.
-		w, err := engine.Open(cmd.Context(), dir, engine.WithReadOnly(), engine.WithConfigFile(resolveConfigPath(dir)))
+		// SPEC-07: searches join the audit trail too (read-only open still
+		// emits search_performed).
+		evOpts, evClose := cliEventPlane(cmd.Context(), dir)
+		defer evClose()
+		w, err := engine.Open(cmd.Context(), dir, append([]engine.Option{engine.WithReadOnly(), engine.WithConfigFile(resolveConfigPath(dir))}, evOpts...)...)
 		if err != nil {
 			if searchFallsBackToLegacy(err, configPath) {
 				fmt.Fprintf(os.Stderr, "warning: config load failed (%v): default fusion weights, ANN off, BM25-only\n", err)
@@ -1070,6 +1103,9 @@ func runQuery(cmd *cobra.Command, args []string) error {
 	if upgrade {
 		openOpts = append(openOpts, engine.WithUpgrade())
 	}
+	evOpts, evClose := cliEventPlane(cmd.Context(), dir)
+	defer evClose()
+	openOpts = append(openOpts, evOpts...)
 	w, err := engine.Open(cmd.Context(), dir, openOpts...)
 	if err != nil {
 		return cli.CLIError(outputFormat, lockSentinel(err))
@@ -1133,6 +1169,9 @@ func runIngest(cmd *cobra.Command, args []string) error {
 	if upgrade {
 		openOpts = append(openOpts, engine.WithUpgrade())
 	}
+	evOpts, evClose := cliEventPlane(cmd.Context(), dir)
+	defer evClose()
+	openOpts = append(openOpts, evOpts...)
 	w, err := engine.Open(cmd.Context(), dir, openOpts...)
 	if err != nil {
 		return cli.CLIError(outputFormat, lockSentinel(err))
@@ -1434,7 +1473,9 @@ func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
 	tokenFlag, _ := cmd.Flags().GetString("token")
 
 	var configToken string
-	if cfg, cfgErr := config.Load(resolveConfigPath(dir)); cfgErr == nil {
+	var cfg *config.Config
+	if loaded, cfgErr := config.Load(resolveConfigPath(dir)); cfgErr == nil {
+		cfg = loaded
 		configToken = cfg.Serve.Token
 	}
 	tokens, err := serve.LoadTokens(tokenFlag, tokenFile, os.Getenv("SAGE_WIKI_TOKEN"), configToken)
@@ -1444,6 +1485,36 @@ func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
 	if err := serve.CheckRefusal(addr, tokens, insecure); err != nil {
 		return err
 	}
+
+	// SPEC-07 event surfaces: bus + audit-trail file sink (+ stdout tee,
+	// webhook dispatchers). Built before the engine so the open can wire
+	// the sink; a webhook config error fails startup, not first delivery.
+	bus, webhookStops, err := serve.BuildEventSurfaces(cmd.Context(), dir, cfg)
+	if err != nil {
+		// The scoped-degradation design returns a LIVE bus alongside the
+		// webhook error; this surface fails startup, so tear the plane
+		// down before returning (the teardown defer is not registered
+		// yet on this path).
+		if bus != nil {
+			bus.Close()
+		}
+		for _, stop := range webhookStops {
+			stop()
+		}
+		return err
+	}
+	// Teardown order matters (SPEC-07): bus.Close() FIRST drains the
+	// remaining events into the sinks; the dispatcher stops AFTER, so its
+	// shutdown drain dead-letters whatever the drain handed it — queued
+	// events get a record, never a silent loss.
+	defer func() {
+		if bus != nil {
+			bus.Close()
+		}
+		for _, stop := range webhookStops {
+			stop()
+		}
+	}()
 
 	// Bind FIRST and serve healthz/readyz immediately (AC-S1): ONE
 	// listener, ONE http.Server. The handler is readiness-aware — until
@@ -1482,11 +1553,16 @@ func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
 
 	// Workspace lock (§2.0): the read-write open acquires engine.lock and
 	// fails fast when another process holds it.
-	w, err := engine.Open(cmd.Context(), dir)
+	w, err := engine.Open(cmd.Context(), dir, engine.WithEventSink(bus))
 	if err != nil {
 		httpSrv.Shutdown(context.Background())
 		return err
 	}
+	// SPEC-07: single-workspace serve opens without a Manager, so it
+	// records the open-workspaces gauge itself (the Manager records it in
+	// multi mode; lazy registration would otherwise hide the series here).
+	metrics.GaugeNamed("workspaces_open").Inc()
+	defer metrics.GaugeNamed("workspaces_open").Dec()
 	defer w.Close() // idempotent; Shutdown may close it first
 	fmt.Fprintf(os.Stderr, "sage-wiki serve (HTTP) — workspace %s locked for exclusive use\n", dir)
 
@@ -1495,12 +1571,14 @@ func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
 		httpSrv.Shutdown(context.Background())
 		return err
 	}
+	deps.SetEventSink(bus) // serve-path compiles bypass the engine (SPEC-07)
 	defer deps.Close()
 	mcpSrv, err := mcppkg.NewServer(dir, deps.Coordinator())
 	if err != nil {
 		httpSrv.Shutdown(context.Background())
 		return err
 	}
+	mcpSrv.SetEventSink(bus) // on-demand compiles join the plane (SPEC-07)
 	defer mcpSrv.Close()
 
 	srv, err := serve.New(deps, mcpSrv, serve.Config{
@@ -1510,6 +1588,7 @@ func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
 		DrainTimeout:          drain,
 		Addr:                  addr,
 		ReadyFn:               ready.Load,
+		Bus:                   bus,
 	})
 	if err != nil {
 		httpSrv.Shutdown(context.Background())

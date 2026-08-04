@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/store"
 )
 
@@ -151,5 +152,26 @@ func (s *ontologyStore) InvalidateFunctional(sourceID, predicate, keepTargetID, 
 	if err != nil {
 		return nil, err
 	}
+	// SPEC-07: report every invalidated edge (winner's start = effective
+	// invalidation boundary; per-row valid_from not read back).
+	if validTo := parseValidStamp(newValidFrom); len(invalidated) > 0 {
+		for _, id := range invalidated {
+			ontology.EmitEdgeInvalidated(s.sink, id, invalidatedBy, nil, validTo)
+		}
+	}
 	return invalidated, nil
+}
+
+// parseValidStamp parses an RFC3339 validity stamp; nil when empty or
+// unparseable (unknown windows are reported as unknown, never faked).
+func parseValidStamp(v string) *time.Time {
+	if v == "" {
+		return nil
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return nil
+	}
+	t = t.UTC()
+	return &t
 }

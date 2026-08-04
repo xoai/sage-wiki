@@ -26,9 +26,9 @@ func TestTrackRecordsTokenMetrics(t *testing.T) {
 	ct.Track("summarize", "claude-test", Usage{InputTokens: 100, OutputTokens: 50, CachedTokens: 25}, false)
 
 	cases := map[string]int64{
-		`llm_tokens_total{provider="anthropic",pass="summarize",direction="input"}`:  100,
-		`llm_tokens_total{provider="anthropic",pass="summarize",direction="output"}`: 50,
-		`llm_tokens_total{provider="anthropic",pass="summarize",direction="cached"}`: 25,
+		`llm_tokens_total{provider="anthropic",model="claude-test",pass="summarize",direction="input"}`:  100,
+		`llm_tokens_total{provider="anthropic",model="claude-test",pass="summarize",direction="output"}`: 50,
+		`llm_tokens_total{provider="anthropic",model="claude-test",pass="summarize",direction="cached"}`: 25,
 	}
 	for key, want := range cases {
 		got, ok := snapshotValue(key)
@@ -48,7 +48,7 @@ func TestTrackAccumulatesAcrossCalls(t *testing.T) {
 	ct.Track("write", "gpt-test", Usage{InputTokens: 10, OutputTokens: 5}, false)
 	ct.Track("write", "gpt-test", Usage{InputTokens: 20, OutputTokens: 15}, false)
 
-	got, ok := snapshotValue(`llm_tokens_total{provider="openai",pass="write",direction="input"}`)
+	got, ok := snapshotValue(`llm_tokens_total{provider="openai",model="gpt-test",pass="write",direction="input"}`)
 	if !ok || got.(int64) != 30 {
 		t.Errorf("input tokens = %v %v, want 30", got, ok)
 	}

@@ -15,12 +15,12 @@ const rrfK = 60 // Standard RRF constant (Cormack et al. 2009)
 // SearchOpts configures a hybrid search.
 type SearchOpts struct {
 	Query        string
-	Tags         []string              // AND pre-filter
-	BoostTags    []string              // soft post-ranking boost
+	Tags         []string // AND pre-filter
+	BoostTags    []string // soft post-ranking boost
 	Limit        int
-	Timestamps   map[string]time.Time  // optional: ID → last_updated for recency decay
-	BM25Weight   float64               // RRF weight for BM25 results (default 1.0)
-	VectorWeight float64               // RRF weight for vector results (default 1.0)
+	Timestamps   map[string]time.Time // optional: ID → last_updated for recency decay
+	BM25Weight   float64              // RRF weight for BM25 results (default 1.0)
+	VectorWeight float64              // RRF weight for vector results (default 1.0)
 }
 
 // SearchResult represents a hybrid search result.
@@ -59,6 +59,7 @@ func (s *Searcher) Search(opts SearchOpts, queryVec []float32) ([]SearchResult, 
 	bm25Start := time.Now()
 	bm25Results, err := s.memory.Search(opts.Query, opts.Tags, candidateLimit)
 	metrics.ObserveDuration(metrics.HistogramNamed("search_duration_seconds", metrics.LatencyBuckets(), "stage", "bm25"), bm25Start)
+	metrics.ObserveDuration(metrics.HistogramNamed("search_channel_duration_seconds", metrics.LatencyBuckets(), "channel", "bm25"), bm25Start)
 	if err != nil {
 		return nil, err
 	}
@@ -69,6 +70,7 @@ func (s *Searcher) Search(opts SearchOpts, queryVec []float32) ([]SearchResult, 
 		vecStart := time.Now()
 		vecResults, err = s.vectors.Search(queryVec, candidateLimit)
 		metrics.ObserveDuration(metrics.HistogramNamed("search_duration_seconds", metrics.LatencyBuckets(), "stage", "vector"), vecStart)
+		metrics.ObserveDuration(metrics.HistogramNamed("search_channel_duration_seconds", metrics.LatencyBuckets(), "channel", "vector"), vecStart)
 		if err != nil {
 			return nil, err
 		}

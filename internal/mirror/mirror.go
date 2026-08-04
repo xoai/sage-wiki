@@ -4,9 +4,11 @@ import (
 	"context"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/mirror/s3"
+	"github.com/xoai/sage-wiki/pkg/events"
 	pkmirror "github.com/xoai/sage-wiki/pkg/mirror"
 )
 
@@ -61,6 +63,19 @@ type Mirror struct {
 	encKey []byte // AES-256 key when encryption.enabled (nil otherwise)
 
 	lastPruneWarnings []string
+
+	// sink receives the mirror events (SPEC-07): mirror_shipped per ship
+	// pass, mirror_snapshot per rotation. nil = no events.
+	sink events.Sink
+
+	// lastSnapshotBytes records the byte size of the most recent rotation
+	// snapshot so emitSnapshot reports real data, never a fabricated zero.
+	lastSnapshotBytes atomic.Int64
+}
+
+// SetEventSink installs the mirror event sink (SPEC-07 narrow setter).
+func (m *Mirror) SetEventSink(sink events.Sink) {
+	m.sink = events.NilSafe(sink) // typed-nil guard — see events.NilSafe
 }
 
 // normalize applies spec defaults to a zero-value-constructed Config so a

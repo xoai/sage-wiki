@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 
 	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/mirror"
+	"github.com/xoai/sage-wiki/pkg/events"
 	pkmirror "github.com/xoai/sage-wiki/pkg/mirror"
 )
 
@@ -44,6 +46,21 @@ func maybeShipAfterCommand() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "mirror: ship pass skipped: %v\n", err)
 		return
+	}
+	// SPEC-07: the CLI ship pass reports mirror_shipped through a
+	// short-lived event plane (file sink when events.enable). Closed
+	// before the function returns — nothing outlives the command.
+	if cfg.Events.EnabledOrDefault() {
+		bus := events.NewBus(context.Background(),
+			events.WithBufferSize(cfg.Events.BufferSizeOrDefault()),
+			events.WithName(filepath.Base(dir)),
+			events.WithOnDrop(func(n int64) {
+				metrics.CounterNamed("events_dropped_total").Add(n)
+			}),
+		)
+		_ = bus.AddSink(events.NewJSONLFileSink(filepath.Join(dir, cfg.Events.DirOrDefault())))
+		m.SetEventSink(bus)
+		defer bus.Close()
 	}
 	// Bounded budget (F-088): a blackholed bucket must not hold the invoking
 	// command — 2× ship_lock_timeout overall, then warn and defer.

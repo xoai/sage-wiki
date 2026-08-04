@@ -5,12 +5,15 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/pkg/engine"
 )
 
@@ -38,6 +41,13 @@ type MultiServer struct {
 
 	srvMu   sync.Mutex
 	httpSrv *http.Server
+
+	// SPEC-07 (verification pass 3): registry-served event streams,
+	// cancelled at shutdown start — an open stream must not pin
+	// srv.Shutdown for the whole drain budget.
+	sseMu      sync.Mutex
+	sseNextID  int64
+	sseCancels map[int64]context.CancelFunc
 }
 
 // NewMulti builds the root server: Manager over root (LRU + idle close +
@@ -56,6 +66,39 @@ func NewMulti(ctx context.Context, cfg MultiConfig) (*MultiServer, error) {
 	mgrOpts := []engine.ManagerOption{
 		engine.WithMaxOpen(cfg.MaxOpen),
 		engine.WithOnEvict(reg.evict),
+		// SPEC-07: the event plane is built at engine-open time (one bus
+		// per workspace) and handed to the stack at assembly. GET-OR-
+		// CREATE under the registry lock: concurrent/retried opens of one
+		// workspace bind the SAME bus, so whichever open wins the Manager
+		// race, the shared handle and the served stack always pair on one
+		// bus (closing a displaced bus could close the bus a live handle
+		// emits into). Bounded: one bus per workspace name. A webhook
+		// failure degrades SCOPED (recorded spec deviation): the bus with
+		// its audit-trail file sink survives; only the dispatcher is lost,
+		// loudly. Workspaces stay open — telemetry never bricks a server.
+		engine.WithPerWorkspaceOptions(func(name string) []engine.Option {
+			reg.mu.Lock()
+			defer reg.mu.Unlock()
+			if bus := reg.buses[name]; bus != nil {
+				return []engine.Option{engine.WithEventSink(bus)}
+			}
+			dir := filepath.Join(cfg.Root, name)
+			wcfg, err := config.Load(filepath.Join(dir, "config.yaml"))
+			if err != nil {
+				return nil
+			}
+			bus, stops, err := BuildEventSurfaces(ctx, dir, wcfg)
+			if err != nil {
+				slog.Warn("serve: webhooks unavailable — workspace opens with audit trail only",
+					"workspace", name, "error", err)
+			}
+			if bus == nil {
+				return nil // events disabled for this workspace
+			}
+			reg.buses[name] = bus
+			reg.busStops[name] = stops
+			return []engine.Option{engine.WithEventSink(bus)}
+		}),
 	}
 	if cfg.IdleClose > 0 {
 		mgrOpts = append(mgrOpts, engine.WithIdleClose(cfg.IdleClose))
@@ -71,7 +114,7 @@ func NewMulti(ctx context.Context, cfg MultiConfig) (*MultiServer, error) {
 	// semantics unchanged).
 	sem := make(chan struct{}, cfg.MaxConcurrentCompiles)
 	reg.compileSem = sem
-	return &MultiServer{cfg: cfg, mgr: mgr, reg: reg, sem: sem}, nil
+	return &MultiServer{cfg: cfg, mgr: mgr, reg: reg, sem: sem, sseCancels: map[int64]context.CancelFunc{}}, nil
 }
 
 // Handler returns the root handler (rate-limit slot → root auth → router).
@@ -136,11 +179,64 @@ func (m *MultiServer) route(w http.ResponseWriter, r *http.Request) {
 // routeWorkspace validates the name segment and delegates to the stack
 // with the prefix stripped. Invalid names and unknown workspaces are the
 // SAME 404 — the registry is not enumerable through error shapes.
+// registerSSE tracks an active registry-served stream; unregister removes
+// it. A registration that lands while shutdown is cancelling streams is
+// cancelled immediately (TOCTOU guard).
+func (m *MultiServer) registerSSE(c context.CancelFunc) int64 {
+	m.sseMu.Lock()
+	defer m.sseMu.Unlock()
+	if m.sseCancels == nil { // shutdown already swept the map
+		c()
+		return -1
+	}
+	m.sseNextID++
+	m.sseCancels[m.sseNextID] = c
+	return m.sseNextID
+}
+
+func (m *MultiServer) unregisterSSE(id int64) {
+	if id < 0 {
+		return
+	}
+	m.sseMu.Lock()
+	defer m.sseMu.Unlock()
+	delete(m.sseCancels, id)
+}
+
+// cancelSSEStreams ends every active registry-served event stream.
+func (m *MultiServer) cancelSSEStreams() {
+	m.sseMu.Lock()
+	cancels := make([]context.CancelFunc, 0, len(m.sseCancels))
+	for _, c := range m.sseCancels {
+		cancels = append(cancels, c)
+	}
+	m.sseCancels = nil // nil marks "shutdown swept" for late registrations
+	m.sseMu.Unlock()
+	for _, c := range cancels {
+		c()
+	}
+}
+
 func (m *MultiServer) routeWorkspace(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/w/")
-	name, _, _ := strings.Cut(rest, "/")
+	name, subPath, _ := strings.Cut(rest, "/")
 	if err := engine.ValidateWorkspaceName(name); err != nil {
 		writeErr(w, http.StatusNotFound, "not_found", "no such workspace")
+		return
+	}
+	// SPEC-07 (verification pass 2): the event stream is served from the
+	// REGISTRY-OWNED bus without a stack ref — a stream must not pin the
+	// stack (unevictable workspace, shutdown hang). The bus outlives
+	// stacks, so the stream survives eviction.
+	if subPath == "events/stream" {
+		m.reg.mu.Lock()
+		bus := m.reg.buses[name]
+		m.reg.mu.Unlock()
+		if bus == nil {
+			writeErr(w, http.StatusServiceUnavailable, "events_disabled", "event stream is not available for this workspace")
+			return
+		}
+		serveEventsStream(w, r, bus, m.registerSSE, m.unregisterSSE)
 		return
 	}
 	st, err := m.reg.acquire(r.Context(), name)
@@ -204,6 +300,9 @@ func (m *MultiServer) Serve(ctx context.Context, addr string) error {
 func (m *MultiServer) Shutdown() error {
 	ctx, cancel := context.WithTimeout(context.Background(), m.cfg.DrainTimeout)
 	defer cancel()
+	// SPEC-07 (verification pass 3): end registry-served event streams
+	// BEFORE the HTTP drain — a stream never goes idle on its own.
+	m.cancelSSEStreams()
 	var firstErr error
 	m.srvMu.Lock()
 	srv := m.httpSrv

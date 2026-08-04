@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/pkg/events"
 )
 
 // Entity types
@@ -71,6 +72,9 @@ type Store struct {
 	// updated_at stamp from it so a pinned SOURCE_DATE_EPOCH propagates into
 	// DB bytes. Nil = wall clock (pre-SPEC-04 behavior for read paths).
 	now func() time.Time
+	// sink receives the edge lifecycle events (SPEC-07); nil = no events.
+	// Installed via SetEventSink, workspace-bound by the installer.
+	sink events.Sink
 }
 
 // StoreOption configures optional Store behavior (P3-6). Variadic so existing
@@ -306,8 +310,9 @@ func (s *Store) AddRelation(r Relation) error {
 	if r.CreatedAt == "" {
 		r.CreatedAt = s.nowUTC().Format(time.RFC3339)
 	}
-	return s.db.WriteTx(func(tx *sql.Tx) error {
-		_, err := tx.Exec(
+	var changed bool
+	err := s.db.WriteTx(func(tx *sql.Tx) error {
+		res, err := tx.Exec(
 			`INSERT INTO relations (id, source_id, target_id, relation, created_at,
 			                        evidence, confidence, source_doc,
 			                        valid_from, valid_to, invalidated_by)
@@ -323,8 +328,23 @@ func (s *Store) AddRelation(r Relation) error {
 			r.Evidence, r.Confidence, r.SourceDoc,
 			r.ValidFrom, r.ValidTo, r.InvalidatedBy,
 		)
-		return err
+		if err != nil {
+			return err
+		}
+		// SPEC-07: a no-op re-assertion (the upsert's WHERE rejects an
+		// equal-or-lower confidence) touches zero rows — no edge changed,
+		// so no edge_added. Recompiles must not flood the audit trail.
+		if n, rerr := res.RowsAffected(); rerr == nil {
+			changed = n > 0
+		} else {
+			changed = true // unknown → report rather than under-report
+		}
+		return nil
 	})
+	if err == nil && changed {
+		s.emitEdgeAdded(r)
+	}
+	return err
 }
 
 // GetRelations returns relations for an entity in a given direction.

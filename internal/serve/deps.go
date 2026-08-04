@@ -14,6 +14,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/linter"
 	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
 	"github.com/xoai/sage-wiki/internal/mirror"
+	"github.com/xoai/sage-wiki/pkg/events"
 )
 
 // serveDeps assembles the shared serve-mode compile state (P2-3, spec C4):
@@ -28,6 +29,24 @@ type Deps struct {
 	closeOnce sync.Once
 
 	mirrorShipper *MirrorShipper // nil unless mirror.enabled
+	dir           string         // workspace dir (SPEC-07 sink binding)
+
+	eventSink events.Sink // SPEC-07: workspace event bus; nil = no events
+}
+
+// SetEventSink installs the workspace event sink for serve-path compiles
+// AND the mirror shipper (SPEC-07 — both bypass pkg/engine, so both thread
+// here). The sink is workspace-bound: stores/shippers do not know their
+// workspace name.
+func (d *Deps) SetEventSink(s events.Sink) {
+	s = events.NilSafe(s) // typed-nil guard — see NilSafe
+	d.eventSink = s
+	if d.mirrorShipper != nil {
+		d.mirrorShipper.m.SetEventSink(events.BindWorkspace(s, filepath.Base(d.dir)))
+	}
+	if d.worker != nil {
+		d.worker.SetEventSink(s) // worker cycles join the same plane
+	}
 }
 
 // Progress returns the shared progress hub.
@@ -62,6 +81,7 @@ func AssembleDeps(dir string) (*Deps, error) {
 	d := &Deps{
 		coord:    compiler.NewCompileCoordinator(),
 		progress: compiler.NewProgress(),
+		dir:      dir,
 	}
 	if !cfg.Serve.WorkerEnabled() {
 		assembleMirrorShipper(d, dir, cfg)
@@ -135,6 +155,9 @@ type serveJobRunner struct {
 func (r *serveJobRunner) RunCompile(ctx context.Context, projectDir string, opts compiler.CompileOpts) (*compiler.CompileResult, error) {
 	opts.Ctx = ctx
 	opts.Progress = r.deps.progress
+	if opts.Sink == nil {
+		opts.Sink = r.deps.eventSink
+	}
 	if r.deps.workerApp != nil {
 		opts.Backend = r.deps.workerApp.Backend
 	}

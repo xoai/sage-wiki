@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/shopspring/decimal"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/extract"
@@ -14,11 +15,11 @@ import (
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
-	"github.com/shopspring/decimal"
 
 	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/sourcedate"
 	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/pkg/events"
 )
 
 // sourceRootPaths extracts the configured source root paths (sources[].path),
@@ -64,18 +65,18 @@ func warnSummaryNameCollisions(paths, roots []string, mode string) {
 // FullPipelineOpts bundles all parameters needed for the full compilation
 // pipeline (Pass 1 → Pass 2 → Pass 3).
 type FullPipelineOpts struct {
-	Ctx          context.Context // cancellation context; nil = background
-	ProjectDir   string
-	Config       *config.Config
-	Client       *llm.Client
-	Manifest     *manifest.Manifest
-	DB           store.DBHandle
-	MemStore     store.EntryStore
-	VecStore     store.VectorStore
-	ChunkStore   store.ChunkStore
-	OntStore     store.OntologyStore
-	TrustStore   store.TrustStore // optional — edge conflicts skipped when nil (P3-6)
-	Embedder     embed.Embedder
+	Ctx        context.Context // cancellation context; nil = background
+	ProjectDir string
+	Config     *config.Config
+	Client     *llm.Client
+	Manifest   *manifest.Manifest
+	DB         store.DBHandle
+	MemStore   store.EntryStore
+	VecStore   store.VectorStore
+	ChunkStore store.ChunkStore
+	OntStore   store.OntologyStore
+	TrustStore store.TrustStore // optional — edge conflicts skipped when nil (P3-6)
+	Embedder   embed.Embedder
 
 	// Prompts is the per-workspace template registry (SPEC-01); nil = the
 	// prompts package default (CLI behavior).
@@ -84,12 +85,17 @@ type FullPipelineOpts struct {
 	// MaxCost + Tracker implement the budget guard (pkg/engine
 	// CompileRequest.MaxCost): between passes, if accumulated cost exceeds
 	// MaxCost the run stops with BudgetExhausted set. nil = no guard.
-	MaxCost *decimal.Decimal
-	Tracker *llm.CostTracker
+	MaxCost      *decimal.Decimal
+	Tracker      *llm.CostTracker
 	Backpressure *BackpressureController
 	ItemStore    store.CompileItemStore // optional — for per-article quality scoring
 	CacheEnabled bool
-	Progress     *Progress
+
+	// Sink, when set, receives the pipeline-interior events (SPEC-07):
+	// entity_resolved from the resolution pass (edge events attach at the
+	// ontology store, Task 6).
+	Sink     events.Sink
+	Progress *Progress
 }
 
 // FullPipelineResult summarizes what the full pipeline produced.
@@ -167,8 +173,8 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	warnSummaryNameCollisions(sourceInfoPaths(sources), sourceRoots, summaryNaming)
 
 	summaries := Summarize(SummarizeOpts{
-		Temperature: cfg.Compiler.CompileTemperature(),
-		Prompts:      opts.Prompts,
+		Temperature:   cfg.Compiler.CompileTemperature(),
+		Prompts:       opts.Prompts,
 		Ctx:           opts.Ctx,
 		ProjectDir:    opts.ProjectDir,
 		OutputDir:     cfg.Output,
@@ -344,6 +350,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	if writeOntStore == nil {
 		writeOntStore = ontology.NewStore(opts.DB, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
 			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC))
+		bindOntSink(writeOntStore, opts.Sink, opts.ProjectDir)
 	}
 
 	// Pass 2b: LLM triple extraction (P3-2, opt-in). Runs BEFORE the
@@ -361,7 +368,8 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	// adds a third. The closure reads `touched` at return time, so Pass 3's
 	// contribution is included.
 	defer func() {
-		ResolveEntitiesPass(opts.Ctx, writeOntStore, touched, cfg, client, opts.Embedder, opts.Prompts)
+		ResolveEntitiesPass(opts.Ctx, writeOntStore, touched, cfg, client, opts.Embedder, opts.Prompts,
+			events.BindWorkspace(opts.Sink, filepath.Base(opts.ProjectDir)))
 		// Second supersession trigger (P3-6): links applied above may have
 		// created alias forms the write-time trigger could not see.
 		runSupersessionSweep(writeOntStore, supersessions)
@@ -401,7 +409,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	relPatterns := ontology.RelationPatterns(merged)
 	progress.StartPhase("Pass 3: Write articles", len(concepts))
 	articles := WriteArticles(ArticleWriteOpts{
-		Temperature: cfg.Compiler.CompileTemperature(),
+		Temperature:        cfg.Compiler.CompileTemperature(),
 		Prompts:            opts.Prompts,
 		Ctx:                opts.Ctx,
 		ProjectDir:         opts.ProjectDir,

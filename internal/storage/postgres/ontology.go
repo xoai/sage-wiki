@@ -6,11 +6,23 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/pkg/events"
 )
 
 type ontologyStore struct {
 	b *backend
+	// sink receives the edge lifecycle events (SPEC-07); nil = no events.
+	// A FRESH store is returned per Backend.Ontology() call, so the
+	// injection sites set the sink on every acquisition.
+	sink events.Sink
+}
+
+// SetEventSink installs the event sink (SPEC-07 narrow setter,
+// type-asserted by the injection sites).
+func (s *ontologyStore) SetEventSink(sink events.Sink) {
+	s.sink = events.NilSafe(sink) // typed-nil guard
 }
 
 // temporalEnabled resolves the P3-6 gate from OpenOptions (nil = enabled).
@@ -153,8 +165,9 @@ func (s *ontologyStore) AddRelation(r store.Relation) error {
 	if r.CreatedAt == "" {
 		r.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
-	return s.b.WriteTx(func(tx *sql.Tx) error {
-		_, err := tx.Exec(`
+	var changed bool
+	err := s.b.WriteTx(func(tx *sql.Tx) error {
+		res, err := tx.Exec(`
 			INSERT INTO relations (id, source_id, target_id, relation, created_at,
 			                       evidence, confidence, source_doc,
 			                       valid_from, valid_to, invalidated_by)
@@ -169,8 +182,22 @@ func (s *ontologyStore) AddRelation(r store.Relation) error {
 			r.ID, r.SourceID, r.TargetID, r.Relation, nullRFC(r.CreatedAt),
 			nullStr(r.Evidence), r.Confidence, nullStr(r.SourceDoc),
 			nullStr(r.ValidFrom), nullStr(r.ValidTo), nullStr(r.InvalidatedBy))
-		return err
+		if err != nil {
+			return err
+		}
+		// SPEC-07: no-op re-assertions touch zero rows — no edge_added
+		// (parity with the sqlite store).
+		if n, rerr := res.RowsAffected(); rerr == nil {
+			changed = n > 0
+		} else {
+			changed = true // unknown → report rather than under-report
+		}
+		return nil
 	})
+	if err == nil && changed {
+		ontology.EmitEdgeAdded(s.sink, r.ID, r.Relation, r.SourceID, r.TargetID, parseValidStamp(r.ValidFrom))
+	}
+	return err
 }
 
 // relationCols COALESCEs the P3-1 columns so pre-v3 rows — where they are

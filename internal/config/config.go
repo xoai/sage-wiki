@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/xoai/sage-wiki/pkg/events"
 )
 
 var typeNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
@@ -41,6 +43,7 @@ type Config struct {
 	Storage     StorageConfig  `yaml:"storage,omitempty"`
 	Vectors     VectorsConfig  `yaml:"vectors,omitempty"`
 	Mirror      MirrorConfig   `yaml:"mirror,omitempty"`
+	Events      EventsConfig   `yaml:"events,omitempty"`
 }
 
 // MirrorEncryptionConfig tunes optional client-side encryption (SPEC-03).
@@ -678,6 +681,84 @@ type ServeConfig struct {
 	// inside serve mode (P2-3). Enabled by default in serve; zero values
 	// resolve to the documented defaults (5s/120s/30s/5/16).
 	Worker WorkerConfig `yaml:"worker,omitempty"`
+	// Webhooks lists event-delivery endpoints (SPEC-07). Empty = no
+	// webhook delivery.
+	Webhooks []WebhookConfig `yaml:"webhooks,omitempty"`
+}
+
+// WebhookConfig is one event-delivery endpoint (SPEC-07). The secret comes
+// from an env var or a file — never inline in config (secrets never in
+// code/config, Base Principle 3).
+type WebhookConfig struct {
+	URL string `yaml:"url"`
+	// SecretEnv names an environment variable holding the HMAC secret.
+	SecretEnv string `yaml:"secret_env,omitempty"`
+	// SecretFile names a file whose contents are the HMAC secret.
+	SecretFile string `yaml:"secret_file,omitempty"`
+	// Types filters which event types are delivered; empty = all types.
+	Types []string `yaml:"types,omitempty"`
+	// TimeoutSeconds bounds each delivery attempt (default 5).
+	TimeoutSeconds int `yaml:"timeout_seconds,omitempty"`
+	// MaxRetries caps retries on 5xx/timeout/connection errors
+	// (default 3; explicit 0 = no retries).
+	MaxRetries *int `yaml:"max_retries,omitempty"`
+}
+
+// TimeoutSecondsOrDefault resolves the per-delivery timeout (default 5s).
+func (w WebhookConfig) TimeoutSecondsOrDefault() int {
+	if w.TimeoutSeconds <= 0 {
+		return 5
+	}
+	return w.TimeoutSeconds
+}
+
+// MaxRetriesOrDefault resolves the retry cap (default 3; explicit 0 means
+// no retries — the pointer carries the unset-vs-zero distinction).
+func (w WebhookConfig) MaxRetriesOrDefault() int {
+	if w.MaxRetries == nil || *w.MaxRetries < 0 {
+		return 3
+	}
+	return *w.MaxRetries
+}
+
+// EventsConfig controls the engine event stream (SPEC-07).
+type EventsConfig struct {
+	// Enable is the master emit switch (default true).
+	Enable *bool `yaml:"enable,omitempty"`
+	// Dir is the JSONL audit-trail directory, workspace-relative
+	// (default "events").
+	Dir string `yaml:"dir,omitempty"`
+	// BufferSize is the bus ring capacity in events (default 1024).
+	BufferSize int `yaml:"buffer_size,omitempty"`
+	// Stdout also tees events to stdout for piping (default false).
+	Stdout bool `yaml:"stdout,omitempty"`
+	// RawQueries includes raw query text in search_performed events
+	// (default false — local debug only; the stream carries hashes).
+	RawQueries bool `yaml:"raw_queries,omitempty"`
+}
+
+// EnabledOrDefault resolves the master emit switch (default true).
+func (e EventsConfig) EnabledOrDefault() bool {
+	if e.Enable == nil {
+		return true
+	}
+	return *e.Enable
+}
+
+// DirOrDefault resolves the audit-trail directory (default "events").
+func (e EventsConfig) DirOrDefault() string {
+	if e.Dir == "" {
+		return "events"
+	}
+	return e.Dir
+}
+
+// BufferSizeOrDefault resolves the bus ring capacity (default 1024).
+func (e EventsConfig) BufferSizeOrDefault() int {
+	if e.BufferSize <= 0 {
+		return 1024
+	}
+	return e.BufferSize
 }
 
 // WorkerConfig tunes the serve-mode compile worker (P2-3). Enabled is a
@@ -1005,6 +1086,9 @@ func Defaults() Config {
 			Transport: "stdio",
 			Port:      3333,
 		},
+		Events: EventsConfig{
+			Dir: "events",
+		},
 		Trust: TrustConfig{
 			IncludeOutputs: "false",
 		},
@@ -1186,6 +1270,31 @@ func (c *Config) validateStorage() error {
 func (c *Config) Validate() error {
 	if c.Project == "" {
 		return fmt.Errorf("config: 'project' is required")
+	}
+	// SPEC-07 webhooks: fail at load, not at 3am delivery time.
+	for i, wh := range c.Serve.Webhooks {
+		if wh.URL == "" {
+			return fmt.Errorf("config: serve.webhooks[%d].url is required", i)
+		}
+		switch {
+		case wh.SecretEnv != "" && wh.SecretFile != "":
+			return fmt.Errorf("config: serve.webhooks[%d]: set exactly one of secret_env, secret_file", i)
+		case wh.SecretEnv == "" && wh.SecretFile == "":
+			return fmt.Errorf("config: serve.webhooks[%d]: one of secret_env, secret_file is required", i)
+		}
+		if wh.TimeoutSeconds < 0 {
+			return fmt.Errorf("config: serve.webhooks[%d].timeout_seconds must be >= 0", i)
+		}
+		if wh.MaxRetries != nil && *wh.MaxRetries < 0 {
+			return fmt.Errorf("config: serve.webhooks[%d].max_retries must be >= 0", i)
+		}
+		// SPEC-07 §5 fail-at-startup: a typo'd type name would match
+		// nothing and the endpoint would silently receive no events.
+		for _, ty := range wh.Types {
+			if events.PayloadType(events.Type(ty)) == nil {
+				return fmt.Errorf("config: serve.webhooks[%d].types: unknown event type %q", i, ty)
+			}
+		}
 	}
 	if b := c.Vectors.Backend; b != "" && b != "memory" && b != "mmap" {
 		return fmt.Errorf("config: invalid vectors.backend %q (valid: memory, mmap)", b)

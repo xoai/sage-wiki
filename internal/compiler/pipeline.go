@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +34,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/vectors"
+	"github.com/xoai/sage-wiki/pkg/events"
 )
 
 // CompileOpts configures a compilation run.
@@ -66,8 +68,22 @@ type CompileOpts struct {
 	MaxCost *decimal.Decimal
 
 	// Recorder, when set, receives usage events instead of the default
-	// workspace file ledger (pkg/engine fan-out: file ledger + event sink).
+	// workspace file ledger + event-sink bridge (SPEC-07: entry paths that
+	// want events leave this nil and set Sink).
 	Recorder llm.UsageRecorder
+
+	// Sink, when set, receives the compile-lifecycle events (SPEC-07):
+	// compile_started/finished, per-doc outcomes, skips, usage bridge,
+	// promotions. nil = no events.
+	Sink events.Sink
+
+	// JobID identifies this compile job in its events; empty = generated.
+	JobID string
+
+	// IsInterrupted, when set, reports whether a context cancellation came
+	// from a serve-queue stop (Outcome "interrupted") rather than the
+	// request itself (Outcome "cancelled"). nil = always "cancelled".
+	IsInterrupted func() bool
 
 	// Progress, when set, is the event hub the pipeline reports into (P2-3 —
 	// the TUI and the serve worker share one so subscribers see live events);
@@ -92,6 +108,9 @@ type CompileResult struct {
 	// SPEC-04: docs skipped/adopted by the compile-key evaluation.
 	Skipped []SkippedDoc
 	Adopted int
+	// JobID is the compile job identifier used in this run's events
+	// (SPEC-07): the caller's CompileOpts.JobID or a generated one.
+	JobID string
 }
 
 // CompileState tracks progress for checkpoint/resume (ADR-018).
@@ -169,9 +188,12 @@ func newTrackedClient(projectDir string, cfg *config.Config, opts *CompileOpts) 
 	// SPEC-05 usage ledger: one event per completion. Tier is 3 by
 	// construction — the full LLM pipeline only runs for tier-3 sources
 	// (runTiers claims tiers 0/1/3; LLM passes are tier-3-gated).
+	// SPEC-07: the default construction is the shared bridge — file ledger
+	// plus the run's event sink (nil sink → plain file ledger), so every
+	// entry path (engine, serve, CLI, parity harness) emits usage events.
 	recorder := opts.Recorder
 	if recorder == nil {
-		recorder = llm.NewFileRecorder(projectDir)
+		recorder = llm.NewBridgedRecorder(projectDir, opts.Sink)
 	}
 	client.SetRecorder(recorder)
 	client.SetTier(3)
@@ -236,6 +258,10 @@ type compileRun struct {
 	pipelineIncomplete bool
 	budgetExhausted    bool
 	compileID          string
+	// SPEC-07 event state: startedEmitted keeps CompileStarted/Finished
+	// paired; skippedEmitted guards the skip-event site (populated once).
+	startedEmitted bool
+	skippedEmitted bool
 }
 
 // Compile runs the compiler pipeline (Pass 0 diff → tiered passes). It is a thin orchestrator over four
@@ -243,8 +269,28 @@ type compileRun struct {
 // diff + dry-run + lazy client] → resolveMode → setupStores → runTiers →
 // the unchanged tail (images, removed sources, strip, manifest save,
 // changelog, trust, git, cost).
-func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
-	run := &compileRun{opts: opts, result: &CompileResult{}}
+func Compile(projectDir string, opts CompileOpts) (result *CompileResult, err error) {
+	if opts.JobID == "" {
+		opts.JobID = events.NewID()
+	}
+	run := &compileRun{opts: opts, result: &CompileResult{JobID: opts.JobID}}
+	compileStart := time.Now()
+	// SPEC-07: CompileFinished brackets every run that emitted
+	// CompileStarted (pairs, never orphans). Outcome mapping: success →
+	// completed; error → failed (incl. ErrBudgetExceeded — the run did not
+	// finish its work); ctx cancel → cancelled, unless the runner marks the
+	// cancellation a serve-queue stop → interrupted.
+	defer func() {
+		// SPEC-07 metrics: one counter per job (tier/outcome) + the
+		// end-to-end duration histogram. Recorded for every run that
+		// reached the diff, with or without an event sink.
+		if run.startedEmitted {
+			tierLabel := strconv.Itoa(run.runTier())
+			metrics.CounterNamed("compiles_total", "tier", tierLabel, "outcome", compileOutcome(run.opts.Ctx, run.opts.IsInterrupted, err)).Add(1)
+			metrics.ObserveDuration(metrics.HistogramNamed("compile_duration_seconds", metrics.CompileBuckets(), "tier", tierLabel), compileStart)
+		}
+		run.emitCompileFinished(projectDir, result, err)
+	}()
 
 	// Step 1: loadInputs — config, prompts (package registry), manifest,
 	// merge-base snapshot, fresh-clearing, batch checkpoint check.
@@ -274,6 +320,9 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	run.result.Modified = len(diff.Modified)
 	run.result.Removed = len(diff.Removed)
 
+	// SPEC-07: the run is now committed — emit the bracket start.
+	run.emitCompileStarted(projectDir, diff)
+
 	if opts.Progress != nil {
 		run.progress = opts.Progress
 	} else {
@@ -290,6 +339,9 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	}
 	run.result.Adopted = len(skipCls.adopted)
 	run.result.Skipped = append(skipCls.skipped, skipCls.adopted...)
+	// SPEC-07: one compile_skip + one compile_doc_finished per skipped doc
+	// (migrated from pkg/engine — emitted where the verdict is made).
+	run.emitSkips(projectDir)
 	// Review M1: key-classified spurious-Added docs (manifest-untracked
 	// tier<3) LEAVE diff.Added — otherwise they double-count (Added AND
 	// Modified when drifted/resumed) and the all-skip fast path can never
@@ -484,6 +536,167 @@ func Compile(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	}
 
 	return run.result, nil
+}
+
+// ── SPEC-07 compile-lifecycle events ───────────────────────────────────
+//
+// Emission is nil-safe (no sink = no-op) and workspace-scoped: the envelope
+// carries the workspace NAME, payloads carry workspace-relative DocIDs — no
+// paths in the stream (privacy defaults).
+
+// emitCompileStarted brackets the run once the diff is known.
+func (run *compileRun) emitCompileStarted(projectDir string, diff *DiffResult) {
+	if run.startedEmitted {
+		return
+	}
+	run.startedEmitted = true
+	if run.opts.Sink == nil {
+		return
+	}
+	run.opts.Sink.Emit(events.NewEvent(filepath.Base(projectDir), events.TypeCompileStarted, events.CompileStarted{
+		JobID:    run.opts.JobID,
+		Tier:     run.runTier(),
+		DocCount: len(diff.Added) + len(diff.Modified),
+	}))
+}
+
+// runTier resolves the effective tier of this run (override, else config
+// default) — shared by the compile_started event and the compile metrics.
+func (run *compileRun) runTier() int {
+	if run.opts.Tier != nil {
+		return *run.opts.Tier
+	}
+	if run.cfg != nil {
+		return run.cfg.Compiler.DefaultTier
+	}
+	return 3
+}
+
+// emitSkips fans one compile_skip + one compile_doc_finished per skipped
+// doc (SPEC-04 pledge observable; SPEC-07 per-doc outcome).
+func (run *compileRun) emitSkips(projectDir string) {
+	if run.opts.Sink == nil || run.skippedEmitted || run.result == nil {
+		return
+	}
+	run.skippedEmitted = true
+	for _, s := range run.result.Skipped {
+		run.opts.Sink.Emit(events.NewEvent(filepath.Base(projectDir), events.TypeCompileSkip, events.CompileSkip{
+			DocID:  s.Path,
+			Reason: s.Reason,
+		}))
+		run.opts.Sink.Emit(events.NewEvent(filepath.Base(projectDir), events.TypeCompileDocFinished, events.CompileDocFinished{
+			JobID:   run.opts.JobID,
+			DocID:   s.Path,
+			Skipped: true,
+		}))
+	}
+}
+
+// emitDocFinished fans one compile_doc_finished for a processed doc.
+func (run *compileRun) emitDocFinished(projectDir string, docID string, tier int) {
+	if run.opts.Sink == nil {
+		return
+	}
+	run.opts.Sink.Emit(events.NewEvent(filepath.Base(projectDir), events.TypeCompileDocFinished, events.CompileDocFinished{
+		JobID: run.opts.JobID,
+		DocID: docID,
+		Tier:  tier,
+	}))
+}
+
+// emitPromotion fans one promotion_triggered for an applied tier change
+// (either direction — FromTier→ToTier disambiguates).
+func (run *compileRun) emitPromotion(projectDir, docID string, fromTier, toTier int, trigger string) {
+	if run.opts.Sink == nil {
+		return
+	}
+	run.opts.Sink.Emit(events.NewEvent(filepath.Base(projectDir), events.TypePromotionTriggered, events.PromotionTriggered{
+		DocID:    docID,
+		FromTier: fromTier,
+		ToTier:   toTier,
+		Trigger:  trigger,
+	}))
+}
+
+// currentTier reads a doc's tier before a change (best effort — a read
+// failure reports 0 rather than stalling the promotion itself).
+func currentTier(items store.CompileItemStore, path string) int {
+	if items == nil {
+		return 0
+	}
+	item, err := items.GetByPath(path)
+	if err != nil || item == nil {
+		return 0
+	}
+	return item.Tier
+}
+
+// bindOntSink installs the run's event sink on an ontology store (SPEC-07
+// edge events). The setter is narrow and type-asserted — it is not part of
+// store.OntologyStore, so non-emitting implementations simply skip. The
+// sink is workspace-bound here: stores do not know their workspace.
+func bindOntSink(ontStore store.OntologyStore, sink events.Sink, projectDir string) {
+	if sink == nil || ontStore == nil {
+		return
+	}
+	setter, ok := ontStore.(interface{ SetEventSink(events.Sink) })
+	if !ok {
+		return
+	}
+	setter.SetEventSink(events.BindWorkspace(sink, filepath.Base(projectDir)))
+}
+
+// compileOutcome maps a finished run to the SPEC-07 outcome enum:
+// completed | failed | cancelled | interrupted (serve-queue stop).
+// ErrBudgetExceeded counts as failed — the run did not finish its work.
+func compileOutcome(ctx context.Context, isInterrupted func() bool, err error) string {
+	if err == nil {
+		return "completed"
+	}
+	// A nil ctx can never have been cancelled — callers that construct
+	// CompileOpts without Ctx (hub, TUI) must map errors to failed, not
+	// cancelled.
+	if ctx != nil {
+		ctxErr := ctx.Err()
+		if errors.Is(ctxErr, context.Canceled) || errors.Is(ctxErr, context.DeadlineExceeded) {
+			if isInterrupted != nil && isInterrupted() {
+				return "interrupted"
+			}
+			return "cancelled"
+		}
+	}
+	return "failed"
+}
+
+// emitCompileFinished closes the bracket opened by emitCompileStarted.
+// A run that never started (early loadInputs returns) emits nothing —
+// pairs, never orphans.
+func (run *compileRun) emitCompileFinished(projectDir string, result *CompileResult, err error) {
+	if run.opts.Sink == nil || !run.startedEmitted {
+		return
+	}
+	outcome := compileOutcome(run.opts.Ctx, run.opts.IsInterrupted, err)
+	res := result
+	if res == nil {
+		res = run.result
+	}
+	totals := events.CompileTotals{}
+	if res != nil {
+		totals.Docs = res.Added + res.Modified
+		totals.Compiled = res.Summarized
+		totals.Skipped = len(res.Skipped)
+		if res.CostReport != nil {
+			totals.InputTokens = res.CostReport.TotalInputTokens
+			totals.CachedTokens = res.CostReport.TotalCachedTokens
+			totals.OutputTokens = res.CostReport.TotalOutputTokens
+			totals.Cost = res.CostReport.Cost // nil when unknown — never fabricated
+		}
+	}
+	run.opts.Sink.Emit(events.NewEvent(filepath.Base(projectDir), events.TypeCompileFinished, events.CompileFinished{
+		JobID:   run.opts.JobID,
+		Outcome: outcome,
+		Totals:  totals,
+	}))
 }
 
 // loadInputs performs Compile's input phase: config load, prompt overrides
@@ -690,6 +903,9 @@ func setupStores(projectDir string, run *compileRun) error {
 		run.pipelineOntStore = ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
 			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC))
 	}
+	// SPEC-07: edge events flow through the run's sink whichever backend
+	// supplied the store (sqlite Store or postgres twin).
+	bindOntSink(run.pipelineOntStore, run.opts.Sink, projectDir)
 
 	// Backfill chunk index if needed (after migration, before first compile)
 	if run.chunkStore.NeedsBackfill(run.memStore) {
@@ -802,7 +1018,13 @@ func runTiers(projectDir string, run *compileRun) {
 			defer stopHB()
 			indexed = indexRawSources(projectDir, tier0Claimed, run.memStore, run.itemStore, run.exOpts...)
 		}()
-		releaseClaimed(run.itemStore, cliToken, tier0Claimed, erroredSinceClaim(run.itemStore, tier0Claimed), wc.MaxAttempts)
+		errored0 := erroredSinceClaim(run.itemStore, tier0Claimed)
+		releaseClaimed(run.itemStore, cliToken, tier0Claimed, errored0, wc.MaxAttempts)
+		for _, item := range tier0Claimed {
+			if !errored0[item.SourcePath] {
+				run.emitDocFinished(projectDir, item.SourcePath, 0)
+			}
+		}
 		run.result.TierIndexed = indexed
 		log.Info("tier 0 indexing complete", "indexed", indexed)
 		run.progress.EndPhase()
@@ -822,7 +1044,13 @@ func runTiers(projectDir string, run *compileRun) {
 			defer stopHB()
 			indexed, embedded = indexAndEmbedSources(run.opts.Ctx, projectDir, tier1Claimed, run.memStore, run.vecStore, run.embedder, run.itemStore, run.bp, run.chunkStore, cfg.Search.ChunkSizeOrDefault(), cfg.Search.ChunkOverlapOrDefault(), run.db, run.exOpts...)
 		}()
-		releaseClaimed(run.itemStore, cliToken, tier1Claimed, erroredSinceClaim(run.itemStore, tier1Claimed), wc.MaxAttempts)
+		errored1 := erroredSinceClaim(run.itemStore, tier1Claimed)
+		releaseClaimed(run.itemStore, cliToken, tier1Claimed, errored1, wc.MaxAttempts)
+		for _, item := range tier1Claimed {
+			if !errored1[item.SourcePath] {
+				run.emitDocFinished(projectDir, item.SourcePath, 1)
+			}
+		}
 		run.result.TierIndexed += indexed
 		run.result.TierEmbedded = embedded
 		log.Info("tier 1 indexing complete", "indexed", indexed, "embedded", embedded)
@@ -888,6 +1116,7 @@ func runTiers(projectDir string, run *compileRun) {
 				ItemStore:    run.itemStore,
 				CacheEnabled: cacheEnabled,
 				Progress:     run.progress,
+				Sink:         opts.Sink,
 			})
 		}()
 		run.result.Summarized = pipelineResult.Summarized
@@ -921,6 +1150,7 @@ func runTiers(projectDir string, run *compileRun) {
 							log.Warn("mark pass failed", "path", s.Path, "pass", pass, "error", err)
 						}
 					}
+					run.emitDocFinished(projectDir, s.Path, 3)
 				}
 			}
 		}
@@ -943,9 +1173,12 @@ func runTiers(projectDir string, run *compileRun) {
 		if promoted, err := run.tierMgr.CheckPromotions(); err == nil && len(promoted) > 0 {
 			log.Info("sources eligible for promotion", "count", len(promoted))
 			for _, p := range promoted {
+				fromTier := currentTier(run.itemStore, p)
 				if err := run.itemStore.SetTier(p, 3, "auto-promote"); err != nil {
 					log.Warn("set tier failed", "path", p, "tier", 3, "error", err)
+					continue
 				}
+				run.emitPromotion(projectDir, p, fromTier, 3, "auto-promote")
 			}
 		}
 	}
@@ -953,9 +1186,12 @@ func runTiers(projectDir string, run *compileRun) {
 		if demoted, err := run.tierMgr.CheckDemotions(); err == nil && len(demoted) > 0 {
 			log.Info("demoting stale sources", "count", len(demoted))
 			for _, p := range demoted {
+				fromTier := currentTier(run.itemStore, p)
 				if err := run.itemStore.SetTier(p, 1, "stale"); err != nil {
 					log.Warn("set tier failed", "path", p, "tier", 1, "error", err)
+					continue
 				}
+				run.emitPromotion(projectDir, p, fromTier, 1, "stale")
 			}
 		}
 	}
@@ -1414,6 +1650,7 @@ func resumeBatch(
 				mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 				ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
 					ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC))
+				bindOntSink(ontStore, opts.Sink, projectDir)
 				client.SetPass("write")
 				writeCacheID, _ := client.SetupCache("You are a knowledge base article writer. Write comprehensive, well-structured wiki articles.", writeModel)
 				relPatterns := ontology.RelationPatterns(merged)
@@ -1470,6 +1707,7 @@ func resumeBatch(
 		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 		ontStore := ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
 			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC))
+		bindOntSink(ontStore, opts.Sink, projectDir)
 		CommunitiesPass(orBackground(opts.Ctx), projectDir, ontStore, ontStore, memStore, vecStore, embedder, cfg, client)
 	}
 
@@ -1506,10 +1744,12 @@ func resumeBatch(
 		trustStore := trust.NewStore(db)
 		batchMerged := ontology.MergedRelations(cfg.Ontology.Relations)
 		batchMergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
+		trustOntStore := ontology.NewStore(db, ontology.ValidRelationNames(batchMerged), ontology.ValidEntityTypeNames(batchMergedTypes),
+			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC))
+		bindOntSink(trustOntStore, opts.Sink, projectDir)
 		stores := trust.IndexStores{
 			MemStore: memStore, VecStore: vecStore,
-			OntStore: ontology.NewStore(db, ontology.ValidRelationNames(batchMerged), ontology.ValidEntityTypeNames(batchMergedTypes),
-				ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC)),
+			OntStore:   trustOntStore,
 			ChunkStore: chunkStore, DB: db,
 		}
 		demoted, err := trust.CheckSourceChanges(trustStore, projectDir, &stores)

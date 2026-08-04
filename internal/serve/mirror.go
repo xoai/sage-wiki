@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/mirror"
 	pkmirror "github.com/xoai/sage-wiki/pkg/mirror"
 )
@@ -24,6 +25,8 @@ type MirrorShipper struct {
 
 	rotating atomic.Bool    // F-087: rotation in flight — sealing ticks never wait on it
 	rotWG    sync.WaitGroup // F-098: Stop awaits in-flight rotations within budget
+
+	lastShip atomic.Int64 // unix seconds of the last successful ship pass (SPEC-07 lag gauge)
 }
 
 // NewMirrorShipper builds the in-process shipper (nil-safe usage patterns:
@@ -44,6 +47,7 @@ func (s *MirrorShipper) Start(ctx context.Context) {
 		defer close(s.done)
 		tick := time.NewTicker(s.shipInterval)
 		defer tick.Stop()
+		s.lastShip.Store(time.Now().Unix()) // baseline: the shipper just started
 		for {
 			select {
 			case <-ctx.Done():
@@ -53,8 +57,12 @@ func (s *MirrorShipper) Start(ctx context.Context) {
 			case <-tick.C:
 				if err := s.m.Ship(ctx, pkmirror.ChangeBatch{}); err != nil {
 					slog.Warn("mirror ship pass failed (retrying next tick)", "err", err)
+					// SPEC-07: lag grows until a pass succeeds.
+					metrics.GaugeNamed("mirror_ship_lag_seconds").Set(time.Now().Unix() - s.lastShip.Load())
 					continue
 				}
+				s.lastShip.Store(time.Now().Unix())
+				metrics.GaugeNamed("mirror_ship_lag_seconds").Set(0)
 				// Scheduled rotation on its OWN goroutine (F-087): a busy-
 				// writer rotation (~20s of retries) must not starve the
 				// segment-sealing cadence that RPO depends on. One in flight

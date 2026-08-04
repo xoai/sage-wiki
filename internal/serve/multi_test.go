@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/client"
@@ -173,5 +174,48 @@ func TestServeMultiWorkspace_MCPThroughPrefix(t *testing.T) {
 	}
 	if len(tools.Tools) == 0 {
 		t.Error("no tools through /w/ws-a/mcp — the prefix route did not reach the stack's MCP mount")
+	}
+}
+
+// TestMultiBusPairingUnderRace (SPEC-07 wiring): four racing cold opens
+// of one workspace must pair the shared engine handle and the served stack
+// on ONE registry-owned bus. Ownership-take designs could hand the bus to
+// a racer that loses the insertion race and close it there; the registry-
+// owned model cannot — this race asserts the pairing survives.
+func TestMultiBusPairingUnderRace(t *testing.T) {
+	ms := multiFixture(t, nil)
+	h := ms.Handler()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r := httptest.NewRequest("GET", "/w/ws-a/healthz", nil)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+		}()
+	}
+	wg.Wait()
+
+	ms.reg.mu.Lock()
+	st := ms.reg.stacks["ws-a"]
+	regBus := ms.reg.buses["ws-a"]
+	ms.reg.mu.Unlock()
+
+	if st == nil {
+		t.Fatal("no stack for ws-a after the race")
+	}
+	// Registry-owned model: the bus persists per workspace name; the
+	// stack references it and serves THAT bus — whichever open won the
+	// Manager race, handle and served surface pair on one plane.
+	if regBus == nil {
+		t.Fatal("no bus registered for ws-a after the race")
+	}
+	if st.bus != regBus {
+		t.Error("the stack's bus reference is not the registered bus")
+	}
+	if st.srv.cfg.Bus != regBus {
+		t.Error("the served bus is not the registered bus — engine events would miss the served surfaces")
 	}
 }

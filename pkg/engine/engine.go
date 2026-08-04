@@ -67,9 +67,11 @@ func WithProvider(p provider.Provider) Option {
 }
 
 // WithEventSink subscribes to engine events (usage events today; SPEC-07
-// widens the union).
+// widens the union). A typed-nil sink (e.g. a nil *Bus passed under
+// events.enable=false) normalizes to plain nil — the workspace degrades
+// event-free instead of panicking on the first Emit.
 func WithEventSink(s events.Sink) Option {
-	return func(o *options) { o.sink = s }
+	return func(o *options) { o.sink = events.NilSafe(s) }
 }
 
 // WithLogger routes engine diagnostics to the given logger instead of the
