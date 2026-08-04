@@ -13,10 +13,12 @@ import (
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/vectors"
+	"github.com/xoai/sage-wiki/pkg/events"
 )
 
 // OnDemandOpts configures a compile-on-demand request.
@@ -33,6 +35,12 @@ type OnDemandOpts struct {
 	Embedder    embed.Embedder
 	Client      *llm.Client
 	Coordinator *CompileCoordinator
+	// Sink, when set, receives the on-demand events (SPEC-07):
+	// promotion_triggered for each promoted source, plus the pipeline-
+	// interior events of the triggered run (edge, entity, usage). The
+	// run itself is NOT bracketed — compile_started/finished belong to
+	// the Compile/job boundaries (CLI runTiers, serve worker cycles).
+	Sink events.Sink
 }
 
 // OnDemandResult summarizes what compile-on-demand produced.
@@ -83,6 +91,7 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 	items := NewCompileItemStore(opts.DB, config.NowUTC)
 	var uncompiled []SourceInfo
 	seen := make(map[string]bool)
+	fromTiers := make(map[string]int) // path → tier before promotion (SPEC-07 event)
 
 	for _, r := range searchResults {
 		path := r.ID
@@ -103,6 +112,7 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 			continue // already fully compiled
 		}
 
+		fromTiers[item.SourcePath] = item.Tier
 		uncompiled = append(uncompiled, SourceInfo{
 			Path: item.SourcePath,
 			Hash: item.Hash,
@@ -126,6 +136,15 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 	for _, src := range uncompiled {
 		if err := items.SetTier(src.Path, 3, "on-demand: "+opts.Topic); err != nil {
 			log.Warn("on-demand: set tier failed", "path", src.Path, "error", err)
+			continue
+		}
+		if opts.Sink != nil {
+			opts.Sink.Emit(events.NewEvent(filepath.Base(opts.ProjectDir), events.TypePromotionTriggered, events.PromotionTriggered{
+				DocID:    src.Path,
+				FromTier: fromTiers[src.Path],
+				ToTier:   3,
+				Trigger:  "compile-on-demand",
+			}))
 		}
 	}
 
@@ -142,6 +161,7 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 		mergedTypes := ontology.MergedEntityTypes(cfg.Ontology.EntityTypes)
 		ontStore := ontology.NewStore(opts.DB, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes),
 			ontology.WithTemporalEnabled(cfg.Ontology.Temporal.EnabledOrDefault()), ontology.WithNow(config.NowUTC))
+		bindOntSink(ontStore, opts.Sink, opts.ProjectDir)
 
 		mfPath := filepath.Join(opts.ProjectDir, ".manifest.json")
 		mf, err := manifest.Load(mfPath)
@@ -160,6 +180,9 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 			trustStore = trust.NewStore(opts.DB)
 		}
 
+		// SPEC-07 metrics: an on-demand run IS a tier-3 compile job —
+		// it records the same counter/histogram as other compile paths.
+		compileStart := time.Now()
 		pResult := runFullPipeline(uncompiled, FullPipelineOpts{
 			Ctx:          ctx,
 			ProjectDir:   opts.ProjectDir,
@@ -177,7 +200,15 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 			ItemStore:    items,
 			CacheEnabled: cacheEnabled,
 			Progress:     NewProgress(),
+			Sink:         opts.Sink,
 		})
+
+		outcome := "completed"
+		if !pResult.Pass23Completed {
+			outcome = "failed"
+		}
+		metrics.CounterNamed("compiles_total", "tier", "3", "outcome", outcome).Add(1)
+		metrics.ObserveDuration(metrics.HistogramNamed("compile_duration_seconds", metrics.CompileBuckets(), "tier", "3"), compileStart)
 
 		result.ArticlesWritten = pResult.ArticlesWritten
 		result.ConceptsExtracted = pResult.ConceptsExtracted

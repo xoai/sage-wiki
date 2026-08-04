@@ -21,8 +21,10 @@ import (
 // IngestResult holds the outcome of an ingest operation.
 type IngestResult struct {
 	SourcePath string
-	Type       string
-	Size       int64
+	// Hash is the content hash registered in the manifest ("sha256:<hex>").
+	Hash string
+	Type string
+	Size int64
 }
 
 // IngestURL downloads a URL as markdown and saves to the source folder.
@@ -90,7 +92,7 @@ func IngestURL(projectDir string, url string) (*IngestResult, error) {
 	}
 
 	log.Info("ingested URL", "url", url, "path", relPath)
-	return &IngestResult{SourcePath: relPath, Type: "article", Size: int64(len(content))}, nil
+	return &IngestResult{SourcePath: relPath, Hash: hash, Type: "article", Size: int64(len(content))}, nil
 }
 
 // IngestPath copies a local file to the appropriate source folder.
@@ -161,7 +163,7 @@ func IngestPath(projectDir string, srcPath string) (*IngestResult, error) {
 	}
 
 	log.Info("ingested file", "source", absPath, "dest", relPath)
-	return &IngestResult{SourcePath: relPath, Type: srcType, Size: info.Size()}, nil
+	return &IngestResult{SourcePath: relPath, Hash: hash, Type: srcType, Size: info.Size()}, nil
 }
 
 func findSourceFolder(projectDir string, cfg *config.Config, sourceType string) string {

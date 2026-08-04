@@ -11,6 +11,7 @@ import (
 
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/pathsafe"
 )
 
@@ -202,6 +203,9 @@ func (m *Manager) Workspace(ctx context.Context, name string) (*Workspace, error
 	}
 	m.handles[name] = &managerHandle{ws: ws, lastUse: time.Now()}
 	m.mu.Unlock()
+	// SPEC-07: open-workspace observability (paired with the Dec in
+	// closeHandle — every close path routes through it).
+	metrics.GaugeNamed("workspaces_open").Inc()
 
 	// The eviction close runs OUTSIDE the mutex (F-043): a slow drain —
 	// or a serve hook waiting out request refcounts — must never stall
@@ -393,6 +397,7 @@ func (m *Manager) Close() error {
 
 // closeHandle closes one handle outside the mutex (Close path).
 func (m *Manager) closeHandle(name string, h *managerHandle) error {
+	metrics.GaugeNamed("workspaces_open").Dec()
 	if m.opts.onEvict != nil {
 		return m.opts.onEvict(name, h.ws)
 	}

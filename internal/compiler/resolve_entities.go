@@ -18,6 +18,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/vectors"
+	"github.com/xoai/sage-wiki/pkg/events"
 )
 
 // Claude-driven entity resolution (P3-3, GRAPH-03).
@@ -618,7 +619,14 @@ func ResolveEntitiesPass(
 	client *llm.Client,
 	embedder embed.Embedder,
 	pr *prompts.Registry,
+	sinks ...events.Sink,
 ) {
+	// SPEC-07: optional event sink (variadic keeps the ~40 existing call
+	// sites untouched); nil = no events.
+	var sink events.Sink
+	if len(sinks) > 0 {
+		sink = sinks[0]
+	}
 	// cfg == nil FIRST: cfg.Ontology on a nil *Config panics, and the
 	// fullpipeline call site can hand over a partially-built config.
 	if cfg == nil || ont == nil {
@@ -747,7 +755,7 @@ func ResolveEntitiesPass(
 			log.Warn("resolve: arbitration failed", "seed", b.seed.ID, "error", err)
 			continue
 		}
-		applyClusters(ont, clusters, rcfg, touchedSet, proposed, graph, rej, &stats)
+		applyClusters(ont, clusters, rcfg, touchedSet, proposed, graph, rej, &stats, sink)
 	}
 
 	log.Info("resolve complete",
@@ -1334,6 +1342,7 @@ func applyClusters(
 	graph *aliasGraph,
 	rej *rejectionIndex,
 	stats *resolveStats,
+	sink events.Sink,
 ) {
 	now := config.NowUTC().Format(time.RFC3339)
 
@@ -1508,6 +1517,16 @@ func applyClusters(
 			proposed[alias.ID] = true
 			graph.add(alias.ID, target)
 			stats.linked++
+			// SPEC-07: the alias is now merged into the canonical entity.
+			// Workspace is filled by the caller's BindWorkspace wrapper.
+			if sink != nil {
+				sink.Emit(events.NewEvent("", events.TypeEntityResolved, events.EntityResolved{
+					Canonical:  target,
+					Alias:      alias.ID,
+					Confidence: row.Confidence,
+					Auto:       true,
+				}))
+			}
 		}
 	}
 }

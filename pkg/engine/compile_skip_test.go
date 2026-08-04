@@ -140,7 +140,7 @@ func TestCompile_SkipEventEmitted(t *testing.T) {
 		t.Fatal(err)
 	}
 	sink.mu.Lock()
-	skipBefore := len(sink.kinds[events.KindCompileSkip])
+	skipBefore := len(sink.kinds[events.TypeCompileSkip])
 	sink.mu.Unlock()
 	if skipBefore != 0 {
 		t.Fatalf("compile 1 emitted %d skip events, want 0", skipBefore)
@@ -150,14 +150,18 @@ func TestCompile_SkipEventEmitted(t *testing.T) {
 		t.Fatal(err)
 	}
 	sink.mu.Lock()
-	got := sink.kinds[events.KindCompileSkip]
+	got := sink.kinds[events.TypeCompileSkip]
 	sink.mu.Unlock()
 	if len(got) != 1 {
 		t.Fatalf("compile 2 emitted %d skip events, want 1", len(got))
 	}
 	ev := got[0]
-	if ev.Workspace != dir || ev.Path != "raw/a.md" || ev.Reason != "unchanged" {
-		t.Errorf("event = %+v, want workspace=%s path=raw/a.md reason=unchanged", ev, dir)
+	skip, ok := ev.Data.(events.CompileSkip)
+	if !ok {
+		t.Fatalf("event data = %T, want events.CompileSkip", ev.Data)
+	}
+	if ev.Workspace != filepath.Base(dir) || skip.DocID != "raw/a.md" || skip.Reason != "unchanged" {
+		t.Errorf("event = %+v data = %+v, want workspace=%s doc_id=raw/a.md reason=unchanged", ev, skip, filepath.Base(dir))
 	}
 }
 
@@ -210,16 +214,16 @@ func TestExplainCompile_Golden(t *testing.T) {
 
 type collectSink struct {
 	mu    sync.Mutex
-	kinds map[events.Kind][]events.Event
+	kinds map[events.Type][]events.Event
 }
 
 func (s *collectSink) Emit(ev events.Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.kinds == nil {
-		s.kinds = map[events.Kind][]events.Event{}
+		s.kinds = map[events.Type][]events.Event{}
 	}
-	s.kinds[ev.Kind] = append(s.kinds[ev.Kind], ev)
+	s.kinds[ev.Type] = append(s.kinds[ev.Type], ev)
 }
 
 var _ = fmt.Sprintf

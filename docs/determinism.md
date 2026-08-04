@@ -53,6 +53,10 @@ in sync — the test names this document):
 - `.sage/batch-state.json` — batch checkpoint (provider batch ids)
 - `.sage/compile-state.json`
 - `.sage/wiki.db-wal`, `.sage/wiki.db-shm` — SQLite sidecars
+- `events/` — SPEC-07 event audit trail (event ids, wall-clock times,
+  completion-order stream)
+- `.sage/webhooks-deadletter.jsonl` — webhook dead letter (wall-clock
+  delivery failures)
 
 Everything else — `wiki/`, `.manifest.json`, `.sage/wiki.db`, the SWVI
 vector index, export streams — is byte-identical across identical

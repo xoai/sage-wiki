@@ -70,6 +70,9 @@ func runCapture(cmd *cobra.Command, args []string) error {
 		openOpts = append(openOpts, engine.WithUpgrade())
 	}
 	openOpts = append(openOpts, engine.WithConfigFile(resolveConfigPath(dir)))
+	evOpts, evClose := cliEventPlane(cmd.Context(), dir)
+	defer evClose()
+	openOpts = append(openOpts, evOpts...)
 	w, err := engine.Open(cmd.Context(), dir, openOpts...)
 	if err != nil {
 		return cli.CLIError(outputFormat, lockSentinel(err))

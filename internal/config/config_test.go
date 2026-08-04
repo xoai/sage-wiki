@@ -1009,3 +1009,116 @@ func TestPriceTable_RelativePathResolves(t *testing.T) {
 		t.Errorf("absolute path rewritten: %q", cfg2.Compiler.PriceTable)
 	}
 }
+
+// SPEC-07: events.* defaults resolve as documented.
+func TestEventsConfigDefaults(t *testing.T) {
+	var e EventsConfig
+	if !e.EnabledOrDefault() {
+		t.Error("events.enable must default true")
+	}
+	if got := e.DirOrDefault(); got != "events" {
+		t.Errorf("DirOrDefault = %q, want events", got)
+	}
+	if got := e.BufferSizeOrDefault(); got != 1024 {
+		t.Errorf("BufferSizeOrDefault = %d, want 1024", got)
+	}
+	off := false
+	e = EventsConfig{Enable: &off, Dir: "audit", BufferSize: 8}
+	if e.EnabledOrDefault() {
+		t.Error("explicit enable=false must resolve false")
+	}
+	if got := e.DirOrDefault(); got != "audit" {
+		t.Errorf("DirOrDefault = %q, want audit", got)
+	}
+	if got := e.BufferSizeOrDefault(); got != 8 {
+		t.Errorf("BufferSizeOrDefault = %d, want 8", got)
+	}
+}
+
+// SPEC-07: webhook entries validate at load — url required, exactly one
+// secret source, sane bounds.
+func TestWebhookConfigValidate(t *testing.T) {
+	valid := func() Config {
+		return Config{
+			Project: "p", Output: "wiki",
+			Sources: []Source{{Path: "raw"}},
+			Serve: ServeConfig{Webhooks: []WebhookConfig{{
+				URL: "https://example.com/hook", SecretEnv: "SAGE_WEBHOOK_SECRET",
+			}}},
+		}
+	}
+	c := valid()
+	if err := c.Validate(); err != nil {
+		t.Fatalf("valid webhook rejected: %v", err)
+	}
+
+	noURL := valid()
+	noURL.Serve.Webhooks[0].URL = ""
+	if err := noURL.Validate(); err == nil {
+		t.Error("missing url must fail validation")
+	}
+
+	bothSecrets := valid()
+	bothSecrets.Serve.Webhooks[0].SecretFile = "/tmp/secret"
+	if err := bothSecrets.Validate(); err == nil {
+		t.Error("both secret_env and secret_file must fail validation")
+	}
+
+	noSecret := valid()
+	noSecret.Serve.Webhooks[0].SecretEnv = ""
+	if err := noSecret.Validate(); err == nil {
+		t.Error("missing secret source must fail validation")
+	}
+
+	negRetries := valid()
+	neg := -1
+	negRetries.Serve.Webhooks[0].MaxRetries = &neg
+	if err := negRetries.Validate(); err == nil {
+		t.Error("negative max_retries must fail validation")
+	}
+}
+
+// SPEC-07: webhook resolver defaults (timeout 5s, retries 3; explicit 0
+// retries means no retries).
+func TestWebhookConfigResolvers(t *testing.T) {
+	var w WebhookConfig
+	if got := w.TimeoutSecondsOrDefault(); got != 5 {
+		t.Errorf("TimeoutSecondsOrDefault = %d, want 5", got)
+	}
+	if got := w.MaxRetriesOrDefault(); got != 3 {
+		t.Errorf("MaxRetriesOrDefault = %d, want 3", got)
+	}
+	zero := 0
+	w = WebhookConfig{TimeoutSeconds: 10, MaxRetries: &zero}
+	if got := w.TimeoutSecondsOrDefault(); got != 10 {
+		t.Errorf("TimeoutSecondsOrDefault = %d, want 10", got)
+	}
+	if got := w.MaxRetriesOrDefault(); got != 0 {
+		t.Errorf("MaxRetriesOrDefault = %d, want 0 (explicit no-retries)", got)
+	}
+}
+
+// TestWebhookTypesValidated (SPEC-07 §5): a typo'd event type in
+// serve.webhooks[].types fails at load — a silent no-match filter would
+// deliver nothing and nothing would say so.
+func TestWebhookTypesValidated(t *testing.T) {
+	base := func() Config {
+		return Config{
+			Project: "p", Output: "wiki",
+			Sources: []Source{{Path: "raw"}},
+			Serve: ServeConfig{Webhooks: []WebhookConfig{{
+				URL: "https://example.com/hook", SecretEnv: "S",
+				Types: []string{"compile_finished"},
+			}}},
+		}
+	}
+	c := base()
+	if err := c.Validate(); err != nil {
+		t.Fatalf("valid type rejected: %v", err)
+	}
+	bad := base()
+	bad.Serve.Webhooks[0].Types = []string{"compile_finish"} // typo
+	if err := bad.Validate(); err == nil {
+		t.Fatal("typo'd event type must fail validation")
+	}
+}

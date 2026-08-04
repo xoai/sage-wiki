@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/xoai/sage-wiki/internal/metrics"
 )
 
 var baseTime = time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
@@ -224,4 +226,179 @@ func TestStopLeavesBacklogPending(t *testing.T) {
 	if s2.Status != JobPending {
 		t.Errorf("j2 = %q, want pending (backlog must NOT start during shutdown)", s2.Status)
 	}
+}
+
+// TestQueueDepthGaugeMultiQueue (verification review F-002): every stack's
+// queue shares one process-global gauge — recovery accounting must be
+// additive, or the last queue to start overwrites the others' depth.
+func TestQueueDepthGaugeMultiQueue(t *testing.T) {
+	metrics.ResetForTest()
+	now := clockSeq(50 * time.Millisecond)
+
+	block := make(chan struct{})
+	started := make(chan struct{}, 4)
+	exec := func(ctx context.Context, j *Job) (json.RawMessage, error) {
+		started <- struct{}{}
+		<-block
+		return json.RawMessage(`{}`), nil
+	}
+
+	dirA, dirB := t.TempDir(), t.TempDir()
+	lA, _ := OpenLedger(dirA)
+	lB, _ := OpenLedger(dirB)
+	// Pending jobs recovered by the ledgers BEFORE either queue starts.
+	for i := 0; i < 2; i++ {
+		if _, err := lA.Submit(CompileJobRequest{}, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := lB.Submit(CompileJobRequest{}, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	qA := NewQueue(lA, 1, exec, now)
+	qB := NewQueue(lB, 1, exec, now)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go qA.Run(ctx)
+	go qB.Run(ctx)
+
+	// One job per queue goes in-flight (each Dec's the gauge once).
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatal("queues did not start their recovered jobs")
+		}
+	}
+
+	got := int64(-1)
+	snap := metrics.Snapshot()
+	for i := 0; i+1 < len(snap); i += 2 {
+		if snap[i] == "job_queue_depth" {
+			got = snap[i+1].(int64)
+		}
+	}
+	// 5 recovered − 2 in-flight = 3 still queued across BOTH queues.
+	if got != 3 {
+		t.Errorf("job_queue_depth = %d, want 3 (additive across queues)", got)
+	}
+
+	// Teardown: release the in-flight jobs and stop both queues BEFORE
+	// TempDir cleanup (running queues hold ledger files).
+	close(block)
+	cancel()
+	_ = qA.Stop(context.Background())
+	_ = qB.Stop(context.Background())
+}
+
+// TestQueueDepthGaugeEvictionReassembly (verification pass 3 F-021): an
+// eviction stops a queue leaving its backlog pending; re-assembly builds a
+// new Queue over the same ledger — recovery accounting must NOT re-Add the
+// jobs the first queue already Inc'd, and the gauge returns to 0 once the
+// carried backlog drains.
+func TestQueueDepthGaugeEvictionReassembly(t *testing.T) {
+	metrics.ResetForTest()
+	queueDepthAccounted.Lock()
+	queueDepthAccounted.m = map[string]int64{}
+	queueDepthAccounted.Unlock()
+	now := clockSeq(50 * time.Millisecond)
+
+	gaugeValue := func() int64 {
+		snap := metrics.Snapshot()
+		for i := 0; i+1 < len(snap); i += 2 {
+			if snap[i] == "job_queue_depth" {
+				return snap[i+1].(int64)
+			}
+		}
+		return -1
+	}
+
+	// exec blocks until its channel closes OR the ctx is cancelled (so
+	// Stop can interrupt the in-flight job and leave the backlog pending).
+	block1 := make(chan struct{})
+	started := make(chan struct{}, 4)
+	exec := func(ctx context.Context, j *Job) (json.RawMessage, error) {
+		started <- struct{}{}
+		select {
+		case <-block1:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return json.RawMessage(`{}`), nil
+	}
+
+	dir := t.TempDir()
+	l, _ := OpenLedger(dir)
+	for i := 0; i < 2; i++ {
+		if _, err := l.Submit(CompileJobRequest{}, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// First queue: its recovery accounting Adds the two ledger-pending
+	// jobs; one goes in-flight (Dec → 1), the other stays pending. Stop
+	// interrupts the in-flight job; the backlog persists.
+	q1 := NewQueue(l, 1, exec, now)
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	defer cancel1()
+	go q1.Run(ctx1)
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first queue did not start its job")
+	}
+	if got := gaugeValue(); got != 1 {
+		t.Fatalf("gauge with one in-flight + one pending = %d, want 1", got)
+	}
+	// Stop FIRST (not ctx cancel): Stop cancels the run ctx, the in-flight
+	// exec returns via its ctx watch, and the Run loop exits on the
+	// cancelled ctx WITHOUT starting the pending job — the backlog survives.
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	_ = q1.Stop(stopCtx)
+	stopCancel()
+	close(block1)
+	if got := gaugeValue(); got != 1 {
+		t.Fatalf("gauge after eviction = %d, want 1 (in-flight Dec'd, backlog still counted)", got)
+	}
+
+	// Re-assembly: a NEW queue over the SAME ledger runs the recovery
+	// accounting — it must not re-Add the carried backlog.
+	block2 := make(chan struct{})
+	exec2 := func(ctx context.Context, j *Job) (json.RawMessage, error) {
+		select {
+		case <-block2:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return json.RawMessage(`{}`), nil
+	}
+	q2 := NewQueue(l, 2, exec2, now)
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	go q2.Run(ctx2)
+	// q2 claims the carried job (Dec → 0) and blocks in exec2. WITH a
+	// double-count, recovery would have re-Added the carried backlog and
+	// the gauge would read 1 here; without one it reads exactly 0.
+	time.Sleep(100 * time.Millisecond)
+	if got := gaugeValue(); got != 0 {
+		t.Errorf("gauge after re-assembly = %d, want 0 (carried backlog double-counted)", got)
+	}
+
+	// Release the in-flight job — the gauge stays 0.
+	close(block2)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if gaugeValue() == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := gaugeValue(); got != 0 {
+		t.Errorf("gauge after draining the carried backlog = %d, want 0", got)
+	}
+	cancel2()
+	stopCtx2, stopCancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+	_ = q2.Stop(stopCtx2)
+	stopCancel2()
 }

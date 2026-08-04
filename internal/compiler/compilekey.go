@@ -2,9 +2,9 @@ package compiler
 
 import (
 	"crypto/sha256"
-	"fmt"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"sort"
 	"strconv"
@@ -560,6 +560,15 @@ var subsetPolicy = map[string]string{
 	"serve.worker.lease_ttl_seconds":          "queue runtime",
 	"serve.worker.max_attempts":               "queue runtime",
 	"serve.worker.poll_interval_seconds":      "queue runtime",
+	"serve.webhooks":                          "event delivery (SPEC-07), not compile output",
+
+	// SPEC-07: the event stream is an observability side-channel — none of
+	// these change compiled artifacts.
+	"events.enable":      "event emission switch, not compile output",
+	"events.dir":         "audit-trail location, not compile output",
+	"events.buffer_size": "event bus runtime",
+	"events.stdout":      "event tee, not compile output",
+	"events.raw_queries": "search-event privacy opt-in, not compile output",
 
 	"mirror.access_key":             "mirror subsystem (backup), not compile output",
 	"mirror.access_key_env":         "mirror subsystem",

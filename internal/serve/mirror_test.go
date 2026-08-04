@@ -17,6 +17,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/xoai/sage-wiki/internal/mirror"
+	"github.com/xoai/sage-wiki/pkg/events"
 	pkmirror "github.com/xoai/sage-wiki/pkg/mirror"
 )
 
@@ -365,4 +366,83 @@ func ageMirrorLocal(t *testing.T, dir string) {
 	}
 	replaced := `"last_rotation_at": "2020-01-01T00:00:00Z",` + tail[end:]
 	os.WriteFile(path, []byte(s[:start]+replaced), 0o644)
+}
+
+// TestDepsSetEventSinkReachesMirrorShipper (SPEC-07 serve wiring): the
+// workspace bus installed via Deps.SetEventSink receives mirror_shipped
+// from the serve-path shipper — the propagation that single-mode
+// (main.go) and multi-mode (stack.go) both rely on.
+func TestDepsSetEventSinkReachesMirrorShipper(t *testing.T) {
+	fake, shipper, dir := shipperFixture(t, shipperFixtureOpts{
+		interval:         20 * time.Millisecond,
+		snapshotInterval: time.Hour,
+		drainTimeout:     300 * time.Millisecond,
+	})
+	_ = fake
+
+	d := &Deps{dir: dir, mirrorShipper: shipper}
+	sink := &mirrorEventCapture{}
+	d.SetEventSink(sink) // must bind the shipper's mirror
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	shipper.Start(ctx)
+
+	os.MkdirAll(filepath.Join(dir, "wiki", "concepts"), 0o755)
+	os.WriteFile(filepath.Join(dir, "wiki", "concepts", "Bar.md"), []byte("# Bar"), 0o644)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if sink.count() > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	shipper.Stop()
+
+	if sink.count() == 0 {
+		t.Fatal("no mirror_shipped event reached the Deps-installed sink")
+	}
+	if ws := sink.firstWorkspace(); ws != filepath.Base(dir) {
+		t.Errorf("event workspace = %q, want %q (BindWorkspace)", ws, filepath.Base(dir))
+	}
+}
+
+type mirrorEventCapture struct {
+	mu     sync.Mutex
+	events []mirrorEvent
+}
+
+type mirrorEvent struct {
+	typ       string
+	workspace string
+}
+
+func (c *mirrorEventCapture) Emit(ev events.Event) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.events = append(c.events, mirrorEvent{typ: string(ev.Type), workspace: ev.Workspace})
+}
+
+func (c *mirrorEventCapture) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, e := range c.events {
+		if e.typ == string(events.TypeMirrorShipped) {
+			n++
+		}
+	}
+	return n
+}
+
+func (c *mirrorEventCapture) firstWorkspace() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, e := range c.events {
+		if e.typ == string(events.TypeMirrorShipped) {
+			return e.workspace
+		}
+	}
+	return ""
 }

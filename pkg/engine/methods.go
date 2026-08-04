@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -66,6 +67,7 @@ func (w *Workspace) Capture(ctx context.Context, src Source) (DocID, error) {
 		if err != nil {
 			return "", fmt.Errorf("engine: capture path: %w", err)
 		}
+		w.emitDocCaptured(res.SourcePath, res.Size, res.Hash)
 		return DocID(res.SourcePath), nil
 
 	case src.URL != "":
@@ -76,6 +78,7 @@ func (w *Workspace) Capture(ctx context.Context, src Source) (DocID, error) {
 		if err != nil {
 			return "", fmt.Errorf("engine: capture url: %w", err)
 		}
+		w.emitDocCaptured(res.SourcePath, res.Size, res.Hash)
 		return DocID(res.SourcePath), nil
 
 	default:
@@ -124,8 +127,24 @@ func (w *Workspace) Capture(ctx context.Context, src Source) (DocID, error) {
 		if err != nil {
 			return "", fmt.Errorf("engine: relativize capture path: %w", err)
 		}
+		stored := fm + string(data) + "\n"
+		w.emitDocCaptured(rel, int64(len(stored)), fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(stored))))
 		return DocID(rel), nil
 	}
+}
+
+// emitDocCaptured fans one doc_captured event into the installed sink
+// (SPEC-07). No sink = no-op. DocID is the workspace-relative identifier;
+// Workspace is the name — no paths in the stream (privacy default).
+func (w *Workspace) emitDocCaptured(docID string, bytes int64, contentHash string) {
+	if w.opts.sink == nil {
+		return
+	}
+	w.opts.sink.Emit(events.NewEvent(filepath.Base(w.dir), events.TypeDocCaptured, events.DocCaptured{
+		DocID:       docID,
+		Bytes:       bytes,
+		ContentHash: contentHash,
+	}))
 }
 
 const maxCaptureBytes = 50 * 1024 * 1024
@@ -158,6 +177,10 @@ type CompileRequest struct {
 	Batch   bool // batch API
 	NoCache bool // disable prompt caching
 	Prune   bool // delete orphaned articles
+
+	// JobID identifies this compile job in its events (SPEC-07); empty =
+	// the compiler generates one (returned in CompileResult.JobID).
+	JobID string
 }
 
 // CompileResult mirrors the compiler's result with the SPEC-05 cost shape:
@@ -178,6 +201,10 @@ type CompileResult struct {
 	// adopted (first run after upgrade — key computed without recompiling).
 	Skipped []SkippedDoc `json:"skipped,omitempty"`
 	Adopted int          `json:"adopted"`
+
+	// JobID is the compile job identifier used in this run's events
+	// (SPEC-07) — the request's JobID or the compiler-generated one.
+	JobID string `json:"job_id,omitempty"`
 }
 
 // SkippedDoc is a doc the compile did not recompile because its compile key
@@ -213,19 +240,20 @@ func (w *Workspace) Compile(ctx context.Context, req CompileRequest) (*CompileRe
 		tierOverride = &req.Tier
 	}
 	res, err := compiler.Compile(w.dir, compiler.CompileOpts{
-		Ctx:      ctx,
-		DryRun:   req.DryRun,
-		Fresh:    req.Fresh,
-		Force:    req.Force,
-		Batch:    req.Batch,
-		NoCache:  req.NoCache,
-		Prune:    req.Prune,
-		Tier:     tierOverride,
-		Model:    req.Model,
-		MaxDocs:  req.MaxDocs,
-		MaxCost:  req.MaxCost,
-		Prompts:  w.prompts,
-		Recorder: w.usageRecorder(),
+		Ctx:     ctx,
+		DryRun:  req.DryRun,
+		Fresh:   req.Fresh,
+		Force:   req.Force,
+		Batch:   req.Batch,
+		NoCache: req.NoCache,
+		Prune:   req.Prune,
+		Tier:    tierOverride,
+		Model:   req.Model,
+		MaxDocs: req.MaxDocs,
+		MaxCost: req.MaxCost,
+		Prompts: w.prompts,
+		Sink:    w.opts.sink,
+		JobID:   req.JobID,
 	})
 	if err != nil && !errors.Is(err, compiler.ErrBudgetExceeded) {
 		return mapCompileResult(res), err
@@ -233,26 +261,7 @@ func (w *Workspace) Compile(ctx context.Context, req CompileRequest) (*CompileRe
 	if errors.Is(err, compiler.ErrBudgetExceeded) {
 		return mapCompileResult(res), fmt.Errorf("%w (partial result returned)", ErrBudgetExceeded)
 	}
-	out := mapCompileResult(res)
-	w.emitCompileSkips(out)
-	return out, nil
-}
-
-// emitCompileSkips fans one compile_skip event per skipped doc into the
-// installed sink (SPEC-04: the pledge must be observable). No sink = no-op.
-func (w *Workspace) emitCompileSkips(res *CompileResult) {
-	if w.opts.sink == nil || res == nil {
-		return
-	}
-	for _, s := range res.Skipped {
-		w.opts.sink.Emit(events.Event{
-			Kind:      events.KindCompileSkip,
-			TS:        config.NowUTC(),
-			Workspace: w.dir,
-			Path:      s.Path,
-			Reason:    s.Reason,
-		})
-	}
+	return mapCompileResult(res), nil
 }
 
 func mapCompileResult(res *compiler.CompileResult) *CompileResult {
@@ -265,6 +274,7 @@ func mapCompileResult(res *compiler.CompileResult) *CompileResult {
 		ArticlesWritten: res.ArticlesWritten, Errors: res.Errors, EmbedErrors: res.EmbedErrors,
 		TierIndexed: res.TierIndexed, TierEmbedded: res.TierEmbedded, TierCompiled: res.TierCompiled,
 		Adopted: res.Adopted,
+		JobID:   res.JobID,
 	}
 	for _, s := range res.Skipped {
 		out.Skipped = append(out.Skipped, SkippedDoc{Path: s.Path, Reason: s.Reason})

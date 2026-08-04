@@ -2,7 +2,10 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/auth"
@@ -11,6 +14,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/trust"
 
+	"github.com/xoai/sage-wiki/pkg/events"
 	"github.com/xoai/sage-wiki/pkg/provider"
 )
 
@@ -56,6 +60,7 @@ type SearchResults struct {
 // Search runs the unified retrieval pipeline over the workspace.
 func (w *Workspace) Search(ctx context.Context, req SearchRequest) (*SearchResults, error) {
 	ctx = orBackground(ctx)
+	searchStart := time.Now()
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	if err := w.checkOpen(); err != nil {
@@ -139,7 +144,41 @@ func (w *Workspace) Search(ctx context.Context, req SearchRequest) (*SearchResul
 			AliasOf: d.AliasOf,
 		})
 	}
+	w.emitSearchPerformed(req, resp, time.Since(searchStart))
 	return out, nil
+}
+
+// emitSearchPerformed fans one search_performed event into the installed
+// sink (SPEC-07). Privacy default: the query is hashed — raw text enters
+// the stream only under the events.raw_queries opt-in (local debug).
+// Channels report the legs that actually ran (Run reports them).
+func (w *Workspace) emitSearchPerformed(req SearchRequest, resp search.Response, d time.Duration) {
+	if w.opts.sink == nil {
+		return
+	}
+	// SPEC-07: the payload lists the legs that ACTUALLY ran (Run reports
+	// them) — a requested channel turned off at runtime (no embedder,
+	// empty ontology) must not appear.
+	channels := make([]string, 0, len(resp.Channels))
+	for _, c := range resp.Channels {
+		channels = append(channels, string(c))
+	}
+	payload := events.SearchPerformed{
+		QueryHash:   queryHash(req.Query),
+		Channels:    channels,
+		ResultCount: len(resp.Results),
+		DurationMS:  d.Milliseconds(),
+	}
+	if w.app.Config.Events.RawQueries {
+		payload.Query = req.Query
+	}
+	w.opts.sink.Emit(events.NewEvent(filepath.Base(w.dir), events.TypeSearchPerformed, payload))
+}
+
+// queryHash is the stable privacy-preserving query identifier: SHA-256 of
+// the whitespace-trimmed query.
+func queryHash(query string) string {
+	return fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(strings.TrimSpace(query))))
 }
 
 // searchEmbedder prefers an injected pkg/provider.Provider (adapted) and

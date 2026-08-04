@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
+	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/pkg/events"
 )
 
 // passHooks are the worker's tier pass functions, fields so tests can
@@ -55,12 +58,15 @@ func (w *Worker) openCycleRun(ctx context.Context) (*cycleRun, error) {
 		return nil, fmt.Errorf("worker: load manifest: %w", err)
 	}
 	mf.SetNow(config.NowUTC)
-	client, _, err := newTrackedClient(projectDir, cfg, &CompileOpts{})
+	// SPEC-07: build opts BEFORE the client so newTrackedClient's
+	// recorder fallback bridges usage to the installed sink — a client
+	// built with empty opts would record to the file ledger only.
+	opts := CompileOpts{Ctx: ctx, Backend: w.deps.Backend, Sink: w.eventSink()}
+	client, _, err := newTrackedClient(projectDir, cfg, &opts)
 	if err != nil {
 		return nil, fmt.Errorf("worker: create LLM client: %w", err)
 	}
 
-	opts := CompileOpts{Ctx: ctx, Backend: w.deps.Backend}
 	run := &compileRun{
 		cfg:      cfg,
 		opts:     opts,
@@ -160,6 +166,25 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 	for p := range paths {
 		allPaths = append(allPaths, p)
 	}
+
+	// SPEC-07: a worker cycle IS a compile job — bracket it. Tier reports
+	// the highest claimed tier; per-doc events carry each doc's own tier.
+	run.opts.JobID = events.NewID()
+	cycleStart := time.Now()
+	maxTier := 0
+	for tier, items := range claimed {
+		if len(items) > 0 && tier > maxTier {
+			maxTier = tier
+		}
+	}
+	if run.opts.Sink != nil {
+		run.opts.Sink.Emit(events.NewEvent(filepath.Base(w.deps.ProjectDir), events.TypeCompileStarted, events.CompileStarted{
+			JobID:    run.opts.JobID,
+			Tier:     maxTier,
+			DocCount: len(paths),
+		}))
+	}
+
 	hbCtx, stopHeartbeat := context.WithCancel(context.Background())
 	defer stopHeartbeat()
 	go w.heartbeatLoop(hbCtx, allPaths)
@@ -213,6 +238,11 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 			w.hooks.indexTier0(w.deps.ProjectDir, claimed[0], run)
 		})
 		run.progress.EndPhase()
+		for _, it := range claimed[0] {
+			if !errored[it.SourcePath] && !readFailed[it.SourcePath] {
+				run.emitDocFinished(w.deps.ProjectDir, it.SourcePath, 0)
+			}
+		}
 	}
 	if len(claimed[1]) > 0 {
 		run.progress.StartPhase("Tier 1: Index + embed sources", len(claimed[1]))
@@ -220,6 +250,11 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 			w.hooks.indexTier1(w.deps.ProjectDir, claimed[1], run)
 		})
 		run.progress.EndPhase()
+		for _, it := range claimed[1] {
+			if !errored[it.SourcePath] && !readFailed[it.SourcePath] {
+				run.emitDocFinished(w.deps.ProjectDir, it.SourcePath, 1)
+			}
+		}
 	}
 
 	// Tier 3: full LLM pipeline; per-item failure = absent from
@@ -258,6 +293,7 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 				ItemStore:    run.itemStore,
 				CacheEnabled: cacheEnabled,
 				Progress:     run.progress,
+				Sink:         run.opts.Sink,
 			})
 		}()
 		run.progress.EndPhase()
@@ -283,7 +319,9 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 		for _, it := range claimed[3] {
 			if panicked || pipelineResult == nil || !succeeded[it.SourcePath] {
 				errored[it.SourcePath] = true
+				continue
 			}
+			run.emitDocFinished(w.deps.ProjectDir, it.SourcePath, 3)
 		}
 		// pipelineIncomplete analogue (P1-1/C1): when Pass 2/3 did not
 		// complete, the cycle's manifest mutations are discarded — the
@@ -325,6 +363,29 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 		}
 	}
 
+	// SPEC-07: close the cycle bracket. Outcome aligns with the
+	// hibernation predicate below: a cycle with no verifiable success
+	// (every item errored OR unreadable) is failed, not completed.
+	outcome := "completed"
+	if failures+len(readFailed) >= len(paths) {
+		outcome = "failed"
+	}
+	// SPEC-07 metrics: worker cycles are compile jobs — they record the
+	// same counter/histogram as CLI/serve-engine compiles.
+	tierLabel := strconv.Itoa(maxTier)
+	metrics.CounterNamed("compiles_total", "tier", tierLabel, "outcome", outcome).Add(1)
+	metrics.ObserveDuration(metrics.HistogramNamed("compile_duration_seconds", metrics.CompileBuckets(), "tier", tierLabel), cycleStart)
+	if run.opts.Sink != nil {
+		run.opts.Sink.Emit(events.NewEvent(filepath.Base(w.deps.ProjectDir), events.TypeCompileFinished, events.CompileFinished{
+			JobID:   run.opts.JobID,
+			Outcome: outcome,
+			Totals: events.CompileTotals{
+				Docs:     len(paths),
+				Compiled: len(paths) - failures - len(readFailed),
+			},
+		}))
+	}
+
 	// Systemic-failure hibernation: when every claimed item errored (or
 	// its state became unreadable — a sick store), back the worker off
 	// exponentially instead of hammering a dead backend. Counting
@@ -348,18 +409,24 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 	if run.cfg.Compiler.AutoPromoteEnabled() {
 		if promoted, err := run.tierMgr.CheckPromotions(); err == nil && len(promoted) > 0 {
 			for _, p := range promoted {
+				fromTier := currentTier(w.deps.Items, p)
 				if err := w.deps.Items.SetTier(p, 3, "auto-promote"); err != nil {
 					log.Warn("worker set tier failed", "path", p, "error", err)
+					continue
 				}
+				run.emitPromotion(w.deps.ProjectDir, p, fromTier, 3, "auto-promote")
 			}
 		}
 	}
 	if run.cfg.Compiler.AutoDemoteEnabled() {
 		if demoted, err := run.tierMgr.CheckDemotions(); err == nil && len(demoted) > 0 {
 			for _, p := range demoted {
+				fromTier := currentTier(w.deps.Items, p)
 				if err := w.deps.Items.SetTier(p, 1, "stale"); err != nil {
 					log.Warn("worker set tier failed", "path", p, "error", err)
+					continue
 				}
+				run.emitPromotion(w.deps.ProjectDir, p, fromTier, 1, "stale")
 			}
 		}
 	}

@@ -29,6 +29,20 @@ recording (no flat-zero noise). When a bearer token is configured,
 `/metrics` is gated exactly like `/api/*`. The MCP transports (stdio and
 SSE) never serve metrics — they are transports, not ops surfaces.
 
+SPEC-07 adds the operational series (serve mode registers the endpoint
+unconditionally at `GET /metrics`):
+
+| Series | Kind | Labels | Meaning |
+|---|---|---|---|
+| `compiles_total` | counter | `tier`, `outcome` | compile jobs; outcome ∈ completed/failed/interrupted/cancelled |
+| `compile_duration_seconds` | histogram | `tier` | end-to-end compile job duration |
+| `llm_tokens_total` | counter | `provider`, `model`, `pass`, `direction` | tokens; direction ∈ input/output/cached splits cached from uncached |
+| `search_channel_duration_seconds` | histogram | `channel` | per-channel leg latency (`bm25`/`vector`/`graph`) |
+| `workspaces_open` | gauge | — | open workspaces (multi-workspace manager) |
+| `job_queue_depth` | gauge | — | pending serve compile jobs |
+| `events_dropped_total` | counter | — | events dropped by bounded buffers |
+| `mirror_ship_lag_seconds` | gauge | — | seconds since the last successful mirror ship pass |
+
 Overhead when the endpoint is off: a few nanoseconds of atomic ops per
 hook — negligible by design and benchmarked
 (`internal/metrics.BenchmarkHook`).
@@ -36,5 +50,7 @@ hook — negligible by design and benchmarked
 ## Cardinality
 
 Labels are pinned to fixed enums (pass, stage, direction, provider,
-cache) — query text, source paths, and IDs are never label values, so
+cache, tier, outcome, channel — plus `model`, which is key-only like
+`provider` because model names are provider-defined) — query text, source
+paths, and IDs are never label values, so
 metrics are safe to expose and cheap to store.

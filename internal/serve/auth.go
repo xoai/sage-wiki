@@ -115,6 +115,8 @@ func anyTokenMatch(pd []byte, digests [][]byte, cmp func(a, b []byte) int) bool 
 // (F-051 — the coordinator fence + progress wiring live once, in deps.go).
 func (s *Server) execCompile(ctx context.Context, j *Job) (json.RawMessage, error) {
 	opts := compiler.CompileOpts{Ctx: ctx}
+	// SPEC-07: a stop-driven cancellation is "interrupted", not "cancelled".
+	opts.IsInterrupted = s.queue.Stopped
 	if j.Request.Tier != nil {
 		opts.Tier = j.Request.Tier
 	}

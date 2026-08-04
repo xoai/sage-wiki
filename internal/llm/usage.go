@@ -12,6 +12,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/pkg/events"
 )
 
 // MarshalJSON emits the pinned wire schema with Cost as a JSON number or
@@ -44,6 +45,48 @@ func (e UsageEvent) MarshalJSON() ([]byte, error) {
 		Tier: e.Tier, InputTokens: e.InputTokens, CachedTokens: e.CachedTokens,
 		CacheWriteTokens: e.CacheWriteTokens, OutputTokens: e.OutputTokens,
 		Cost: cost, PriceSource: e.PriceSource, Assumptions: e.Assumptions,
+	})
+}
+
+// NewBridgedRecorder is the SINGLE usage-recording construction (SPEC-07):
+// the workspace file ledger always gets the event, and an installed event
+// sink gets the bridged copy (nil sink → plain file ledger). Every entry
+// path (engine, serve, CLI, parity harness) builds its recorder here.
+func NewBridgedRecorder(projectDir string, sink events.Sink) UsageRecorder {
+	file := NewFileRecorder(projectDir)
+	if sink == nil {
+		return file
+	}
+	return &bridgedRecorder{file: file, sink: sink, workspace: filepath.Base(projectDir)}
+}
+
+// bridgedRecorder multiplies a usage recorder: file ledger + event sink.
+type bridgedRecorder struct {
+	file      *FileRecorder
+	sink      events.Sink
+	workspace string
+}
+
+func (b *bridgedRecorder) RecordUsage(ctx context.Context, ev UsageEvent) {
+	b.file.RecordUsage(ctx, ev)
+	b.sink.Emit(bridgeUsageEvent(b.workspace, ev))
+}
+
+// bridgeUsageEvent maps the usage-ledger record onto the public typed
+// union. Cost stays decimal end to end (nil when unknown — never a
+// fabricated zero). Workspace is the NAME, never a path (SPEC-07 privacy).
+func bridgeUsageEvent(workspace string, ev UsageEvent) events.Event {
+	return events.NewEventAt(ev.TS, workspace, events.TypeUsage, events.Usage{
+		Pass:             ev.Pass,
+		Provider:         ev.Provider,
+		Model:            ev.Model,
+		Tier:             ev.Tier,
+		InputTokens:      ev.InputTokens,
+		CachedTokens:     ev.CachedTokens,
+		CacheWriteTokens: ev.CacheWriteTokens,
+		OutputTokens:     ev.OutputTokens,
+		Cost:             ev.Cost,
+		PriceSource:      ev.PriceSource,
 	})
 }
 

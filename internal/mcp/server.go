@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -29,6 +30,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/wiki"
+	"github.com/xoai/sage-wiki/pkg/events"
 )
 
 // Version is the version this server reports to MCP clients during
@@ -52,6 +54,24 @@ type Server struct {
 	embedder    embed.Embedder
 	language    string
 	coordinator *compiler.CompileCoordinator // serializes compiles
+
+	// SPEC-07: workspace event sink, installed post-construction by the
+	// serve wiring (on-demand compiles join the plane).
+	sinkMu sync.Mutex
+	sink   events.Sink
+}
+
+// SetEventSink installs the workspace event sink for on-demand compiles.
+func (s *Server) SetEventSink(sink events.Sink) {
+	s.sinkMu.Lock()
+	defer s.sinkMu.Unlock()
+	s.sink = events.NilSafe(sink) // typed-nil guard — see events.NilSafe
+}
+
+func (s *Server) eventSink() events.Sink {
+	s.sinkMu.Lock()
+	defer s.sinkMu.Unlock()
+	return s.sink
 }
 
 // NewServer creates an MCP server with read tools registered, via the

@@ -45,8 +45,21 @@ expect proxies to log query strings.
 `POST /capture`, `POST /search`, `POST /compile` → `{job_id}`,
 `GET /jobs`, `GET /jobs/{id}`, `GET /graph/query?q=&mode=&as_of=`,
 `GET /docs/{id}` (article DocIDs only), `GET /export` (tar stream),
-`GET /metrics`, and `/mcp` (all 19 tools over streamable HTTP).
-`/v1/*` stays as-is.
+`GET /metrics`, `GET /events/stream` (SSE), and `/mcp` (all 19 tools over
+streamable HTTP). `/v1/*` stays as-is.
+
+## Event surfaces (SPEC-07)
+
+The workspace runs an event bus (see [events config](configuration.md#events)):
+
+- **Audit trail** — every event also lands as JSONL under `events/`
+  (rotating generations), CLI and serve alike.
+- **`GET /events/stream`** — Server-Sent Events, token-gated like every
+  non-health route: one `data:` line per event, `: keepalive` comment
+  every 15s, per-workspace by construction (multi-workspace mode serves
+  each workspace's stream under `/w/{name}/events/stream`).
+- **Webhooks** — signed at-least-once delivery to your endpoints; see
+  [webhooks](../webhooks.md).
 
 ## Async compile jobs
 

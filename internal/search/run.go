@@ -98,6 +98,10 @@ type Deps struct {
 // Response is the unified search output.
 type Response struct {
 	Results []SearchResult
+	// Channels lists the legs that ACTUALLY ran (SPEC-07 SearchPerformed):
+	// runtime gating (no embedder, empty ontology) can turn a requested
+	// channel off — the payload must not claim legs that never executed.
+	Channels []Channel
 }
 
 // channelEnabled reports whether c is active for the request (nil = all).
@@ -150,13 +154,17 @@ func Run(ctx context.Context, deps Deps, req Request) (Response, error) {
 	// (F-076): if it registers there, swap for an EXISTS-style probe.
 	var graphLeg legList
 	var graphAliases map[string]string
+	graphRan := false
 	if req.channelEnabled(ChannelGraph) && deps.Ont != nil {
 		if n, err := deps.Ont.EntityCount(""); err == nil && n > 0 {
 			// pipelineLimit, not limit: every other leg fetches against the
 			// over-fetched pool, so capping graph at the raw limit starves
 			// the channel exactly when a filter is active (and the trust
 			// predicate makes one active on every adapter call).
+			graphStart := time.Now()
 			graphLeg, graphAliases = buildGraphLeg(deps.Ont, req.Query, pipelineLimit, deps.GraphRelationWeights)
+			graphRan = true
+			metrics.ObserveDuration(metrics.HistogramNamed("search_channel_duration_seconds", metrics.LatencyBuckets(), "channel", "graph"), graphStart)
 		}
 	}
 
@@ -304,7 +312,19 @@ func Run(ctx context.Context, deps Deps, req Request) (Response, error) {
 	for i := range results {
 		results[i].Rank = i + 1
 	}
-	return Response{Results: results}, nil
+	// SPEC-07: report the legs that actually ran — requested-but-unrun
+	// channels (no embedder, empty ontology) stay out of the payload.
+	var ran []Channel
+	if req.channelEnabled(ChannelBM25) {
+		ran = append(ran, ChannelBM25)
+	}
+	if embedder != nil {
+		ran = append(ran, ChannelVector)
+	}
+	if graphRan {
+		ran = append(ran, ChannelGraph)
+	}
+	return Response{Results: results, Channels: ran}, nil
 }
 
 // fetchDocEntries loads the entry for each distinct result doc — one

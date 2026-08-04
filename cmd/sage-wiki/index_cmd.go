@@ -61,6 +61,9 @@ func runIndexRebuildVectors(cmd *cobra.Command, args []string) error {
 	if upgrade {
 		openOpts = append(openOpts, engine.WithUpgrade())
 	}
+	evOpts, evClose := cliEventPlane(cmd.Context(), dir)
+	defer evClose()
+	openOpts = append(openOpts, evOpts...)
 	w, err := engine.Open(cmd.Context(), dir, openOpts...)
 	if err != nil {
 		return cli.CLIError(outputFormat, err)

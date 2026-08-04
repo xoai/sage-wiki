@@ -13,6 +13,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/internal/metrics"
 )
 
 // Job status vocabulary — SHARED with internal/api's job store
@@ -70,6 +73,54 @@ type Ledger struct {
 	mu      sync.Mutex
 	jobs    map[string]*Job
 	counter uint64 // collision-proof ID suffix (coarse clocks, F-038)
+}
+
+// queueDepthAccounted tracks, per ledger path, the job_queue_depth gauge
+// contribution this process has already made. Recovery accounting (Queue.Run)
+// is additive yet non-duplicative across eviction→reassembly cycles: a new
+// Queue over the same ledger re-Adds only jobs no earlier queue Inc'd
+// (verification pass 3).
+var queueDepthAccounted = struct {
+	sync.Mutex
+	m map[string]int64
+}{m: map[string]int64{}}
+
+// All gauge accounting happens UNDER the owning ledger's mutex so a
+// concurrent Submit and the recovery snapshot cannot double-count a job
+// (verification pass 5): insert+Inc and the pending snapshot are then
+// atomic with respect to each other.
+func queueDepthIncLocked(path string) {
+	queueDepthAccounted.Lock()
+	queueDepthAccounted.m[path]++
+	queueDepthAccounted.Unlock()
+	metrics.GaugeNamed("job_queue_depth").Inc()
+}
+
+func queueDepthDecLocked(path string) {
+	queueDepthAccounted.Lock()
+	queueDepthAccounted.m[path]--
+	queueDepthAccounted.Unlock()
+	metrics.GaugeNamed("job_queue_depth").Dec()
+}
+
+// queueDepthRecover snapshots pending under the ledger mutex, then applies
+// the delta — atomic against concurrent Submit insert+Inc.
+func queueDepthRecover(l *Ledger) {
+	l.mu.Lock()
+	pending := int64(0)
+	for _, j := range l.jobs {
+		if j.Status == JobPending {
+			pending++
+		}
+	}
+	queueDepthAccounted.Lock()
+	delta := pending - queueDepthAccounted.m[l.path]
+	queueDepthAccounted.m[l.path] = pending
+	queueDepthAccounted.Unlock()
+	l.mu.Unlock()
+	if delta != 0 {
+		metrics.GaugeNamed("job_queue_depth").Add(delta)
+	}
 }
 
 // OpenLedger loads (or creates) the ledger, applying restart recovery:
@@ -151,8 +202,17 @@ func (l *Ledger) Submit(req CompileJobRequest, now func() time.Time) (*Job, erro
 		Request:   req,
 		CreatedAt: now().UTC().Format(time.RFC3339Nano),
 	}
+	// Append BEFORE the in-memory insert (verification pass 4): if the
+	// append fails, the job must not linger pending in memory — the
+	// queue-depth gauge Inc happens in Queue.Submit after a successful
+	// ledger submit, and a lingering pending job would later Dec without
+	// a matching Inc.
+	if err := l.appendLocked(ledgerEvent{Op: "submit", Job: j}); err != nil {
+		return nil, err
+	}
 	l.jobs[j.ID] = j
-	return j, l.appendLocked(ledgerEvent{Op: "submit", Job: j})
+	queueDepthIncLocked(l.path) // under l.mu — atomic vs the recover snapshot
+	return j, nil
 }
 
 // transition moves a job to a new status, stamping the time.
@@ -299,6 +359,9 @@ func (q *Queue) Submit(req CompileJobRequest) (*Job, error) {
 	if err != nil {
 		return nil, err
 	}
+	// SPEC-07: the gauge Inc happened inside Ledger.Submit under the
+	// ledger mutex (atomic with the recovery snapshot — verification
+	// pass 5); the paired Dec is in runOne.
 	select {
 	case q.wake <- struct{}{}:
 	default:
@@ -316,6 +379,12 @@ func (q *Queue) Run(ctx context.Context) {
 	q.cancel = cancel
 	q.mu.Unlock()
 	defer close(q.doneCh)
+	// SPEC-07: recovery accounting for restart-resumed jobs (recovered by
+	// the ledger, not by Submit). Additive yet non-duplicative: the
+	// per-ledger accounting map keeps an eviction→reassembly cycle from
+	// re-Adding jobs an earlier queue already Inc'd, and keeps
+	// multi-workspace queues from overwriting each other (a Set would).
+	queueDepthRecover(q.ledger)
 	q.drainOnce(runCtx) // restart-resumed pending jobs run first (F-033)
 	for {
 		select {
@@ -367,8 +436,19 @@ func (q *Queue) runOne(ctx context.Context, id string) {
 	}()
 	j, err := q.ledger.transition(id, JobRunning, "", q.now)
 	if err != nil {
+		// The start transition mutates the job to running before its
+		// append; on append failure the job is no longer pending and
+		// never retried in-process. Release the gauge and log — never
+		// leak the +1 silently (verification pass 5).
+		q.ledger.mu.Lock()
+		queueDepthDecLocked(q.ledger.path)
+		q.ledger.mu.Unlock()
+		log.Error("queue: start transition failed — job stranded, gauge released", "job", id, "error", err)
 		return
 	}
+	q.ledger.mu.Lock()
+	queueDepthDecLocked(q.ledger.path)
+	q.ledger.mu.Unlock()
 	res, err := q.exec(ctx, j)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -384,6 +464,18 @@ func (q *Queue) runOne(ctx context.Context, id string) {
 	}
 	q.ledger.mu.Unlock()
 	q.ledger.transition(id, JobDone, "", q.now)
+}
+
+// Stopped reports whether Stop has been signaled — the IsInterrupted seam
+// (SPEC-07): a ctx cancellation during a stopped queue maps to Outcome
+// "interrupted", not "cancelled".
+func (q *Queue) Stopped() bool {
+	select {
+	case <-q.stopCh:
+		return true
+	default:
+		return false
+	}
 }
 
 // Stop signals the worker to halt and waits for in-flight work to

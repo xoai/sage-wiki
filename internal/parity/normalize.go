@@ -97,6 +97,12 @@ func BuildWorkspace(corpusDir, wsDir, replayURL, goldenConfig string) error {
 // BuildWorkspaceAuth is BuildWorkspace with an explicit API key + model —
 // the real-vendor record path (make record-fixtures ORIGIN=... KEY=... MODEL=...).
 func BuildWorkspaceAuth(corpusDir, wsDir, replayURL, goldenConfig, apiKey, model string) error {
+	return buildWorkspaceOpts(corpusDir, wsDir, replayURL, goldenConfig, apiKey, model, compiler.CompileOpts{})
+}
+
+// buildWorkspaceOpts is BuildWorkspaceAuth with explicit compile options —
+// the SPEC-07 event golden injects JobID + a capture sink here.
+func buildWorkspaceOpts(corpusDir, wsDir, replayURL, goldenConfig, apiKey, model string, opts compiler.CompileOpts) error {
 	if err := copyTree(corpusDir, wsDir); err != nil {
 		return fmt.Errorf("copy corpus: %w", err)
 	}
@@ -148,7 +154,7 @@ ontology:
 		return err
 	}
 	defer os.Unsetenv("SOURCE_DATE_EPOCH")
-	_, err = compiler.Compile(wsDir, compiler.CompileOpts{})
+	_, err = compiler.Compile(wsDir, opts)
 	if err != nil {
 		return fmt.Errorf("compile: %w", err)
 	}
