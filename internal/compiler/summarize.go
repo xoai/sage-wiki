@@ -140,12 +140,14 @@ func Summarize(opts SummarizeOpts) []SummaryResult {
 				budget.Consume(time.Since(start))
 				cancelUnit()
 				// A unit that failed because ITS budget deadline fired is a
-				// typed per-doc timeout — not a generic failure, not a
-				// run-level cancellation. Only a deadline-class error is
-				// reclassified: a provider 500 that merely outlasted the
-				// budget keeps its real error (and its real numbers).
+				// typed per-doc timeout — not a generic failure, not a run-level
+				// cancellation. Require BOTH a deadline-class error AND an
+				// exhausted budget: a provider_timeout (DeadlineExceeded with
+				// budget remaining) is its own condition, not a compile_doc
+				// timeout, and must not emit a self-contradictory
+				// limit_exceeded{Limit=doc_budget > Got=provider_timeout}.
 				parentCancelled := opts.Ctx != nil && opts.Ctx.Err() != nil
-				if result.Error != nil && errors.Is(result.Error, context.DeadlineExceeded) && !parentCancelled {
+				if result.Error != nil && errors.Is(result.Error, context.DeadlineExceeded) && budget.Expired() && !parentCancelled {
 					result.Error = docTimeoutError(budget)
 				}
 			}

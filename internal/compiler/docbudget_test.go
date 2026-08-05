@@ -267,3 +267,47 @@ func TestSummarizeQueueTimeNotConsumed(t *testing.T) {
 		}
 	}
 }
+
+// TestSummarizeProviderTimeoutNotMisattributed (SPEC-08 AC11 review fix):
+// provider_timeout (the per-call LLM deadline, default 120s) fires as
+// context.DeadlineExceeded — the SAME error class as a compile_doc_timeout
+// budget expiry. A provider timeout with budget REMAINING must NOT be
+// reclassified as compile_doc_timeout (it would emit a self-contradictory
+// limit_exceeded{Limit=compile_doc_budget > Got=provider_timeout} and
+// inflate the wrong counter). Only a deadline that ALSO exhausted the
+// per-doc budget is a compile_doc_timeout.
+func TestSummarizeProviderTimeoutNotMisattributed(t *testing.T) {
+	// Server slower than the provider callTimeout but well under the budget.
+	srv := slowLLMServer(t, []time.Duration{200 * time.Millisecond}, strings.Repeat("summary ", 30))
+	c, err := llm.NewClient("openai", "fake-key", srv.URL, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetCallTimeout(50 * time.Millisecond) // provider_timeout analog
+	restore := llm.SetBackoffDelayForTest(func(int) time.Duration { return time.Millisecond })
+	defer restore()
+
+	projectDir, outputDir, sources := budgetWorkspace(t, "a.md")
+	results := Summarize(SummarizeOpts{
+		Ctx:         context.Background(),
+		ProjectDir:  projectDir,
+		OutputDir:   outputDir,
+		Sources:     sources,
+		Client:      c,
+		Model:       "gpt-4o-mini",
+		MaxTokens:   256,
+		MaxParallel: 1,
+		UserTZ:      time.UTC,
+		Budgets:     NewDocBudgets(2000 * time.Millisecond), // budget >> callTimeout
+	})
+	if len(results) != 1 {
+		t.Fatalf("results = %d, want 1", len(results))
+	}
+	if results[0].Error == nil {
+		t.Fatal("want a provider-timeout error, got nil")
+	}
+	// The provider timeout must NOT be classified as compile_doc_timeout.
+	if errors.Is(results[0].Error, limits.ErrTimeout) {
+		t.Errorf("provider timeout misattributed as compile_doc_timeout (budget was not exhausted): %v", results[0].Error)
+	}
+}

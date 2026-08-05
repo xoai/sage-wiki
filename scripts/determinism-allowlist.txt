@@ -39,7 +39,7 @@ internal/compiler/pipeline.go:1372 pathByID values → pending slice, sorted imm
 internal/compiler/pipeline.go:1492 expected map → missing list for an error report only (not an artifact)
 internal/compiler/diff.go:128 Added/Modified sorted at :140-141, Removed at :149 (pre-existing AGENTS.md rule 6)
 internal/compiler/diff.go:144 Removed sorted at :149 (pre-existing AGENTS.md rule 6)
-internal/compiler/migrate_checkpoint.go:169 sources sorted at :61-64 before upserts (SPEC-04 D1 fix)
+internal/compiler/migrate_checkpoint.go:173 collects mf.Sources keys into a slice that is sort.Strings'd immediately after (PopulateFromManifest) — order-independent collection
 internal/compiler/fullpipeline.go:523 mf.Concepts[name].Sources is a slice lookup, not a map-order iteration
 internal/compiler/dedup.go:142 canonical tie-break (Task 3) makes the result order-independent
 internal/manifest/merge.go:24 copy loop into a keyed map (json-sorted on save)
