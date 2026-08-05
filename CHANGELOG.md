@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.7] — 2026-08-05
+
 ### Added
 
 - **Input hardening + resource limits (SPEC-08).** A single `limits:` block
