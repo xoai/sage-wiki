@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.2.8] — 2026-08-05
+
+### Fixed
+
+- **CI stability (Windows + macOS).** Build+vet on all platforms; batch
+  determinism test flake (FTS rowid query for WAL stability); Windows
+  file-handle leak in hydrate test; LLM retry-loop race destroying read
+  errors; SSE drain handler synchronization in httptest; engine.lock
+  exclusion on Windows tar exports; MinIO service container replaced
+  with explicit `server /data` command; crash-test skipped on platforms
+  without flock.
+
+### Added
+
 ## [0.2.7] — 2026-08-05
 
 ### Added
