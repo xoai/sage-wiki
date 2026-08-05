@@ -1458,6 +1458,12 @@ func resumeBatch(
 	if err != nil {
 		return nil, fmt.Errorf("compile: retrieve batch: %w", err)
 	}
+	// SPEC-04 determinism: providers return batch results in arbitrary
+	// order. The apply loop below feeds memStore/vecStore writes, summary
+	// application, and concept extraction order — all of which must be
+	// stable for byte-identical artifacts. Sort by the wire-level custom_id
+	// (a stable per-document key) before any iteration.
+	sort.Slice(batchResults, func(i, j int) bool { return batchResults[i].CustomID < batchResults[j].CustomID })
 
 	// Completeness check (#124): a truncated retrieve yields a SILENTLY
 	// incomplete result set, and the tail sources would vanish from this

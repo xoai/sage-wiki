@@ -233,6 +233,22 @@ func (m *Manager) cached(name string) *Workspace {
 	return nil
 }
 
+// Touch refreshes the recency of an open workspace WITHOUT returning the
+// handle. The serve hot path serves many requests off one open (it does
+// not re-call Workspace per request), so without a per-request recency
+// touch an idle-close window evicts a workspace that is actively serving
+// (SPEC-06 review fix). No-op for a closed manager or an unknown name.
+func (m *Manager) Touch(name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return
+	}
+	if h, ok := m.handles[name]; ok {
+		h.lastUse = time.Now()
+	}
+}
+
 // registryDir verifies name is a valid workspace under root and returns
 // its directory: a subdirectory (symlinks resolved) containing config.yaml
 // and a loadable .manifest.json, contained under root.

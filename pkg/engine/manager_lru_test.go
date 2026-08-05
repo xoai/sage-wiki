@@ -178,6 +178,35 @@ func TestManager_IdleClose(t *testing.T) {
 	}
 }
 
+// TestManager_TouchKeepsIdleWorkspaceOpen (SPEC-06 review fix): the serve
+// hot path opens a workspace once and serves many requests without
+// re-calling Workspace — so recency must be refreshable independently.
+// Touch refreshes lastUse; a workspace touched past its idle window stays
+// open (without Touch, idle-close evicts a workspace under active traffic).
+func TestManager_TouchKeepsIdleWorkspaceOpen(t *testing.T) {
+	root := t.TempDir()
+	initWorkspaceIn(t, root, "one")
+
+	m, err := OpenManager(context.Background(), root, WithIdleClose(60*time.Millisecond))
+	if err != nil {
+		t.Fatalf("OpenManager: %v", err)
+	}
+	defer func() { _ = m.Close() }()
+
+	if _, err := m.Workspace(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	// Touch repeatedly past the idle window — the workspace must survive.
+	deadline := time.Now().Add(600 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		m.Touch("one")
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := m.openCount(); got != 1 {
+		t.Errorf("openCount after touched idle window = %d, want 1 (Touch must refresh recency)", got)
+	}
+}
+
 func TestManager_MaxOpenZeroUnlimited(t *testing.T) {
 	root := t.TempDir()
 	names := []string{"u1", "u2", "u3", "u4"}

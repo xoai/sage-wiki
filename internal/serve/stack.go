@@ -118,6 +118,11 @@ func newStackRegistry(rootCtx context.Context, maxCompiles int) *stackRegistry {
 func (r *stackRegistry) acquire(ctx context.Context, name string) (*workspaceStack, error) {
 	r.mu.Lock()
 	if st, ok := r.stacks[name]; ok && st.acquireRef() {
+		// SPEC-06 review fix: refresh recency on the serve hot path. acquire
+		// serves many requests off one open without re-calling Workspace, so
+		// without a per-request Touch an idle-close window evicts a workspace
+		// that is actively serving.
+		r.mgr.Touch(name)
 		r.mu.Unlock()
 		return st, nil
 	}

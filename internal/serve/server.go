@@ -22,6 +22,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/limits"
 	mcppkg "github.com/xoai/sage-wiki/internal/mcp"
 	"github.com/xoai/sage-wiki/internal/metrics"
+	"github.com/xoai/sage-wiki/internal/pathsafe"
 	"github.com/xoai/sage-wiki/pkg/engine"
 	"github.com/xoai/sage-wiki/pkg/events"
 	"net"
@@ -276,6 +277,23 @@ func (s *Server) unregisterSSE(id int64) {
 	delete(s.sseCancels, id)
 }
 
+// trackForShutdown wraps a handler whose requests may be long-lived (the
+// MCP streamable-HTTP SSE GET blocks on r.Context().Done()) so the shutdown
+// sweep (cancelSSEStreams) can cancel them — mirroring /events/stream.
+// Without this, http.Server.Shutdown waits the full drain budget for a
+// connected /mcp client and then starves the job-queue drain (SPEC-02).
+func (s *Server) trackForShutdown(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithCancel(r.Context())
+		id := s.registerSSE(cancel)
+		defer func() {
+			s.unregisterSSE(id)
+			cancel()
+		}()
+		h.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 // serveEventsStream is the bus-facing core of the SSE surface, shared by
 // the single-workspace route and the multi-workspace registry path (which
 // serves it WITHOUT a stack ref — the bus is registry-owned and outlives
@@ -510,9 +528,18 @@ func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_found", path+" is not an article id (only article DocIDs are served)")
 		return
 	}
+	// Containment BEFORE the lookup: an encoded `..` bypasses ServeMux's
+	// cleanPath and reaches the handler, so os.Stat on a workspace-escaped
+	// path would be a host-filesystem existence oracle (N-03/SPEC-02 review).
+	// Treat any escape as not-found — never Stat it.
+	fullPath := filepath.Join(s.cfg.Workspace, path)
+	if contained, err := pathsafe.Contained(s.cfg.Workspace, fullPath); err != nil || !contained {
+		writeErr(w, http.StatusNotFound, "not_found", "article not found")
+		return
+	}
 	// Classify not-found BEFORE the tool call (N-03): redacted errors are
 	// path-free by design, so existence is decided here, not from text.
-	if _, err := os.Stat(filepath.Join(s.cfg.Workspace, path)); os.IsNotExist(err) {
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
 		writeErr(w, http.StatusNotFound, "not_found", "article not found")
 		return
 	}

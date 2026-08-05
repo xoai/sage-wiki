@@ -363,7 +363,7 @@ func helpText(name string) string {
 // allowedLabelKV is the D3 cardinality inventory — the ONLY permitted
 // label keys and their permitted values.
 var allowedLabelKV = map[string]map[string]bool{
-	"pass": {"summarize": true, "extract": true, "write": true, "triples": true, "resolve": true},
+	"pass": {"summarize": true, "extract": true, "write": true, "triples": true, "resolve": true, "communities": true},
 	// "total" is the request-scoped end-to-end stage the search facade
 	// emits (search.Run); the three others are per-leg.
 	"stage":     {"bm25": true, "vector": true, "rrf": true, "total": true},

@@ -402,3 +402,26 @@ func TestQueueDepthGaugeEvictionReassembly(t *testing.T) {
 	_ = q2.Stop(stopCtx2)
 	stopCancel2()
 }
+
+// TestValidServeTier (SPEC-07 D3 cardinality): a client-requested compile
+// tier must be in the bounded set {0..3} so the compiles_total tier label
+// cannot explode. nil (use-config-default) is always valid.
+func TestValidServeTier(t *testing.T) {
+	intp := func(n int) *int { return &n }
+	for _, c := range []struct {
+		name string
+		tier *int
+		want bool
+	}{
+		{"nil (config default)", nil, true},
+		{"tier 0", intp(0), true},
+		{"tier 3", intp(3), true},
+		{"tier -1 (rejected: nil means default)", intp(-1), false},
+		{"tier 4", intp(4), false},
+		{"tier 99", intp(99), false},
+	} {
+		if got := validServeTier(c.tier); got != c.want {
+			t.Errorf("%s: validServeTier=%v, want %v", c.name, got, c.want)
+		}
+	}
+}

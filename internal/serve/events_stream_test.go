@@ -210,3 +210,46 @@ func TestShutdownEndsSSEStreams(t *testing.T) {
 		t.Errorf("SinkCount = %d after shutdown, want 0", got)
 	}
 }
+
+// TestTrackForShutdown_CancelsLongLivedHandler (SPEC-02 drain fix): the
+// MCP streamable-HTTP GET is a long-lived SSE session that blocks on
+// r.Context().Done(). It must be cancellable by the shutdown sweep
+// (cancelSSEStreams), otherwise http.Server.Shutdown waits the full drain
+// budget for a connected client and then interrupts in-flight compiles.
+// trackForShutdown registers each request's cancel into the same set the
+// sweep drains — mirroring /events/stream.
+func TestTrackForShutdown_CancelsLongLivedHandler(t *testing.T) {
+	srv := testServer(t, nil) // a Server with sseCancels initialized
+
+	blocked := make(chan struct{})
+	h := srv.trackForShutdown(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done() // simulate the MCP SSE GET blocking until cancelled
+		close(blocked)
+	}))
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		resp, err := http.Get(ts.URL)
+		if err == nil {
+			resp.Body.Close()
+		}
+		done <- err
+	}()
+	// Confirm the handler is actually blocked (long-lived), not already done.
+	select {
+	case <-blocked:
+		t.Fatal("handler returned before the shutdown sweep — not long-lived")
+	case <-time.After(80 * time.Millisecond):
+	}
+
+	// The shutdown sweep must end the in-flight handler.
+	srv.cancelSSEStreams()
+	select {
+	case <-done:
+		// GET returned: the handler's context was cancelled. PASS.
+	case <-time.After(2 * time.Second):
+		t.Fatal("long-lived handler not cancelled by cancelSSEStreams — the serve drain would stall on a connected /mcp client")
+	}
+}
