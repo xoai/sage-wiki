@@ -130,7 +130,7 @@ func TestCaptureTypeTraversalSanitized(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
-	rel := string(id)
+	rel := filepath.ToSlash(string(id))
 	if strings.Contains(rel, "..") || !strings.HasPrefix(rel, "raw/captures/") {
 		t.Fatalf("capture escaped raw/captures: %q", rel)
 	}

@@ -304,7 +304,11 @@ jobs:
     runs-on: ubuntu-latest
     services:
       minio:
-        image: minio/minio:latest
+        # Pinned: minio/minio:latest changed its default CMD (no longer
+        # auto-starts `server /data`), and GitHub Actions service containers
+        # run the image default CMD with no override. Pin to a release that
+        # defaults to running the server.
+        image: minio/minio:RELEASE.2025-10-15T17-29-55Z
         env:
           MINIO_ROOT_USER: minioadmin
           MINIO_ROOT_PASSWORD: minioadmin
