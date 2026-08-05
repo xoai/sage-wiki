@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -85,6 +86,9 @@ func writeWSHelper(dir, rel, content string) {
 }
 
 func TestCrashKillLoop(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skipf("ship-mutex uses lockfile fallback on %s (24h stale timeout); crash-recovery requires flock", runtime.GOOS)
+	}
 	loops := crashLoops()
 	testBin := os.Args[0]
 	for i := 0; i < loops; i++ {
