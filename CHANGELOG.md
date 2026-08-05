@@ -36,8 +36,32 @@
   5. A doc whose cumulative LLM-unit time exceeds `compile_doc_timeout`
      (default 15m) now expires with a typed timeout instead of running
      unbounded (new default-on behavior; configurable via `limits:`).
-  6. Captures whose type/title slug sanitizes to empty now fail with a typed
-     error instead of silently falling back to a generated name.
+   6. Captures whose type/title slug sanitizes to empty now fail with a typed
+      error instead of silently falling back to a generated name.
+
+### Added
+
+- **Events bus, webhooks, and structured metrics (SPEC-07).** The engine now
+  emits a typed event stream for everything meaningful it does — captures,
+  compile lifecycle and per-doc outcomes, graph edge changes, entity
+  resolution, searches, mirror passes, and LLM usage. Delivery is non-blocking
+  via a bounded in-process bus (drop-oldest under backpressure, drops counted
+  in `events_dropped_total`); events never carry document content, raw query
+  text (hashed by default), or filesystem paths. The new `events:` block
+  (`enable`, `dir`, `buffer_size`, `stdout`, `raw_queries`) writes a rotating
+  JSONL audit trail under `events/` (10 MiB/file, 5 generations). Serve mode
+  adds an HMAC-SHA256-signed webhook fan-out (`serve.webhooks`, secret via env
+  or file, at-least-once with retries + a dead-letter file) and an SSE stream
+  at `GET /events/stream`. The Prometheus surface at `GET /metrics` gains the
+  operational series: `compiles_total`, `compile_duration_seconds`,
+  `compile_pass_duration_seconds`, `llm_tokens_total`, `llm_retries_total`,
+  `llm_rate_limited_total`, `search_duration_seconds`,
+  `search_channel_duration_seconds`, `query_duration_seconds`,
+  `embed_calls_total`, `vector_cache_hits_total`/`_misses_total`,
+  `workspaces_open`, `job_queue_depth`, `events_dropped_total`, and
+  `mirror_ship_lag_seconds`. The `pkg/events` package is the supported sink
+  seam (`engine.WithEventSink`). Docs: [events](docs/guides/configuration.md#events),
+  [webhooks](docs/webhooks.md), [metrics](docs/guides/metrics.md).
 
 ### Added
 

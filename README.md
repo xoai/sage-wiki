@@ -89,6 +89,8 @@ and mechanics: [graph memory](docs/guides/graph-memory.md).
 | [Customizing Prompts](docs/guides/customizing-prompts.md) | Prompt scaffolding, per-type overrides, custom frontmatter fields |
 | [Local Models](docs/guides/local-models.md) | Ollama setup, GPU/CPU routing, per-pass model config |
 | [Metrics](docs/guides/metrics.md) | Log snapshots, /metrics endpoint, cardinality controls |
+| [Webhooks](docs/webhooks.md) | HMAC-signed event delivery, signature recipe, retry/dead-letter |
+| [Security](docs/security.md) | Threat model, the limits table, prompt boundary, residual risks |
 | [Contribution Packs](CONTRIBUTING.md) | Creating packs, parser authoring, registry submission |
 
 ## Install
@@ -421,6 +423,12 @@ layout can change in any release. Pin a version.
   pgvector for server deployments. Switching and pool sizing: [Storage Backends](docs/guides/storage-backends.md).
 - **Observability** — structured log snapshots and an opt-in `/metrics`
   endpoint: [Metrics](docs/guides/metrics.md).
+- **Events & webhooks** — the engine emits a typed event stream (captures,
+  compile lifecycle, per-doc outcomes, graph edges, searches, LLM usage) to a
+  rotating JSONL audit trail (`events:` block); serve mode adds
+  HMAC-SHA256-signed webhooks and an SSE stream at `/events/stream`. Events
+  never carry document content or raw query text. See
+  [Webhooks](docs/webhooks.md) and [Configuration § events](docs/guides/configuration.md#events).
 - **Structured outputs** — LLM extraction passes use each provider's
   native mechanism (Anthropic tool-use, OpenAI `response_format`, Gemini
   `responseSchema`) with a validating fence-strip fallback.

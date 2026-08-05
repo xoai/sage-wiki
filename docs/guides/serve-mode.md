@@ -48,6 +48,13 @@ expect proxies to log query strings.
 `GET /metrics`, `GET /events/stream` (SSE), and `/mcp` (all 19 tools over
 streamable HTTP). `/v1/*` stays as-is.
 
+> **Two MCP-over-network paths.** This stack exposes MCP at **`/mcp`**
+> (streamable HTTP, SPEC-02). The **web UI** stack (`serve --ui`) exposes
+> MCP at **`/sse`** (SSE transport) instead — see
+> [Self-hosted server](self-hosted-server.md). Both serve the same 19
+> tools; pick the stack that fits your client. `/v1/` is hosted by both
+> (see [HTTP API](http-api.md)).
+
 ## Event surfaces (SPEC-07)
 
 The workspace runs an event bus (see [events config](configuration.md#events)):

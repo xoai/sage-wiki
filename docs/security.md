@@ -91,6 +91,19 @@ a hostile document cannot close the frame early and inject outside it.
   sufficiently adversarial document may still influence model output within
   the frame. The span-verification gate is the backstop for the graph.
 
+## Fuzzing
+
+The parsing and hardening surfaces are covered by native Go fuzz targets
+that assert security invariants only (no panic, no unbounded growth,
+deterministic output): `FuzzFrontmatter` (one per owning package —
+extract, web, ontology, wiki, compiler), `FuzzWikilink`,
+`FuzzAliasNormalize`, and `FuzzCanonical`, alongside the extractor
+`FuzzExtract{Docx,Xlsx,Pptx,Epub,Email,PdfGo}` targets. A PR-gated
+short pass runs every target for 30s and a nightly job runs longer; any
+crasher is committed to the corpus. See
+[CONTRIBUTING § Fuzzing](../CONTRIBUTING.md#fuzzing) for running them
+locally.
+
 ## Residual risks
 
 Stated plainly, these are out of scope by design:
