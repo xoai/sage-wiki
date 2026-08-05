@@ -2,10 +2,12 @@
 // for filesystem-serving and filesystem-writing handlers. It is the single place
 // the project answers "does this untrusted path stay inside the directory I mean
 // to expose?" — replacing ad-hoc strings.HasPrefix checks that miss sibling
-// prefixes (/a/wiki vs /a/wiki-secret) and symlink escapes.
+// prefixes (/a/wiki vs /a/wiki-secret) and symlink escapes. Since SPEC-08 it
+// also answers the input-shape half of ingestion safety (ValidateRel,
+// ValidConceptID).
 //
-// It depends only on the standard library so it can be imported anywhere without
-// an import cycle.
+// It depends only on the standard library (plus golang.org/x/text for NFKC
+// lookalike detection) so it can be imported anywhere without an import cycle.
 package pathsafe
 
 import (
@@ -13,7 +15,12 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"regexp"
 	"strings"
+
+	"golang.org/x/text/unicode/norm"
+
+	"github.com/xoai/sage-wiki/internal/limits"
 )
 
 // SafeJoin joins untrustedRel under base and returns the cleaned absolute path,
@@ -105,4 +112,74 @@ func resolveExisting(path string) (string, error) {
 		tail = append(tail, filepath.Base(p))
 		p = parent
 	}
+}
+
+// MaxNameLen is the per-segment name ceiling (SPEC-08 AC1 "overlong names").
+const MaxNameLen = 255
+
+// encodedTraversalRe matches URL-encoded dot/slash/backslash sequences —
+// ingestion APIs receive raw strings, so a literal %2e%2e%2f is a hostile
+// encoding attempt, not a decoded separator (SPEC-08 AC1).
+var encodedTraversalRe = regexp.MustCompile(`(?i)%(2e|2f|5c)`)
+
+// conceptIDRe is the shared concept-identifier shape (SPEC-08 D3): the
+// REST edge rule (internal/api conceptIDShape) promoted to the single
+// ingestion-guard home.
+var conceptIDRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+
+// ValidConceptID reports whether s matches the concept-identifier charset.
+func ValidConceptID(s string) bool {
+	return conceptIDRe.MatchString(s)
+}
+
+// ValidateRel rejects untrusted workspace-relative path inputs that could
+// traverse, confuse, or overflow path construction (SPEC-08 AC1). Traversal
+// vectors unwrap to limits.ErrTraversalTooWide; malformed inputs (NUL,
+// overlong names, empty) unwrap to limits.ErrInvalidName. It is the shared
+// predicate for every API that accepts a workspace-relative path; callers
+// still run Contained/SafeJoin as the containment backstop.
+func ValidateRel(rel string) error {
+	if rel == "" {
+		return fmt.Errorf("pathsafe: empty path: %w", limits.ErrInvalidName)
+	}
+	if strings.IndexByte(rel, 0) >= 0 {
+		return fmt.Errorf("pathsafe: NUL byte in path: %w", limits.ErrInvalidName)
+	}
+	if strings.ContainsRune(rel, '\\') {
+		return fmt.Errorf("pathsafe: backslash in path %q: %w", rel, limits.ErrTraversalTooWide)
+	}
+	if filepath.IsAbs(rel) || strings.HasPrefix(rel, "/") {
+		return fmt.Errorf("pathsafe: absolute path %q: %w", rel, limits.ErrTraversalTooWide)
+	}
+	if encodedTraversalRe.MatchString(rel) {
+		return fmt.Errorf("pathsafe: encoded separator in path %q: %w", rel, limits.ErrTraversalTooWide)
+	}
+	for _, seg := range strings.Split(rel, "/") {
+		if seg == ".." {
+			return fmt.Errorf("pathsafe: parent traversal in path %q: %w", rel, limits.ErrTraversalTooWide)
+		}
+		if len(seg) > MaxNameLen {
+			return fmt.Errorf("pathsafe: name longer than %d bytes in path: %w", MaxNameLen, limits.ErrInvalidName)
+		}
+	}
+	if lookalikeRune(rel) {
+		return fmt.Errorf("pathsafe: unicode lookalike separator in path %q: %w", rel, limits.ErrTraversalTooWide)
+	}
+	return nil
+}
+
+// lookalikeRune reports whether rel contains a non-ASCII rune whose NFKC
+// normalization yields a path-significant ASCII character ('.', '/', '\\',
+// '%') — e.g. two-dot leader U+2025 or fullwidth solidus U+FF0F.
+func lookalikeRune(rel string) bool {
+	for _, r := range rel {
+		if r < 0x80 {
+			continue
+		}
+		n := norm.NFKC.String(string(r))
+		if strings.ContainsAny(n, "./\\%") {
+			return true
+		}
+	}
+	return false
 }

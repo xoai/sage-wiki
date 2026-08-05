@@ -118,6 +118,13 @@ func newStackRegistry(rootCtx context.Context, maxCompiles int) *stackRegistry {
 func (r *stackRegistry) acquire(ctx context.Context, name string) (*workspaceStack, error) {
 	r.mu.Lock()
 	if st, ok := r.stacks[name]; ok && st.acquireRef() {
+		// SPEC-06 review fix: refresh recency on the serve hot path. acquire
+		// serves many requests off one open without re-calling Workspace, so
+		// without a per-request Touch an idle-close window evicts a workspace
+		// that is actively serving.
+		if r.mgr != nil {
+			r.mgr.Touch(name)
+		}
 		r.mu.Unlock()
 		return st, nil
 	}
@@ -257,6 +264,25 @@ func (r *stackRegistry) evict(name string, ws *engine.Workspace) error {
 		return ws.Close()
 	}
 	return st.close()
+}
+
+// cancelStackSSEStreams ends every active per-stack SSE/MCP session across
+// all live stacks (SPEC-02 drain fix for multi-workspace): a connected
+// /w/{name}/mcp client holds a stack ref, so closeAll→st.close() blocks on
+// the refcount wait unless the session is cancelled BEFORE the HTTP drain.
+// Safe to call concurrently with request traffic (snapshot under the lock).
+func (r *stackRegistry) cancelStackSSEStreams() {
+	r.mu.Lock()
+	stacks := make([]*workspaceStack, 0, len(r.stacks))
+	for _, st := range r.stacks {
+		stacks = append(stacks, st)
+	}
+	r.mu.Unlock()
+	for _, st := range stacks {
+		if st.srv != nil {
+			st.srv.cancelSSEStreams()
+		}
+	}
 }
 
 // closeAll tears down every stack (root shutdown path).

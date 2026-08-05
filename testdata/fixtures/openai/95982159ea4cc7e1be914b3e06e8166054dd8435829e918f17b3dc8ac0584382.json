@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "## Key claims\n\nRaw Code Examplego is the central subject of this source document, which lays out its definition, mechanics, and practical implications in detail.\n\n## Concepts\n\nraw-code-examplego: The central concept developed by this document.",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.707,
+            0.088,
+            0.945,
+            0.326,
+            0.183,
+            0.564,
+            0.421,
+            0.802
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

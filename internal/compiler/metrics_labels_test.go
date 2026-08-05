@@ -40,3 +40,16 @@ func TestResolvePassDurationSeriesWithinInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Same contract for community detection (P3-5): communities.go sets pass
+// "communities" on the tracked client; without "communities" in the closed
+// pass inventory the series ships out-of-inventory on /metrics. Pin it so
+// removing the inventory entry fails CI (SPEC-07 cardinality).
+func TestCommunitiesPassDurationSeriesWithinInventory(t *testing.T) {
+	metrics.ResetForTest()
+	metrics.ObserveDuration(metrics.HistogramNamed(
+		"compile_pass_duration_seconds", metrics.CompileBuckets(), "pass", "communities"), time.Now())
+	if err := metrics.ValidateLabels(); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -140,6 +140,87 @@ jobs:
         shell: bash
         run: CGO_ENABLED=0 go test -timeout 15m ${{ steps.pkgs.outputs.packages }}
 
+  # SPEC-08 AC5: short PR-gated fuzz pass over the hardening targets. Each
+  # target gets its own invocation (Go's -fuzz errors when one invocation
+  # matches multiple targets) and its own continue-on-error step, so one
+  # crasher never masks the others — the aggregation step reads OUTCOME and
+  # turns the job red on any failure. FuzzFrontmatter runs once per owning
+  # package (the five pure-string frontmatter sites live in five packages;
+  # Go visibility forbids one cross-package target).
+  fuzz-short:
+    name: Fuzz (short, SPEC-08)
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - id: fm-extract
+        name: FuzzFrontmatter (extract)
+        run: go test -run=NONE -fuzz=FuzzFrontmatter -fuzztime=30s ./internal/extract/
+        continue-on-error: true
+      - id: fm-web
+        name: FuzzFrontmatter (web)
+        run: go test -run=NONE -fuzz=FuzzFrontmatter -fuzztime=30s ./internal/web/
+        continue-on-error: true
+      - id: fm-ontology
+        name: FuzzFrontmatter (ontology)
+        run: go test -run=NONE -fuzz=FuzzFrontmatter -fuzztime=30s ./internal/ontology/
+        continue-on-error: true
+      - id: fm-wiki
+        name: FuzzFrontmatter (wiki)
+        run: go test -run=NONE -fuzz=FuzzFrontmatter -fuzztime=30s ./internal/wiki/
+        continue-on-error: true
+      - id: fm-compiler
+        name: FuzzFrontmatter (compiler)
+        run: go test -run=NONE -fuzz=FuzzFrontmatter -fuzztime=30s ./internal/compiler/
+        continue-on-error: true
+      - id: wikilink
+        name: FuzzWikilink
+        run: go test -run=NONE -fuzz=FuzzWikilink -fuzztime=30s ./internal/compiler/
+        continue-on-error: true
+      - id: alias
+        name: FuzzAliasNormalize
+        run: go test -run=NONE -fuzz=FuzzAliasNormalize -fuzztime=30s ./internal/compiler/
+        continue-on-error: true
+      - id: canonical
+        name: FuzzCanonical
+        run: go test -run=NONE -fuzz=FuzzCanonical -fuzztime=30s ./internal/compiler/
+        continue-on-error: true
+
+      - name: Upload crashers (when any target failed)
+        if: always() && (steps.fm-extract.outcome == 'failure' || steps.fm-web.outcome == 'failure' || steps.fm-ontology.outcome == 'failure' || steps.fm-wiki.outcome == 'failure' || steps.fm-compiler.outcome == 'failure' || steps.wikilink.outcome == 'failure' || steps.alias.outcome == 'failure' || steps.canonical.outcome == 'failure')
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-short-crashers
+          path: |
+            internal/extract/testdata/fuzz/
+            internal/web/testdata/fuzz/
+            internal/ontology/testdata/fuzz/
+            internal/wiki/testdata/fuzz/
+            internal/compiler/testdata/fuzz/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Fail if any target crashed
+        if: always()
+        run: |
+          if [ "${{ steps.fm-extract.outcome }}" = "failure" ] || \
+             [ "${{ steps.fm-web.outcome }}" = "failure" ] || \
+             [ "${{ steps.fm-ontology.outcome }}" = "failure" ] || \
+             [ "${{ steps.fm-wiki.outcome }}" = "failure" ] || \
+             [ "${{ steps.fm-compiler.outcome }}" = "failure" ] || \
+             [ "${{ steps.wikilink.outcome }}" = "failure" ] || \
+             [ "${{ steps.alias.outcome }}" = "failure" ] || \
+             [ "${{ steps.canonical.outcome }}" = "failure" ]; then
+            echo "fuzz findings — see the fuzz-short-crashers artifact"
+            exit 1
+          fi
+
   skill-drift:
     name: Agent skill drift
     runs-on: ubuntu-latest

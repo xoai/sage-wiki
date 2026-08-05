@@ -15,7 +15,8 @@
         }
       ],
       "model": "gpt-4o-mini",
-      "stream": false
+      "stream": false,
+      "temperature": 0
     }
   },
   "response": {
@@ -25,15 +26,15 @@
         {
           "finish_reason": "stop",
           "message": {
-            "content": "## Key claims\n\nYou is the central subject of this source document, which lays out its definition, mechanics, and practical implications in detail.\n\n## Concepts\n\nyou: The central concept developed by this document."
+            "content": "## Key claims\n\nRaw Adversarial System Prompt Bait is the central subject of this source document, which lays out its definition, mechanics, and practical implications in detail.\n\n## Concepts\n\nraw-adversarial-system-prompt-bait: The central concept developed by this document."
           }
         }
       ],
       "model": "gpt-4o-mini",
       "usage": {
-        "completion_tokens": 53,
+        "completion_tokens": 68,
         "prompt_tokens": 364,
-        "total_tokens": 417
+        "total_tokens": 432
       }
     }
   }

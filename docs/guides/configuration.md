@@ -227,6 +227,27 @@ serve:
 #     use_embeddings: false        # widen candidates to names sharing no tokens
 #     embed_threshold: 0.82
 #     max_embed_candidates: 500    # global per-run cap on embedding calls
+
+# Resource limits (SPEC-08) — zero values resolve to safe defaults, never
+# "disabled". Every violation returns a typed error + limit_exceeded event.
+# See the "limits" section below for the full table.
+# limits:
+#   max_doc_bytes: 10485760            # 10 MiB
+#   max_compile_batch: 1000
+#   max_query_bytes: 32768             # 32 KiB
+#   provider_timeout: 120s
+#   compile_doc_timeout: 15m
+
+# Event stream (SPEC-07) — typed events to a JSONL audit trail; serve mode
+# adds webhooks + SSE. See the "events" and "serve.webhooks" sections.
+# events:
+#   enable: true
+#   dir: events
+
+# Remote mirror (SPEC-03) — S3-compatible backup, WAL shipping, hydrate.
+# See docs/guides/remote-mirror.md for the full block.
+# mirror:
+#   enabled: false
 ```
 
 ## Multi-Provider Setup
@@ -347,6 +368,76 @@ config. Failed deliveries retry with exponential backoff (1s/2s/4s) on
 5xx, timeouts, and connection errors; 4xx is permanent. Anything still
 failing lands in `.sage/webhooks-deadletter.jsonl` (one JSON record per
 event, with attempts and last error). Delivery is at-least-once.
+
+## limits
+
+**Resource limits (SPEC-08).** A single block capping every ingestion,
+compile, query, and serve surface. Zero (unset) values resolve to the
+defaults below — a zero never means "disabled". Every violation fails fast
+with a typed `LimitError` and emits a `limit_exceeded` event. Threat model
+and residual risks: [Security](../security.md).
+
+| Key | Default | Enforced at |
+|-----|---------|-------------|
+| `max_doc_bytes` | `10485760` (10 MiB) | one ingested/captured document (stat-before-read; streaming for capture reader) |
+| `max_docs_per_capture_batch` | `10` | one MCP `wiki_capture` batch |
+| `max_compile_batch` | `1000` | docs entering one compile run (fail-fast before any processing) |
+| `max_query_bytes` | `32768` (32 KiB) | search/query/QA question length (web, MCP, serve) |
+| `max_graph_traversal_nodes` | `10000` | one Graph-Neighbors BFS (both ontology backends) |
+| `max_concurrent_provider_calls` | `20` | concurrent LLM/embed calls in a compile |
+| `max_concurrent_requests_per_conn` | `8` | serve per-connection in-flight request guard |
+| `provider_timeout` | `120s` | per LLM/embed provider call (shorter caller deadline wins) |
+| `compile_doc_timeout` | `15m` | per-document budget over its LLM units (Pass 1 + 2b) |
+
+```yaml
+limits:
+  max_doc_bytes: 10485760
+  max_docs_per_capture_batch: 10
+  max_compile_batch: 1000
+  max_query_bytes: 32768
+  max_graph_traversal_nodes: 10000
+  max_concurrent_provider_calls: 20
+  max_concurrent_requests_per_conn: 8
+  provider_timeout: 120s
+  compile_doc_timeout: 15m
+```
+
+Serve mode adds fixed HTTP hardening (not part of this block): request
+timeouts, a 1 MiB header cap, the per-connection guard, and a 1 MiB `/mcp`
+body cap. The `pkg/engine` option `WithLimits` overrides per-caller for
+Capture/Search/Graph-Neighbors (compile-path limits read from this block).
+
+## mirror
+
+**Remote mirror (SPEC-03).** S3-compatible backup with WAL shipping and
+point-in-time hydrate. The full key set and recipes (SigV4/STS, retain
+policy, per-attempt timeouts, generation maps) live in
+[Remote mirror](remote-mirror.md); this is the shape of the block.
+
+```yaml
+mirror:
+  enabled: false              # `mirror enable` sets this
+  endpoint: ""                # e.g. https://<acct>.r2.cloudflarestore.com or http://localhost:9000
+  addressing: "auto"          # auto = virtual-host for amazonaws.com, path-style otherwise
+  bucket: ""
+  prefix: ""                  # default: workspace directory name
+  region: "auto"              # SigV4 region; "auto" works for R2/MinIO
+  access_key_env: "AWS_ACCESS_KEY_ID"    # NAME of env var, never the value
+  secret_key_env: "AWS_SECRET_ACCESS_KEY"
+  ship_interval: "1s"         # WAL seal cadence while active
+  snapshot_interval: "1h"     # scheduled generation cadence
+  retain_generations: 2       # PITR depth in rotation count, not time
+  encryption:
+    enabled: false            # AES-256-GCM client-side encryption
+    key_file: ""              # 32-byte key file — MUST live outside the workspace
+```
+
+Credentials come from the environment (names configurable) or a
+`credentials_file` outside the workspace — never inline in config.
+`config.yaml` itself is **not** mirrored (it can hold secrets like
+`api.api_key`); hydrate restores data only. See
+[Remote mirror](remote-mirror.md) for the full key set, SigV4/STS recipes,
+and the retain/rotation semantics.
 
 ## Price registry
 

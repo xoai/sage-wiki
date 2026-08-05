@@ -150,3 +150,64 @@ func TestCompile_ExplainMatchesSpecComposition(t *testing.T) {
 		t.Errorf("source component malformed: %q", ex.CurrentParts.Source)
 	}
 }
+
+// TestBatchResume_OrderIndependentByteParity (SPEC-04 AC-1 for the batch
+// path): providers return batch results in arbitrary order. Two compiles
+// whose retrieved results arrive in OPPOSITE orders must still produce
+// byte-identical artifacts. Without a deterministic sort before the apply
+// loop, memStore/vecStore insertion (and thus wiki.db) follows provider-
+// return order and the two trees drift.
+func TestBatchResume_OrderIndependentByteParity(t *testing.T) {
+	t.Setenv("SOURCE_DATE_EPOCH", "1700000000")
+
+	fake := newFakeBatchServer(t)
+	fake.status.Store("completed")
+	defer fake.Close()
+
+	idA, idB := batchIDForPath("raw/a.md"), batchIDForPath("raw/b.md")
+	if idA == idB {
+		t.Fatal("test fixture: batch ids collide")
+	}
+
+	run := func(t *testing.T, resultOrder []string) string {
+		dir := writeBatchProject(t, fake.URL, "", "raw/a.md", "raw/b.md")
+		if err := saveBatchCheckpoint(dir, &BatchCheckpoint{
+			CompileID: "c1",
+			Batch: &BatchState{
+				BatchID:  "batch_test_1",
+				Provider: "openai",
+				Pass:     "summarize",
+				PathByID: map[string]string{idA: "raw/a.md", idB: "raw/b.md"},
+			},
+			Pending: []string{"raw/a.md", "raw/b.md"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		fake.setResults(resultOrder)
+		if _, err := Compile(dir, CompileOpts{}); err != nil {
+			t.Fatalf("batch compile: %v", err)
+		}
+		return dir
+	}
+
+	forward := []string{idA, idB}
+	reversed := []string{idB, idA}
+
+	dirA := run(t, forward)
+	dirB := run(t, reversed)
+
+	drift := spikeDiffTrees(t, dirA, dirB)
+	var real []string
+	for _, d := range drift {
+		rel := strings.Fields(d)[0]
+		if !isVolatileState(rel) {
+			real = append(real, d)
+		}
+	}
+	for _, d := range drift {
+		t.Logf("drift: %s%s", d, map[bool]string{true: " (volatile, excluded)", false: ""}[isVolatileState(strings.Fields(d)[0])])
+	}
+	if len(real) > 0 {
+		t.Errorf("SPEC-04 batch path: %d non-volatile paths differ between forward and reversed batch-result orders (provider-return order leaked into artifacts): %v", len(real), real)
+	}
+}

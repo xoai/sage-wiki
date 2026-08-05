@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "## Key claims\n\nRaw Multihop A Links B is the central subject of this source document, which lays out its definition, mechanics, and practical implications in detail. The Alpha protocol establishes sessions via the Beta Handshake.\n\n## Concepts\n\nraw-multihop-a-links-b: The central concept developed by this document.",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.072,
+            0.691,
+            0.31,
+            0.929,
+            0.548,
+            0.167,
+            0.786,
+            0.405
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

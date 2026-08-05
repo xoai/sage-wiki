@@ -89,6 +89,8 @@ and mechanics: [graph memory](docs/guides/graph-memory.md).
 | [Customizing Prompts](docs/guides/customizing-prompts.md) | Prompt scaffolding, per-type overrides, custom frontmatter fields |
 | [Local Models](docs/guides/local-models.md) | Ollama setup, GPU/CPU routing, per-pass model config |
 | [Metrics](docs/guides/metrics.md) | Log snapshots, /metrics endpoint, cardinality controls |
+| [Webhooks](docs/webhooks.md) | HMAC-signed event delivery, signature recipe, retry/dead-letter |
+| [Security](docs/security.md) | Threat model, the limits table, prompt boundary, residual risks |
 | [Contribution Packs](CONTRIBUTING.md) | Creating packs, parser authoring, registry submission |
 
 ## Install
@@ -421,6 +423,12 @@ layout can change in any release. Pin a version.
   pgvector for server deployments. Switching and pool sizing: [Storage Backends](docs/guides/storage-backends.md).
 - **Observability** — structured log snapshots and an opt-in `/metrics`
   endpoint: [Metrics](docs/guides/metrics.md).
+- **Events & webhooks** — the engine emits a typed event stream (captures,
+  compile lifecycle, per-doc outcomes, graph edges, searches, LLM usage) to a
+  rotating JSONL audit trail (`events:` block); serve mode adds
+  HMAC-SHA256-signed webhooks and an SSE stream at `/events/stream`. Events
+  never carry document content or raw query text. See
+  [Webhooks](docs/webhooks.md) and [Configuration § events](docs/guides/configuration.md#events).
 - **Structured outputs** — LLM extraction passes use each provider's
   native mechanism (Anthropic tool-use, OpenAI `response_format`, Gemini
   `responseSchema`) with a validating fence-strip fallback.
@@ -487,6 +495,33 @@ sage-wiki cost report     # recorded spend by model and pass/tier
 ```
 
 Details: [Configuration](docs/guides/configuration.md).
+
+### Resource limits
+
+A single `limits:` block caps every ingestion, compile, query, and serve
+surface. Zero (unset) values resolve to the defaults below — a zero never
+means "disabled". Every violation fails fast with a typed error and emits a
+`limit_exceeded` event. Threat model and residual risks:
+[Security](docs/security.md).
+
+```yaml
+limits:
+  max_doc_bytes: 10485760                  # 10 MiB — max size of one ingested doc
+  max_docs_per_capture_batch: 10           # max docs per capture batch
+  max_compile_batch: 1000                  # max docs per compile run
+  max_query_bytes: 32768                   # 32 KiB — max question length
+  max_graph_traversal_nodes: 10000         # max nodes per graph traversal
+  max_concurrent_provider_calls: 20        # concurrent LLM/embed calls in a compile
+  max_concurrent_requests_per_conn: 8      # serve per-connection in-flight cap
+  provider_timeout: 120s                   # per-call LLM/embed deadline
+  compile_doc_timeout: 15m                 # per-doc compile budget
+```
+
+Serve mode is additionally hardened at the HTTP layer: request/header/idle
+timeouts, a 1 MiB request-header cap, a per-connection in-flight request
+guard (429 on breach), and a 1 MiB body cap on `/mcp`. An operator-owned
+rate-limit middleware slot (`serve.Config.RateLimit`, token-bucket example
+included) is the hook for deployment-level policy.
 
 ### Scaling to large vaults
 

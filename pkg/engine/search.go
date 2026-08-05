@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/xoai/sage-wiki/internal/auth"
 	"github.com/xoai/sage-wiki/internal/embed"
+	"github.com/xoai/sage-wiki/internal/limits"
 	"github.com/xoai/sage-wiki/internal/search"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/trust"
@@ -65,6 +67,15 @@ func (w *Workspace) Search(ctx context.Context, req SearchRequest) (*SearchResul
 	defer w.mu.RUnlock()
 	if err := w.checkOpen(); err != nil {
 		return nil, err
+	}
+
+	// SPEC-08 D1: overlong queries fail fast before any provider call
+	// (no cost incurred) — typed error + limit_exceeded event.
+	lim := w.ResolvedLimits()
+	if int64(len(req.Query)) > lim.MaxQueryBytes {
+		le := limits.New(limits.WhichQueryBytes, lim.MaxQueryBytes, int64(len(req.Query)))
+		w.emitLimitExceeded(le, "search")
+		return nil, fmt.Errorf("engine: search: %w", le)
 	}
 
 	cfg := w.app.Config
@@ -354,12 +365,24 @@ func (g *graphAPI) Neighbors(ctx context.Context, entityID string, depth int) ([
 	if depth > 5 {
 		depth = 5
 	}
+	// SPEC-08 AC12: cap the visited set; over-cap returns the partial
+	// result with the typed error, and the engine emits limit_exceeded.
+	lim := g.w.ResolvedLimits()
 	ents, err := g.w.app.Ont.Traverse(entityID, store.TraverseOpts{
 		Direction: store.Both,
 		MaxDepth:  depth,
 		AsOf:      g.asOf,
+		MaxNodes:  int(lim.MaxGraphTraversalNodes),
 	})
 	if err != nil {
+		if errors.Is(err, limits.ErrTraversalTooWide) {
+			g.w.emitLimitExceeded(err, "graph:neighbors")
+			out := make([]Entity, 0, len(ents))
+			for _, e := range ents {
+				out = append(out, mapEntity(e))
+			}
+			return out, fmt.Errorf("engine: graph neighbors: %w", err)
+		}
 		return nil, fmt.Errorf("engine: graph neighbors: %w", err)
 	}
 	out := make([]Entity, 0, len(ents))

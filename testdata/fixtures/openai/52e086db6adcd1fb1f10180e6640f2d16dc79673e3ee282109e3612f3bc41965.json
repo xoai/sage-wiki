@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "## Key claims\n\nRaw Alias Kubernetes K8s is the central subject of this source document, which lays out its definition, mechanics, and practical implications in detail. K8s uses etcd for cluster state.\n\n## Concepts\n\nraw-alias-kubernetes-k8s: The central concept developed by this document.",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.978,
+            0.597,
+            0.74,
+            0.359,
+            0.502,
+            0.121,
+            0.264,
+            0.883
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

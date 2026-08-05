@@ -13,32 +13,41 @@ drift check.
 
 ## Running
 
-The facade is mounted on the web server:
+The `/v1` facade is mounted on **both** serve stacks (same route table,
+`internal/api/router.go`):
+
+- **Serve mode** (`sage-wiki serve --addr 127.0.0.1:8484`, SPEC-02) —
+  REST + MCP at `/mcp` + `/events/stream`; **bearer-only** auth (no
+  Host/Origin checks). See [Serve mode](serve-mode.md).
+- **Web UI** (`sage-wiki serve --ui --port 3333`) — bearer auth **plus**
+  a Host allowlist (DNS-rebind guard) and an `Origin` header check
+  (CSRF guard) on state-changing routes.
 
 ```bash
-sage-wiki serve --ui --port 3333          # loopback, zero-config
-SAGE_WIKI_TOKEN=secret sage-wiki serve --ui --port 3333
+sage-wiki serve --addr 127.0.0.1:8484        # SPEC-02 REST + /mcp (bearer-only)
+sage-wiki serve --ui --port 3333             # web UI (bearer + Host + Origin)
+SAGE_WIKI_TOKEN=secret sage-wiki serve --addr 0.0.0.0:8484
 ```
 
-Loopback needs no token. Binding beyond loopback refuses to start without
-one (unchanged from the web UI's rule).
+Loopback needs no token on either stack. Binding beyond loopback refuses
+to start without one.
 
 ## Auth
 
-When a token is configured, every `/v1/*` route requires it — same
-middleware as `/api/*`:
+When a token is configured, every `/v1/*` route requires it:
 
 ```bash
-curl -H "Authorization: Bearer $SAGE_WIKI_TOKEN" http://127.0.0.1:3333/v1/status
+curl -H "Authorization: Bearer $SAGE_WIKI_TOKEN" http://127.0.0.1:8484/v1/status
 # or the query-param form:
-curl "http://127.0.0.1:3333/v1/status?token=$SAGE_WIKI_TOKEN"
+curl "http://127.0.0.1:8484/v1/status?token=$SAGE_WIKI_TOKEN"
 ```
 
-Failures: no/invalid token → `401 unauthenticated`; a Host outside the
-allowlist → `403 forbidden`. State-changing requests (POST/PUT/DELETE/
-PATCH on `/v1/*`) whose `Origin` header does not match the Host are also
-refused 403 — non-browser clients should simply not send an `Origin`
-header.
+Failures: no/invalid token → `401 unauthenticated`. **On the web UI stack
+only** (`serve --ui`): a Host outside the allowlist → `403 forbidden`, and
+state-changing requests (POST/PUT/DELETE/PATCH on `/v1/*`) whose `Origin`
+header does not match the Host are also refused 403 — non-browser clients
+should simply not send an `Origin` header. The SPEC-02 `serve --addr`
+stack enforces bearer only (it has no Host/Origin guards).
 
 ## Errors
 

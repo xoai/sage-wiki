@@ -144,7 +144,7 @@ func ReExtract(projectDir string, options ...ReExtractOption) (*CompileResult, e
 	// is true here: this path loads summary FILES from disk, so Summary holds
 	// the frontmatter and SourcePath is the summary's filename, not the source
 	// document.
-	touched, supersessions := ExtractTriplesPass(context.Background(), ontStore, summaries, concepts, cfg, client, true, projectDir, mf, trust.NewStore(db), ro.prompts)
+	touched, supersessions, _ := ExtractTriplesPass(context.Background(), ontStore, summaries, concepts, cfg, client, true, projectDir, mf, trust.NewStore(db), ro.prompts, nil, nil)
 
 	// Pass 3: Write articles
 	if len(concepts) > 0 {

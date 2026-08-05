@@ -303,6 +303,10 @@ func (m *MultiServer) Shutdown() error {
 	// SPEC-07 (verification pass 3): end registry-served event streams
 	// BEFORE the HTTP drain — a stream never goes idle on its own.
 	m.cancelSSEStreams()
+	// SPEC-02 drain (multi-workspace): per-stack /mcp sessions hold a stack
+	// ref; cancel them too so closeAll→st.close() doesn't block on the
+	// refcount wait past the HTTP drain.
+	m.reg.cancelStackSSEStreams()
 	var firstErr error
 	m.srvMu.Lock()
 	srv := m.httpSrv

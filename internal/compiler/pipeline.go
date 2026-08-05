@@ -22,6 +22,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/extract"
 	"github.com/xoai/sage-wiki/internal/fsutil"
 	gitpkg "github.com/xoai/sage-wiki/internal/git"
+	"github.com/xoai/sage-wiki/internal/limits"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
@@ -232,27 +233,30 @@ func renderPrompt(pr *prompts.Registry, name string, data any, language string) 
 }
 
 type compileRun struct {
-	cfg                *config.Config
-	opts               CompileOpts
-	result             *CompileResult
-	mf                 *manifest.Manifest
-	mfPath             string
-	base               *manifest.Manifest
-	diff               *DiffResult
-	client             *llm.Client
-	tracker            *llm.CostTracker
-	progress           *Progress
-	db                 store.DBHandle
-	closeDB            func() // nil-safe; no-op when the Backend is caller-owned
-	memStore           store.EntryStore
-	vecStore           store.VectorStore
-	chunkStore         store.ChunkStore
-	embedder           embed.Embedder
-	pipelineOntStore   store.OntologyStore
-	itemStore          store.CompileItemStore
-	trustStore         store.TrustStore
-	tierMgr            *TierManager
-	bp                 *BackpressureController
+	cfg              *config.Config
+	opts             CompileOpts
+	result           *CompileResult
+	mf               *manifest.Manifest
+	mfPath           string
+	base             *manifest.Manifest
+	diff             *DiffResult
+	client           *llm.Client
+	tracker          *llm.CostTracker
+	progress         *Progress
+	db               store.DBHandle
+	closeDB          func() // nil-safe; no-op when the Backend is caller-owned
+	memStore         store.EntryStore
+	vecStore         store.VectorStore
+	chunkStore       store.ChunkStore
+	embedder         embed.Embedder
+	pipelineOntStore store.OntologyStore
+	itemStore        store.CompileItemStore
+	trustStore       store.TrustStore
+	tierMgr          *TierManager
+	bp               *BackpressureController
+	// docBudgets enforces the per-doc compile_doc_timeout stopwatch
+	// (SPEC-08 D6); created per run from the workspace limits.
+	docBudgets         *DocBudgets
 	exOpts             []extract.ExtractOpts
 	toProcess          []SourceInfo
 	pipelineIncomplete bool
@@ -315,6 +319,22 @@ func Compile(projectDir string, opts CompileOpts) (result *CompileResult, err er
 		diff.Modified = ShuffleSourcesForTest(diff.Modified)
 	}
 	run.diff = diff
+
+	// SPEC-08 D1/AC2: max_compile_batch — a run claiming more docs than the
+	// cap fails fast BEFORE any doc is processed, so nothing partial
+	// persists. Typed error + limit_exceeded event.
+	if lim := run.cfg.Limits.Resolve(); int64(len(diff.Added)+len(diff.Modified)) > lim.MaxCompileBatch {
+		le := limits.New(limits.WhichCompileBatch, lim.MaxCompileBatch, int64(len(diff.Added)+len(diff.Modified)))
+		if run.opts.Sink != nil {
+			run.opts.Sink.Emit(events.NewEvent(filepath.Base(projectDir), events.TypeLimitExceeded, events.LimitExceeded{
+				Which:  le.Which,
+				Limit:  le.Limit,
+				Got:    le.Got,
+				Detail: "compile",
+			}))
+		}
+		return nil, le
+	}
 
 	run.result.Added = len(diff.Added)
 	run.result.Modified = len(diff.Modified)
@@ -920,7 +940,10 @@ func setupStores(projectDir string, run *compileRun) error {
 		run.itemStore = NewCompileItemStore(db, config.NowUTC)
 	}
 	run.tierMgr = NewTierManager(&cfg.Compiler, run.itemStore)
-	run.bp = NewBackpressureController(cfg.Compiler.MaxParallel)
+	run.bp = NewBackpressureController(providerConcurrency(cfg))
+	// SPEC-08 D6: one stopwatch registry per run; each doc's budget equals
+	// limits.compile_doc_timeout. The registry is cheap (lazy per-doc map).
+	run.docBudgets = NewDocBudgets(cfg.Limits.Resolve().CompileDocTimeout)
 
 	// Populate compile_items from manifest on first run (if empty)
 	if count, _ := run.itemStore.Count(); count == 0 && run.mf.SourceCount() > 0 {
@@ -963,6 +986,21 @@ func maintainQueue(run *compileRun, items store.CompileItemStore) {
 	} else if n > 0 {
 		log.Info("requeued expired compile leases", "count", n)
 	}
+}
+
+// providerConcurrency resolves the effective provider-call ceiling
+// (SPEC-08 D1/D6): the backpressure controller runs at
+// min(compiler.max_parallel, limits.max_concurrent_provider_calls).
+func providerConcurrency(cfg *config.Config) int {
+	maxParallel := cfg.Compiler.MaxParallel
+	ceiling := int(cfg.Limits.Resolve().MaxConcurrentProviderCalls)
+	if ceiling > 0 && (maxParallel <= 0 || ceiling < maxParallel) {
+		return ceiling
+	}
+	if maxParallel <= 0 {
+		return 20 // BackpressureController's documented default
+	}
+	return maxParallel
 }
 
 // runTiers executes the tiered compilation passes (Tier 0 FTS index, Tier 1
@@ -1117,6 +1155,8 @@ func runTiers(projectDir string, run *compileRun) {
 				CacheEnabled: cacheEnabled,
 				Progress:     run.progress,
 				Sink:         opts.Sink,
+				Budgets:      run.docBudgets,
+				JobID:        opts.JobID,
 			})
 		}()
 		run.result.Summarized = pipelineResult.Summarized
@@ -1418,6 +1458,12 @@ func resumeBatch(
 	if err != nil {
 		return nil, fmt.Errorf("compile: retrieve batch: %w", err)
 	}
+	// SPEC-04 determinism: providers return batch results in arbitrary
+	// order. The apply loop below feeds memStore/vecStore writes, summary
+	// application, and concept extraction order — all of which must be
+	// stable for byte-identical artifacts. Sort by the wire-level custom_id
+	// (a stable per-document key) before any iteration.
+	sort.Slice(batchResults, func(i, j int) bool { return batchResults[i].CustomID < batchResults[j].CustomID })
 
 	// Completeness check (#124): a truncated retrieve yields a SILENTLY
 	// incomplete result set, and the tail sources would vanish from this

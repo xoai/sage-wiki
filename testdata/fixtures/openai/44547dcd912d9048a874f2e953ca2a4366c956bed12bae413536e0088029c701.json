@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "## Key claims\n\nRaw Adversarial Instruction Lookalike is the central subject of this source document, which lays out its definition, mechanics, and practical implications in detail.\n\n## Concepts\n\nraw-adversarial-instruction-lookalike: The central concept developed by this document.",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.05,
+            0.669,
+            0.812,
+            0.431,
+            0.574,
+            0.193,
+            0.336,
+            0.955
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

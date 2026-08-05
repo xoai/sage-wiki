@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "## Key claims\n\nRaw Alias Api Gateway is the central subject of this source document, which lays out its definition, mechanics, and practical implications in detail.\n\n## Concepts\n\nraw-alias-api-gateway: The central concept developed by this document.",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.506,
+            0.125,
+            0.268,
+            0.887,
+            0.03,
+            0.649,
+            0.792,
+            0.411
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

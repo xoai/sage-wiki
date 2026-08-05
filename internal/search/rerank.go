@@ -11,6 +11,7 @@ import (
 
 	"github.com/xoai/sage-wiki/internal/extract"
 	"github.com/xoai/sage-wiki/internal/llm"
+	"github.com/xoai/sage-wiki/internal/prompts"
 )
 
 // RerankCandidate is a search result to be re-ranked by the LLM.
@@ -82,13 +83,15 @@ func Rerank(ctx context.Context, query string, candidates []RerankCandidate, cli
 		return fallbackRerank(candidates), nil
 	}
 
-	prompt := fmt.Sprintf(`Rate the relevance of each passage to the query on a scale of 0-10.
-Query: "%s"
-
-%s
+	// SPEC-08 D4: both the user query and the retrieved passages are
+	// untrusted input meeting instructions — each enters inside the
+	// canonical untrusted frame (P1-6); instructions stay outside.
+	prompt := "Rate the relevance of each passage to the query on a scale of 0-10.\nQuery:\n" +
+		prompts.WrapUntrusted(query) + "\n\nPassages:\n" +
+		prompts.WrapUntrusted(strings.Join(passages, "\n\n")) + `
 
 Respond ONLY with a JSON array, no explanation:
-[{"id":1,"score":7},{"id":2,"score":2},...]`, query, strings.Join(passages, "\n\n"))
+[{"id":1,"score":7},{"id":2,"score":2},...]`
 
 	// P2-4: schema-guaranteed JSON where supported; graceful degrade to
 	// fallbackRerank on any error — today's failure contract.

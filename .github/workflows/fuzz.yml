@@ -10,9 +10,9 @@ permissions:
 
 jobs:
   fuzz:
-    name: Extractor fuzz targets (nightly)
+    name: Fuzz targets (nightly)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -22,9 +22,9 @@ jobs:
 
       # REQUIRED per-target invocations: Go's -fuzz errors when one
       # invocation matches multiple targets. continue-on-error per step
-      # so one crasher never masks the other five targets that night —
-      # but OUTCOME (not conclusion) is what the aggregation step reads:
-      # a failed target ends the job RED via the aggregation step below.
+      # so one crasher never masks the other targets that night — but
+      # OUTCOME (not conclusion) is what the aggregation step reads: a
+      # failed target ends the job RED via the aggregation step below.
       - id: docx
         name: FuzzExtractDocx
         run: go test -run=NONE -fuzz=FuzzExtractDocx -fuzztime=60s ./internal/extract/
@@ -50,17 +50,58 @@ jobs:
         run: go test -run=NONE -fuzz=FuzzExtractPdfGo -fuzztime=60s ./internal/extract/
         continue-on-error: true
 
+      # SPEC-08 hardening targets (30s each). FuzzFrontmatter runs once per
+      # owning package — the five pure-string frontmatter sites live in five
+      # packages (Go visibility forbids one cross-package target).
+      - id: fm-extract
+        name: FuzzFrontmatter (extract)
+        run: go test -run=NONE -fuzz=FuzzFrontmatter -fuzztime=30s ./internal/extract/
+        continue-on-error: true
+      - id: fm-web
+        name: FuzzFrontmatter (web)
+        run: go test -run=NONE -fuzz=FuzzFrontmatter -fuzztime=30s ./internal/web/
+        continue-on-error: true
+      - id: fm-ontology
+        name: FuzzFrontmatter (ontology)
+        run: go test -run=NONE -fuzz=FuzzFrontmatter -fuzztime=30s ./internal/ontology/
+        continue-on-error: true
+      - id: fm-wiki
+        name: FuzzFrontmatter (wiki)
+        run: go test -run=NONE -fuzz=FuzzFrontmatter -fuzztime=30s ./internal/wiki/
+        continue-on-error: true
+      - id: fm-compiler
+        name: FuzzFrontmatter (compiler)
+        run: go test -run=NONE -fuzz=FuzzFrontmatter -fuzztime=30s ./internal/compiler/
+        continue-on-error: true
+      - id: wikilink
+        name: FuzzWikilink
+        run: go test -run=NONE -fuzz=FuzzWikilink -fuzztime=30s ./internal/compiler/
+        continue-on-error: true
+      - id: alias
+        name: FuzzAliasNormalize
+        run: go test -run=NONE -fuzz=FuzzAliasNormalize -fuzztime=30s ./internal/compiler/
+        continue-on-error: true
+      - id: canonical
+        name: FuzzCanonical
+        run: go test -run=NONE -fuzz=FuzzCanonical -fuzztime=30s ./internal/compiler/
+        continue-on-error: true
+
       - name: Upload crashers (when any target failed)
-        if: always() && (steps.docx.outcome == 'failure' || steps.xlsx.outcome == 'failure' || steps.pptx.outcome == 'failure' || steps.epub.outcome == 'failure' || steps.eml.outcome == 'failure' || steps.pdf.outcome == 'failure')
+        if: always() && (steps.docx.outcome == 'failure' || steps.xlsx.outcome == 'failure' || steps.pptx.outcome == 'failure' || steps.epub.outcome == 'failure' || steps.eml.outcome == 'failure' || steps.pdf.outcome == 'failure' || steps.fm-extract.outcome == 'failure' || steps.fm-web.outcome == 'failure' || steps.fm-ontology.outcome == 'failure' || steps.fm-wiki.outcome == 'failure' || steps.fm-compiler.outcome == 'failure' || steps.wikilink.outcome == 'failure' || steps.alias.outcome == 'failure' || steps.canonical.outcome == 'failure')
         uses: actions/upload-artifact@v4
         with:
           name: fuzz-crashers
-          path: internal/extract/testdata/fuzz/
+          path: |
+            internal/extract/testdata/fuzz/
+            internal/web/testdata/fuzz/
+            internal/ontology/testdata/fuzz/
+            internal/wiki/testdata/fuzz/
+            internal/compiler/testdata/fuzz/
           if-no-files-found: ignore
           retention-days: 14
 
-      # Aggregation: continue-on-error keeps all six targets running, but
-      # any failed OUTCOME must turn the job red — a crasher can never be
+      # Aggregation: continue-on-error keeps all targets running, but any
+      # failed OUTCOME must turn the job red — a crasher can never be
       # mistaken for a pass.
       - name: Fail if any target crashed
         if: always()
@@ -70,7 +111,15 @@ jobs:
              [ "${{ steps.pptx.outcome }}" = "failure" ] || \
              [ "${{ steps.epub.outcome }}" = "failure" ] || \
              [ "${{ steps.eml.outcome }}" = "failure" ] || \
-             [ "${{ steps.pdf.outcome }}" = "failure" ]; then
+             [ "${{ steps.pdf.outcome }}" = "failure" ] || \
+             [ "${{ steps.fm-extract.outcome }}" = "failure" ] || \
+             [ "${{ steps.fm-web.outcome }}" = "failure" ] || \
+             [ "${{ steps.fm-ontology.outcome }}" = "failure" ] || \
+             [ "${{ steps.fm-wiki.outcome }}" = "failure" ] || \
+             [ "${{ steps.fm-compiler.outcome }}" = "failure" ] || \
+             [ "${{ steps.wikilink.outcome }}" = "failure" ] || \
+             [ "${{ steps.alias.outcome }}" = "failure" ] || \
+             [ "${{ steps.canonical.outcome }}" = "failure" ]; then
             echo "fuzz findings — see the fuzz-crashers artifact"
             exit 1
           fi

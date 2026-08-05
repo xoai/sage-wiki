@@ -22,6 +22,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/search"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/trust"
@@ -128,7 +129,9 @@ func Query(projectDir string, question string, format string, topK int, opts ...
 
 	resp, err := client.ChatCompletion([]llm.Message{
 		{Role: "system", Content: "You are a knowledge base Q&A assistant. Answer questions using the provided wiki articles as context. Cite sources using [[wikilinks]]. Be precise and factual."},
-		{Role: "user", Content: fmt.Sprintf("Question: %s%s\n\n## Wiki Context:\n\n%s", question, formatInstruction, contextStr)},
+		// SPEC-08 D4: question and wiki context are untrusted inputs meeting
+		// instructions — each enters inside the canonical frame (P1-6).
+		{Role: "user", Content: "Question:\n" + prompts.WrapUntrusted(question) + formatInstruction + "\n\n## Wiki Context:\n\n" + prompts.WrapUntrusted(contextStr)},
 	}, llm.CallOpts{Model: model, MaxTokens: 4000})
 	if err != nil {
 		return nil, fmt.Errorf("query: LLM synthesis: %w", err)
@@ -910,7 +913,9 @@ func StreamQuery(ctx context.Context, projectDir string, question string, topK i
 
 	messages := []llm.Message{
 		{Role: "system", Content: "You are a knowledge base Q&A assistant. Answer questions using the provided wiki articles as context. Cite sources using [[wikilinks]]. Be precise and factual.\nFormat as markdown with [[wikilinks]] for cross-references."},
-		{Role: "user", Content: fmt.Sprintf("Question: %s\n\n## Wiki Context:\n\n%s", question, contextStr)},
+		// SPEC-08 D4: question and wiki context are untrusted inputs meeting
+		// instructions — each enters inside the canonical frame (P1-6).
+		{Role: "user", Content: "Question:\n" + prompts.WrapUntrusted(question) + "\n\n## Wiki Context:\n\n" + prompts.WrapUntrusted(contextStr)},
 	}
 
 	resp, err := client.ChatCompletionStream(ctx, messages, llm.CallOpts{Model: model, MaxTokens: 4000}, tokenCB)

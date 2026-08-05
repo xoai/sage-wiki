@@ -111,9 +111,25 @@ func anyTokenMatch(pd []byte, digests [][]byte, cmp func(a, b []byte) int) bool 
 	return ok == 1
 }
 
+// validServeTier reports whether a client-requested compile tier is in the
+// bounded set {0..3} that the compiles_total tier label allows (SPEC-07 D3
+// cardinality). nil means "use config default" and is always valid.
+func validServeTier(t *int) bool {
+	if t == nil {
+		return true
+	}
+	return *t >= 0 && *t <= 3
+}
+
 // execCompile runs one queued compile through the SHARED serveJobRunner
 // (F-051 — the coordinator fence + progress wiring live once, in deps.go).
 func (s *Server) execCompile(ctx context.Context, j *Job) (json.RawMessage, error) {
+	// SPEC-07 D3 cardinality: the serve queue bypasses the engine's tier
+	// validation, so bound the client-requested tier here — otherwise
+	// compiles_total{tier=N} ships for any N.
+	if !validServeTier(j.Request.Tier) {
+		return nil, fmt.Errorf("compile: tier %d out of range (0..3; omit for config default)", *j.Request.Tier)
+	}
 	opts := compiler.CompileOpts{Ctx: ctx}
 	// SPEC-07: a stop-driven cancellation is "interrupted", not "cancelled".
 	opts.IsInterrupted = s.queue.Stopped

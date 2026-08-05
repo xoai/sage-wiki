@@ -71,6 +71,9 @@ func NewLLMClient(cfg *config.Config) (*llm.Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	// SPEC-08 provider_timeout: every config-built client carries the
+	// workspace limit; shorter caller deadlines still win at call time.
+	client.SetCallTimeout(cfg.Limits.Resolve().ProviderTimeout)
 
 	if isSub {
 		store := NewStore(DefaultStorePath())

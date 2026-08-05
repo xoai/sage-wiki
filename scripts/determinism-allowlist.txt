@@ -4,17 +4,19 @@
 # itself a finding (the lint fails on it when the site moves).
 
 internal/compiler/communities.go:113 populates keyed lookup maps only (commOfEntity/counts); output rows come from an ordered SELECT
-internal/compiler/worker_cycle.go:230 claimed[3] is a fixed-key lookup, not a map-order iteration
-internal/compiler/worker_cycle.go:272 claimed[3] is a fixed-key lookup, not a map-order iteration
-internal/compiler/worker_cycle.go:283 claimed[3] is a fixed-key lookup, not a map-order iteration
-internal/compiler/worker_cycle.go:388 heartbeat write order — operational lease columns, not artifacts
-internal/compiler/worker_cycle.go:413 error-set construction order — readback is keyed by path
-internal/compiler/worker_cycle.go:436 claimedItemFor is a membership scan, first match wins regardless of order
-internal/compiler/worker_cycle.go:450 claimedItemFor is a membership scan, first match wins regardless of order
-internal/compiler/worker_cycle.go:310 heartbeat path list feeds one IN-clause UPDATE (set semantics)
-internal/compiler/worker_cycle.go:160 heartbeat path list feeds one IN-clause UPDATE (set semantics)
-internal/compiler/worker_cycle.go:299 heartbeat path list feeds one IN-clause UPDATE (set semantics)
-internal/compiler/worker_cycle.go:333 error-report log order only (stderr text)
+internal/compiler/worker_cycle.go:166 paths set → allPaths slice for an IN-clause UPDATE (set semantics)
+internal/compiler/worker_cycle.go:175 max-reduction to compute maxTier only (order-independent)
+internal/compiler/worker_cycle.go:241 claimed[0] fixed-key slice; doc-finished events in stable slice order
+internal/compiler/worker_cycle.go:253 claimed[1] fixed-key slice; doc-finished events in stable slice order
+internal/compiler/worker_cycle.go:265 claimed[3] fixed-key slice; builds toProcess in stable slice order
+internal/compiler/worker_cycle.go:308 claimed[3] fixed-key slice; MarkPass per item (idempotent)
+internal/compiler/worker_cycle.go:319 claimed[3] fixed-key slice; errored classification per item (order-independent)
+internal/compiler/worker_cycle.go:348 per-path release loop — each path released independently, order-independent
+internal/compiler/worker_cycle.go:394 counting loop (unaccounted++ only), order-independent
+internal/compiler/worker_cycle.go:503 claimed is a []CompileItem slice parameter here (shadowed), not the worker map
+internal/compiler/worker_cycle.go:517 claimedItemFor membership scan — first match by SourcePath wins, order-independent
+internal/compiler/worker_cycle.go:455 claimed is a []CompileItem slice param; builds paths for one IN-clause Heartbeat (set semantics)
+internal/compiler/worker_cycle.go:480 claimed is a []CompileItem slice param; per-item release, order-independent
 internal/compiler/compilekey.go:202 sort.Strings(names) immediately after the loop
 internal/compiler/pipeline.go:1210 sort.Strings(missing) immediately after the loop (SPEC-04 Task 3)
 internal/compiler/pipeline.go:1096 batch results: per-path independent atomic writes + manifest is a json-sorted map
@@ -22,21 +24,23 @@ internal/compiler/write.go:523 prefix-match membership loop, produces no ordered
 internal/compiler/write.go:826 sort.Slice(related) immediately after the shared-count loop
 internal/compiler/write.go:837 same: the related slice is sorted by count desc, name asc right below
 internal/compiler/concepts.go:407 purge-and-re-register over map keys — set semantics, all keys handled regardless of order
-internal/compiler/resolve_entities.go:207 populates keyed df-count maps only (lookups by key)
-internal/compiler/resolve_entities.go:229 membership map (ok[tok]) — read back by key only
-internal/compiler/resolve_entities.go:400 claimed-set membership writes
-internal/compiler/resolve_entities.go:429 range over SLICE (shadowed `out`), not the map of the same name
-internal/compiler/resolve_entities.go:434 range over SLICE `labels` (shadow), not a map
-internal/compiler/resolve_entities.go:544 norm[id] slice membership compare
-internal/compiler/resolve_entities.go:548 norm[id] slice membership compare
-internal/compiler/resolve_entities.go:579 labels slice already sorted at :577 immediately before
-internal/compiler/resolve_entities.go:1264 adj[cur] is a slice lookup; BFS result sorted at :1273
+internal/compiler/resolve_entities.go:208 populates keyed df-count maps only (lookups by key)
+internal/compiler/resolve_entities.go:230 membership map (ok[tok]) — read back by key only
+internal/compiler/resolve_entities.go:401 claimed-set membership writes
+internal/compiler/resolve_entities.go:430 range over SLICE (shadowed `out`), not the map of the same name
+internal/compiler/resolve_entities.go:435 range over SLICE `labels` (shadow), not a map
+internal/compiler/resolve_entities.go:545 norm[id] slice membership compare
+internal/compiler/resolve_entities.go:549 norm[id] slice membership compare
+internal/compiler/resolve_entities.go:580 labels slice already sorted at :578 immediately before
+internal/compiler/resolve_entities.go:1272 adj[cur] is a slice lookup; BFS result sorted at :1281
 internal/compiler/watch.go:206 sort.Strings(changed) after both snapshot loops (SPEC-04 Task 3)
-internal/compiler/resolve_entities.go:492 byType[seed.Type] is a slice lookup, not a map-order iteration
+internal/compiler/resolve_entities.go:493 byType[seed.Type] is a slice lookup, not a map-order iteration
+internal/compiler/pipeline.go:1372 pathByID values → pending slice, sorted immediately at :1375
+internal/compiler/pipeline.go:1492 expected map → missing list for an error report only (not an artifact)
 internal/compiler/diff.go:128 Added/Modified sorted at :140-141, Removed at :149 (pre-existing AGENTS.md rule 6)
 internal/compiler/diff.go:144 Removed sorted at :149 (pre-existing AGENTS.md rule 6)
-internal/compiler/migrate_checkpoint.go:169 sources sorted at :61-64 before upserts (SPEC-04 D1 fix)
-internal/compiler/fullpipeline.go:488 mf.Concepts[name].Sources is a slice lookup, not a map-order iteration
+internal/compiler/migrate_checkpoint.go:173 collects mf.Sources keys into a slice that is sort.Strings'd immediately after (PopulateFromManifest) — order-independent collection
+internal/compiler/fullpipeline.go:523 mf.Concepts[name].Sources is a slice lookup, not a map-order iteration
 internal/compiler/dedup.go:142 canonical tie-break (Task 3) makes the result order-independent
 internal/manifest/merge.go:24 copy loop into a keyed map (json-sorted on save)
 internal/manifest/merge.go:32 copy loop into a keyed map (json-sorted on save)

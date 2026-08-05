@@ -570,6 +570,11 @@ var subsetPolicy = map[string]string{
 	"events.stdout":      "event tee, not compile output",
 	"events.raw_queries": "search-event privacy opt-in, not compile output",
 
+	// SPEC-08 limits: runtime resource caps — they bound work, they do not
+	// change what a compile produces (same class as api.rate_limit). The
+	// walker sees internal/limits.Limits as one leaf (external package).
+	"limits": "runtime resource caps (SPEC-08), no artifact effect",
+
 	"mirror.access_key":             "mirror subsystem (backup), not compile output",
 	"mirror.access_key_env":         "mirror subsystem",
 	"mirror.addressing":             "mirror subsystem",

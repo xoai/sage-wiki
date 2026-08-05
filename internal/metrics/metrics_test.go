@@ -173,3 +173,58 @@ func BenchmarkHook(b *testing.B) {
 		h.Observe(0.001)
 	}
 }
+
+// SPEC-08 D2: two hardening counters join the inventory with their labels.
+
+func TestSpec08LabelInventory(t *testing.T) {
+	limitVals, ok := allowedLabelKV["limit"]
+	if !ok {
+		t.Fatal("label key \"limit\" missing from allowedLabelKV")
+	}
+	for _, v := range []string{"doc_bytes", "query_bytes", "compile_batch", "capture_batch", "compile_doc_timeout"} {
+		if !limitVals[v] {
+			t.Errorf("limit label value %q not permitted", v)
+		}
+	}
+	reasonVals, ok := allowedLabelKV["reason"]
+	if !ok {
+		t.Fatal("label key \"reason\" missing from allowedLabelKV")
+	}
+	if !reasonVals["span_missing"] {
+		t.Error("reason label value \"span_missing\" not permitted")
+	}
+}
+
+func TestSpec08HelpTexts(t *testing.T) {
+	for _, name := range []string{"limit_exceeded_total", "edge_rejected_total"} {
+		if h := helpText(name); h == "auto-generated" || h == "" {
+			t.Errorf("helpText(%q) = %q, want a real HELP entry", name, h)
+		}
+	}
+}
+
+func TestSpec08CountersValidateAndExpose(t *testing.T) {
+	resetRegistry()
+	CounterNamed("limit_exceeded_total", "limit", "doc_bytes").Inc()
+	CounterNamed("edge_rejected_total", "reason", "span_missing").Inc()
+	if err := ValidateLabels(); err != nil {
+		t.Fatalf("ValidateLabels: %v", err)
+	}
+	out := exposition(t)
+	for _, want := range []string{
+		`limit_exceeded_total{limit="doc_bytes"} 1`,
+		`edge_rejected_total{reason="span_missing"} 1`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q\n%s", want, out)
+		}
+	}
+}
+
+func TestSpec08LabelViolationCaught(t *testing.T) {
+	resetRegistry()
+	CounterNamed("limit_exceeded_total", "limit", "not_a_real_limit").Inc()
+	if err := ValidateLabels(); err == nil {
+		t.Error("ValidateLabels must reject an out-of-inventory limit value")
+	}
+}

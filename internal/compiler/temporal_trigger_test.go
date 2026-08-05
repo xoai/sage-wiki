@@ -41,8 +41,8 @@ func graphServer(t *testing.T, graph string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
-			"choices":	[]map[string]any{{"message": map[string]string{"content": graph}}},
-			"model":	"m",
+			"choices": []map[string]any{{"message": map[string]string{"content": graph}}},
+			"model":   "m",
 		})
 	}))
 	t.Cleanup(srv.Close)
@@ -84,9 +84,13 @@ const contradictsGraph = `{"entities":[
 func runOneDoc(t *testing.T, ont *ontology.Store, ts store.TrustStore, cfg *config.Config, graph, doc string) []FunctionalSupersession {
 	t.Helper()
 	srv := graphServer(t, graph)
-	_, sup := ExtractTriplesPass(context.Background(), ont,
-		[]SummaryResult{{SourcePath: doc, Summary: "text"}}, nil,
-		cfg, triplesClient(t, srv.URL), false, t.TempDir(), nil, ts, nil)
+	// The summary grounds every evidence sentence used by this file's
+	// fixture graphs (SPEC-08 span verification rejects ungrounded edges).
+	const groundedSummary = "Alice works at Acme. Alice works at Initech. " +
+		"Alice might work at Globex. These statements conflict."
+	_, sup, _ := ExtractTriplesPass(context.Background(), ont,
+		[]SummaryResult{{SourcePath: doc, Summary: groundedSummary}}, nil,
+		cfg, triplesClient(t, srv.URL), false, t.TempDir(), nil, ts, nil, nil, nil)
 	return sup
 }
 
@@ -195,7 +199,7 @@ func TestSupersessionWithNilTrustStore(t *testing.T) {
 	cfg := temporalCfg()
 
 	runOneDoc(t, ont, nil, cfg, worksAtAcme, "raw/a.md")
-	runOneDoc(t, ont, nil, cfg, worksAtInitech, "raw/b.md")	// must not panic
+	runOneDoc(t, ont, nil, cfg, worksAtInitech, "raw/b.md") // must not panic
 
 	if targets := liveTargets(t, ont, "alice"); len(targets) != 1 || targets[0] != "initech" {
 		t.Errorf("nil trust store: supersession must still auto-apply, got %v", targets)
@@ -244,8 +248,8 @@ func TestPostResolutionSweepCoversNewAliasForms(t *testing.T) {
 
 	// Resolution applies the alias and derives the winner onto the canonical.
 	if _, err := ont.LinkAlias(store.EntityAlias{
-		Alias:	"alice_alias", CanonicalID: "alice", EntityType: "person",
-		Status:	store.AliasApplied, Source: "llm", CreatedAt: "2026-07-29T00:00:00Z",
+		Alias: "alice_alias", CanonicalID: "alice", EntityType: "person",
+		Status: store.AliasApplied, Source: "llm", CreatedAt: "2026-07-29T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}

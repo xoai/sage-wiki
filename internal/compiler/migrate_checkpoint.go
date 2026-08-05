@@ -166,7 +166,17 @@ func resolveTierDefault(sourcePath string, cfg *config.Config) int {
 func PopulateFromManifest(items store.CompileItemStore, mf *manifest.Manifest, cfg *config.Config) (int, error) {
 	populated := 0
 
-	for path, src := range mf.Sources {
+	// SPEC-04 determinism: mf.Sources is a map — iterating it directly
+	// upserts compile_items (and thus .sage/wiki.db) in randomized order.
+	// Collect and sort the paths first so the migration is byte-stable.
+	paths := make([]string, 0, len(mf.Sources))
+	for path := range mf.Sources {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+
+	for _, path := range paths {
+		src := mf.Sources[path]
 		// Skip if already exists
 		existing, err := items.GetByPath(path)
 		if err != nil {

@@ -15,7 +15,8 @@
         }
       ],
       "model": "gpt-4o-mini",
-      "stream": false
+      "stream": false,
+      "temperature": 0
     }
   },
   "response": {

@@ -52,6 +52,9 @@ func (s *Server) handleQuery(ctx context.Context, req mcplib.CallToolRequest) (*
 	if strings.TrimSpace(question) == "" {
 		return errorResult("question is required"), nil
 	}
+	if err := s.checkQueryLen(question); err != nil {
+		return errorResult(fmt.Sprintf("question rejected: %v", err)), nil
+	}
 	topK := 5
 	if k, ok := args["top_k"].(float64); ok && k != 0 {
 		// k != k catches NaN on the in-process CallTool path (JSON can't

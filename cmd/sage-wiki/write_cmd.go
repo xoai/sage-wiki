@@ -11,10 +11,12 @@ import (
 	"github.com/xoai/sage-wiki/internal/cli"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
+	"github.com/xoai/sage-wiki/internal/limits"
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/pathsafe"
 	"github.com/xoai/sage-wiki/internal/sourcedate"
 	"github.com/xoai/sage-wiki/internal/storedial"
 	"github.com/xoai/sage-wiki/internal/vectors"
@@ -123,6 +125,12 @@ func runWriteArticle(cmd *cobra.Command, args []string) error {
 	dir, _ := filepath.Abs(projectDir)
 	conceptID, _ := cmd.Flags().GetString("concept")
 	content, _ := cmd.Flags().GetString("content")
+
+	// SPEC-08 AC1: concept ids are identifiers — strict charset rejection
+	// (the MCP/REST twins already enforce conceptIDShape at their edges).
+	if !pathsafe.ValidConceptID(conceptID) {
+		return cli.CLIError(outputFormat, fmt.Errorf("write article: invalid concept id %q: %w", conceptID, limits.ErrInvalidName))
+	}
 
 	cfg, err := config.Load(resolveConfigPath(dir))
 	if err != nil {

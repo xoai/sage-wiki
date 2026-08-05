@@ -13,6 +13,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/xoai/sage-wiki/internal/limits"
 	"github.com/xoai/sage-wiki/pkg/events"
 )
 
@@ -44,6 +45,7 @@ type Config struct {
 	Vectors     VectorsConfig  `yaml:"vectors,omitempty"`
 	Mirror      MirrorConfig   `yaml:"mirror,omitempty"`
 	Events      EventsConfig   `yaml:"events,omitempty"`
+	Limits      limits.Limits  `yaml:"limits,omitempty"`
 }
 
 // MirrorEncryptionConfig tunes optional client-side encryption (SPEC-03).
@@ -1089,6 +1091,7 @@ func Defaults() Config {
 		Events: EventsConfig{
 			Dir: "events",
 		},
+		Limits: limits.Limits{}.Resolve(),
 		Trust: TrustConfig{
 			IncludeOutputs: "false",
 		},
@@ -1506,6 +1509,31 @@ func (c *Config) Validate() error {
 		if w.val < 0 {
 			return fmt.Errorf("config: compiler.quality.%s must be >= 0, got %g", w.name, w.val)
 		}
+	}
+	// SPEC-08 limits: fail at load, not at the first oversized input.
+	// Zero values are legal (they resolve to defaults via Resolve).
+	lim := []struct {
+		name string
+		val  int64
+	}{
+		{"limits.max_doc_bytes", c.Limits.MaxDocBytes},
+		{"limits.max_docs_per_capture_batch", c.Limits.MaxDocsPerCaptureBatch},
+		{"limits.max_compile_batch", c.Limits.MaxCompileBatch},
+		{"limits.max_query_bytes", c.Limits.MaxQueryBytes},
+		{"limits.max_graph_traversal_nodes", c.Limits.MaxGraphTraversalNodes},
+		{"limits.max_concurrent_provider_calls", c.Limits.MaxConcurrentProviderCalls},
+		{"limits.max_concurrent_requests_per_conn", c.Limits.MaxConcurrentRequestsPerConn},
+	}
+	for _, l := range lim {
+		if l.val < 0 {
+			return fmt.Errorf("config: %s must be >= 0, got %d", l.name, l.val)
+		}
+	}
+	if c.Limits.ProviderTimeout < 0 {
+		return fmt.Errorf("config: limits.provider_timeout must be >= 0, got %v", c.Limits.ProviderTimeout)
+	}
+	if c.Limits.CompileDocTimeout < 0 {
+		return fmt.Errorf("config: limits.compile_doc_timeout must be >= 0, got %v", c.Limits.CompileDocTimeout)
 	}
 	return nil
 }

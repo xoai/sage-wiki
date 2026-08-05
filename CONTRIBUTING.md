@@ -73,6 +73,42 @@ limits against zip bombs) and covered by a nightly fuzzing job
 ([.github/workflows/fuzz.yml](.github/workflows/fuzz.yml)) that feeds
 malformed docx/xlsx/pptx/epub/eml/pdf inputs and checks the caps hold.
 
+## Fuzzing
+
+Native Go fuzz targets guard the parsing and hardening surfaces. A PR-gated
+short pass runs every target for 30s (`fuzz-short` job in
+[.github/workflows/ci.yml](.github/workflows/ci.yml)); a nightly job runs the
+same targets longer ([.github/workflows/fuzz.yml](.github/workflows/fuzz.yml)).
+
+Run a target locally (pick one target per invocation — Go's `-fuzz` errors if
+a pattern matches more than one):
+
+```sh
+go test -run=NONE -fuzz=FuzzFrontmatter -fuzztime=30s ./internal/extract/
+go test -run=NONE -fuzz=FuzzWikilink    -fuzztime=30s ./internal/compiler/
+```
+
+The current targets:
+
+| Target | Package | Surface |
+|--------|---------|---------|
+| `FuzzExtract{Docx,Xlsx,Pptx,Epub,Email,PdfGo}` | `internal/extract` | extractor decompression caps |
+| `FuzzFrontmatter` | `internal/extract`, `internal/web`, `internal/ontology`, `internal/wiki`, `internal/compiler` | the five pure-string frontmatter sites (one target per owning package) |
+| `FuzzWikilink` | `internal/compiler` | wikilink matching, sanitization, broken-link strip |
+| `FuzzAliasNormalize` | `internal/compiler` | name normalization + alias map |
+| `FuzzCanonical` | `internal/compiler` | canonical frontmatter/JSON determinism |
+
+Assertions are security invariants only — no panic, no unbounded growth,
+deterministic output. Errors are accepted, never asserted.
+
+If a run finds a crash, Go writes the failing input under
+`<package>/testdata/fuzz/<Target>/`. **Commit that crasher file** with your
+fix so the corpus always reproduces it:
+
+```sh
+git add internal/compiler/testdata/fuzz/FuzzWikilink/   # example
+```
+
 ## Regenerating the web UI dist
 
 The committed `internal/web/dist` must byte-match a `node:22-alpine` build

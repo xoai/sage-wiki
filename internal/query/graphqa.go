@@ -165,7 +165,9 @@ func GraphQA(ctx context.Context, ont store.OntologyStore, searcher *hybrid.Sear
 	if !opts.AsOf.IsZero() {
 		timeNote = fmt.Sprintf(" (as of %s — only facts valid then are listed)", opts.AsOf.UTC().Format(time.RFC3339))
 	}
-	user := fmt.Sprintf("Question: %s%s\n\nGraph edges:\n%s", question, timeNote, prompts.WrapUntrusted(sg.Text))
+	// SPEC-08 D4: the question joins the (already framed) subgraph text as
+	// untrusted input — both inside the canonical frame (P1-6).
+	user := "Question:\n" + prompts.WrapUntrusted(question) + timeNote + "\n\nGraph edges:\n" + prompts.WrapUntrusted(sg.Text)
 	payload, _, err := client.StructuredCompletion(ctx, []llm.Message{
 		{Role: "system", Content: graphQAGroundingInstruction},
 		{Role: "user", Content: user},

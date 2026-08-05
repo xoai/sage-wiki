@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/limits"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/pkg/events"
 )
@@ -421,8 +422,12 @@ func (s *Store) Traverse(entityID string, opts TraverseOpts) ([]Entity, error) {
 	visited := map[string]bool{entityID: true}
 	queue := []string{entityID}
 	var result []Entity
+	// overCap becomes true when the visited set exceeds opts.MaxNodes
+	// (SPEC-08 AC12); the traversal stops and returns the partial result
+	// with the typed error.
+	overCap := false
 
-	for depth := 0; depth < opts.MaxDepth && len(queue) > 0; depth++ {
+	for depth := 0; depth < opts.MaxDepth && len(queue) > 0 && !overCap; depth++ {
 		var nextQueue []string
 		for _, id := range queue {
 			rels, err := s.GetRelationsAt(id, opts.Direction, opts.RelationType, opts.AsOf)
@@ -438,6 +443,10 @@ func (s *Store) Traverse(entityID string, opts TraverseOpts) ([]Entity, error) {
 					continue
 				}
 				visited[neighborID] = true
+				if opts.MaxNodes > 0 && len(visited) > opts.MaxNodes {
+					overCap = true
+					break
+				}
 				nextQueue = append(nextQueue, neighborID)
 
 				entity, err := s.GetEntity(neighborID)
@@ -448,10 +457,16 @@ func (s *Store) Traverse(entityID string, opts TraverseOpts) ([]Entity, error) {
 					result = append(result, *entity)
 				}
 			}
+			if overCap {
+				break
+			}
 		}
 		queue = nextQueue
 	}
 
+	if overCap {
+		return result, limits.ErrTraversalTooWide
+	}
 	return result, nil
 }
 

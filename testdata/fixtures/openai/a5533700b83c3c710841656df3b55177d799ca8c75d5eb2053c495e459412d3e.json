@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "## Key claims\n\nRaw Multihop C Terminal is the central subject of this source document, which lays out its definition, mechanics, and practical implications in detail.\n\n## Concepts\n\nraw-multihop-c-terminal: The central concept developed by this document.",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.57,
+            0.189,
+            0.332,
+            0.951,
+            0.094,
+            0.713,
+            0.856,
+            0.475
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

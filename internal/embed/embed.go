@@ -73,7 +73,30 @@ func NewFromConfig(cfg *config.Config) Embedder {
 			RateLimit:  cfg.Embed.RateLimit,
 		}
 	}
-	return NewCascade(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, ov)
+	e := NewCascade(cfg.API.Provider, cfg.API.APIKey, cfg.API.BaseURL, ov)
+	// SPEC-08 provider_timeout: the config-built embedder carries the
+	// workspace limit as its per-call HTTP bound (the Embedder interface
+	// gains no ctx this cycle — the client timeout is the bound).
+	applyCallTimeout(e, cfg.Limits.Resolve().ProviderTimeout)
+	return e
+}
+
+// applyCallTimeout threads the workspace provider_timeout into the
+// constructed embedder, unwrapping the metrics wrapper. Unknown embedder
+// shapes keep their construction default.
+func applyCallTimeout(e Embedder, d time.Duration) {
+	if d <= 0 || e == nil {
+		return
+	}
+	if mw, ok := e.(*metricsWrapper); ok {
+		e = mw.inner
+	}
+	switch v := e.(type) {
+	case *APIEmbedder:
+		v.client.Timeout = d
+	case *OllamaEmbedder:
+		v.client.Timeout = d
+	}
 }
 
 // NewCascade auto-detects the best available embedding provider.
@@ -200,7 +223,7 @@ type APIEmbedder struct {
 	limiter *embedRateLimiter
 }
 
-func (e *APIEmbedder) Name() string    { return fmt.Sprintf("%s/%s", e.provider, e.model) }
+func (e *APIEmbedder) Name() string { return fmt.Sprintf("%s/%s", e.provider, e.model) }
 func (e *APIEmbedder) Dimensions() int {
 	e.dimsMu.RLock()
 	defer e.dimsMu.RUnlock()

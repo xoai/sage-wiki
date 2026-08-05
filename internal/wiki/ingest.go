@@ -1,6 +1,7 @@
 package wiki
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -11,11 +12,14 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/extract"
+	"github.com/xoai/sage-wiki/internal/limits"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
+	"github.com/xoai/sage-wiki/internal/pathsafe"
 )
 
 // IngestResult holds the outcome of an ingest operation.
@@ -27,11 +31,52 @@ type IngestResult struct {
 	Size int64
 }
 
-// IngestURL downloads a URL as markdown and saves to the source folder.
-const maxIngestBytes = 50 * 1024 * 1024 // 50MB max download
-
 // SkipSSRFCheck disables SSRF validation. Only for testing.
 var SkipSSRFCheck bool
+
+// binaryExtractorExts are the extensions the compile-time extractor
+// dispatches to binary-aware tiers (internal/extract). Invalid-UTF-8
+// content with one of these extensions routes to the source folder
+// (extension preserved); anything else non-UTF-8 is rejected — binary
+// bytes are never fed raw to FTS (SPEC-08 D3).
+var binaryExtractorExts = map[string]bool{
+	".pdf": true, ".docx": true, ".xlsx": true, ".pptx": true,
+	".epub": true, ".png": true, ".jpg": true, ".jpeg": true,
+	".gif": true, ".webp": true, ".bmp": true,
+}
+
+var (
+	bomUTF8    = []byte{0xEF, 0xBB, 0xBF}
+	bomUTF32LE = []byte{0xFF, 0xFE, 0x00, 0x00}
+	bomUTF32BE = []byte{0x00, 0x00, 0xFE, 0xFF}
+	bomUTF16LE = []byte{0xFF, 0xFE}
+	bomUTF16BE = []byte{0xFE, 0xFF}
+)
+
+// EncodingGate applies the SPEC-08 ingestion encoding gate to raw content.
+// BOM detection PRECEDES the extractor branch (spec edge case): UTF-16/32
+// content is rejected even when the extension matches a binary extractor.
+// Valid UTF-8 (after an optional UTF-8 BOM) passes as text. Invalid UTF-8
+// routes only when the extension belongs to a known binary extractor tier.
+// Exported so pkg/engine's capture surface applies the identical gate
+// (one implementation per behavior — memchain ground rule 2).
+func EncodingGate(path string, data []byte) error {
+	base := filepath.Base(path)
+	switch {
+	case bytes.HasPrefix(data, bomUTF32LE), bytes.HasPrefix(data, bomUTF32BE),
+		bytes.HasPrefix(data, bomUTF16LE), bytes.HasPrefix(data, bomUTF16BE):
+		return fmt.Errorf("ingest: %s: UTF-16/32 content is not supported (detected via BOM): %w", base, limits.ErrEncoding)
+	}
+	body := bytes.TrimPrefix(data, bomUTF8)
+	if utf8.Valid(body) {
+		return nil
+	}
+	if binaryExtractorExts[strings.ToLower(filepath.Ext(path))] {
+		return nil // routed to the extractor tier at compile time
+	}
+	return fmt.Errorf("ingest: %s: content is not valid UTF-8 and no binary extractor handles %q: %w",
+		base, filepath.Ext(path), limits.ErrEncoding)
+}
 
 func IngestURL(projectDir string, url string) (*IngestResult, error) {
 	// Validate URL scheme
@@ -43,6 +88,7 @@ func IngestURL(projectDir string, url string) (*IngestResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	lim := cfg.Limits.Resolve()
 
 	// Download with SSRF-safe client (validates IP at dial time, not before)
 	client := safeHTTPClient(SkipSSRFCheck)
@@ -56,9 +102,18 @@ func IngestURL(projectDir string, url string) (*IngestResult, error) {
 		return nil, fmt.Errorf("ingest: HTTP %d for %s", resp.StatusCode, url)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxIngestBytes))
+	// Cap+1 read: an oversized body is an error, never a silent truncation
+	// (SPEC-08: the old LimitReader swallowed the overflow).
+	body, err := io.ReadAll(io.LimitReader(resp.Body, lim.MaxDocBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("ingest: read body: %w", err)
+	}
+	if int64(len(body)) > lim.MaxDocBytes {
+		return nil, limits.New(limits.WhichDocBytes, lim.MaxDocBytes, int64(len(body)))
+	}
+
+	if err := EncodingGate(url, body); err != nil {
+		return nil, err
 	}
 
 	// Convert to markdown-ish format (basic: wrap in frontmatter)
@@ -101,6 +156,7 @@ func IngestPath(projectDir string, srcPath string) (*IngestResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	lim := cfg.Limits.Resolve()
 
 	absPath, err := filepath.Abs(srcPath)
 	if err != nil {
@@ -110,6 +166,11 @@ func IngestPath(projectDir string, srcPath string) (*IngestResult, error) {
 	info, err := os.Stat(absPath)
 	if err != nil {
 		return nil, fmt.Errorf("ingest: file not found: %w", err)
+	}
+
+	// Size cap BEFORE reading the file into memory (SPEC-08 D3).
+	if info.Size() > lim.MaxDocBytes {
+		return nil, limits.New(limits.WhichDocBytes, lim.MaxDocBytes, info.Size())
 	}
 
 	var contentHead string
@@ -140,12 +201,28 @@ func IngestPath(projectDir string, srcPath string) (*IngestResult, error) {
 	os.MkdirAll(destDir, 0755)
 
 	destPath := filepath.Join(destDir, filepath.Base(absPath))
+	// Defense-in-depth containment: destDir is config-derived and Base
+	// neutralizes traversal, but the write target is verified anyway
+	// (SPEC-08 D3 — pathsafe is the single containment answer).
+	contained, err := pathsafe.Contained(projectDir, destPath)
+	if err != nil || !contained {
+		return nil, fmt.Errorf("ingest: destination escapes the workspace: %s: %w", destPath, limits.ErrTraversalTooWide)
+	}
 	relPath, _ := filepath.Rel(projectDir, destPath)
 
 	// Copy file
 	data, err := os.ReadFile(absPath)
 	if err != nil {
 		return nil, fmt.Errorf("ingest: read source: %w", err)
+	}
+	// Defense-in-depth re-check after the read: a file that grew between the
+	// stat (line 172) and this ReadFile would bypass max_doc_bytes (TOCTOU).
+	// The cost is one length comparison against an already-in-memory buffer.
+	if int64(len(data)) > lim.MaxDocBytes {
+		return nil, limits.New(limits.WhichDocBytes, lim.MaxDocBytes, int64(len(data)))
+	}
+	if err := EncodingGate(absPath, data); err != nil {
+		return nil, err
 	}
 	if err := os.WriteFile(destPath, data, 0644); err != nil {
 		return nil, fmt.Errorf("ingest: write dest: %w", err)
@@ -234,11 +311,11 @@ func safeHTTPClient(skipSSRF bool) http.Client {
 	}
 }
 
-func slugifyURL(rawURL string) string {
-	// Remove protocol
-	s := strings.TrimPrefix(rawURL, "https://")
-	s = strings.TrimPrefix(s, "http://")
-
+// Slugify reduces a label to a safe filename slug: lowercase alphanumerics,
+// everything else collapsed to single hyphens, trimmed, capped at 80 chars.
+// Shared by URL ingestion and capture-type labels (one implementation per
+// behavior — memchain ground rule 2).
+func Slugify(s string) string {
 	var result strings.Builder
 	for _, r := range strings.ToLower(s) {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
@@ -258,4 +335,11 @@ func slugifyURL(rawURL string) string {
 		slug = slug[:80]
 	}
 	return slug
+}
+
+func slugifyURL(rawURL string) string {
+	// Remove protocol
+	s := strings.TrimPrefix(rawURL, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	return Slugify(s)
 }

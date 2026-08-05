@@ -1,10 +1,14 @@
 package pathsafe
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/xoai/sage-wiki/internal/limits"
+	"github.com/xoai/sage-wiki/internal/traversaltest"
 )
 
 // mkBase returns an existing base directory (EvalSymlinks requires base to
@@ -167,5 +171,59 @@ func TestSymlinkEscape(t *testing.T) {
 	// Through the inside symlink → allowed.
 	if got, err := Contained(base, filepath.Join(base, "inside", "a.md")); err != nil || !got {
 		t.Errorf("Contained via in-base symlink = %v (err %v), want true", got, err)
+	}
+}
+
+// SPEC-08 AC1: ValidateRel rejects the shared traversal table with typed
+// errors, and benign workspace-relative inputs pass.
+func TestValidateRelRejectsTraversalTable(t *testing.T) {
+	for _, tc := range traversaltest.Cases() {
+		err := ValidateRel(tc.Input)
+		if err == nil {
+			t.Errorf("%s: ValidateRel(%q) = nil, want typed error", tc.Name, tc.Input)
+			continue
+		}
+		switch tc.Family {
+		case "traversal":
+			if !errors.Is(err, limits.ErrTraversalTooWide) {
+				t.Errorf("%s: err = %v, want ErrTraversalTooWide", tc.Name, err)
+			}
+		case "malformed":
+			if !errors.Is(err, limits.ErrInvalidName) {
+				t.Errorf("%s: err = %v, want ErrInvalidName", tc.Name, err)
+			}
+		}
+	}
+}
+
+func TestValidateRelAcceptsBenign(t *testing.T) {
+	for _, ok := range []string{
+		"raw/a.md",
+		"raw/sub/deep/file.md",
+		"a.md",
+		"docs/v1.2/spec-08.md",
+	} {
+		if err := ValidateRel(ok); err != nil {
+			t.Errorf("ValidateRel(%q) = %v, want nil", ok, err)
+		}
+	}
+}
+
+func TestValidateRelRejectsEmpty(t *testing.T) {
+	if err := ValidateRel(""); !errors.Is(err, limits.ErrInvalidName) {
+		t.Errorf("ValidateRel(\"\") = %v, want ErrInvalidName", err)
+	}
+}
+
+func TestValidConceptID(t *testing.T) {
+	for _, ok := range []string{"concept", "self-attention", "a1-b2"} {
+		if !ValidConceptID(ok) {
+			t.Errorf("ValidConceptID(%q) = false, want true", ok)
+		}
+	}
+	for _, bad := range []string{"", "Concept", "has_underscore", "../x", "a..b", "a-", "-a", "a--b"} {
+		if ValidConceptID(bad) {
+			t.Errorf("ValidConceptID(%q) = true, want false", bad)
+		}
 	}
 }

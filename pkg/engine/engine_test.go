@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -191,5 +192,93 @@ func TestOpenConfigLoadErrorSentinel(t *testing.T) {
 	_, err := Open(context.Background(), dir)
 	if !errors.Is(err, ErrConfigLoad) {
 		t.Errorf("err = %v, want ErrConfigLoad", err)
+	}
+}
+
+// SPEC-08 D1: limits resolution — config block, WithLimits tightening,
+// and ErrDocTooLarge back-compat.
+
+func TestResolvedLimitsDefaults(t *testing.T) {
+	dir := initWorkspace(t)
+	w, err := Open(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer w.Close()
+	got := w.ResolvedLimits()
+	want := Limits{}.Resolve()
+	if got != want {
+		t.Fatalf("ResolvedLimits() = %+v, want %+v", got, want)
+	}
+}
+
+func TestWithLimitsTightensPerField(t *testing.T) {
+	dir := initWorkspace(t)
+	w, err := Open(context.Background(), dir, WithLimits(Limits{MaxDocBytes: 1024}))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer w.Close()
+	got := w.ResolvedLimits()
+	if got.MaxDocBytes != 1024 {
+		t.Errorf("MaxDocBytes = %d, want 1024 (option override)", got.MaxDocBytes)
+	}
+	if got.MaxQueryBytes != DefaultMaxQueryBytes {
+		t.Errorf("MaxQueryBytes = %d, want default %d (unset option fields stay)", got.MaxQueryBytes, DefaultMaxQueryBytes)
+	}
+}
+
+func TestLimitsFromWorkspaceConfig(t *testing.T) {
+	dir := initWorkspace(t)
+	cfgPath := filepath.Join(dir, "config.yaml")
+	old, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, append(old, []byte("limits:\n  max_doc_bytes: 2048\n  max_query_bytes: 4096\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := Open(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer w.Close()
+	got := w.ResolvedLimits()
+	if got.MaxDocBytes != 2048 || got.MaxQueryBytes != 4096 {
+		t.Errorf("config limits = %d/%d, want 2048/4096", got.MaxDocBytes, got.MaxQueryBytes)
+	}
+}
+
+func TestWithLimitsOverridesConfigPerField(t *testing.T) {
+	dir := initWorkspace(t)
+	cfgPath := filepath.Join(dir, "config.yaml")
+	old, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, append(old, []byte("limits:\n  max_doc_bytes: 2048\n  max_query_bytes: 4096\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Option overrides ONLY the fields it sets; the rest stay at config values.
+	w, err := Open(context.Background(), dir, WithLimits(Limits{MaxDocBytes: 512}))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer w.Close()
+	got := w.ResolvedLimits()
+	if got.MaxDocBytes != 512 {
+		t.Errorf("MaxDocBytes = %d, want 512 (option wins)", got.MaxDocBytes)
+	}
+	if got.MaxQueryBytes != 4096 {
+		t.Errorf("MaxQueryBytes = %d, want 4096 (config survives unset option field)", got.MaxQueryBytes)
+	}
+}
+
+func TestErrDocTooLargeBackCompat(t *testing.T) {
+	// The exported sentinel must remain errors.Is-reachable, now via the
+	// LimitError's Unwrap (variable identity through the alias).
+	err := fmt.Errorf("capture: %w", &LimitError{Which: "doc_bytes", Limit: 10, Got: 20})
+	if !errors.Is(err, ErrDocTooLarge) {
+		t.Fatal("errors.Is(wrapped LimitError, ErrDocTooLarge) = false, want true")
 	}
 }

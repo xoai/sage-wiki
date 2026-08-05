@@ -19,8 +19,14 @@ func (s *Server) mountMCP() *mcpserver.StreamableHTTPServer {
 	}
 	sh := mcpserver.NewStreamableHTTPServer(s.mcp.MCPServer(),
 		mcpserver.WithEndpointPath("/mcp"))
-	s.mux.Handle("/mcp", sh)
-	s.mux.Handle("/mcp/", sh)
+	// SPEC-08 D5: JSON-RPC bodies are capped at the mount (a flood of
+	// oversized bodies must not reach the MCP SDK).
+	capped := maxBytesBody(sh, MaxMCPBodyBytes)
+	// SPEC-02 drain: track long-lived /mcp SSE sessions so the shutdown
+	// sweep can cancel them (otherwise a connected client pins the drain).
+	tracked := s.trackForShutdown(capped)
+	s.mux.Handle("/mcp", tracked)
+	s.mux.Handle("/mcp/", tracked)
 	return sh
 }
 

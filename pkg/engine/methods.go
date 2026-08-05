@@ -15,6 +15,8 @@ import (
 	"github.com/xoai/sage-wiki/internal/compiler"
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/export"
+	"github.com/xoai/sage-wiki/internal/limits"
+	"github.com/xoai/sage-wiki/internal/pathsafe"
 	"github.com/xoai/sage-wiki/internal/wiki"
 	"github.com/xoai/sage-wiki/pkg/events"
 )
@@ -65,6 +67,7 @@ func (w *Workspace) Capture(ctx context.Context, src Source) (DocID, error) {
 		}
 		res, err := wiki.IngestPath(w.dir, src.Path)
 		if err != nil {
+			w.emitLimitExceeded(err, "capture:path")
 			return "", fmt.Errorf("engine: capture path: %w", err)
 		}
 		w.emitDocCaptured(res.SourcePath, res.Size, res.Hash)
@@ -76,6 +79,7 @@ func (w *Workspace) Capture(ctx context.Context, src Source) (DocID, error) {
 		}
 		res, err := wiki.IngestURL(w.dir, src.URL)
 		if err != nil {
+			w.emitLimitExceeded(err, "capture:url")
 			return "", fmt.Errorf("engine: capture url: %w", err)
 		}
 		w.emitDocCaptured(res.SourcePath, res.Size, res.Hash)
@@ -85,16 +89,26 @@ func (w *Workspace) Capture(ctx context.Context, src Source) (DocID, error) {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
+		lim := w.ResolvedLimits()
 		capturesDir := filepath.Join(w.dir, "raw", "captures")
 		if err := os.MkdirAll(capturesDir, 0o755); err != nil {
 			return "", fmt.Errorf("engine: create captures dir: %w", err)
 		}
-		data, err := io.ReadAll(io.LimitReader(src.Reader, maxCaptureBytes+1))
+		data, err := io.ReadAll(io.LimitReader(src.Reader, lim.MaxDocBytes+1))
 		if err != nil {
 			return "", fmt.Errorf("engine: read capture: %w", err)
 		}
-		if int64(len(data)) > maxCaptureBytes {
-			return "", fmt.Errorf("%w: capture exceeds %d bytes", ErrDocTooLarge, maxCaptureBytes)
+		if int64(len(data)) > lim.MaxDocBytes {
+			le := limits.New(limits.WhichDocBytes, lim.MaxDocBytes, int64(len(data)))
+			w.emitLimitExceeded(le, "capture:reader")
+			return "", fmt.Errorf("engine: capture: %w", le)
+		}
+		// Capture is a TEXT surface (markdown-only capturefmt): binary
+		// content is rejected, never routed (SPEC-08 D3). The ".md" name
+		// keeps the gate's extension branch out of the binary set.
+		if err := wiki.EncodingGate("capture.md", data); err != nil {
+			w.emitLimitExceeded(err, "capture:reader")
+			return "", fmt.Errorf("engine: capture: %w", err)
 		}
 
 		// The ONE capture-file format (pack rule 2): date-slug name with
@@ -111,7 +125,15 @@ func (w *Workspace) Capture(ctx context.Context, src Source) (DocID, error) {
 
 		slug := "capture-" + now[:10]
 		if src.Type != "" {
-			slug = "capture-" + src.Type + "-" + now[:10]
+			// Sanitize the caller-supplied label; a label that sanitizes to
+			// empty is rejected (SPEC-08 behavior change 6) — a raw
+			// interpolation here was a traversal vector.
+			typeSlug := wiki.Slugify(src.Type)
+			if typeSlug == "" {
+				return "", fmt.Errorf("engine: capture: Source.Type %q sanitizes to an empty slug: %w",
+					src.Type, limits.ErrInvalidName)
+			}
+			slug = "capture-" + typeSlug + "-" + now[:10]
 		}
 		dst := filepath.Join(capturesDir, slug+".md")
 		for i := 1; ; i++ {
@@ -119,6 +141,12 @@ func (w *Workspace) Capture(ctx context.Context, src Source) (DocID, error) {
 				break
 			}
 			dst = filepath.Join(capturesDir, fmt.Sprintf("%s-%d.md", slug, i))
+		}
+		// Defense-in-depth: the sanitized slug cannot escape, but the
+		// write target is containment-checked anyway (SPEC-08 D3).
+		contained, cerr := pathsafe.Contained(capturesDir, dst)
+		if cerr != nil || !contained {
+			return "", fmt.Errorf("engine: capture destination escapes raw/captures: %s: %w", dst, limits.ErrTraversalTooWide)
 		}
 		if err := os.WriteFile(dst, []byte(fm+string(data)+"\n"), 0o644); err != nil {
 			return "", fmt.Errorf("engine: write capture: %w", err)
@@ -147,7 +175,45 @@ func (w *Workspace) emitDocCaptured(docID string, bytes int64, contentHash strin
 	}))
 }
 
-const maxCaptureBytes = 50 * 1024 * 1024
+// emitLimitExceeded fans one limit_exceeded event into the installed sink
+// (SPEC-08 D2: the engine owns emission for ALL capture modes — the wiki
+// ingestion layer returns typed errors upward and has no sink). Detail is a
+// short locator, never content. No sink = no-op.
+func (w *Workspace) emitLimitExceeded(err error, detail string) {
+	if w.opts.sink == nil {
+		return
+	}
+	var le *limits.LimitError
+	if errors.As(err, &le) {
+		w.opts.sink.Emit(events.NewEvent(filepath.Base(w.dir), events.TypeLimitExceeded, events.LimitExceeded{
+			Which:  le.Which,
+			Limit:  le.Limit,
+			Got:    le.Got,
+			Detail: detail,
+		}))
+		return
+	}
+	if errors.Is(err, limits.ErrEncoding) {
+		w.opts.sink.Emit(events.NewEvent(filepath.Base(w.dir), events.TypeLimitExceeded, events.LimitExceeded{
+			Which:  limits.WhichEncoding,
+			Detail: detail,
+		}))
+		return
+	}
+	if errors.Is(err, limits.ErrTraversalTooWide) {
+		w.opts.sink.Emit(events.NewEvent(filepath.Base(w.dir), events.TypeLimitExceeded, events.LimitExceeded{
+			Which:  limits.WhichGraphTraversal,
+			Detail: detail,
+		}))
+		return
+	}
+	if errors.Is(err, limits.ErrInvalidName) {
+		w.opts.sink.Emit(events.NewEvent(filepath.Base(w.dir), events.TypeLimitExceeded, events.LimitExceeded{
+			Which:  limits.WhichInvalidName,
+			Detail: detail,
+		}))
+	}
+}
 
 // TierUseConfig leaves the compile tier at the workspace's configured
 // default in a CompileRequest.

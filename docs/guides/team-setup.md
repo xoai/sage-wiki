@@ -163,6 +163,8 @@ services:
       - ./wiki-data:/wiki
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - SAGE_WIKI_TOKEN=${SAGE_WIKI_TOKEN}     # required: 3333 binds beyond loopback
+      - SAGE_WIKI_ALLOWED_HOST=wiki.example.com # your real Host (DNS-rebind guard)
     restart: unless-stopped
 ```
 

@@ -4,6 +4,14 @@ sage-wiki can run on a server — a VPS, a NAS, a Raspberry Pi, a home lab machi
 
 This guide covers Docker setup, file syncing, and common deployment patterns.
 
+> **Two serve stacks.** This guide deploys the **web UI** (`serve --ui`,
+> port 3333) — a browser UI plus `/api/*`, `/v1/*`, and MCP at `/sse`,
+> guarded by a bearer token **and** a Host allowlist (DNS-rebind). For a
+> headless **REST + MCP** surface (no UI, MCP at `/mcp`, `/events/stream`
+> SSE, async compile jobs), use `serve --addr` instead — see
+> [Serve mode](serve-mode.md) and [HTTP API](http-api.md). Both stacks can
+> run behind the reverse-proxy patterns below.
+
 ## Quick Start with Docker
 
 ```bash
@@ -222,6 +230,8 @@ x-common: &common
     - ./wiki:/wiki
   environment:
     - GEMINI_API_KEY=${GEMINI_API_KEY}
+    - SAGE_WIKI_TOKEN=${SAGE_WIKI_TOKEN}       # required: 3333 binds beyond loopback
+    - SAGE_WIKI_ALLOWED_HOST=wiki.example.com  # your real Host (DNS-rebind guard)
   restart: unless-stopped
 
 services:

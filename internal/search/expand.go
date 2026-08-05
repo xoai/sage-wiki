@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math"
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/llm"
+	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/store"
 )
 
@@ -45,14 +45,18 @@ func ExpandQuery(ctx context.Context, question string, client *llm.Client, model
 	ctx, cancel := context.WithTimeout(ctx, expandTimeout)
 	defer cancel()
 
-	prompt := fmt.Sprintf(`Given the search query: %q
+	// SPEC-08 D4: the user query is untrusted input meeting instructions —
+	// it enters inside the canonical untrusted frame (P1-6), instructions
+	// stay outside.
+	prompt := "Given the search query below, generate search variants to improve retrieval:\n" +
+		prompts.WrapUntrusted(question) + `
 Generate search variants to improve retrieval:
 - lex: 2 keyword-rich rewrites (for full-text search, use technical terms)
 - vec: 1 natural language rewrite (for semantic vector search)
 - hyde: 1 hypothetical answer sentence (what a good answer might say)
 
 Respond ONLY with JSON, no explanation:
-{"lex":["...","..."],"vec":["..."],"hyde":"..."}`, question)
+{"lex":["...","..."],"vec":["..."],"hyde":"..."}`
 
 	// P2-4: schema-guaranteed JSON where supported; graceful degrade to
 	// fallbackExpansion on any error — exactly today's failure contract.

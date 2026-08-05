@@ -15,7 +15,8 @@
         }
       ],
       "model": "gpt-4o-mini",
-      "stream": false
+      "stream": false,
+      "temperature": 0
     }
   },
   "response": {
@@ -25,15 +26,15 @@
         {
           "finish_reason": "stop",
           "message": {
-            "content": "## Key claims\n\nYou is the central subject of this source document, which lays out its definition, mechanics, and practical implications in detail.\n\n## Concepts\n\nyou: The central concept developed by this document."
+            "content": "## Key claims\n\nRaw Multihop Delta Observability is the central subject of this source document, which lays out its definition, mechanics, and practical implications in detail.\n\n## Concepts\n\nraw-multihop-delta-observability: The central concept developed by this document."
           }
         }
       ],
       "model": "gpt-4o-mini",
       "usage": {
-        "completion_tokens": 53,
+        "completion_tokens": 67,
         "prompt_tokens": 307,
-        "total_tokens": 360
+        "total_tokens": 375
       }
     }
   }
