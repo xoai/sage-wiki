@@ -302,23 +302,6 @@ jobs:
   minio:
     name: MinIO mirror integration
     runs-on: ubuntu-latest
-    services:
-      minio:
-        # Pinned: minio/minio:latest changed its default CMD (no longer
-        # auto-starts `server /data`), and GitHub Actions service containers
-        # run the image default CMD with no override. Pin to a release that
-        # defaults to running the server.
-        image: minio/minio:RELEASE.2025-10-15T17-29-55Z
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-        ports:
-          - 9000:9000
-        options: >-
-          --health-cmd "mc ready local || curl -f http://localhost:9000/minio/health/live"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -327,15 +310,33 @@ jobs:
           go-version: "1.26"
           cache: true
 
+      # Run MinIO as a background docker container so we can explicitly pass
+      # `server /data` — GitHub Actions service containers run the image's
+      # default CMD with no override, and mineio/minio:latest no longer
+      # defaults to running the server.
+      - name: Start MinIO
+        run: >
+          docker run -d --name minio
+          -p 9000:9000
+          -e MINIO_ROOT_USER=minioadmin
+          -e MINIO_ROOT_PASSWORD=minioadmin
+          minio/minio server /data --console-address ":9001"
+      - name: Wait for MinIO
+        run: |
+          for i in $(seq 1 20); do
+            if curl -fsS http://localhost:9000/minio/health/live 2>/dev/null; then
+              echo "MinIO ready"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "MinIO failed to start" && docker logs minio && exit 1
+
       - name: Create test buckets
         run: |
           curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /tmp/mc
           chmod +x /tmp/mc
           /tmp/mc alias set local http://localhost:9000 minioadmin minioadmin
-          for i in $(seq 1 15); do
-            /tmp/mc ready local && break
-            sleep 2
-          done
           /tmp/mc mb --ignore-existing local/sage-it-roundtrip
           /tmp/mc mb --ignore-existing local/sage-it-corrupt
           /tmp/mc mb --ignore-existing local/sage-it-crypt
