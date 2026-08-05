@@ -66,7 +66,7 @@ jobs:
             echo "ASSET=dist/${ARCHIVE}.tar.gz" >> "$GITHUB_ENV"
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           # Unique name per matrix leg — v4 rejects duplicate artifact names.
           name: sage-wiki_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}

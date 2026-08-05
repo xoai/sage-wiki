@@ -194,7 +194,7 @@ jobs:
 
       - name: Upload crashers (when any target failed)
         if: always() && (steps.fm-extract.outcome == 'failure' || steps.fm-web.outcome == 'failure' || steps.fm-ontology.outcome == 'failure' || steps.fm-wiki.outcome == 'failure' || steps.fm-compiler.outcome == 'failure' || steps.wikilink.outcome == 'failure' || steps.alias.outcome == 'failure' || steps.canonical.outcome == 'failure')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-short-crashers
           path: |
