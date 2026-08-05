@@ -253,3 +253,28 @@ func TestTrackForShutdown_CancelsLongLivedHandler(t *testing.T) {
 		t.Fatal("long-lived handler not cancelled by cancelSSEStreams — the serve drain would stall on a connected /mcp client")
 	}
 }
+
+// TestCancelStackSSEStreams (SPEC-02 drain, multi-workspace): the
+// multi-workspace shutdown sweep must reach every per-stack Server's SSE
+// cancels so a connected /w/{name}/mcp session (which holds a stack ref)
+// is ended BEFORE the HTTP drain — otherwise closeAll blocks on the
+// refcount wait. Pins cancelStackSSEStreams: removing it (or moving the
+// call after srv.Shutdown) leaves the session uncancelled.
+func TestCancelStackSSEStreams(t *testing.T) {
+	reg := &stackRegistry{stacks: map[string]*workspaceStack{}}
+
+	// Stack A: a tracked SSE session that should be cancelled.
+	srvA := &Server{sseCancels: map[int64]context.CancelFunc{}}
+	ctxA, cancelA := context.WithCancel(context.Background())
+	srvA.registerSSE(cancelA)
+	reg.stacks["a"] = &workspaceStack{name: "a", srv: srvA}
+
+	// Stack B: nil srv — must not panic (defensive guard).
+	reg.stacks["b"] = &workspaceStack{name: "b", srv: nil}
+
+	reg.cancelStackSSEStreams()
+
+	if ctxA.Err() == nil {
+		t.Error("cancelStackSSEStreams did not cancel stack A's SSE session — multi-mode drain would hang")
+	}
+}
