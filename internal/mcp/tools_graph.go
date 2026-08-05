@@ -23,6 +23,9 @@ func (s *Server) handleGraphQuery(ctx context.Context, req mcp.CallToolRequest) 
 	if question == "" {
 		return errorResult("question is required"), nil
 	}
+	if err := s.checkQueryLen(question); err != nil {
+		return errorResult(fmt.Sprintf("question rejected: %v", err)), nil
+	}
 	hops := 0
 	if v, ok := args["hops"].(float64); ok {
 		hops = int(v)

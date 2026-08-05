@@ -57,6 +57,7 @@ func TestPayloadTypeMapping(t *testing.T) {
 		TypeEdgeAdded, TypeEdgeInvalidated, TypeEntityResolved, TypePromotionTriggered,
 		TypeSearchPerformed, TypeMirrorShipped, TypeMirrorSnapshot,
 		TypeUsage, TypeCompileSkip, TypeEventsDropped,
+		TypeLimitExceeded, TypeEdgeRejected,
 	}
 	seen := map[Type]bool{}
 	payloadNames := map[string]Type{}
@@ -75,8 +76,8 @@ func TestPayloadTypeMapping(t *testing.T) {
 		}
 		payloadNames[pt.Name()] = ty
 	}
-	if len(types) != 14 {
-		t.Errorf("union size = %d, want 14", len(types))
+	if len(types) != 16 {
+		t.Errorf("union size = %d, want 16", len(types))
 	}
 	if PayloadType(Type("bogus")) != nil {
 		t.Error("unknown Type must map to nil")
@@ -181,4 +182,84 @@ func TestCompileFinishedCostNumber(t *testing.T) {
 // parseHexInt64 decodes the ID's time prefix (test helper).
 func parseHexInt64(s string) (int64, error) {
 	return strconv.ParseInt(s, 16, 64)
+}
+
+// SPEC-08 D2: the two hardening event types join the closed union.
+
+func TestLimitExceededJSONShape(t *testing.T) {
+	ev := NewEvent("ws", TypeLimitExceeded, LimitExceeded{
+		Which:  "doc_bytes",
+		Limit:  10485760,
+		Got:    20000000,
+		Detail: "capture:raw/note.md",
+	})
+	b, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var round struct {
+		Type string `json:"type"`
+		Data struct {
+			Which  string `json:"which"`
+			Limit  int64  `json:"limit"`
+			Got    int64  `json:"got"`
+			Detail string `json:"detail"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(b, &round); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if round.Type != "limit_exceeded" {
+		t.Errorf("type = %q, want limit_exceeded", round.Type)
+	}
+	if round.Data.Which != "doc_bytes" || round.Data.Limit != 10485760 ||
+		round.Data.Got != 20000000 || round.Data.Detail != "capture:raw/note.md" {
+		t.Errorf("data = %+v, fields not pinned snake_case", round.Data)
+	}
+}
+
+func TestEdgeRejectedJSONShape(t *testing.T) {
+	ev := NewEvent("ws", TypeEdgeRejected, EdgeRejected{
+		Source:    "alpha",
+		Predicate: "uses",
+		Target:    "beta",
+		Reason:    "span_missing",
+	})
+	b, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var round struct {
+		Type string `json:"type"`
+		Data struct {
+			Source    string `json:"source"`
+			Predicate string `json:"predicate"`
+			Target    string `json:"target"`
+			Reason    string `json:"reason"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(b, &round); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if round.Type != "edge_rejected" {
+		t.Errorf("type = %q, want edge_rejected", round.Type)
+	}
+	if round.Data.Source != "alpha" || round.Data.Predicate != "uses" ||
+		round.Data.Target != "beta" || round.Data.Reason != "span_missing" {
+		t.Errorf("data = %+v, fields not pinned snake_case", round.Data)
+	}
+}
+
+func TestNewEventRejectsMismatchedSpec08Payloads(t *testing.T) {
+	mustPanic := func(f func()) {
+		t.Helper()
+		defer func() {
+			if recover() == nil {
+				t.Error("NewEvent with mismatched payload must panic")
+			}
+		}()
+		f()
+	}
+	mustPanic(func() { NewEvent("ws", TypeLimitExceeded, EdgeRejected{}) })
+	mustPanic(func() { NewEvent("ws", TypeEdgeRejected, LimitExceeded{}) })
 }

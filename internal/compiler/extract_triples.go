@@ -23,6 +23,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/sourcedate"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/trust"
+	"github.com/xoai/sage-wiki/pkg/events"
 )
 
 // ExtractedEntity is one node the LLM found in a document.
@@ -606,6 +607,13 @@ const (
 // join. Both stores serialize writes, so concurrent writes would be safe — but
 // GetEntity reads OUTSIDE the write mutex, so two documents extracting the same
 // new entity concurrently would both observe "absent" and race on its type.
+// tripleTimeout records a doc whose per-doc budget expired during the triples
+// pass, carrying the typed error so the caller can emit the AC11 event pair.
+type tripleTimeout struct {
+	SourcePath string
+	Err        error
+}
+
 func ExtractTriplesPass(
 	ctx context.Context,
 	ont store.OntologyStore,
@@ -618,9 +626,11 @@ func ExtractTriplesPass(
 	mf *manifest.Manifest,
 	trustStore store.TrustStore,
 	pr *prompts.Registry,
-) (touched []string, supersessions []FunctionalSupersession) {
+	budgets *DocBudgets,
+	sink events.Sink,
+) (touched []string, supersessions []FunctionalSupersession, timeouts []tripleTimeout) {
 	if cfg == nil || !cfg.Ontology.Triples.Enabled || ont == nil || client == nil || len(summaries) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	// opts.Ctx is nilable at the fullpipeline call site; a per-document
 	// ctx.Err() on a nil interface panics.
@@ -688,7 +698,11 @@ func ExtractTriplesPass(
 	type extraction struct {
 		graph     ExtractedGraph
 		sourceDoc string
-		ok        bool
+		// body is the resolved source text the triples were extracted from
+		// (resolveSourceDoc output) — the grounding surface for SPEC-08
+		// span verification.
+		body string
+		ok   bool
 	}
 	results := make([]extraction, len(summaries))
 	sem := make(chan struct{}, concurrency)
@@ -714,33 +728,67 @@ func ExtractTriplesPass(
 				return
 			}
 
+			// SPEC-08 D6: the per-doc budget (shared with the doc's Pass-1
+			// units) bounds this unit; queueing never consumes it.
+			unitCtx := ctx
+			var budget *DocBudget
+			var cancelUnit context.CancelFunc
+			if budgets != nil {
+				budget = budgets.For(s.SourcePath)
+				if budget.Expired() {
+					// SPEC-08 AC11: a per-doc budget expiry is a typed timeout.
+					// The caller emits the event pair and marks the run
+					// incomplete so the doc is retried (its summary persisted,
+					// so only an incomplete run re-enters it).
+					mu.Lock()
+					timeouts = append(timeouts, tripleTimeout{SourcePath: s.SourcePath, Err: docTimeoutError(budget)})
+					mu.Unlock()
+					log.Warn("triples skipped: per-doc timeout budget exhausted", "source", s.SourcePath)
+					return
+				}
+				unitCtx, cancelUnit = budget.UnitContext(ctx)
+			}
+
 			body, sourceDoc := resolveSourceDoc(s, summariesCarryFrontmatter)
 			// The re-extract path loads every .md in summaries/ with no
 			// validity check, unlike ExtractConcepts and filterSuccessful — so
 			// a frontmatter-only file would arrive here as an empty body and
 			// buy a paid call that can only return an empty graph.
 			if strings.TrimSpace(body) == "" {
+				if cancelUnit != nil {
+					cancelUnit()
+				}
 				return
 			}
 			doc := s
 			doc.Summary = body
 
-			graph, err := ExtractTriples(ctx, doc, tcfg, model, validTypes, validPredicates, client, pr, cfg.Compiler.CompileTemperature())
+			start := time.Now()
+			graph, err := ExtractTriples(unitCtx, doc, tcfg, model, validTypes, validPredicates, client, pr, cfg.Compiler.CompileTemperature())
+			if budget != nil {
+				budget.Consume(time.Since(start))
+				cancelUnit()
+			}
 			if err != nil {
 				// Every early exit either records a failure or fills its slot.
 				// A cancel mid-flight surfaces as an error here; classify it as
-				// cancellation, not as a per-document failure.
+				// cancellation, not as a per-document failure. A per-doc budget
+				// expiry is a typed timeout failure (SPEC-08 AC11).
 				mu.Lock()
-				if ctx.Err() != nil {
+				switch {
+				case ctx.Err() != nil:
 					cancelled = true
-				} else {
+				case budget != nil && budget.Expired():
+					timeouts = append(timeouts, tripleTimeout{SourcePath: s.SourcePath, Err: docTimeoutError(budget)})
+					log.Warn("triples: per-doc timeout", "source", s.SourcePath, "error", docTimeoutError(budget))
+				default:
 					failures++
 					log.Warn("triples: extraction failed", "source", s.SourcePath, "error", err)
 				}
 				mu.Unlock()
 				return
 			}
-			results[i] = extraction{graph: graph, sourceDoc: sourceDoc, ok: true}
+			results[i] = extraction{graph: graph, sourceDoc: sourceDoc, body: doc.Summary, ok: true}
 		}(i, s)
 	}
 	wg.Wait()
@@ -769,6 +817,10 @@ func ExtractTriplesPass(
 			continue
 		}
 		g := normalizeGraph(r.graph, ont, defs, tcfg.MaxEntitiesPerDoc, tcfg.MaxRelationsPerDoc)
+		// SPEC-08 D4/AC3 span verification: compile output is DATA — an edge
+		// whose evidence span does not actually appear in the resolved source
+		// text is dropped (with edge_rejected + metric) before any persist.
+		g = verifyEvidenceSpans(g, r.body, sink, filepath.Base(projectDir))
 		if len(g.Entities) == 0 && len(g.Relations) == 0 {
 			continue
 		}
@@ -786,7 +838,7 @@ func ExtractTriplesPass(
 			"failed", failures, "of", len(summaries))
 	}
 	log.Info("triples extracted", "entities", entities, "relations", relations, "documents", len(summaries))
-	return dedupeIDs(persisted), supersessions
+	return dedupeIDs(persisted), supersessions, timeouts
 }
 
 // dedupeIDs collapses the per-document id lists into one stable set. The same
@@ -849,4 +901,53 @@ func resolveSourceDoc(s SummaryResult, carriesFrontmatter bool) (body, sourceDoc
 		}
 	}
 	return body, sourceDoc
+}
+
+// normalizeForSpanMatch lowercase-folds and collapses all whitespace runs so
+// a span quoted with different spacing/case still grounds (SPEC-08 D4).
+func normalizeForSpanMatch(s string) string {
+	return strings.Join(strings.Fields(strings.ToLower(s)), " ")
+}
+
+// evidenceGrounded reports whether the evidence span actually appears in the
+// resolved source text. Empty evidence never grounds (an empty string is a
+// substring of everything — it would launder fabricated edges).
+func evidenceGrounded(evidence, sourceText string) bool {
+	ev := normalizeForSpanMatch(evidence)
+	if ev == "" {
+		return false
+	}
+	return strings.Contains(normalizeForSpanMatch(sourceText), ev)
+}
+
+// verifyEvidenceSpans drops relations whose Evidence is not present in the
+// resolved source text (SPEC-08 D4/AC3 — compile outputs are data; schema
+// validation alone cannot stop a fabricated evidence span). Each dropped
+// edge emits edge_rejected and increments edge_rejected_total
+// {reason:"span_missing"}. Entities are kept — other grounded edges or the
+// article pass may still use them.
+func verifyEvidenceSpans(g ExtractedGraph, sourceText string, sink events.Sink, wsName string) ExtractedGraph {
+	if len(g.Relations) == 0 {
+		return g
+	}
+	kept := make([]ExtractedRelation, 0, len(g.Relations))
+	for _, rel := range g.Relations {
+		if evidenceGrounded(rel.Evidence, sourceText) {
+			kept = append(kept, rel)
+			continue
+		}
+		metrics.CounterNamed("edge_rejected_total", "reason", "span_missing").Inc()
+		if sink != nil {
+			sink.Emit(events.NewEvent(wsName, events.TypeEdgeRejected, events.EdgeRejected{
+				Source:    rel.Source,
+				Predicate: rel.Predicate,
+				Target:    rel.Target,
+				Reason:    "span_missing",
+			}))
+		}
+		log.Warn("triples: edge rejected — evidence span not in source",
+			"source", rel.Source, "predicate", rel.Predicate, "target", rel.Target)
+	}
+	g.Relations = kept
+	return g
 }

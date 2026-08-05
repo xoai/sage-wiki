@@ -115,6 +115,11 @@ type Client struct {
 	pass          string        // current compiler pass name (for tracking)
 	tier          int           // compile tier for usage events (TierNotCompileScoped when unset)
 	cacheID       string        // active cache ID (empty = no caching)
+	// callTimeout bounds each provider call (SPEC-08 provider_timeout).
+	// The per-call deadline is min(remaining ctx deadline, callTimeout) —
+	// a shorter caller deadline always wins. Zero disables the extra
+	// bound (the http.Client transport timeout still applies).
+	callTimeout time.Duration
 }
 
 // sharedTransport is the HTTP transport reused by every llm.Client.
@@ -180,11 +185,21 @@ func NewClient(providerName string, apiKey string, baseURL string, rateLimit int
 			Transport: sharedTransport,
 			Timeout:   120 * time.Second,
 		},
+		callTimeout: 120 * time.Second,
 	}, nil
 }
 
 func (c *Client) SetTransport(t http.RoundTripper) {
 	c.client.Transport = t
+}
+
+// SetCallTimeout bounds each provider call (SPEC-08 provider_timeout).
+// Shorter caller context deadlines always win (context nesting takes the
+// minimum). Zero or negative disables the extra bound.
+func (c *Client) SetCallTimeout(d time.Duration) {
+	if d > 0 {
+		c.callTimeout = d
+	}
 }
 
 // ChatCompletion sends a chat completion request with retry on rate limits.

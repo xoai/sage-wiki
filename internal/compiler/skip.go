@@ -9,6 +9,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
+	"github.com/xoai/sage-wiki/internal/pathsafe"
 	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/store"
@@ -289,7 +290,16 @@ type CompileExplanation struct {
 // ExplainCompileKey computes the --explain report for one doc, side-effect
 // free (no adoptions, no resets — the skip rule as a pure query).
 func ExplainCompileKey(projectDir, doc string, cfg *config.Config, pr *prompts.Registry, items store.CompileItemStore) (*CompileExplanation, error) {
-	absPath := filepath.Join(projectDir, doc)
+	// SPEC-08 AC1: doc is a workspace-relative name — reject traversal and
+	// malformed inputs BEFORE any filesystem access, then containment-check
+	// the join (pathsafe is the single containment answer).
+	if err := pathsafe.ValidateRel(doc); err != nil {
+		return nil, fmt.Errorf("explain: %w", err)
+	}
+	absPath, err := pathsafe.SafeJoin(projectDir, doc)
+	if err != nil {
+		return nil, fmt.Errorf("explain: %w", err)
+	}
 	diskHash, err := fileHash(absPath)
 	if err != nil {
 		return nil, fmt.Errorf("explain %s: %w", doc, err)

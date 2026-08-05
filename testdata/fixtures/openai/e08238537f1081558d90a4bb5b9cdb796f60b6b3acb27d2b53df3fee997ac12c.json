@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "## Key claims\n\nRaw Contradiction Fact V2 is the central subject of this source document, which lays out its definition, mechanics, and practical implications in detail. Project Lighthouse moved to a decentralized lease model in early 2025. the centralized coordinator was removed.\n\n## Concepts\n\nraw-contradiction-fact-v2: The central concept developed by this document.",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.781,
+            0.162,
+            0.543,
+            0.924,
+            0.305,
+            0.686,
+            0.067,
+            0.448
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

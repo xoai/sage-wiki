@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "## Key claims\n\nRaw Contradiction Fact V1 is the central subject of this source document, which lays out its definition, mechanics, and practical implications in detail. Project Lighthouse uses a centralized coordinator for all compile jobs.\n\n## Concepts\n\nraw-contradiction-fact-v1: The central concept developed by this document.",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.332,
+            0.951,
+            0.57,
+            0.189,
+            0.856,
+            0.475,
+            0.094,
+            0.713
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

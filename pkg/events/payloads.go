@@ -225,6 +225,26 @@ type EventsDropped struct {
 	Dropped int64 `json:"dropped"`
 }
 
+// LimitExceeded is the payload of TypeLimitExceeded (SPEC-08): which limit
+// fired, its configured value, and the offending value. Detail carries a
+// short locator (doc id / path fragment / query hash) — never full content.
+type LimitExceeded struct {
+	Which  string `json:"which"`
+	Limit  int64  `json:"limit"`
+	Got    int64  `json:"got"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// EdgeRejected is the payload of TypeEdgeRejected (SPEC-08): an LLM-emitted
+// edge dropped before persist. Allowed Reason values are pinned in spec D2
+// ("span_missing" this cycle).
+type EdgeRejected struct {
+	Source    string `json:"source"`
+	Predicate string `json:"predicate"`
+	Target    string `json:"target"`
+	Reason    string `json:"reason"`
+}
+
 // costRaw renders a decimal cost as a raw JSON number, or null when nil.
 func costRaw(c *decimal.Decimal) json.RawMessage {
 	if c == nil {

@@ -24,6 +24,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/hybrid"
+	"github.com/xoai/sage-wiki/internal/limits"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
@@ -923,6 +924,12 @@ func (s *WebServer) handleQuery(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 64*1024) // 64KB max
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Question == "" {
 		http.Error(w, "question required", http.StatusBadRequest)
+		return
+	}
+	// SPEC-08 D1: overlong questions fail fast before any provider call.
+	lim := s.cfg.Limits.Resolve()
+	if int64(len(body.Question)) > lim.MaxQueryBytes {
+		http.Error(w, fmt.Sprintf("question too large: %v", limits.New(limits.WhichQueryBytes, lim.MaxQueryBytes, int64(len(body.Question)))), http.StatusRequestEntityTooLarge)
 		return
 	}
 	if body.TopK <= 0 {

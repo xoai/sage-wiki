@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xoai/sage-wiki/internal/limits"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/pkg/events"
@@ -389,7 +390,8 @@ func (s *ontologyStore) Traverse(entityID string, opts store.TraverseOpts) ([]st
 	visited := map[string]bool{entityID: true}
 	frontier := []string{entityID}
 	var out []store.Entity
-	for depth := 0; depth < maxDepth && len(frontier) > 0; depth++ {
+	overCap := false
+	for depth := 0; depth < maxDepth && len(frontier) > 0 && !overCap; depth++ {
 		var next []string
 		for _, id := range frontier {
 			var rels []store.Relation
@@ -414,14 +416,24 @@ func (s *ontologyStore) Traverse(entityID string, opts store.TraverseOpts) ([]st
 					continue
 				}
 				visited[other] = true
+				if opts.MaxNodes > 0 && len(visited) > opts.MaxNodes {
+					overCap = true
+					break
+				}
 				next = append(next, other)
 				e, err := s.GetEntity(other)
 				if err == nil && e != nil {
 					out = append(out, *e)
 				}
 			}
+			if overCap {
+				break
+			}
 		}
 		frontier = next
+	}
+	if overCap {
+		return out, limits.ErrTraversalTooWide
 	}
 	return out, nil
 }

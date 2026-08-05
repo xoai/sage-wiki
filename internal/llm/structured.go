@@ -63,9 +63,20 @@ func (c *Client) doWithRetry(ctx context.Context, buildReq func() (*http.Request
 		if err != nil {
 			return nil, fmt.Errorf("llm: format request: %w", err)
 		}
-		req = req.WithContext(ctx) // cancellation reaches the in-flight call
+		// SPEC-08 provider_timeout: bound each attempt. context.WithTimeout
+		// takes the minimum of the parent deadline and the timeout, so a
+		// shorter caller deadline always wins.
+		reqCtx := ctx
+		var cancelAttempt context.CancelFunc
+		if c.callTimeout > 0 {
+			reqCtx, cancelAttempt = context.WithTimeout(ctx, c.callTimeout)
+		}
+		req = req.WithContext(reqCtx) // cancellation reaches the in-flight call
 
 		resp, err := c.client.Do(req)
+		if cancelAttempt != nil {
+			cancelAttempt()
+		}
 		if err != nil {
 			return nil, fmt.Errorf("llm: request failed: %w", err)
 		}

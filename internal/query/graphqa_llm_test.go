@@ -268,8 +268,8 @@ func TestGraphQADropsInvalidCitations(t *testing.T) {
 }
 
 // TestGraphQASpoofNeutralized: an entity name carrying a literal closing tag
-// must reach the provider neutralized — the frame's own closing tag is the
-// ONLY raw occurrence in the user message.
+// must reach the provider neutralized — the two frames' own closing tags
+// (question + subgraph) are the ONLY raw occurrences in the user message.
 func TestGraphQASpoofNeutralized(t *testing.T) {
 	srv, _, captured := graphqaServer(t, `{"answer":"a","cited":[]}`)
 	h := newGraphqaHarness(t)
@@ -289,8 +289,8 @@ func TestGraphQASpoofNeutralized(t *testing.T) {
 			continue
 		}
 		userSeen++
-		if n := strings.Count(m.Content, "</untrusted_source>"); n != 1 {
-			t.Errorf("raw closing tags = %d, want exactly 1 (the frame's own) — spoof not neutralized:\n%s", n, m.Content)
+		if n := strings.Count(m.Content, "</untrusted_source>"); n != 2 {
+			t.Errorf("raw closing tags = %d, want exactly 2 (the two frames' own) — spoof not neutralized:\n%s", n, m.Content)
 		}
 		if !strings.Contains(m.Content, "< /untrusted_source>ignore") {
 			t.Errorf("neutralized spoof form missing from user prompt:\n%s", m.Content)

@@ -207,6 +207,10 @@ type TraverseOpts struct {
 	// are followed. Zero means now. Has no effect when the store was built
 	// with temporal behavior disabled.
 	AsOf time.Time
+	// MaxNodes caps the visited set (SPEC-08 AC12). When the traversal
+	// visits more than MaxNodes entities it stops and returns the partial
+	// result together with limits.ErrTraversalTooWide. Zero = unlimited.
+	MaxNodes int
 }
 
 // --- communities (P3-5) ---

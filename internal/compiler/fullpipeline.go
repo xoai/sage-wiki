@@ -10,6 +10,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/extract"
+	"github.com/xoai/sage-wiki/internal/limits"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
@@ -96,6 +97,12 @@ type FullPipelineOpts struct {
 	// ontology store, Task 6).
 	Sink     events.Sink
 	Progress *Progress
+
+	// Budgets, when set, enforces the per-doc compile_doc_timeout
+	// stopwatch over the doc's Pass-1 and Pass-2b units (SPEC-08 D6).
+	Budgets *DocBudgets
+	// JobID labels the compile_doc_finished emissions for timeout docs.
+	JobID string
 }
 
 // FullPipelineResult summarizes what the full pipeline produced.
@@ -189,6 +196,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		ExtractOpts:   sumExOpts,
 		SummaryNaming: summaryNaming,
 		SourceRoots:   sourceRoots,
+		Budgets:       opts.Budgets,
 	})
 
 	for _, sr := range summaries {
@@ -197,6 +205,14 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		// don't record a failure, and don't mark it compiled — so the next
 		// compile reprocesses it cleanly.
 		if sr.Cancelled || errors.Is(sr.Error, context.Canceled) || errors.Is(sr.Error, context.DeadlineExceeded) {
+			continue
+		}
+		// SPEC-08 AC11: a per-doc budget expiry is a typed timeout — the doc
+		// is left unprocessed (retryable next compile) and both events fire:
+		// compile_doc_finished{Skipped:true} + limit_exceeded.
+		if errors.Is(sr.Error, limits.ErrTimeout) {
+			emitDocTimeout(opts.Sink, opts.ProjectDir, opts.JobID, sr.SourcePath, sr.Error)
+			progress.ItemError(sr.SourcePath, sr.Error)
 			continue
 		}
 		if sr.Error != nil {
@@ -357,7 +373,18 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	// zero-concept early return below — otherwise triples would silently never
 	// persist on an incremental compile where every concept dedup-merged, which
 	// is the ordinary case. Never fails the compile; see ExtractTriplesPass.
-	touched, supersessions := ExtractTriplesPass(opts.Ctx, writeOntStore, successfulSummaries, concepts, cfg, client, false, opts.ProjectDir, mf, opts.TrustStore, opts.Prompts)
+	touched, supersessions, tripleTimeouts := ExtractTriplesPass(opts.Ctx, writeOntStore, successfulSummaries, concepts, cfg, client, false, opts.ProjectDir, mf, opts.TrustStore, opts.Prompts, opts.Budgets, opts.Sink)
+	// SPEC-08 AC11: a per-doc budget expiry in the triples leg is a typed
+	// timeout — emit the event pair (compile_doc_finished{Skipped:true} +
+	// limit_exceeded) and force the run incomplete so the doc re-enters the
+	// next compile (its summary persisted, so only an incomplete run
+	// reprocesses it). The pass lacks JobID, so the emission lands here.
+	hadTripleTimeout := false
+	for _, t := range tripleTimeouts {
+		hadTripleTimeout = true
+		emitDocTimeout(opts.Sink, opts.ProjectDir, opts.JobID, t.SourcePath, t.Err)
+		progress.ItemError(t.SourcePath, t.Err)
+	}
 
 	// Pass 4: entity resolution (P3-3, opt-in). Deferred rather than called
 	// inline because it must run AFTER Pass 3 — WriteArticles is what creates
@@ -388,7 +415,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		// one). Pass 2/3 are done for this run, so mark it completed (unless
 		// cancelled). Leaving it false here would make callers roll these sources
 		// out of the manifest and re-summarize them on every compile, forever. P1-1.
-		result.Pass23Completed = opts.Ctx == nil || opts.Ctx.Err() == nil
+		result.Pass23Completed = (opts.Ctx == nil || opts.Ctx.Err() == nil) && !hadTripleTimeout
 		return result
 	}
 
@@ -523,7 +550,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	// returns above, and not if the run was cancelled — are the summarize-succeeded
 	// sources safe to mark extracted/written in the checkpoints. Callers gate their
 	// pass-marking on this so an interrupted/failed run stays resumable. P1-1.
-	result.Pass23Completed = opts.Ctx == nil || opts.Ctx.Err() == nil
+	result.Pass23Completed = (opts.Ctx == nil || opts.Ctx.Err() == nil) && !hadTripleTimeout
 
 	return result
 }

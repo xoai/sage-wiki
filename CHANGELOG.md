@@ -4,6 +4,43 @@
 
 ### Added
 
+- **Input hardening + resource limits (SPEC-08).** A single `limits:` block
+  in `config.yaml` now caps every ingestion, compile, query, and serve
+  surface; zero values resolve to safe defaults (never "disabled"). New
+  limits: `max_doc_bytes` (10 MiB), `max_docs_per_capture_batch` (10),
+  `max_compile_batch` (1000), `max_query_bytes` (32 KiB),
+  `max_graph_traversal_nodes` (10000), `max_concurrent_provider_calls` (20),
+  `max_concurrent_requests_per_conn` (8), `provider_timeout` (120s), and
+  `compile_doc_timeout` (15m). Every violation returns a typed `LimitError`
+  and emits a `limit_exceeded` event; a new `edge_rejected` event (and
+  `edge_rejected_total` metric) records LLM edges dropped by span
+  verification. `pkg/engine` gains `WithLimits` for per-open tightening.
+  Serve mode is hardened: production server timeouts + a 1 MiB header cap,
+  a per-connection in-flight request guard (429), and a 1 MiB `/mcp` body
+  cap. `docs/security.md` documents the threat model, the limits table, the
+  prompt-boundary design, and residual risks. Four new native Go fuzz
+  targets (`FuzzFrontmatter` per owning package, `FuzzWikilink`,
+  `FuzzAliasNormalize`, `FuzzCanonical`) run PR-gated (30s) and nightly.
+
+### Changed
+
+- **Behavior changes (SPEC-08 — all deliberate):**
+  1. `max_doc_bytes` default 10 MiB lowers the previous 50 MB engine/URL
+     capture ceiling; operators with larger docs set `limits.max_doc_bytes`.
+  2. `IngestURL` no longer silently truncates oversized downloads — it
+     errors.
+  3. Non-UTF-8 content not matching a known binary extractor is rejected at
+     ingestion instead of being stored raw.
+  4. LLM edges whose evidence span is absent from the source are dropped
+     (span verification) rather than persisted.
+  5. A doc whose cumulative LLM-unit time exceeds `compile_doc_timeout`
+     (default 15m) now expires with a typed timeout instead of running
+     unbounded (new default-on behavior; configurable via `limits:`).
+  6. Captures whose type/title slug sanitizes to empty now fail with a typed
+     error instead of silently falling back to a generated name.
+
+### Added
+
 - **Deterministic artifacts + content-hash dedup (SPEC-04).** Identical
   inputs now produce byte-identical artifacts — articles, summaries,
   manifest, `wiki.db`, vector index, and exports are reproducible

@@ -15,7 +15,8 @@
         }
       ],
       "model": "gpt-4o-mini",
-      "stream": false
+      "stream": false,
+      "temperature": 0
     }
   },
   "response": {
@@ -25,15 +26,15 @@
         {
           "finish_reason": "stop",
           "message": {
-            "content": "## Key claims\n\nYou is the central subject of this source document, which lays out its definition, mechanics, and practical implications in detail.\n\n## Concepts\n\nyou: The central concept developed by this document."
+            "content": "## Key claims\n\nRaw Code Examplepy is the central subject of this source document, which lays out its definition, mechanics, and practical implications in detail.\n\n## Concepts\n\nraw-code-examplepy: The central concept developed by this document."
           }
         }
       ],
       "model": "gpt-4o-mini",
       "usage": {
-        "completion_tokens": 53,
+        "completion_tokens": 60,
         "prompt_tokens": 429,
-        "total_tokens": 483
+        "total_tokens": 490
       }
     }
   }

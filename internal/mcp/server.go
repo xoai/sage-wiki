@@ -285,6 +285,9 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if query == "" {
 		return errorResult("query is required"), nil
 	}
+	if err := s.checkQueryLen(query); err != nil {
+		return errorResult(fmt.Sprintf("query rejected: %v", err)), nil
+	}
 
 	limit := 10
 	if l, ok := args["limit"].(float64); ok {

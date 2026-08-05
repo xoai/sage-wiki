@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/xoai/sage-wiki/internal/cli"
 	"github.com/xoai/sage-wiki/internal/manifest"
+	"github.com/xoai/sage-wiki/internal/pathsafe"
 )
 
 var addSourceCmd = &cobra.Command{
@@ -28,7 +29,15 @@ func runAddSource(cmd *cobra.Command, args []string) error {
 	relPath := args[0]
 	srcType, _ := cmd.Flags().GetString("type")
 
-	absPath := filepath.Join(dir, relPath)
+	// SPEC-08 AC1: the manifest key is a workspace-relative name — reject
+	// traversal/malformed inputs, then containment-check the resolved path.
+	if err := pathsafe.ValidateRel(relPath); err != nil {
+		return cli.CLIError(outputFormat, fmt.Errorf("add-source: %w", err))
+	}
+	absPath, err := pathsafe.SafeJoin(dir, relPath)
+	if err != nil {
+		return cli.CLIError(outputFormat, fmt.Errorf("add-source: %w", err))
+	}
 	info, err := os.Stat(absPath)
 	if err != nil {
 		return cli.CLIError(outputFormat, fmt.Errorf("file not found: %s", relPath))

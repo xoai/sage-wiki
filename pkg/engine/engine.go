@@ -11,6 +11,7 @@ import (
 
 	"github.com/xoai/sage-wiki/internal/app"
 	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/limits"
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/store"
@@ -25,8 +26,7 @@ var (
 	// ErrIncompatibleVersion reports a mutation attempted on a pre-format
 	// (v0.2.x) workspace opened without WithUpgrade.
 	ErrIncompatibleVersion = errors.New("engine: workspace predates format versioning — open with WithUpgrade to adopt it")
-	// ErrDocTooLarge reports a source over the engine's document cap.
-	ErrDocTooLarge = errors.New("engine: document too large")
+	// ErrDocTooLarge lives in limits.go (SPEC-08 alias to internal/limits).
 	// ErrBudgetExceeded reports a compile stopped by CompileRequest.MaxCost.
 	ErrBudgetExceeded = errors.New("engine: compile stopped at MaxCost")
 	// ErrNotInitialized reports Open on a directory that is not a workspace.
@@ -42,12 +42,13 @@ var (
 type Option func(*options)
 
 type options struct {
-	configFile string
-	provider   provider.Provider
-	sink       events.Sink
-	logger     *slog.Logger
-	upgrade    bool
-	readOnly   bool
+	configFile     string
+	provider       provider.Provider
+	sink           events.Sink
+	logger         *slog.Logger
+	upgrade        bool
+	readOnly       bool
+	limitsOverride limits.Limits
 }
 
 // WithConfigFile loads config from an explicit path instead of

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,16 +21,20 @@ import (
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/fsutil"
 	gitpkg "github.com/xoai/sage-wiki/internal/git"
+	"github.com/xoai/sage-wiki/internal/limits"
 	"github.com/xoai/sage-wiki/internal/linter"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/pathsafe"
 	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/sourcedate"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/trust"
+	"github.com/xoai/sage-wiki/internal/wiki"
+	"github.com/xoai/sage-wiki/pkg/events"
 )
 
 func (s *Server) registerWriteTools() {
@@ -243,6 +248,13 @@ func (s *Server) handleWriteArticle(ctx context.Context, req mcplib.CallToolRequ
 	if conceptID == "" || content == "" {
 		return errorResult("concept and content are required"), nil
 	}
+	// SPEC-08 AC1: concept ids are identifiers — strict charset rejection,
+	// aligned with the REST edge rule and the CLI shim.
+	if !pathsafe.ValidConceptID(conceptID) {
+		err := fmt.Errorf("invalid concept id %q: %w", conceptID, limits.ErrInvalidName)
+		s.emitLimitExceeded(err, "mcp:wiki_write_article")
+		return errorResult(err.Error()), nil
+	}
 
 	articlePath := filepath.Join(s.cfg.Output, "concepts", conceptID+".md")
 	absProject, _ := filepath.Abs(s.projectDir)
@@ -369,6 +381,49 @@ func (s *Server) handleLearn(ctx context.Context, req mcplib.CallToolRequest) (*
 
 const maxCaptureSize = 100 * 1024 // 100KB
 
+// checkQueryLen enforces limits.MaxQueryBytes on query/question inputs
+// (SPEC-08 D1) before any provider call. Emits limit_exceeded and returns
+// the typed error; nil when within the cap.
+func (s *Server) checkQueryLen(q string) error {
+	lim := s.cfg.Limits.Resolve()
+	if int64(len(q)) > lim.MaxQueryBytes {
+		le := limits.New(limits.WhichQueryBytes, lim.MaxQueryBytes, int64(len(q)))
+		s.emitLimitExceeded(le, "mcp:query")
+		return le
+	}
+	return nil
+}
+
+// emitLimitExceeded fans one limit_exceeded event into the installed sink
+// for tool-level enforcement (SPEC-08 D2 emission inventory). Detail is a
+// short locator, never content. No sink = no-op.
+func (s *Server) emitLimitExceeded(err error, detail string) {
+	sink := s.eventSink()
+	if sink == nil {
+		return
+	}
+	var le *limits.LimitError
+	if errors.As(err, &le) {
+		sink.Emit(events.NewEvent(filepath.Base(s.projectDir), events.TypeLimitExceeded, events.LimitExceeded{
+			Which:  le.Which,
+			Limit:  le.Limit,
+			Got:    le.Got,
+			Detail: detail,
+		}))
+		return
+	}
+	which := limits.WhichInvalidName
+	if errors.Is(err, limits.ErrEncoding) {
+		which = limits.WhichEncoding
+	}
+	if errors.Is(err, limits.ErrInvalidName) || errors.Is(err, limits.ErrEncoding) {
+		sink.Emit(events.NewEvent(filepath.Base(s.projectDir), events.TypeLimitExceeded, events.LimitExceeded{
+			Which:  which,
+			Detail: detail,
+		}))
+	}
+}
+
 func (s *Server) handleCapture(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
 	args := req.GetArguments()
 	content, _ := args["content"].(string)
@@ -377,6 +432,12 @@ func (s *Server) handleCapture(ctx context.Context, req mcplib.CallToolRequest) 
 	}
 	if len(content) > maxCaptureSize {
 		return errorResult(fmt.Sprintf("content too large (%d bytes, max %d)", len(content), maxCaptureSize)), nil
+	}
+	// SPEC-08 D3: wiki_capture is a TEXT surface — invalid UTF-8 is
+	// rejected with the typed encoding error, never stored.
+	if err := wiki.EncodingGate("capture.md", []byte(content)); err != nil {
+		s.emitLimitExceeded(err, "mcp:wiki_capture")
+		return errorResult(fmt.Sprintf("capture rejected: %v", err)), nil
 	}
 
 	captureCtx, _ := args["context"].(string)
@@ -404,6 +465,26 @@ func (s *Server) handleCapture(ctx context.Context, req mcplib.CallToolRequest) 
 		return textResult("No knowledge items found worth extracting."), nil
 	}
 
+	// SPEC-08 D1: per-call capture batch cap. Over-cap is a typed failure
+	// with an event — nothing partial persists.
+	lim := s.cfg.Limits.Resolve()
+	if int64(len(items)) > lim.MaxDocsPerCaptureBatch {
+		le := limits.New(limits.WhichCaptureBatch, lim.MaxDocsPerCaptureBatch, int64(len(items)))
+		s.emitLimitExceeded(le, "mcp:wiki_capture")
+		return errorResult(fmt.Sprintf("capture rejected: %v", le)), nil
+	}
+
+	// SPEC-08 D3 (behavior change 6): a title that sanitizes to an empty
+	// slug fails the capture — the old silent timestamped fallback let
+	// unnameable content in.
+	for _, item := range items {
+		if slugify(item.Title) == "" {
+			err := fmt.Errorf("capture rejected: title %q sanitizes to an empty slug: %w", item.Title, limits.ErrInvalidName)
+			s.emitLimitExceeded(err, "mcp:wiki_capture")
+			return errorResult(err.Error()), nil
+		}
+	}
+
 	// Write each item as a source file. The manifest RMW is deferred to one
 	// locked Mutate at the end (D4): file writes are per-path and race-free, so
 	// only the manifest update needs the lock, and batching keeps it to a single
@@ -419,9 +500,6 @@ func (s *Server) handleCapture(ctx context.Context, req mcplib.CallToolRequest) 
 
 	for _, item := range items {
 		slug := slugify(item.Title)
-		if slug == "" {
-			slug = fmt.Sprintf("capture-%d", time.Now().UnixNano())
-		}
 		// Disambiguate duplicate slugs
 		if n, exists := usedSlugs[slug]; exists {
 			usedSlugs[slug] = n + 1

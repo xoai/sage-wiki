@@ -27,6 +27,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/hybrid"
+	"github.com/xoai/sage-wiki/internal/limits"
 	"github.com/xoai/sage-wiki/internal/linter"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/manifest"
@@ -1527,8 +1528,11 @@ func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
 	}
 	var ready atomic.Bool
 	var liveHandler atomic.Value // http.Handler, installed at handoff
-	httpSrv := &http.Server{}
-	httpSrv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	lim := limits.Limits{}
+	if cfg != nil {
+		lim = cfg.Limits
+	}
+	httpSrv := serve.NewHardenedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if h, ok := liveHandler.Load().(http.Handler); ok && h != nil {
 			h.ServeHTTP(w, r)
 			return
@@ -1548,7 +1552,7 @@ func runServeHTTP(cmd *cobra.Command, dir, addr string) error {
 			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte(`{"error":{"code":"not_found","message":"server is starting"}}`))
 		}
-	})
+	}), lim)
 	go httpSrv.Serve(listener)
 
 	// Workspace lock (§2.0): the read-write open acquires engine.lock and

@@ -9,6 +9,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/store"
 )
 
@@ -120,9 +121,11 @@ func GlobalQA(ctx context.Context, cs store.CommunityStore, searcher *hybrid.Sea
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			resp, err := client.ChatCompletionCtx(ctx, []llm.Message{
-				{Role: "user", Content: fmt.Sprintf(
-					"Question: %s\n\nCommunity summary:\n%s\n\nAnswer the question using ONLY this community's summary, in 2-3 sentences. If the summary is not relevant, say IRRELEVANT.",
-					question, c.Summary)},
+				// SPEC-08 D4: question + community summary are untrusted
+				// inputs meeting instructions — canonical frame (P1-6).
+				{Role: "user", Content: "Question:\n" + prompts.WrapUntrusted(question) +
+					"\n\nCommunity summary:\n" + prompts.WrapUntrusted(c.Summary) +
+					"\n\nAnswer the question using ONLY this community's summary, in 2-3 sentences. If the summary is not relevant, say IRRELEVANT."},
 			}, llm.CallOpts{Model: opts.Model, MaxTokens: opts.MaxTokens})
 			if err != nil {
 				log.Warn("globalqa: map call failed", "community", c.ID, "error", err)
@@ -161,9 +164,11 @@ func GlobalQA(ctx context.Context, cs store.CommunityStore, searcher *hybrid.Sea
 		fmt.Fprintf(&sb, "[%s] %s\n\n", p.id, p.text)
 	}
 	resp, err := client.ChatCompletionCtx(ctx, []llm.Message{
-		{Role: "user", Content: fmt.Sprintf(
-			"Question: %s\n\nPartial answers from knowledge communities:\n%s\nSynthesize one global answer. Cite communities by their [id] inline.",
-			question, sb.String())},
+		// SPEC-08 D4: question + partial answers (LLM output over
+		// doc-derived data — second-order untrusted) enter framed (P1-6).
+		{Role: "user", Content: "Question:\n" + prompts.WrapUntrusted(question) +
+			"\n\nPartial answers from knowledge communities:\n" + prompts.WrapUntrusted(sb.String()) +
+			"\nSynthesize one global answer. Cite communities by their [id] inline."},
 	}, llm.CallOpts{Model: opts.Model, MaxTokens: opts.MaxTokens})
 	if err != nil {
 		return GlobalQAResult{}, fmt.Errorf("globalqa: reduce: %w", err)

@@ -54,6 +54,11 @@ const (
 	TypeCompileSkip Type = "compile_skip"
 	// TypeEventsDropped: coalesced overflow signal from a bounded buffer.
 	TypeEventsDropped Type = "events_dropped"
+	// TypeLimitExceeded: a SPEC-08 resource limit rejected an operation.
+	TypeLimitExceeded Type = "limit_exceeded"
+	// TypeEdgeRejected: an LLM-emitted edge failed grounding (SPEC-08 span
+	// verification) and was dropped.
+	TypeEdgeRejected Type = "edge_rejected"
 )
 
 // Event is the event envelope. Data holds exactly the payload struct that
@@ -85,6 +90,8 @@ var payloadTypes = map[Type]reflect.Type{
 	TypeUsage:              reflect.TypeOf(Usage{}),
 	TypeCompileSkip:        reflect.TypeOf(CompileSkip{}),
 	TypeEventsDropped:      reflect.TypeOf(EventsDropped{}),
+	TypeLimitExceeded:      reflect.TypeOf(LimitExceeded{}),
+	TypeEdgeRejected:       reflect.TypeOf(EdgeRejected{}),
 }
 
 // PayloadType returns the payload struct type for t, or nil for an unknown

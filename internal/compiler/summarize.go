@@ -3,6 +3,7 @@ package compiler
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -55,6 +56,10 @@ type SummarizeOpts struct {
 	// Temperature (SPEC-04 D2): the compile sampling temperature — always
 	// non-nil from cfg.Compiler.CompileTemperature() at construction sites.
 	Temperature *float64
+	// Budgets, when set, enforces the per-doc compile_doc_timeout
+	// stopwatch (SPEC-08 D6): each source's summarize unit runs under a
+	// deadline derived from its remaining budget. nil = no per-doc bound.
+	Budgets *DocBudgets
 }
 
 // Summarize processes sources through Pass 1, producing summaries.
@@ -114,7 +119,36 @@ func Summarize(opts SummarizeOpts) []SummaryResult {
 			defer wg.Done()
 			defer release()
 
-			result := summarizeOne(opts.Ctx, opts.ProjectDir, opts.OutputDir, info, opts.Client, opts.Model, opts.MaxTokens, opts.UserTZ, opts.Language, opts.SummaryNaming, opts.SourceRoots, opts.Prompts, opts.Temperature, opts.ExtractOpts...)
+			// SPEC-08 D6: the per-doc budget bounds this unit. Queueing
+			// (sem wait above) never consumes budget — only unit runtime.
+			unitCtx := opts.Ctx
+			var budget *DocBudget
+			var cancelUnit context.CancelFunc
+			if opts.Budgets != nil {
+				budget = opts.Budgets.For(info.Path)
+				if budget.Expired() {
+					results[idx] = SummaryResult{SourcePath: info.Path, Error: docTimeoutError(budget)}
+					n := int(done.Add(1))
+					log.Warn("summarize skipped: per-doc timeout budget exhausted", "progress", fmt.Sprintf("%d/%d", n, total), "source", info.Path)
+					return
+				}
+				unitCtx, cancelUnit = budget.UnitContext(opts.Ctx)
+			}
+			start := time.Now()
+			result := summarizeOne(unitCtx, opts.ProjectDir, opts.OutputDir, info, opts.Client, opts.Model, opts.MaxTokens, opts.UserTZ, opts.Language, opts.SummaryNaming, opts.SourceRoots, opts.Prompts, opts.Temperature, opts.ExtractOpts...)
+			if budget != nil {
+				budget.Consume(time.Since(start))
+				cancelUnit()
+				// A unit that failed because ITS budget deadline fired is a
+				// typed per-doc timeout — not a generic failure, not a
+				// run-level cancellation. Only a deadline-class error is
+				// reclassified: a provider 500 that merely outlasted the
+				// budget keeps its real error (and its real numbers).
+				parentCancelled := opts.Ctx != nil && opts.Ctx.Err() != nil
+				if result.Error != nil && errors.Is(result.Error, context.DeadlineExceeded) && !parentCancelled {
+					result.Error = docTimeoutError(budget)
+				}
+			}
 			results[idx] = result
 
 			n := int(done.Add(1))

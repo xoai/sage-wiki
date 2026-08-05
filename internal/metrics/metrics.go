@@ -348,6 +348,9 @@ var helpTexts = map[string]string{
 	"job_queue_depth":          "Pending jobs in the serve compile queue.",
 	"events_dropped_total":     "Events dropped by bounded event buffers.",
 	"mirror_ship_lag_seconds":  "Seconds since the last successful mirror ship pass.",
+	// SPEC-08 series.
+	"limit_exceeded_total": "Resource-limit rejections by limit name (SPEC-08).",
+	"edge_rejected_total":  "LLM-emitted edges dropped by span verification (SPEC-08).",
 }
 
 func helpText(name string) string {
@@ -375,6 +378,16 @@ var allowedLabelKV = map[string]map[string]bool{
 	// model names are provider-defined and unbounded — validated by key
 	// only, exactly like provider.
 	"model": nil,
+	// SPEC-08 additions. "limit" values mirror internal/limits Which
+	// constants; "reason" values are pinned in SPEC-08 spec D2.
+	"limit": {
+		"doc_bytes": true, "capture_batch": true, "compile_batch": true,
+		"query_bytes": true, "graph_traversal": true,
+		"concurrent_provider_calls": true, "concurrent_requests_per_conn": true,
+		"encoding": true, "provider_timeout": true, "compile_doc_timeout": true,
+		"invalid_name": true,
+	},
+	"reason": {"span_missing": true},
 }
 
 // ValidateLabels returns an error for every registered series whose labels
