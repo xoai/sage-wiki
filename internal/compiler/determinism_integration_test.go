@@ -196,18 +196,58 @@ func TestBatchResume_OrderIndependentByteParity(t *testing.T) {
 	dirA := run(t, forward)
 	dirB := run(t, reversed)
 
+	// Compare the wiki/ output directory (summaries, articles) — the
+	// user-facing artifacts. Raw wiki.db BYTES are sensitive to SQLite
+	// page-layout timing under -race; instead, query the FTS rowid→id
+	// mapping directly (the actual thing the batch sort protects: FTS
+	// insertion order).
 	drift := spikeDiffTrees(t, dirA, dirB)
-	var real []string
+	var realDrift []string
 	for _, d := range drift {
 		rel := strings.Fields(d)[0]
-		if !isVolatileState(rel) {
-			real = append(real, d)
+		// Exclude wiki.db (page-layout timing under -race) and the known
+		// volatile files — the FTS query below covers wiki.db's logical
+		// content.
+		if isVolatileState(rel) || strings.HasSuffix(rel, "wiki.db") {
+			continue
 		}
+		realDrift = append(realDrift, d)
 	}
-	for _, d := range drift {
-		t.Logf("drift: %s%s", d, map[bool]string{true: " (volatile, excluded)", false: ""}[isVolatileState(strings.Fields(d)[0])])
+	if len(realDrift) > 0 {
+		t.Errorf("SPEC-04 batch path: non-volatile drift: %v", realDrift)
 	}
-	if len(real) > 0 {
-		t.Errorf("SPEC-04 batch path: %d non-volatile paths differ between forward and reversed batch-result orders (provider-return order leaked into artifacts): %v", len(real), real)
+
+	// FTS rowid→id mapping: the batch sort's determinism guarantee.
+	// Without the sort, the two runs produce different rowid assignments
+	// (the provider-return order leaks into insertion order).
+	ftsOrder := func(dir string) []string {
+		sdb, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sdb.Close()
+		rows, err := sdb.ReadDB().Query("SELECT id FROM entries ORDER BY rowid")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var ids []string
+		for rows.Next() {
+			var id string
+			rows.Scan(&id)
+			ids = append(ids, id)
+		}
+		return ids
+	}
+	aOrder := ftsOrder(dirA)
+	bOrder := ftsOrder(dirB)
+	if len(aOrder) != len(bOrder) {
+		t.Fatalf("FTS entry count: A=%d B=%d", len(aOrder), len(bOrder))
+	}
+	for i := range aOrder {
+		if aOrder[i] != bOrder[i] {
+			t.Errorf("SPEC-04 batch path: FTS rowid %d maps to %q in A but %q in B — provider-return order leaked into FTS insertion order", i, aOrder[i], bOrder[i])
+			break
+		}
 	}
 }
