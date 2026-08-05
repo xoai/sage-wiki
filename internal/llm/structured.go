@@ -74,15 +74,22 @@ func (c *Client) doWithRetry(ctx context.Context, buildReq func() (*http.Request
 		req = req.WithContext(reqCtx) // cancellation reaches the in-flight call
 
 		resp, err := c.client.Do(req)
-		if cancelAttempt != nil {
-			cancelAttempt()
-		}
 		if err != nil {
+			if cancelAttempt != nil {
+				cancelAttempt()
+			}
 			return nil, fmt.Errorf("llm: request failed: %w", err)
 		}
 
 		body, rerr := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		// SPEC-08: cancelAttempt fires AFTER the body is consumed, so the
+		// read error's identity (e.g. io.ErrUnexpectedEOF) survives —
+		// cancelling before ReadAll destroys it via Go's HTTP transport
+		// close path (issue #114 flake on CI).
+		if cancelAttempt != nil {
+			cancelAttempt()
+		}
 		if rerr != nil {
 			// Dropped mid-body — transient transport failure. Retry, and
 			// preserve the error identity (issue #114 R2: previously

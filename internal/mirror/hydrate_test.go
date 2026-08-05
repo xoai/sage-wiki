@@ -169,6 +169,7 @@ func TestHydrate_PITR(t *testing.T) {
 	// A gen-3 segment (row-gen2-seg), sealed AFTER gen3Created.
 	h.src.now = gen3Created.Add(time.Second)
 	h.src.dbWrite(t, "row-gen2-seg")
+	defer h.src.dbClose() // Windows: every dbWrite must Close before TempDir cleanup
 	h.src.pass(t)
 
 	cases := []struct {

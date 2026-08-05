@@ -205,9 +205,16 @@ func TestShutdownEndsSSEStreams(t *testing.T) {
 	case <-time.After(1500 * time.Millisecond):
 		t.Fatal("Shutdown blocked on the open SSE stream (budget 2s)")
 	}
-	// The stream's slot is gone.
-	if got := bus.SinkCount(); got != 0 {
-		t.Errorf("SinkCount = %d after shutdown, want 0", got)
+	// The stream's slot is gone — Shutdown cancels the handler async, so
+	// the defers may not have run yet when Shutdown returns. Poll briefly.
+	deadline := time.After(500 * time.Millisecond)
+	for bus.SinkCount() != 0 {
+		select {
+		case <-deadline:
+			t.Errorf("SinkCount = %d after shutdown, want 0", bus.SinkCount())
+			return
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }
 

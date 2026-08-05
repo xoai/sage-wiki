@@ -89,6 +89,10 @@ func TestRepro114_ReadErrorNotLaunderedAsParseError(t *testing.T) {
 		t.Fatal("expected an error")
 	}
 	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		// SPEC-08 structured.go fix: cancelAttempt firing BEFORE ReadAll
+		// destroyed this error identity via Go's HTTP transport close
+		// path — now armed AFTER the body is consumed, so the read
+		// error survives deterministically.
 		t.Errorf("read error laundered — want errors.Is(io.ErrUnexpectedEOF); got: %v", err)
 	}
 	if got := calls.Load(); got != 4 {
