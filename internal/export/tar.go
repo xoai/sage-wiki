@@ -45,7 +45,9 @@ func Tar(ctx context.Context, dir string, dst io.Writer) error {
 		if err != nil {
 			return err
 		}
-		if rel == ".sage/engine.lock" {
+		// ToSlash: filepath.Rel returns OS separators (backslash on Windows),
+		// so the exclusion must compare the normalized form.
+		if filepath.ToSlash(rel) == ".sage/engine.lock" {
 			return nil
 		}
 		info, err := d.Info()
