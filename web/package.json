@@ -9,20 +9,20 @@
     "preview": "node node_modules/vite/bin/vite.js preview"
   },
   "dependencies": {
-    "@tailwindcss/typography": "^0.5.19",
-    "force-graph": "^1.51.2",
+    "@tailwindcss/typography": "^0.5.20",
+    "force-graph": "^1.51.4",
     "highlight.js": "^11.11.1",
     "markdown-it": "^14.1.1",
-    "preact": "^10.29.1",
+    "preact": "^10.29.8",
     "preact-router": "^4.1.2"
   },
   "devDependencies": {
-    "@preact/preset-vite": "^2.10.5",
-    "@tailwindcss/vite": "^4.2.2",
+    "@preact/preset-vite": "^2.10.6",
+    "@tailwindcss/vite": "^4.3.3",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^24.12.2",
     "tailwindcss": "^4.2.2",
     "typescript": "~6.0.2",
-    "vite": "^8.0.4"
+    "vite": "^8.2.0"
   }
 }
