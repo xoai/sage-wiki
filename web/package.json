@@ -12,7 +12,7 @@
     "@tailwindcss/typography": "^0.5.19",
     "force-graph": "^1.51.2",
     "highlight.js": "^11.11.1",
-    "markdown-it": "^14.1.1",
+    "markdown-it": "^15.0.0",
     "preact": "^10.29.1",
     "preact-router": "^4.1.2"
   },
