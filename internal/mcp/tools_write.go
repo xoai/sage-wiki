@@ -807,6 +807,18 @@ func (s *Server) CompileTopic(ctx context.Context, topic string, maxSources int)
 	client.SetPriceOverride(cfg.Compiler.TokenPriceOverride)
 	client.SetPriceTable(cfg.Compiler.PriceTable)
 
+	// R3/R5: each on-demand request loads a FRESH project registry (embedded
+	// defaults + <projectDir>/prompts), so overrides never depend on package-
+	// global state and multi-workspace serves cannot cross-contaminate. A
+	// missing prompts/ dir stays silent; a malformed override warns and keeps
+	// the defaults (R4) — prompt loading never aborts topic compilation,
+	// mirroring the engine's warning-and-default behavior rather than the
+	// neighboring wiki_capture hard-error path.
+	registry := prompts.NewRegistry()
+	if err := registry.LoadFromDir(filepath.Join(s.projectDir, "prompts")); err != nil {
+		log.Warn("failed to load custom prompts", "error", err)
+	}
+
 	result, err := compiler.CompileTopic(ctx, compiler.OnDemandOpts{
 		Topic:       topic,
 		MaxSources:  maxSources,
@@ -818,6 +830,7 @@ func (s *Server) CompileTopic(ctx context.Context, topic string, maxSources int)
 		Embedder:    s.embedder,
 		Client:      client,
 		Coordinator: s.coordinator,
+		Prompts:     registry,
 		Sink:        s.eventSink(),
 	})
 	if err != nil {
