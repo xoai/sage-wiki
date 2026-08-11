@@ -1,8 +1,10 @@
 package compiler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,7 +17,9 @@ import (
 	"time"
 
 	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/metrics"
+	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/wiki"
 	"github.com/xoai/sage-wiki/pkg/events"
@@ -566,5 +570,148 @@ func TestWorker_EmitsUsageEvents(t *testing.T) {
 	}
 	if usage == 0 {
 		t.Fatal("no usage events reached the sink from the tier-3 worker cycle")
+	}
+}
+
+// TestWorker_LoadsPromptOverridesFreshPerCycle pins spec R2/R5 (AC3-AC4):
+// each worker cycle loads <projectDir>/prompts into a fresh registry and
+// passes it through FullPipelineOpts. The override sentinel lives ONLY in
+// the prompt file — never in source content (spec Test Integrity
+// Constraints). After the first cycle the override is rewritten and a NEW
+// source enqueues a fresh tier-3 item (the first is done and cannot be
+// re-claimed); cycle 2 must render the new body through its own registry.
+func TestWorker_LoadsPromptOverridesFreshPerCycle(t *testing.T) {
+	h := newWorkerHarness(t, 3, http.StatusOK)
+	h.writeSource(t, "a.md", "# Alpha\n\nNeutral content for the full pipeline.")
+	h.newWorker(t, 50*time.Millisecond, time.Second, 5)
+
+	promptsDir := filepath.Join(h.dir, "prompts")
+	if err := os.MkdirAll(promptsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeOverride := func(marker string) {
+		t.Helper()
+		body := marker + " {{.SourcePath}}"
+		if err := os.WriteFile(filepath.Join(promptsDir, "summarize-article.md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeOverride("WORKER-CYCLE-V1")
+
+	var registries []*prompts.Registry
+	h.worker.hooks.fullPipeline = func(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineResult {
+		registries = append(registries, opts.Prompts)
+		succeeded := make([]string, 0, len(sources))
+		for _, s := range sources {
+			succeeded = append(succeeded, s.Path)
+		}
+		return &FullPipelineResult{Pass23Completed: true, SucceededSources: succeeded}
+	}
+
+	render := func(reg *prompts.Registry) string {
+		t.Helper()
+		out, err := reg.Render("summarize_article", prompts.SummarizeData{SourcePath: "raw/a.md", SourceType: "md", MaxTokens: 500}, "")
+		if err != nil {
+			t.Fatalf("render through cycle registry: %v", err)
+		}
+		return out
+	}
+
+	// Cycle 1: the enqueue scan upserts raw/a.md at tier 3 (default_tier)
+	// and the pipeline hook sees the freshly loaded override.
+	if _, err := h.worker.cycle(context.Background()); err != nil {
+		t.Fatalf("cycle 1: %v", err)
+	}
+	if len(registries) != 1 {
+		t.Fatalf("cycle 1: fullPipeline called %d times, want 1", len(registries))
+	}
+	reg1 := registries[0]
+	if reg1 == nil {
+		t.Fatal("cycle 1: FullPipelineOpts.Prompts is nil — worker did not load the project registry")
+	}
+	if got := render(reg1); !strings.Contains(got, "WORKER-CYCLE-V1") {
+		t.Errorf("cycle 1 render missing override: %q", got)
+	}
+
+	// Cycle 2: rewritten override + new source must render the new body.
+	writeOverride("WORKER-CYCLE-V2")
+	h.writeSource(t, "b.md", "# Beta\n\nMore neutral content for the full pipeline.")
+	if _, err := h.worker.cycle(context.Background()); err != nil {
+		t.Fatalf("cycle 2: %v", err)
+	}
+	if len(registries) != 2 {
+		t.Fatalf("cycle 2: fullPipeline called %d times, want 2", len(registries))
+	}
+	reg2 := registries[1]
+	if reg2 == nil {
+		t.Fatal("cycle 2: FullPipelineOpts.Prompts is nil — worker did not load a fresh registry")
+	}
+	got := render(reg2)
+	if !strings.Contains(got, "WORKER-CYCLE-V2") {
+		t.Errorf("cycle 2 render missing rewritten override: %q", got)
+	}
+	if strings.Contains(got, "WORKER-CYCLE-V1") {
+		t.Errorf("cycle 2 render reused the stale template: %q", got)
+	}
+}
+
+// TestWorker_MalformedPromptOverrideWarnsAndFallsBack pins spec R4 (AC6):
+// a malformed override logs a warning through the captured logger, leaves
+// FullPipelineOpts.Prompts non-nil, and keeps the embedded defaults
+// renderable — the cycle completes cleanly without the malformed body.
+func TestWorker_MalformedPromptOverrideWarnsAndFallsBack(t *testing.T) {
+	h := newWorkerHarness(t, 3, http.StatusOK)
+	h.writeSource(t, "a.md", "# Alpha\n\nNeutral content for the full pipeline.")
+	h.newWorker(t, 50*time.Millisecond, time.Second, 5)
+
+	promptsDir := filepath.Join(h.dir, "prompts")
+	if err := os.MkdirAll(promptsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Unclosed template action — LoadFromDir must fail with a parse error.
+	if err := os.WriteFile(filepath.Join(promptsDir, "summarize-article.md"), []byte("MALFORMED-BODY {{.SourcePath"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	restore := log.SetLoggerForTest(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer restore()
+
+	var got *prompts.Registry
+	h.worker.hooks.fullPipeline = func(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineResult {
+		got = opts.Prompts
+		succeeded := make([]string, 0, len(sources))
+		for _, s := range sources {
+			succeeded = append(succeeded, s.Path)
+		}
+		return &FullPipelineResult{Pass23Completed: true, SucceededSources: succeeded}
+	}
+
+	if _, err := h.worker.cycle(context.Background()); err != nil {
+		t.Fatalf("cycle: %v", err)
+	}
+	if !strings.Contains(buf.String(), "failed to load custom prompts") {
+		t.Errorf("no warning for malformed override; log=%q", buf.String())
+	}
+	if got == nil {
+		t.Fatal("FullPipelineOpts.Prompts is nil after a malformed override")
+	}
+	rendered, err := got.Render("summarize_article", prompts.SummarizeData{SourcePath: "raw/a.md", SourceType: "md", MaxTokens: 500}, "")
+	if err != nil {
+		t.Fatalf("embedded default no longer renderable: %v", err)
+	}
+	if strings.Contains(rendered, "MALFORMED-BODY") {
+		t.Errorf("malformed body leaked into rendered prompt: %q", rendered)
+	}
+	if !strings.Contains(rendered, "research assistant") {
+		t.Errorf("embedded default not rendered: %q", rendered)
+	}
+
+	item, err := h.items.GetByPath("raw/a.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.Status != "done" {
+		t.Errorf("cycle did not complete cleanly: status=%q", item.Status)
 	}
 }
