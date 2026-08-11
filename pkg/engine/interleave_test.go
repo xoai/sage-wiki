@@ -25,6 +25,13 @@ func TestEngine_TwoWorkspacesInterleaved(t *testing.T) {
 			if msgs, ok := body["messages"].([]any); ok {
 				for _, m := range msgs {
 					if mm, ok := m.(map[string]any); ok {
+						// Capture only rendered user prompts: the sentinel lives
+						// exclusively in the override template, so no
+						// source-bearing or system message can satisfy the
+						// override assertions (spec Test Integrity Constraints).
+						if role, _ := mm["role"].(string); role != "user" {
+							continue
+						}
 						if c, ok := mm["content"].(string); ok {
 							prompts.add(c)
 						}
@@ -66,7 +73,7 @@ compiler:
 			[]byte(marker+" {{.SourcePath}}"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, "raw", "doc.md"), []byte("# Doc\n\nContent for "+marker+"."), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "raw", "doc.md"), []byte("# Doc\n\nNeutral content for the test subject matter."), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		return dir, srv, prompts

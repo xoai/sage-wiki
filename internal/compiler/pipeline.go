@@ -1157,6 +1157,7 @@ func runTiers(projectDir string, run *compileRun) {
 				Sink:         opts.Sink,
 				Budgets:      run.docBudgets,
 				JobID:        opts.JobID,
+				Prompts:      opts.Prompts,
 			})
 		}()
 		run.result.Summarized = pipelineResult.Summarized
