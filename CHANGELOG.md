@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Project prompt overrides apply to every compilation surface (#143).**
+  Overrides in a workspace's `prompts/` directory now take effect for
+  standard `sage-wiki compile`, serve background worker cycles, and MCP/REST
+  on-demand topic compilation.
+
 ## [0.2.8] — 2026-08-05
 
 ### Fixed
