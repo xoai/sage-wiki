@@ -5,8 +5,11 @@
 #   (a) a file declares `X := map[` or `X := make(map[` and later ranges X
 #   (b) a range over a known workspace map field (manifest Sources/
 #       Concepts, DedupCache.cache) feeding a serializer
-# …unless the line is allowlisted in scripts/determinism-allowlist.txt
-# (one line per verified-safe site with its justification).
+# …unless the site is allowlisted in scripts/determinism-allowlist.txt.
+# Matching is source-bound and bidirectional: an entry identifies a site by
+# <location>|<source> and the check validates BOTH directions — an
+# unallowlisted candidate fails, and a dead, duplicate, or malformed entry
+# fails too (a stale line number here is itself a finding).
 #
 # LIMITS (documented in docs/determinism.md): no cross-file dataflow, no
 # judgment about whether a sort's key is the right one. A tripwire, not a
@@ -30,12 +33,77 @@ violations() {
 }
 
 filter_allowed() {
-  while IFS= read -r line; do
-    loc="$(echo "$line" | cut -d: -f1,2)"
-    if ! grep -qF "$loc" "$ALLOWLIST" 2>/dev/null; then
-      echo "$line"
+  # Source-bound, bidirectional allowlist validation.
+  #
+  # Entry format: <location>|<source>|<justification>
+  #   location      = the emitted violation's first two fields (<file>:<line>)
+  #   source        = the emitted violation's text after the second colon,
+  #                   trimmed of leading/trailing blanks — identity, together
+  #                   with the location, of the site; colons, braces, and
+  #                   trailing comments are preserved
+  #   justification = free text, excluded from comparison
+  # `|` is never escaped: any candidate source or entry field containing an
+  # unescaped `|` is malformed. Blank lines and lines whose first
+  # non-whitespace char is `#` are ignored; every data line must have exactly
+  # three non-empty fields. A duplicate key, a malformed line, or an entry
+  # key matching no candidate (dead) hard-fails with exit 1.
+  cand="$(mktemp)"
+  keys="$(mktemp)"
+  candkeys="$(mktemp)"
+  trap 'rm -f "$cand" "$keys" "$candkeys"' RETURN
+  cat > "$cand"
+  bad=0
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="$(printf '%s' "$line" | sed 's/^[[:blank:]]*//; s/[[:blank:]]*$//')"
+    [ -z "$line" ] && continue
+    case "$line" in \#*) continue ;; esac
+    if [ "$(printf '%s' "$line" | grep -o '|' | wc -l)" -ne 2 ]; then
+      echo "check-determinism: malformed allowlist line (expected <location>|<source>|<justification>; \`|\` is never escaped): $line"
+      bad=1
+      continue
     fi
-  done
+    loc="${line%%|*}"
+    src="${line#*|}"; src="${src%%|*}"
+    just="${line##*|}"
+    if [ -z "$loc" ] || [ -z "$src" ] || [ -z "$just" ]; then
+      echo "check-determinism: allowlist entry with an empty field (location, source, and justification are all required): $line"
+      bad=1
+      continue
+    fi
+    if grep -Fqx "$loc|$src" "$keys"; then
+      echo "check-determinism: duplicate allowlist key (location+source identity): $loc|$src"
+      bad=1
+      continue
+    fi
+    printf '%s\n' "$loc|$src" >> "$keys"
+  done < "$ALLOWLIST"
+
+  while IFS= read -r line; do
+    loc="$(printf '%s' "$line" | cut -d: -f1,2)"
+    src="$(printf '%s' "$line" | cut -d: -f3- | sed 's/^[[:blank:]]*//; s/[[:blank:]]*$//')"
+    if [ -z "$src" ]; then
+      echo "check-determinism: malformed candidate (no source text after the location): $line"
+      bad=1
+      continue
+    fi
+    case "$src" in
+      *\|*) echo "check-determinism: malformed candidate (unescaped \`|\` in source): $line"; bad=1 ;;
+    esac
+    printf '%s\n' "$loc|$src" >> "$candkeys"
+    if ! grep -Fqx "$loc|$src" "$keys"; then
+      printf '%s\n' "$line"
+    fi
+  done < "$cand"
+
+  while IFS= read -r key; do
+    if ! grep -Fqx "$key" "$candkeys"; then
+      echo "check-determinism: dead allowlist entry — no candidate matches this location+source: $key"
+      bad=1
+    fi
+  done < "$keys"
+
+  return "$bad"
 }
 
 if [ "${1:-}" = "--self-test" ]; then
@@ -145,6 +213,13 @@ EOF
 fi
 
 v="$(violations | filter_allowed)"
+rc=$?
+
+if [ "$rc" -ne 0 ]; then
+  echo "$v"
+  echo "check-determinism: allowlist validation FAILED — a dead, duplicate, or malformed entry was found (see above)."
+  exit 1
+fi
 
 if [ -n "$v" ]; then
   echo "check-determinism: map-range loops feeding writers without an allowlisted justification:"
