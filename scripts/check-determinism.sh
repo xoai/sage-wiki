@@ -113,7 +113,7 @@ filter_allowed() {
     fi
   done < "$cand"
 
-  while IFS= read -r key || [ -n "$key" ]; do
+  while IFS= read -r key; do
     if ! grep -Fqx "$key" "$candkeys"; then
       echo "check-determinism: dead allowlist entry — no candidate matches this location+source: $key"
       bad=1
@@ -244,15 +244,21 @@ EOF
     witness_fail "final candidate without trailing newline dropped — false dead entry"
   fi
 
-  # RED witness: a missing allowlist must fail with an explicit diagnostic,
-  # not a redirection error followed by misleading unallowlisted guidance.
-  ALLOWLIST="$tmpdir/does-not-exist"
-  out="$(planted_candidates | filter_allowed 2>&1)"
-  rc=$?
-  if [ "$rc" -eq 0 ]; then
-    witness_fail "missing allowlist not detected (rc=0)"
-  elif ! printf '%s\n' "$out" | grep -q 'allowlist'; then
-    witness_fail "missing allowlist diagnostic not emitted"
+  # END-TO-END RED witness: a missing allowlist must fail on the script's
+  # real caller path — rc=1, the accurate missing/unreadable diagnostic,
+  # and a truthful generic summary. The misleading "dead, duplicate, or
+  # malformed" claim and any unallowlisted guidance must never appear.
+  # Recursive invocation via "$script_path" without --self-test exercises
+  # the normal path; the env var drives it exactly like a CI invocation.
+  script_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  e2e_out="$(SAGE_DETERMINISM_ALLOWLIST="$tmpdir/does-not-exist" bash "$script_path" 2>&1)"
+  e2e_rc=$?
+  if [ "$e2e_rc" -ne 1 ]; then
+    witness_fail "missing allowlist on caller path: rc=$e2e_rc, want 1"
+  elif ! printf '%s\n' "$e2e_out" | grep -qF "check-determinism: allowlist missing or unreadable: $tmpdir/does-not-exist"; then
+    witness_fail "missing allowlist on caller path: accurate diagnostic not emitted"
+  elif printf '%s\n' "$e2e_out" | grep -qE 'dead, duplicate, or malformed|unallowlisted'; then
+    witness_fail "missing allowlist on caller path: misleading summary or unallowlisted guidance emitted"
   fi
 
   if [ "$fails" -ne 0 ]; then
@@ -267,8 +273,8 @@ v="$(violations | filter_allowed)"
 rc=$?
 
 if [ "$rc" -ne 0 ]; then
-  echo "$v"
-  echo "check-determinism: allowlist validation FAILED — a dead, duplicate, or malformed entry was found (see above)."
+  [ -n "$v" ] && echo "$v"
+  echo "check-determinism: allowlist validation FAILED (see above)."
   exit 1
 fi
 
