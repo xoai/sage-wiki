@@ -255,6 +255,58 @@ func TestManager_TouchKeepsIdleWorkspaceOpen(t *testing.T) {
 	}
 }
 
+// TestManager_IdleCloseWiring exercises the production wiring the
+// synchronous evaluateIdle tests deliberately bypass: WithIdleClose must
+// spawn idleLoop, whose ticker must delegate to evaluateIdle, and Close
+// must stop that goroutine via the idleStop/idleDone channels. Eviction is
+// asserted with an EVENTUAL check — polling openCount under a generous
+// integration bound (~100x the worst-case d+tick lag) — never with a
+// Sleep(short) < idle precision contract.
+func TestManager_IdleCloseWiring(t *testing.T) {
+	root := t.TempDir()
+	initWorkspaceIn(t, root, "one")
+
+	const d = 30 * time.Millisecond // tick = d/2 = 15ms
+	m, err := OpenManager(context.Background(), root, WithIdleClose(d))
+	if err != nil {
+		t.Fatalf("OpenManager: %v", err)
+	}
+	defer func() { _ = m.Close() }()
+
+	if _, err := m.Workspace(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.openCount(); got != 1 {
+		t.Fatalf("openCount = %d, want 1", got)
+	}
+
+	// The idle handle must be evicted by the BACKGROUND goroutine: lastUse
+	// is refreshed only by Workspace/cached, so without ticker → evaluateIdle
+	// delegation nothing will ever close it. The bound is deliberately
+	// generous — eventual wiring proof, not scheduler-bound precision.
+	deadline := time.Now().Add(5 * time.Second)
+	for m.openCount() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("idleLoop never evicted the idle workspace — WithIdleClose wiring broken")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Close must signal idleStop and wait on idleDone; a goroutine that
+	// stopped delegating (or never started) would deadlock the wait. Bound
+	// the wait so a regression fails instead of hanging the suite.
+	closed := make(chan struct{})
+	go func() {
+		_ = m.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not return — idleStop/idleDone coordination broken")
+	}
+}
+
 func TestManager_MaxOpenZeroUnlimited(t *testing.T) {
 	root := t.TempDir()
 	names := []string{"u1", "u2", "u3", "u4"}

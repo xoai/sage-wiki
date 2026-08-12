@@ -147,7 +147,8 @@ func TestWorkerHarness_SingleBackendTopology(t *testing.T) {
 		t.Error("cycle itemStore is not the harness Items")
 	}
 	if cr.run.memStore != tb.Entries() || cr.run.chunkStore != tb.Chunks() ||
-		cr.run.vecStore != tb.Vectors() || cr.run.trustStore != tb.Trust() {
+		cr.run.vecStore != tb.Vectors() || cr.run.trustStore != tb.Trust() ||
+		cr.run.pipelineOntStore != tb.Ontology() {
 		t.Error("cycle pass stores are not the harness backend's own stores")
 	}
 	if cr.run.db != tb {

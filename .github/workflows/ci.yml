@@ -485,12 +485,16 @@ jobs:
   # excluded. `if: always()` + explicit result inspection means this job runs
   # even when a dependency fails and turns red unless EVERY listed result is
   # `success` — the aggregate behavior a required status check needs. No
-  # checkout, no permissions: this job only reads `needs`.
+  # checkout, no permissions: this job only reads `needs`. Explicit empty
+  # job-level permissions drop the workflow-level `contents: read` here, so
+  # the aggregate gate stays least-privilege even if a future workflow edit
+  # broadens the top-level permissions block.
   ci-required:
     name: CI required
     needs: [build, parity, go-test, fuzz-short, skill-drift, postgres, minio, lint, frontend, translations]
     if: always()
     runs-on: ubuntu-latest
+    permissions: {}
     steps:
       - name: All required jobs succeeded
         run: |
