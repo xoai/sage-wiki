@@ -14,6 +14,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/storage"
 	"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -142,9 +143,12 @@ func TestCompile_DryRunNoSideEffects(t *testing.T) {
 	}
 }
 
-// testBackend is the minimal store.Backend for Compile-level tests,
-// built exactly like setupStores' legacy sqlite path. Trust/OutputIndex/
-// Learnings are nil — the compile path never touches them.
+// testBackend is the minimal store.Backend for Compile- and worker-cycle
+// tests, built like setupStores' legacy sqlite path but over ONE
+// *storage.DB handle (R3: worker tests must mirror serve-mode ownership,
+// where Items and the pass stores share a backend). OutputIndex and
+// Learnings stay nil and BeginWrite stays an explicit unsupported stub —
+// neither the Compile path nor a worker cycle reaches those surfaces.
 type testBackend struct {
 	db      *storage.DB
 	items   store.CompileItemStore
@@ -152,6 +156,7 @@ type testBackend struct {
 	chunks  store.ChunkStore
 	vecs    store.VectorStore
 	ont     store.OntologyStore
+	trust   store.TrustStore
 }
 
 func newTestBackend(db *storage.DB) *testBackend {
@@ -164,6 +169,7 @@ func newTestBackend(db *storage.DB) *testBackend {
 		chunks:  memory.NewChunkStore(db),
 		vecs:    vectors.NewStore(db),
 		ont:     ontology.NewStore(db, ontology.ValidRelationNames(merged), ontology.ValidEntityTypeNames(mergedTypes)),
+		trust:   trust.NewStore(db),
 	}
 }
 
@@ -172,7 +178,7 @@ func (b *testBackend) Chunks() store.ChunkStore          { return b.chunks }
 func (b *testBackend) Vectors() store.VectorStore        { return b.vecs }
 func (b *testBackend) Ontology() store.OntologyStore     { return b.ont }
 func (b *testBackend) Communities() store.CommunityStore { return b.ont.(store.CommunityStore) }
-func (b *testBackend) Trust() store.TrustStore           { return nil }
+func (b *testBackend) Trust() store.TrustStore           { return b.trust }
 func (b *testBackend) CompileItems() store.CompileItemStore {
 	return b.items
 }

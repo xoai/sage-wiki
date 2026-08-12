@@ -16,11 +16,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/storage"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/wiki"
 	"github.com/xoai/sage-wiki/pkg/events"
 )
@@ -30,7 +30,8 @@ type workerHarness struct {
 	dir     string
 	project string
 	server  *httptest.Server
-	items   *CompileItemStore
+	backend store.Backend
+	items   store.CompileItemStore
 	worker  *Worker
 	embeds  atomic.Int32
 }
@@ -113,11 +114,47 @@ compiler:
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	h.items = NewCompileItemStore(db, config.NowUTC)
+	// R3: one backend owns every store a worker cycle touches — serve-mode
+	// topology, where NewWorkerForServe sources Items from the same backend
+	// the pass stores come from (single handle, single writeMu).
+	h.backend = newTestBackend(db)
+	h.items = h.backend.CompileItems()
 	return h
 }
 
 var itoa = strconv.Itoa
+
+// TestWorkerHarness_SingleBackendTopology pins spec R3/AC3: a worker cycle
+// must run entirely on the harness backend — every pass store is the
+// backend's own instance and no second sqlite handle is opened. Pre-fix,
+// setupStores opened handle B for chunk/entry/vector stores and only
+// itemStore pointed at handle A, so the 5 ms heartbeat raced FTS writes
+// (BUSY/BUSY_SNAPSHOT, empty compile key).
+func TestWorkerHarness_SingleBackendTopology(t *testing.T) {
+	h := newWorkerHarness(t, 3, http.StatusOK)
+	h.newWorker(t, 50*time.Millisecond, 5*time.Millisecond, 3)
+
+	cr, err := h.worker.openCycleRun(context.Background())
+	if err != nil {
+		t.Fatalf("openCycleRun: %v", err)
+	}
+	defer cr.cleanup()
+	tb, ok := cr.run.db.(*testBackend)
+	if !ok {
+		t.Fatalf("cycle run db = %T, want the harness testBackend (no second handle)", cr.run.db)
+	}
+	if cr.run.itemStore != h.items {
+		t.Error("cycle itemStore is not the harness Items")
+	}
+	if cr.run.memStore != tb.Entries() || cr.run.chunkStore != tb.Chunks() ||
+		cr.run.vecStore != tb.Vectors() || cr.run.trustStore != tb.Trust() ||
+		cr.run.pipelineOntStore != tb.Ontology() {
+		t.Error("cycle pass stores are not the harness backend's own stores")
+	}
+	if cr.run.db != tb {
+		t.Error("cycle run db is not the harness backend")
+	}
+}
 
 func (h *workerHarness) writeSource(t *testing.T, name, content string) {
 	t.Helper()
@@ -131,6 +168,7 @@ func (h *workerHarness) newWorker(t *testing.T, poll, heartbeat time.Duration, m
 	h.worker = NewWorker(WorkerDeps{
 		ProjectDir: h.dir,
 		Items:      h.items,
+		Backend:    h.backend,
 		Coord:      NewCompileCoordinator(),
 		Progress:   NewProgress(),
 		Config: workerSettings{
@@ -341,6 +379,7 @@ func TestWorker_TierClaimOrder(t *testing.T) {
 	h.worker = NewWorker(WorkerDeps{
 		ProjectDir: h.dir,
 		Items:      h.items,
+		Backend:    h.backend,
 		Coord:      NewCompileCoordinator(),
 		Progress:   progress,
 		Config: workerSettings{
@@ -393,6 +432,7 @@ func TestWorker_ClaimFencing(t *testing.T) {
 	w2 := NewWorker(WorkerDeps{
 		ProjectDir: h.dir,
 		Items:      h.items,
+		Backend:    h.backend,
 		Coord:      NewCompileCoordinator(),
 		Progress:   NewProgress(),
 		Config:     h.worker.deps.Config,
@@ -425,6 +465,7 @@ func TestWorker_EmitsQueueEvents(t *testing.T) {
 	h.worker = NewWorker(WorkerDeps{
 		ProjectDir: h.dir,
 		Items:      h.items,
+		Backend:    h.backend,
 		Coord:      NewCompileCoordinator(),
 		Progress:   progress,
 		Config: workerSettings{

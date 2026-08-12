@@ -5,6 +5,15 @@ CI quality gate (build, vet, race tests, new-issue lint, translation drift).
 On `main` itself the *local* drift range is empty (CI's push path checks
 `before..after` and is not), so always check from your branch.
 
+**Local `make ci` is mandatory but not a substitute for hosted CI.** The
+hosted `CI required` check-run on the latest PR SHA is the merge gate: a
+green `make ci` mirrors the quality gate (build, vet, race tests, new-issue
+lint, translation drift) but does not replace a green hosted run, and a
+hosted result that predates your last push does not count. Today that gate
+is maintainer policy — a PR is not mergeable without `CI required` success
+on the HEAD SHA — and it becomes mechanical once branch protection requires
+the check on `main`.
+
 ## Repository layout
 
 Selected entries (illustrative, not exhaustive):
@@ -39,7 +48,11 @@ to document the debt.
 **Maintainers merging external PRs:** GitHub holds CI for first-time
 contributors at `action_required` — checks must have *run and passed*, not
 merely be absent. Click "Approve and run workflows" on fork PRs, and treat a
-PR showing zero checks as unverified regardless of local runs.
+PR showing zero checks as unverified regardless of local runs. When reworking
+CI workflow code, keep the required context valid: once branch protection
+requires `CI required` on `main`, relax or remove that required status check
+before reverting or renaming the workflow that emits the check-run — a
+required context that no workflow produces blocks every merge.
 
 ## Adding a file format parser
 

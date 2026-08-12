@@ -478,3 +478,37 @@ jobs:
           COMMIT_MSGS="$(git log --format=%B "$RANGE")"
           export BASE HEAD COMMIT_MSGS
           bash scripts/check-readme-translations.sh
+
+  # The ONE stable required result: `CI required` is the unique displayed
+  # check-run context this repo protects (R5-R6). Every non-advisory job is
+  # a dependency; vuln stays advisory (continue-on-error) and is deliberately
+  # excluded. `if: always()` + explicit result inspection means this job runs
+  # even when a dependency fails and turns red unless EVERY listed result is
+  # `success` — the aggregate behavior a required status check needs. No
+  # checkout, no permissions: this job only reads `needs`. Explicit empty
+  # job-level permissions drop the workflow-level `contents: read` here, so
+  # the aggregate gate stays least-privilege even if a future workflow edit
+  # broadens the top-level permissions block.
+  ci-required:
+    name: CI required
+    needs: [build, parity, go-test, fuzz-short, skill-drift, postgres, minio, lint, frontend, translations]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: All required jobs succeeded
+        run: |
+          if [ "${{ needs.build.result }}" != "success" ] || \
+             [ "${{ needs.parity.result }}" != "success" ] || \
+             [ "${{ needs.go-test.result }}" != "success" ] || \
+             [ "${{ needs.fuzz-short.result }}" != "success" ] || \
+             [ "${{ needs.skill-drift.result }}" != "success" ] || \
+             [ "${{ needs.postgres.result }}" != "success" ] || \
+             [ "${{ needs.minio.result }}" != "success" ] || \
+             [ "${{ needs.lint.result }}" != "success" ] || \
+             [ "${{ needs.frontend.result }}" != "success" ] || \
+             [ "${{ needs.translations.result }}" != "success" ]; then
+            echo "CI required: one or more dependencies did not succeed"
+            exit 1
+          fi
+          echo "CI required: all dependencies succeeded"

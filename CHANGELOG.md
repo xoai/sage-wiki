@@ -9,6 +9,35 @@
   standard `sage-wiki compile`, serve background worker cycles, and MCP/REST
   on-demand topic compilation.
 
+- **SQLite writer reservation at transaction begin.** A second handle on the
+  same SQLite path could enter a write transaction while another handle held
+  a deferred snapshot, commit, and force the paused handle's later snapshot
+  upgrade to fail with `SQLITE_BUSY_SNAPSHOT` mid-callback — the
+  cross-handle contention class behind hosted CI flakes. The writer DSN now
+  uses `_txlock=immediate`, so both `WriteTx` and `BeginWrite` take the
+  writer lock at BEGIN, where the existing busy-handler arbitration applies,
+  instead of at first write.
+
+- **Deterministic idle-close and worker-cycle tests.** The engine manager's
+  idle-close tests drive the idle evaluator directly with explicit
+  timestamps instead of real-time sleeps, and the compile worker harness now
+  mirrors serve backend ownership (one handle, same backend, for every pass
+  store) — removing the stray second handle that distorted worker-cycle runs
+  with `BUSY_SNAPSHOT` flakes. The cross-handle production class stays
+  covered by the dedicated two-handle storage test.
+
+### Added
+
+- **Hosted CI aggregate check-run (`CI required`).** The main CI workflow
+  now emits a single stable check-run that explicitly inspects every
+  required job (build, parity, go-test, fuzz-short, skill-drift, postgres,
+  minio, lint, frontend, translations) and reports failure unless all
+  succeed — including on runs where a dependency failed. One stable status
+  for pre-main merges: `make ci` stays mandatory local evidence, and a green
+  `CI required` on the latest PR SHA is the gate maintainers hold before
+  merging — a policy gate today, mechanical once branch protection requires
+  the check on `main`.
+
 ## [0.2.8] — 2026-08-05
 
 ### Fixed

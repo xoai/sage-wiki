@@ -157,7 +157,10 @@ func TestManager_IdleClose(t *testing.T) {
 	root := t.TempDir()
 	initWorkspaceIn(t, root, "one")
 
-	m, err := OpenManager(context.Background(), root, WithIdleClose(60*time.Millisecond))
+	// No WithIdleClose: the synchronous evaluator is driven with explicit
+	// timestamps, never by the background ticker (AC4 — no scheduler-
+	// sensitive polling, no Sleep(interval) < idle).
+	m, err := OpenManager(context.Background(), root)
 	if err != nil {
 		t.Fatalf("OpenManager: %v", err)
 	}
@@ -169,12 +172,25 @@ func TestManager_IdleClose(t *testing.T) {
 	if got := m.openCount(); got != 1 {
 		t.Fatalf("openCount = %d, want 1", got)
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	for m.openCount() != 0 && time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
+
+	// Controlled recency: pin lastUse to a known instant, then evaluate at
+	// exact timestamps. Monotonic time makes the arithmetic exact.
+	const d = 60 * time.Millisecond
+	m.mu.Lock()
+	base := time.Now()
+	m.handles["one"].lastUse = base
+	m.mu.Unlock()
+
+	// now.Sub(lastUse) == d: strict > d boundary — survives.
+	m.evaluateIdle(base.Add(d), d)
+	if got := m.openCount(); got != 1 {
+		t.Fatalf("openCount at exactly d = %d, want 1 (survives at the boundary)", got)
 	}
+
+	// now.Sub(lastUse) == d + 1ns: evicted.
+	m.evaluateIdle(base.Add(d+time.Nanosecond), d)
 	if got := m.openCount(); got != 0 {
-		t.Errorf("openCount after idle window = %d, want 0", got)
+		t.Errorf("openCount at d+1ns = %d, want 0 (evicted past the boundary)", got)
 	}
 }
 
@@ -183,11 +199,14 @@ func TestManager_IdleClose(t *testing.T) {
 // re-calling Workspace — so recency must be refreshable independently.
 // Touch refreshes lastUse; a workspace touched past its idle window stays
 // open (without Touch, idle-close evicts a workspace under active traffic).
+// Controlled timestamps prove Touch changes the eviction decision: the
+// stale recency would be evicted at d+1ns, the refreshed one survives at
+// exactly d (AC4 — no wall-clock timing margins).
 func TestManager_TouchKeepsIdleWorkspaceOpen(t *testing.T) {
 	root := t.TempDir()
 	initWorkspaceIn(t, root, "one")
 
-	m, err := OpenManager(context.Background(), root, WithIdleClose(60*time.Millisecond))
+	m, err := OpenManager(context.Background(), root)
 	if err != nil {
 		t.Fatalf("OpenManager: %v", err)
 	}
@@ -196,14 +215,95 @@ func TestManager_TouchKeepsIdleWorkspaceOpen(t *testing.T) {
 	if _, err := m.Workspace(context.Background(), "one"); err != nil {
 		t.Fatal(err)
 	}
-	// Touch repeatedly past the idle window — the workspace must survive.
-	deadline := time.Now().Add(600 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		m.Touch("one")
-		time.Sleep(20 * time.Millisecond)
+	if got := m.openCount(); got != 1 {
+		t.Fatalf("openCount = %d, want 1", got)
+	}
+
+	const d = 60 * time.Millisecond
+	m.mu.Lock()
+	h := m.handles["one"]
+	stale := h.lastUse.Add(-time.Hour) // clearly past d before any refresh
+	h.lastUse = stale
+	m.mu.Unlock()
+
+	// Touch must refresh recency (monotonic clock: strictly after stale).
+	m.Touch("one")
+	m.mu.Lock()
+	refreshed := h.lastUse
+	m.mu.Unlock()
+	if !refreshed.After(stale) {
+		t.Fatalf("Touch did not refresh lastUse: stale=%v refreshed=%v", stale, refreshed)
+	}
+
+	// The stale timestamp would have been evicted at d+1ns; the refreshed
+	// handle survives there — Touch changed the eviction decision.
+	m.evaluateIdle(stale.Add(d+time.Nanosecond), d)
+	if got := m.openCount(); got != 1 {
+		t.Fatalf("openCount after Touch at stale+d+1ns = %d, want 1 (Touch must refresh recency)", got)
+	}
+
+	// Survives at exactly d past the refreshed recency...
+	m.evaluateIdle(refreshed.Add(d), d)
+	if got := m.openCount(); got != 1 {
+		t.Fatalf("openCount at exactly d after Touch = %d, want 1", got)
+	}
+
+	// ...and is evicted at d+1ns.
+	m.evaluateIdle(refreshed.Add(d+time.Nanosecond), d)
+	if got := m.openCount(); got != 0 {
+		t.Errorf("openCount at d+1ns after Touch = %d, want 0", got)
+	}
+}
+
+// TestManager_IdleCloseWiring exercises the production wiring the
+// synchronous evaluateIdle tests deliberately bypass: WithIdleClose must
+// spawn idleLoop, whose ticker must delegate to evaluateIdle, and Close
+// must stop that goroutine via the idleStop/idleDone channels. Eviction is
+// asserted with an EVENTUAL check — polling openCount under a generous
+// integration bound (~100x the worst-case d+tick lag) — never with a
+// Sleep(short) < idle precision contract.
+func TestManager_IdleCloseWiring(t *testing.T) {
+	root := t.TempDir()
+	initWorkspaceIn(t, root, "one")
+
+	const d = 30 * time.Millisecond // tick = d/2 = 15ms
+	m, err := OpenManager(context.Background(), root, WithIdleClose(d))
+	if err != nil {
+		t.Fatalf("OpenManager: %v", err)
+	}
+	defer func() { _ = m.Close() }()
+
+	if _, err := m.Workspace(context.Background(), "one"); err != nil {
+		t.Fatal(err)
 	}
 	if got := m.openCount(); got != 1 {
-		t.Errorf("openCount after touched idle window = %d, want 1 (Touch must refresh recency)", got)
+		t.Fatalf("openCount = %d, want 1", got)
+	}
+
+	// The idle handle must be evicted by the BACKGROUND goroutine: lastUse
+	// is refreshed only by Workspace/cached, so without ticker → evaluateIdle
+	// delegation nothing will ever close it. The bound is deliberately
+	// generous — eventual wiring proof, not scheduler-bound precision.
+	deadline := time.Now().Add(5 * time.Second)
+	for m.openCount() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("idleLoop never evicted the idle workspace — WithIdleClose wiring broken")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Close must signal idleStop and wait on idleDone; a goroutine that
+	// stopped delegating (or never started) would deadlock the wait. Bound
+	// the wait so a regression fails instead of hanging the suite.
+	closed := make(chan struct{})
+	go func() {
+		_ = m.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not return — idleStop/idleDone coordination broken")
 	}
 }
 
