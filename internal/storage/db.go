@@ -30,8 +30,14 @@ func Open(path string) (*DB, error) {
 		}
 	}
 
-	// Write connection
-	writeDB, err := sql.Open("sqlite", path)
+	// Write connection. _txlock=immediate reserves SQLite's sole writer at
+	// BEGIN (spec R1): a deferred begin only takes a read snapshot, so a
+	// second handle's transaction can enter, write, and commit first, and the
+	// paused handle's later snapshot upgrade fails BUSY_SNAPSHOT — exactly
+	// the cross-handle contention class seen in hosted CI. Waiting at begin
+	// is safer than failing mid-callback: transaction callbacks are never
+	// replayed.
+	writeDB, err := sql.Open("sqlite", path+"?_txlock=immediate")
 	if err != nil {
 		return nil, fmt.Errorf("storage.Open: %w", err)
 	}
