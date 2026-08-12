@@ -359,28 +359,35 @@ func (m *Manager) idleLoop(ctx context.Context, d time.Duration) {
 		case <-m.idleStop:
 			return
 		case now := <-t.C:
-			// Detach under the lock, close outside it (F-043): the close
-			// drains in-flight readers and must not stall the Manager.
-			var evicted []struct {
+			m.evaluateIdle(now, d)
+		}
+	}
+}
+
+// evaluateIdle detaches every handle idle longer than d at now and closes
+// the detached handles. Detach happens under the lock, close outside it
+// (F-043): the close drains in-flight readers and must not stall the
+// Manager. Synchronous so tests drive it with explicit timestamps instead
+// of waiting on the background ticker.
+func (m *Manager) evaluateIdle(now time.Time, d time.Duration) {
+	var evicted []struct {
+		name string
+		h    *managerHandle
+	}
+	m.mu.Lock()
+	for name, h := range m.handles {
+		if now.Sub(h.lastUse) > d {
+			delete(m.handles, name)
+			evicted = append(evicted, struct {
 				name string
 				h    *managerHandle
-			}
-			m.mu.Lock()
-			for name, h := range m.handles {
-				if now.Sub(h.lastUse) > d {
-					delete(m.handles, name)
-					evicted = append(evicted, struct {
-						name string
-						h    *managerHandle
-					}{name, h})
-				}
-			}
-			m.mu.Unlock()
-			for _, e := range evicted {
-				if err := m.closeHandle(e.name, e.h); err != nil {
-					log.Warn("engine: idle close failed", "name", e.name, "error", err)
-				}
-			}
+			}{name, h})
+		}
+	}
+	m.mu.Unlock()
+	for _, e := range evicted {
+		if err := m.closeHandle(e.name, e.h); err != nil {
+			log.Warn("engine: idle close failed", "name", e.name, "error", err)
 		}
 	}
 }
