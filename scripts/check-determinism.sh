@@ -16,7 +16,11 @@
 # proof — the proofs are the double-compile tests.
 set -uo pipefail
 
-cd "$(dirname "$0")/.."
+# Capture the absolute script path before any cwd change: $0 may be relative,
+# so deriving repo root or a recursive invocation path after `cd` would
+# resolve against the new directory instead of the script's own.
+script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+cd "$(dirname "$script_path")/.."
 ALLOWLIST="${SAGE_DETERMINISM_ALLOWLIST:-scripts/determinism-allowlist.txt}"
 PKGS="internal/compiler internal/manifest internal/wiki internal/sourcedate internal/ontology internal/mirror internal/pack internal/hub internal/export internal/serve internal/mcp internal/tui internal/vectors internal/parity"
 
@@ -250,7 +254,6 @@ EOF
   # malformed" claim and any unallowlisted guidance must never appear.
   # Recursive invocation via "$script_path" without --self-test exercises
   # the normal path; the env var drives it exactly like a CI invocation.
-  script_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
   e2e_out="$(SAGE_DETERMINISM_ALLOWLIST="$tmpdir/does-not-exist" bash "$script_path" 2>&1)"
   e2e_rc=$?
   if [ "$e2e_rc" -ne 1 ]; then
