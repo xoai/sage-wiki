@@ -51,10 +51,23 @@ filter_allowed() {
   # non-whitespace char is `#` are ignored; every data line must have exactly
   # three non-empty fields. A duplicate key, a malformed line, or an entry
   # key matching no candidate (dead) hard-fails with exit 1.
+  local cand keys candkeys
   cand="$(mktemp)"
   keys="$(mktemp)"
   candkeys="$(mktemp)"
   trap 'rm -f "$cand" "$keys" "$candkeys"' RETURN
+  # Detect a missing/unreadable allowlist before parsing: a redirection
+  # error here would otherwise surface as "every candidate is
+  # unallowlisted" and misdirect the operator at a nonexistent path. A
+  # character device (/dev/null) is a legitimate empty allowlist.
+  if [ ! -r "$ALLOWLIST" ]; then
+    echo "check-determinism: allowlist missing or unreadable: $ALLOWLIST" >&2
+    return 1
+  fi
+  if [ ! -f "$ALLOWLIST" ] && [ ! -c "$ALLOWLIST" ]; then
+    echo "check-determinism: allowlist is not a regular file or character device: $ALLOWLIST" >&2
+    return 1
+  fi
   cat > "$cand"
   bad=0
 
@@ -83,7 +96,7 @@ filter_allowed() {
     printf '%s\n' "$loc|$src" >> "$keys"
   done < "$ALLOWLIST"
 
-  while IFS= read -r line; do
+  while IFS= read -r line || [ -n "$line" ]; do
     loc="$(printf '%s' "$line" | cut -d: -f1,2)"
     src="$(printf '%s' "$line" | cut -d: -f3- | sed 's/^[[:blank:]]*//; s/[[:blank:]]*$//')"
     if [ -z "$src" ]; then
@@ -100,7 +113,7 @@ filter_allowed() {
     fi
   done < "$cand"
 
-  while IFS= read -r key; do
+  while IFS= read -r key || [ -n "$key" ]; do
     if ! grep -Fqx "$key" "$candkeys"; then
       echo "check-determinism: dead allowlist entry — no candidate matches this location+source: $key"
       bad=1
@@ -220,6 +233,27 @@ EOF
     witness_fail "zero-candidate discovery exit poisoned allowlist validation status"
   fi
   PKGS="$PKGS_SAVE"
+
+  # RED witness: a final candidate line without a trailing newline must
+  # still be processed — dropping it would surface as a false dead entry.
+  cat > "$tmpdir/single" <<'EOF'
+internal/compiler/zz_determinism_selftest.go:6|for k := range seen {|single non-newline-terminated candidate
+EOF
+  ALLOWLIST="$tmpdir/single"
+  if ! printf '%s' 'internal/compiler/zz_determinism_selftest.go:6:for k := range seen {' | filter_allowed >/dev/null 2>&1; then
+    witness_fail "final candidate without trailing newline dropped — false dead entry"
+  fi
+
+  # RED witness: a missing allowlist must fail with an explicit diagnostic,
+  # not a redirection error followed by misleading unallowlisted guidance.
+  ALLOWLIST="$tmpdir/does-not-exist"
+  out="$(planted_candidates | filter_allowed 2>&1)"
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    witness_fail "missing allowlist not detected (rc=0)"
+  elif ! printf '%s\n' "$out" | grep -q 'allowlist'; then
+    witness_fail "missing allowlist diagnostic not emitted"
+  fi
 
   if [ "$fails" -ne 0 ]; then
     echo "self-test RED: $fails witness(es) failed against the current matcher"

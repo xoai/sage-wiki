@@ -116,14 +116,21 @@ as `compile_skip` engine events.
 
 ## Determinism lint
 
-`scripts/check-determinism.sh` greps `internal/` for `range` over maps
-near serializers/writers and fails on any hit not allowlisted in
-`scripts/determinism-allowlist.txt`. It is a **best-effort static
-check**: it cannot see dataflow (a map-range two functions away from
-the writer), and it cannot prove a sorted site is sorted by the RIGHT
-key. It is a tripwire, not a proof — a green run means only that no
-unallowlisted map-range loop was found. The proofs are the
-double-compile tests.
+`scripts/check-determinism.sh` greps a **fixed package list** — the
+`PKGS` variable in the script: `internal/compiler`, `internal/manifest`,
+`internal/wiki`, `internal/sourcedate`, `internal/ontology`,
+`internal/mirror`, `internal/pack`, `internal/hub`, `internal/export`,
+`internal/serve`, `internal/mcp`, `internal/tui`, `internal/vectors`,
+`internal/parity` — for `range` over maps near serializers/writers and
+fails on any hit not allowlisted in `scripts/determinism-allowlist.txt`.
+Coverage is exactly that list: map-range loops in packages not listed
+are **not scanned**, so a contributor adding a package whose writers
+range maps must add it to `PKGS` — the check cannot find what it does
+not scan. It is a **best-effort static check**: it cannot see dataflow
+(a map-range two functions away from the writer), and it cannot prove a
+sorted site is sorted by the RIGHT key. It is a tripwire, not a proof —
+a green run means only that no unallowlisted map-range loop was found
+in the scanned packages. The proofs are the double-compile tests.
 
 ### Allowlist layout
 
