@@ -79,6 +79,9 @@ func TestDocBudgetExpiredUnitContext(t *testing.T) {
 	default:
 		t.Fatal("exhausted budget must produce an already-done context")
 	}
+	if !errors.Is(context.Cause(ctx), errDocBudgetDeadline) {
+		t.Fatalf("context cause = %v, want errDocBudgetDeadline", context.Cause(ctx))
+	}
 }
 
 func TestDocBudgetsRegistryPerDoc(t *testing.T) {
@@ -126,6 +129,44 @@ type budgetSink struct {
 	events []events.Event
 }
 
+type contextBlockingTransport struct {
+	started chan struct{}
+	once    sync.Once
+	calls   atomic.Int32
+}
+
+func newContextBlockingTransport() *contextBlockingTransport {
+	return &contextBlockingTransport{started: make(chan struct{})}
+}
+
+func (t *contextBlockingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.calls.Add(1)
+	t.once.Do(func() { close(t.started) })
+	<-req.Context().Done()
+	return nil, req.Context().Err()
+}
+
+func (t *contextBlockingTransport) waitForRequest(tb testing.TB) {
+	tb.Helper()
+	select {
+	case <-t.started:
+	case <-time.After(5 * time.Second):
+		tb.Fatal("LLM request did not reach the blocking transport")
+	}
+}
+
+func blockingLLMClient(t *testing.T, callTimeout time.Duration) (*llm.Client, *contextBlockingTransport) {
+	t.Helper()
+	c, err := llm.NewClient("openai", "fake-key", "http://llm.invalid", -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := newContextBlockingTransport()
+	c.SetTransport(transport)
+	c.SetCallTimeout(callTimeout)
+	return c, transport
+}
+
 func (s *budgetSink) Emit(ev events.Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -142,6 +183,86 @@ func (s *budgetSink) byType(ty events.Type) []events.Event {
 		}
 	}
 	return out
+}
+
+func TestDocBudgetFinishUnitAttributesExactDeadlineSource(t *testing.T) {
+	t.Run("budget deadline", func(t *testing.T) {
+		b := NewDocBudget(time.Hour)
+		unitCtx, cancel := context.WithTimeoutCause(context.Background(), 0, errDocBudgetDeadline)
+		defer cancel()
+		<-unitCtx.Done()
+
+		if !b.finishUnit(unitCtx, 0, unitCtx.Err()) {
+			t.Fatal("budget-owned child deadline was not attributed to the document budget")
+		}
+		if !errors.Is(context.Cause(unitCtx), errDocBudgetDeadline) {
+			t.Fatalf("context cause = %v, want errDocBudgetDeadline", context.Cause(unitCtx))
+		}
+		var le *limits.LimitError
+		err := docTimeoutError(b)
+		if !errors.As(err, &le) {
+			t.Fatalf("docTimeoutError = %v, want LimitError", err)
+		}
+		if le.Got < le.Limit {
+			t.Fatalf("timeout accounting Got=%d, Limit=%d; want Got >= Limit", le.Got, le.Limit)
+		}
+	})
+
+	t.Run("parent cancellation", func(t *testing.T) {
+		b := NewDocBudget(time.Hour)
+		parent, cancelParent := context.WithCancel(context.Background())
+		unitCtx, cancelUnit := b.UnitContext(parent)
+		defer cancelUnit()
+		cancelParent()
+		<-unitCtx.Done()
+
+		if b.finishUnit(unitCtx, time.Millisecond, unitCtx.Err()) {
+			t.Fatal("parent cancellation was attributed to the document budget")
+		}
+		if !errors.Is(context.Cause(unitCtx), context.Canceled) {
+			t.Fatalf("context cause = %v, want context.Canceled", context.Cause(unitCtx))
+		}
+	})
+
+	t.Run("shorter parent deadline", func(t *testing.T) {
+		b := NewDocBudget(time.Hour)
+		parent, cancelParent := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+		defer cancelParent()
+		unitCtx, cancelUnit := b.UnitContext(parent)
+		defer cancelUnit()
+		<-unitCtx.Done()
+
+		if b.finishUnit(unitCtx, time.Millisecond, unitCtx.Err()) {
+			t.Fatal("shorter parent deadline was attributed to the document budget")
+		}
+		if !errors.Is(context.Cause(unitCtx), context.DeadlineExceeded) {
+			t.Fatalf("context cause = %v, want context.DeadlineExceeded", context.Cause(unitCtx))
+		}
+	})
+
+	t.Run("provider timeout while unit remains live", func(t *testing.T) {
+		b := NewDocBudget(time.Hour)
+		unitCtx, cancelUnit := b.UnitContext(context.Background())
+		defer cancelUnit()
+
+		if b.finishUnit(unitCtx, time.Millisecond, context.DeadlineExceeded) {
+			t.Fatal("provider timeout was attributed to the document budget")
+		}
+		if unitCtx.Err() != nil {
+			t.Fatalf("unit context unexpectedly terminated: %v", unitCtx.Err())
+		}
+	})
+
+	t.Run("explicit cleanup cancellation", func(t *testing.T) {
+		b := NewDocBudget(time.Hour)
+		unitCtx, cancelUnit := b.UnitContext(context.Background())
+		cancelUnit()
+		<-unitCtx.Done()
+
+		if b.finishUnit(unitCtx, time.Millisecond, unitCtx.Err()) {
+			t.Fatal("cleanup cancellation was attributed to the document budget")
+		}
+	})
 }
 
 func TestEmitDocTimeoutEventPair(t *testing.T) {
@@ -200,15 +321,9 @@ func budgetWorkspace(t *testing.T, names ...string) (projectDir, outputDir strin
 }
 
 func TestSummarizeDocBudgetExpiryTyped(t *testing.T) {
-	// Server slower than the budget: the unit must expire with the typed
-	// per-doc timeout error (retryable — not marked compiled).
-	srv := slowLLMServer(t, []time.Duration{200 * time.Millisecond}, strings.Repeat("summary ", 30))
-	c, err := llm.NewClient("openai", "fake-key", srv.URL, -1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	restore := llm.SetBackoffDelayForTest(func(int) time.Duration { return time.Millisecond })
-	defer restore()
+	// Context completion itself releases the transport; no server sleep decides
+	// whether the document budget owns the timeout.
+	c, transport := blockingLLMClient(t, time.Hour)
 
 	projectDir, outputDir, sources := budgetWorkspace(t, "a.md")
 	results := Summarize(SummarizeOpts{
@@ -221,8 +336,11 @@ func TestSummarizeDocBudgetExpiryTyped(t *testing.T) {
 		MaxTokens:   256,
 		MaxParallel: 1,
 		UserTZ:      time.UTC,
-		Budgets:     NewDocBudgets(30 * time.Millisecond),
+		Budgets:     NewDocBudgets(10 * time.Millisecond),
 	})
+	if got := transport.calls.Load(); got != 1 {
+		t.Fatalf("LLM calls = %d, want 1", got)
+	}
 	if len(results) != 1 {
 		t.Fatalf("results = %d, want 1", len(results))
 	}
@@ -232,6 +350,9 @@ func TestSummarizeDocBudgetExpiryTyped(t *testing.T) {
 	var le *limits.LimitError
 	if !errors.As(results[0].Error, &le) || le.Which != "compile_doc_timeout" {
 		t.Errorf("error is not a compile_doc_timeout LimitError: %v", results[0].Error)
+	}
+	if le.Got < le.Limit {
+		t.Errorf("timeout accounting Got=%d, Limit=%d; want Got >= Limit", le.Got, le.Limit)
 	}
 }
 
@@ -277,15 +398,7 @@ func TestSummarizeQueueTimeNotConsumed(t *testing.T) {
 // inflate the wrong counter). Only a deadline that ALSO exhausted the
 // per-doc budget is a compile_doc_timeout.
 func TestSummarizeProviderTimeoutNotMisattributed(t *testing.T) {
-	// Server slower than the provider callTimeout but well under the budget.
-	srv := slowLLMServer(t, []time.Duration{200 * time.Millisecond}, strings.Repeat("summary ", 30))
-	c, err := llm.NewClient("openai", "fake-key", srv.URL, -1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.SetCallTimeout(50 * time.Millisecond) // provider_timeout analog
-	restore := llm.SetBackoffDelayForTest(func(int) time.Duration { return time.Millisecond })
-	defer restore()
+	c, transport := blockingLLMClient(t, time.Millisecond)
 
 	projectDir, outputDir, sources := budgetWorkspace(t, "a.md")
 	results := Summarize(SummarizeOpts{
@@ -298,8 +411,11 @@ func TestSummarizeProviderTimeoutNotMisattributed(t *testing.T) {
 		MaxTokens:   256,
 		MaxParallel: 1,
 		UserTZ:      time.UTC,
-		Budgets:     NewDocBudgets(2000 * time.Millisecond), // budget >> callTimeout
+		Budgets:     NewDocBudgets(time.Hour),
 	})
+	if got := transport.calls.Load(); got != 1 {
+		t.Fatalf("LLM calls = %d, want 1", got)
+	}
 	if len(results) != 1 {
 		t.Fatalf("results = %d, want 1", len(results))
 	}
@@ -309,5 +425,40 @@ func TestSummarizeProviderTimeoutNotMisattributed(t *testing.T) {
 	// The provider timeout must NOT be classified as compile_doc_timeout.
 	if errors.Is(results[0].Error, limits.ErrTimeout) {
 		t.Errorf("provider timeout misattributed as compile_doc_timeout (budget was not exhausted): %v", results[0].Error)
+	}
+}
+
+func TestSummarizeParentCancelWithBudgetPreserved(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	c, transport := blockingLLMClient(t, time.Hour)
+	projectDir, outputDir, sources := budgetWorkspace(t, "a.md")
+
+	resultCh := make(chan []SummaryResult, 1)
+	go func() {
+		resultCh <- Summarize(SummarizeOpts{
+			Ctx:         ctx,
+			ProjectDir:  projectDir,
+			OutputDir:   outputDir,
+			Sources:     sources,
+			Client:      c,
+			Model:       "gpt-4o-mini",
+			MaxTokens:   256,
+			MaxParallel: 1,
+			UserTZ:      time.UTC,
+			Budgets:     NewDocBudgets(time.Hour),
+		})
+	}()
+
+	transport.waitForRequest(t)
+	cancel()
+	results := <-resultCh
+	if len(results) != 1 {
+		t.Fatalf("results = %d, want 1", len(results))
+	}
+	if !errors.Is(results[0].Error, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", results[0].Error)
+	}
+	if errors.Is(results[0].Error, limits.ErrTimeout) {
+		t.Fatalf("parent cancellation was misattributed as compile_doc_timeout: %v", results[0].Error)
 	}
 }

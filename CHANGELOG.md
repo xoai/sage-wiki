@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- **Deterministic document-budget timeout attribution.** Summarization and
+  triple extraction now identify `compile_doc_timeout` from the exact child
+  context deadline instead of comparing a separately started elapsed-time
+  counter. Parent cancellation and provider timeouts remain distinct, and typed
+  timeout diagnostics no longer report consumed time below the configured
+  limit.
+
 - **Project prompt overrides apply to every compilation surface (#143).**
   Overrides in a workspace's `prompts/` directory now take effect for
   standard `sage-wiki compile`, serve background worker cycles, and MCP/REST

@@ -765,8 +765,9 @@ func ExtractTriplesPass(
 
 			start := time.Now()
 			graph, err := ExtractTriples(unitCtx, doc, tcfg, model, validTypes, validPredicates, client, pr, cfg.Compiler.CompileTemperature())
+			budgetTimedOut := false
 			if budget != nil {
-				budget.Consume(time.Since(start))
+				budgetTimedOut = budget.finishUnit(unitCtx, time.Since(start), err)
 				cancelUnit()
 			}
 			if err != nil {
@@ -776,11 +777,12 @@ func ExtractTriplesPass(
 				// expiry is a typed timeout failure (SPEC-08 AC11).
 				mu.Lock()
 				switch {
+				case budgetTimedOut:
+					timeoutErr := docTimeoutError(budget)
+					timeouts = append(timeouts, tripleTimeout{SourcePath: s.SourcePath, Err: timeoutErr})
+					log.Warn("triples: per-doc timeout", "source", s.SourcePath, "error", timeoutErr)
 				case ctx.Err() != nil:
 					cancelled = true
-				case budget != nil && budget.Expired():
-					timeouts = append(timeouts, tripleTimeout{SourcePath: s.SourcePath, Err: docTimeoutError(budget)})
-					log.Warn("triples: per-doc timeout", "source", s.SourcePath, "error", docTimeoutError(budget))
 				default:
 					failures++
 					log.Warn("triples: extraction failed", "source", s.SourcePath, "error", err)

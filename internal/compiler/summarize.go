@@ -3,7 +3,6 @@ package compiler
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -137,17 +136,9 @@ func Summarize(opts SummarizeOpts) []SummaryResult {
 			start := time.Now()
 			result := summarizeOne(unitCtx, opts.ProjectDir, opts.OutputDir, info, opts.Client, opts.Model, opts.MaxTokens, opts.UserTZ, opts.Language, opts.SummaryNaming, opts.SourceRoots, opts.Prompts, opts.Temperature, opts.ExtractOpts...)
 			if budget != nil {
-				budget.Consume(time.Since(start))
+				budgetTimedOut := budget.finishUnit(unitCtx, time.Since(start), result.Error)
 				cancelUnit()
-				// A unit that failed because ITS budget deadline fired is a
-				// typed per-doc timeout — not a generic failure, not a run-level
-				// cancellation. Require BOTH a deadline-class error AND an
-				// exhausted budget: a provider_timeout (DeadlineExceeded with
-				// budget remaining) is its own condition, not a compile_doc
-				// timeout, and must not emit a self-contradictory
-				// limit_exceeded{Limit=doc_budget > Got=provider_timeout}.
-				parentCancelled := opts.Ctx != nil && opts.Ctx.Err() != nil
-				if result.Error != nil && errors.Is(result.Error, context.DeadlineExceeded) && budget.Expired() && !parentCancelled {
+				if budgetTimedOut {
 					result.Error = docTimeoutError(budget)
 				}
 			}

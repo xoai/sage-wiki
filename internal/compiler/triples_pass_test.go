@@ -16,7 +16,6 @@ import (
 
 	"github.com/xoai/sage-wiki/internal/config"
 	"github.com/xoai/sage-wiki/internal/limits"
-	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/storage"
@@ -366,17 +365,12 @@ func TestExtractTriplesPassFansOutConcurrently(t *testing.T) {
 // Cancellation MID-FLIGHT: the pre-check catches a ctx cancelled before the
 // call, but the branch that classifies an in-flight provider error as
 // cancellation rather than a per-document failure is only reachable this way.
-func TestExtractTriplesPassClassifiesMidFlightCancel(t *testing.T) {
+func TestExtractTriplesPassParentCancelWithBudgetPreserved(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cancel()
-		time.Sleep(50 * time.Millisecond)
-		json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{"message": map[string]string{"content": sampleGraph}}},
-			"model":   "m", "usage": map[string]int{"total_tokens": 1},
-		})
-	}))
-	defer srv.Close()
+	client := triplesClient(t, "http://llm.invalid")
+	transport := newContextBlockingTransport()
+	client.SetTransport(transport)
+	client.SetCallTimeout(time.Hour)
 
 	var buf strings.Builder
 	var mu sync.Mutex
@@ -384,9 +378,20 @@ func TestExtractTriplesPassClassifiesMidFlightCancel(t *testing.T) {
 		&lockedWriter{mu: &mu, w: &buf}, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	defer restore()
 
-	ExtractTriplesPass(ctx, passStore(t),
-		[]SummaryResult{{SourcePath: "raw/a.md", Summary: "Backpressure extends flow control."}}, nil,
-		enabledCfg(), triplesClient(t, srv.URL), false, t.TempDir(), nil, nil, nil, nil, nil)
+	done := make(chan []tripleTimeout, 1)
+	go func() {
+		_, _, timeouts := ExtractTriplesPass(ctx, passStore(t),
+			[]SummaryResult{{SourcePath: "raw/a.md", Summary: "Backpressure extends flow control."}}, nil,
+			enabledCfg(), client, false, t.TempDir(), nil, nil, nil, NewDocBudgets(time.Hour), nil)
+		done <- timeouts
+	}()
+
+	transport.waitForRequest(t)
+	cancel()
+	timeouts := <-done
+	if len(timeouts) != 0 {
+		t.Fatalf("timeouts = %+v, want none for parent cancellation", timeouts)
+	}
 
 	mu.Lock()
 	out := buf.String()
@@ -533,22 +538,43 @@ func TestExtractTriplesPassBudgetExpiryRecorded(t *testing.T) {
 // as a generic provider failure. The deadline surfaces as
 // context.DeadlineExceeded through the client.
 func TestExtractTriplesPassBudgetExpiryMidCall(t *testing.T) {
-	// Server slower than the budget: the unit's deadline fires mid-call.
-	srv := slowLLMServer(t, []time.Duration{200 * time.Millisecond}, sampleGraph)
-	defer srv.Close()
+	client := triplesClient(t, "http://llm.invalid")
+	transport := newContextBlockingTransport()
+	client.SetTransport(transport)
+	client.SetCallTimeout(time.Hour)
 	ont := passStore(t)
-	restore := llm.SetBackoffDelayForTest(func(int) time.Duration { return time.Millisecond })
-	defer restore()
 
-	budgets := NewDocBudgets(40 * time.Millisecond)
+	budgets := NewDocBudgets(10 * time.Millisecond)
 	_, _, timeouts := ExtractTriplesPass(context.Background(), ont,
 		[]SummaryResult{{SourcePath: "raw/a.md", Summary: "Backpressure extends flow control."}}, nil,
-		enabledCfg(), triplesClient(t, srv.URL), false, t.TempDir(), nil, nil, nil, budgets, nil)
+		enabledCfg(), client, false, t.TempDir(), nil, nil, nil, budgets, nil)
 
 	if len(timeouts) != 1 {
 		t.Fatalf("timeouts = %+v, want one mid-call timeout entry", timeouts)
 	}
 	if !errors.Is(timeouts[0].Err, limits.ErrTimeout) {
 		t.Errorf("mid-call err = %v, want errors.Is ErrTimeout (not a generic failure)", timeouts[0].Err)
+	}
+	var le *limits.LimitError
+	if !errors.As(timeouts[0].Err, &le) || le.Got < le.Limit {
+		t.Errorf("mid-call timeout = %v, want LimitError with Got >= Limit", timeouts[0].Err)
+	}
+}
+
+func TestExtractTriplesPassProviderTimeoutNotMisattributed(t *testing.T) {
+	client := triplesClient(t, "http://llm.invalid")
+	transport := newContextBlockingTransport()
+	client.SetTransport(transport)
+	client.SetCallTimeout(time.Millisecond)
+
+	_, _, timeouts := ExtractTriplesPass(context.Background(), passStore(t),
+		[]SummaryResult{{SourcePath: "raw/a.md", Summary: "Backpressure extends flow control."}}, nil,
+		enabledCfg(), client, false, t.TempDir(), nil, nil, nil, NewDocBudgets(time.Hour), nil)
+
+	if got := transport.calls.Load(); got != 1 {
+		t.Fatalf("LLM calls = %d, want 1", got)
+	}
+	if len(timeouts) != 0 {
+		t.Fatalf("provider timeout was misattributed as compile_doc_timeout: %+v", timeouts)
 	}
 }

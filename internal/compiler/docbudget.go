@@ -11,6 +11,8 @@ import (
 	"github.com/xoai/sage-wiki/pkg/events"
 )
 
+var errDocBudgetDeadline = errors.New("compiler: document budget deadline")
+
 // DocBudget tracks one document's compile_doc_timeout stopwatch
 // (SPEC-08 D6). The budget is consumed ONLY while the doc's own LLM units
 // run — queueing time and cross-document phases (concept extraction,
@@ -62,12 +64,27 @@ func (b *DocBudget) UnitContext(parent context.Context) (context.Context, contex
 		parent = context.Background()
 	}
 	rem := b.Remaining()
-	if rem <= 0 {
-		ctx, cancel := context.WithCancel(parent)
-		cancel()
-		return ctx, func() {}
+	return context.WithTimeoutCause(parent, rem, errDocBudgetDeadline)
+}
+
+// finishUnit records elapsed unit time and reports whether the exact context
+// deadline created by UnitContext caused unitErr. The cause, rather than a
+// second elapsed-time sample, distinguishes document budget expiry from parent
+// cancellation and nested provider timeouts.
+func (b *DocBudget) finishUnit(unitCtx context.Context, elapsed time.Duration, unitErr error) bool {
+	budgetOwned := unitCtx != nil &&
+		errors.Is(context.Cause(unitCtx), errDocBudgetDeadline) &&
+		(errors.Is(unitErr, context.DeadlineExceeded) || errors.Is(unitErr, context.Canceled))
+
+	b.mu.Lock()
+	if elapsed >= 0 {
+		b.used += elapsed
 	}
-	return context.WithTimeout(parent, rem)
+	if budgetOwned && b.used < b.limit {
+		b.used = b.limit
+	}
+	b.mu.Unlock()
+	return budgetOwned
 }
 
 // Limit returns the configured budget size (for typed-error reporting).
