@@ -181,7 +181,7 @@ was observed during verification and is stored in project memory).
   green confirms planted candidates are accepted and detected exactly,
   and that source-bound and reverse validation hold.
 - `bash scripts/check-determinism.sh` — the normal check; green means
-  all map-range loops near serializers are sorted or allowlisted.
+  no unallowlisted candidate was found by the grep patterns above.
 
 ## Honest limits
 

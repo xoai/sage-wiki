@@ -21,15 +21,19 @@ ALLOWLIST="${SAGE_DETERMINISM_ALLOWLIST:-scripts/determinism-allowlist.txt}"
 PKGS="internal/compiler internal/manifest internal/wiki internal/sourcedate internal/ontology internal/mirror internal/pack internal/hub internal/export internal/serve internal/mcp internal/tui internal/vectors internal/parity"
 
 violations() {
+  # "Emit zero or more candidates" is success: each discovery grep below
+  # exits 1 on a zero-match run by design, and that must not poison the
+  # pipeline status of `violations | filter_allowed` under pipefail — the
+  # status is filter_allowed's alone.
   # (a) file-local map declarations ranged later.
-  for f in $(grep -rlE ':= (map\[|make\(map\[)' --include="*.go" $PKGS 2>/dev/null | grep -v "_test.go"); do
-    names=$(grep -oE '[a-zA-Z_][a-zA-Z0-9_]* := (map\[|make\(map\[)' "$f" | sed 's/ :=.*//' | sort -u)
+  for f in $(grep -rlE ':= (map\[|make\(map\[)' --include="*.go" $PKGS 2>/dev/null | grep -v "_test.go" || true); do
+    names=$(grep -oE '[a-zA-Z_][a-zA-Z0-9_]* := (map\[|make\(map\[)' "$f" | sed 's/ :=.*//' | sort -u || true)
     for n in $names; do
-      grep -nE "range ${n}\b" "$f" | sed "s|^|$f:|"
+      grep -nE "range ${n}\b" "$f" | sed "s|^|$f:|" || true
     done
   done
   # (b) known workspace map fields.
-  grep -rnE 'range +(mf|m)\.(Sources|Concepts)\b|range +[a-zA-Z_]+\.cache\b' --include="*.go" $PKGS 2>/dev/null | grep -v "_test.go"
+  grep -rnE 'range +(mf|m)\.(Sources|Concepts)\b|range +[a-zA-Z_]+\.cache\b' --include="*.go" $PKGS 2>/dev/null | grep -v "_test.go" || true
 }
 
 filter_allowed() {
@@ -203,6 +207,19 @@ EOF
   if [ "$(printf '%s\n' "$detected" | grep -cF 'zz_determinism_selftest')" -lt 3 ]; then
     witness_fail "unallowlisted planted offender was not detected"
   fi
+  # Zero-candidate family witness: a discovery pass whose final grep finds
+  # nothing exits 1 by design — "emit zero or more candidates" must not be
+  # read as an allowlist validation failure. Discovery over an empty package
+  # dir with a valid (empty) allowlist must yield the pipeline status of
+  # filter_allowed alone, i.e. 0.
+  mkdir -p "$tmpdir/nomatch"
+  PKGS_SAVE="$PKGS"
+  PKGS="$tmpdir/nomatch"
+  ALLOWLIST="$tmpdir/empty"
+  if ! v="$(violations | filter_allowed)"; then
+    witness_fail "zero-candidate discovery exit poisoned allowlist validation status"
+  fi
+  PKGS="$PKGS_SAVE"
 
   if [ "$fails" -ne 0 ]; then
     echo "self-test RED: $fails witness(es) failed against the current matcher"
@@ -229,4 +246,4 @@ if [ -n "$v" ]; then
   echo "Best-effort check — see docs/determinism.md for its limits."
   exit 1
 fi
-echo "check-determinism: OK (all map-range loops near serializers sorted or allowlisted)"
+echo "check-determinism: OK (no unallowlisted candidate found by the grep patterns above)"
