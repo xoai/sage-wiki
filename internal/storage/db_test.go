@@ -137,14 +137,22 @@ func TestWriteTxSerializesAcrossHandles(t *testing.T) {
 	}
 	defer dbB.Close()
 
-	for _, stmt := range []string{
-		"CREATE TABLE IF NOT EXISTS test_counter (val INTEGER NOT NULL)",
-		"DELETE FROM test_counter",
-		"INSERT INTO test_counter (val) VALUES (0)",
-	} {
-		if _, err := dbA.WriteDB().Exec(stmt); err != nil {
-			t.Fatalf("setup %q: %v", stmt, err)
+	// Setup runs through WriteTx so the write connection is only ever touched
+	// while its lock is held (WriteDB's documented contract), matching the
+	// other tests in this package.
+	if err := dbA.WriteTx(func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			"CREATE TABLE IF NOT EXISTS test_counter (val INTEGER NOT NULL)",
+			"DELETE FROM test_counter",
+			"INSERT INTO test_counter (val) VALUES (0)",
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%q: %w", stmt, err)
+			}
 		}
+		return nil
+	}); err != nil {
+		t.Fatalf("setup: %v", err)
 	}
 
 	order := make(chan string, 8)   // buffered phase log; drained after joins
@@ -155,6 +163,7 @@ func TestWriteTxSerializesAcrossHandles(t *testing.T) {
 	aDone := make(chan struct{})    // A's WriteTx returned
 
 	var aErr, bErr error
+	var bEntryVal int // value B's callback reads at entry; synced via close(bDone)
 
 	go func() {
 		aErr = dbA.WriteTx(func(tx *sql.Tx) error {
@@ -181,6 +190,11 @@ func TestWriteTxSerializesAcrossHandles(t *testing.T) {
 	go func() {
 		close(bAttempt)
 		bErr = dbB.WriteTx(func(tx *sql.Tx) error {
+			var v int
+			if err := tx.QueryRow("SELECT val FROM test_counter").Scan(&v); err != nil {
+				return err
+			}
+			bEntryVal = v
 			order <- "B:enter"
 			if _, err := tx.Exec("UPDATE test_counter SET val = val + 1"); err != nil {
 				return fmt.Errorf("B write: %w", err)
@@ -228,18 +242,39 @@ drain:
 	}
 	t.Logf("observed transaction order: %v", entries)
 
-	// B's callback entry must be ordered after A's commit.
-	bEnteredAt, aDoneAt := -1, -1
+	// Ordering anchors — both airtight, neither has a false-red window:
+	//
+	// 1. Data anchor: B's entry read must observe A's committed increment
+	//    (bEntryVal == 1). WAL snapshots contain only committed data, and B's
+	//    BEGIN (immediate mode) can succeed only after A's commit releases the
+	//    writer lock, so B's entry read observes the increment if and only if
+	//    A committed before B entered. The observation is the database state
+	//    read inside B's own transaction — not a goroutine log line — so there
+	//    is no post-commit logging gap to race with.
+	//
+	// 2. Log anchor: "B:enter" must follow "A:write" in the phase log.
+	//    "A:write" is logged inside A's callback immediately after the UPDATE,
+	//    while A still holds the writer lock (commit has not happened yet);
+	//    "B:enter" is logged only after B's BEGIN succeeds, which requires the
+	//    lock to be free. The write lock therefore orders the two log sends
+	//    with no scheduler involvement. ("A:done" is deliberately NOT used as
+	//    an anchor: it is logged after WriteTx returns, and Commit may release
+	//    the writer lock before the goroutine schedules that send, letting B
+	//    enter and log first — a false-red window.)
+	if bEntryVal != 1 {
+		t.Errorf("handle B entered its transaction before handle A's increment committed (B entry read %d): %v", bEntryVal, entries)
+	}
+	bEnteredAt, aWriteAt := -1, -1
 	for i, e := range entries {
 		switch e {
 		case "B:enter":
 			bEnteredAt = i
-		case "A:done":
-			aDoneAt = i
+		case "A:write":
+			aWriteAt = i
 		}
 	}
-	if bEnteredAt >= 0 && aDoneAt >= 0 && bEnteredAt < aDoneAt {
-		t.Errorf("handle B entered its transaction body before handle A committed (order: %v)", entries)
+	if bEnteredAt >= 0 && aWriteAt >= 0 && bEnteredAt < aWriteAt {
+		t.Errorf("handle B entered its transaction body before handle A's write (order: %v)", entries)
 	}
 
 	var val int
