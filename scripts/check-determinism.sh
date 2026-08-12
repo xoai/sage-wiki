@@ -38,19 +38,14 @@ filter_allowed() {
   done
 }
 
-v="$(violations | filter_allowed)"
-
 if [ "${1:-}" = "--self-test" ]; then
-  tmp_allow="$(mktemp)"
   plant="internal/compiler/zz_determinism_selftest.go"
-  trap 'rm -f "$tmp_allow" "$plant"' EXIT
-  cp "$ALLOWLIST" "$tmp_allow"
-  # The mechanism check: violations exist unfiltered and the allowlist gates them.
-  if [ -n "$(violations)" ] && [ -n "$(violations | filter_allowed)" ]; then
-    echo "self-test FAIL: violations pipeline produced nothing even unfiltered"
-    exit 1
-  fi
-  # The planted-offender check: an unallowlisted map-declared range is flagged.
+  tmpdir="$(mktemp -d)"
+  trap 'rm -rf "$tmpdir" "$plant"' EXIT
+  # Planted candidates only: a map-declared range at a known line, the same
+  # source at a second location, and a trailing-comment statement. The live
+  # repository allowlist is never read or copied here, so live drift cannot
+  # mask witness results.
   cat > "$plant" <<'EOF'
 package compiler
 
@@ -60,17 +55,96 @@ func zzDeterminismSelfTest() []string {
 	for k := range seen {
 		out = append(out, k)
 	}
+	extra := map[string]bool{}
+	for k := range seen {
+		out = append(out, k)
+	}
+	for k := range extra { // deterministic self-test
+		out = append(out, k)
+	}
 	return out
 }
 EOF
-  if [ -z "$(violations | grep zz_determinism_selftest)" ]; then
-    echo "self-test FAIL: planted offender was not flagged"
+  planted_candidates() { violations | grep -F "$plant"; }
+  fails=0
+  witness_fail() {
+    echo "self-test FAIL: $1"
+    fails=$((fails + 1))
+  }
+  # Temporary fixture allowlists, one per witness.
+  cat > "$tmpdir/good" <<'EOF'
+# a comment line and the blank line below must be ignored
+internal/compiler/zz_determinism_selftest.go:6|for k := range seen {|exact key, first of two identical sources
+internal/compiler/zz_determinism_selftest.go:10|for k := range seen {|identical source at distinct location
+internal/compiler/zz_determinism_selftest.go:13|for k := range extra { // deterministic self-test|full trailing-comment statement
+
+EOF
+  cat > "$tmpdir/wrong_source" <<'EOF'
+internal/compiler/zz_determinism_selftest.go:6|for k := range OTHER {|wrong source occupying a candidate's location
+internal/compiler/zz_determinism_selftest.go:10|for k := range seen {|valid
+internal/compiler/zz_determinism_selftest.go:13|for k := range extra { // deterministic self-test|valid
+EOF
+  cat > "$tmpdir/dead" <<'EOF'
+internal/compiler/zz_determinism_selftest.go:6|for k := range seen {|valid
+internal/compiler/zz_determinism_selftest.go:10|for k := range seen {|valid
+internal/compiler/zz_determinism_selftest.go:13|for k := range extra { // deterministic self-test|valid
+internal/compiler/zz_determinism_selftest.go:999|for k := range seen {|dead entry: no candidate at this location
+EOF
+  cat > "$tmpdir/malformed" <<'EOF'
+internal/compiler/zz_determinism_selftest.go:6|for k := range seen {|valid
+internal/compiler/zz_determinism_selftest.go:10|for k := range seen {|valid
+internal/compiler/zz_determinism_selftest.go:13|for k := range extra { // deterministic self-test|valid
+not an allowlist entry: no delimiters
+internal/compiler/zz_determinism_selftest.go:6|for k := range a|b {|unescaped pipe in source
+EOF
+  cat > "$tmpdir/duplicate" <<'EOF'
+internal/compiler/zz_determinism_selftest.go:6|for k := range seen {|first duplicate
+internal/compiler/zz_determinism_selftest.go:6|for k := range seen {|second duplicate
+internal/compiler/zz_determinism_selftest.go:10|for k := range seen {|valid
+internal/compiler/zz_determinism_selftest.go:13|for k := range extra { // deterministic self-test|valid
+EOF
+  : > "$tmpdir/empty"
+
+  # RED witnesses: the location-only matcher must fail these.
+  # A same-location wrong-source entry must not exempt the candidate.
+  ALLOWLIST="$tmpdir/wrong_source"
+  if [ -z "$(planted_candidates | filter_allowed | grep -F 'zz_determinism_selftest.go:6')" ]; then
+    witness_fail "same-location wrong-source entry exempted the candidate — source-bound matching missing"
+  fi
+  # Dead, malformed, and duplicate-key entries must each fail validation.
+  ALLOWLIST="$tmpdir/dead"
+  if [ -z "$(planted_candidates | filter_allowed)" ]; then
+    witness_fail "dead allowlist entry accepted — reverse validation missing"
+  fi
+  ALLOWLIST="$tmpdir/malformed"
+  if [ -z "$(planted_candidates | filter_allowed)" ]; then
+    witness_fail "malformed allowlist entry accepted — entry validation missing"
+  fi
+  ALLOWLIST="$tmpdir/duplicate"
+  if [ -z "$(planted_candidates | filter_allowed)" ]; then
+    witness_fail "duplicate-key allowlist entry accepted — key validation missing"
+  fi
+
+  # GREEN-only witnesses: acceptance surface the implemented matcher must keep.
+  ALLOWLIST="$tmpdir/good"
+  if [ -n "$(planted_candidates | filter_allowed)" ]; then
+    witness_fail "exact key, trailing-comment statement, or identical-source entries not accepted; blank/comment lines not ignored"
+  fi
+  ALLOWLIST="$tmpdir/empty"
+  detected="$(planted_candidates | filter_allowed)"
+  if [ "$(printf '%s\n' "$detected" | grep -cF 'zz_determinism_selftest')" -lt 3 ]; then
+    witness_fail "unallowlisted planted offender was not detected"
+  fi
+
+  if [ "$fails" -ne 0 ]; then
+    echo "self-test RED: $fails witness(es) failed against the current matcher"
     exit 1
   fi
-  ALLOWLIST="$tmp_allow"
-  echo "self-test OK: unfiltered violations exist, allowlist gates them, planted offender flagged"
+  echo "self-test OK: planted candidates accepted and detected exactly; source-bound and reverse validation hold"
   exit 0
 fi
+
+v="$(violations | filter_allowed)"
 
 if [ -n "$v" ]; then
   echo "check-determinism: map-range loops feeding writers without an allowlisted justification:"
