@@ -118,12 +118,70 @@ as `compile_skip` engine events.
 
 `scripts/check-determinism.sh` greps `internal/` for `range` over maps
 near serializers/writers and fails on any hit not allowlisted in
-`scripts/determinism-allowlist.txt` (one line per verified-safe site,
-with its justification). It is a **best-effort static check**: it cannot
-see dataflow (a map-range two functions away from the writer), and it
-cannot prove a sorted site is sorted by the RIGHT key. It is a tripwire,
-not a proof — the proofs are the double-compile tests. Run it via
-`--self-test` to see it catch a planted offender.
+`scripts/determinism-allowlist.txt`. It is a **best-effort static
+check**: it cannot see dataflow (a map-range two functions away from
+the writer), and it cannot prove a sorted site is sorted by the RIGHT
+key. It is a tripwire, not a proof — a green run means only that no
+unallowlisted map-range loop was found. The proofs are the
+double-compile tests.
+
+### Allowlist layout
+
+Each allowlist line identifies one verified-safe site as
+`<location>|<source>|<justification>`:
+
+- **location** — the emitted violation's first two fields
+  (`<file>:<line>`).
+- **source** — the violation's text after the second colon, normalized
+  by trimming leading/trailing spaces and tabs. Colons, braces, and
+  trailing comments are preserved and are part of the identity — the
+  source is the full statement as emitted, not a fragment.
+- **justification** — free-text reason the site is order-independent.
+  Required, but never compared against anything.
+
+`|` is never escaped: any field — including a candidate's source —
+containing an unescaped `|` is malformed and fails the check. Blank
+lines and lines whose first non-whitespace character is `#` are
+ignored. Every data line must have exactly three non-empty fields.
+
+### Exact key matching
+
+An entry exempts a candidate only when **location and normalized
+source match exactly**; the justification is excluded from the
+comparison. The check validates **both directions**, and both are hard
+failures (exit 1):
+
+- an **unallowlisted candidate** — a map-range loop feeding a
+  serializer without a matching entry — is reported and rejected;
+- a **dead entry** (key matches no candidate), **duplicate key**, or
+  **malformed line** fails the check — a stale or wrong entry is
+  itself a finding.
+
+Source identity is what makes the first direction trustworthy: an
+entry cannot exempt a candidate by merely occupying its line number —
+the emitted source text must match too, so a wrong justification
+cannot ride a same-line collision. Location is still half the key, so
+line drift is still a finding: an edit that shifts a justified site
+invalidates its entry, and the check fails closed instead of silently
+exempting whichever loop moved onto the old line.
+
+### Running it
+
+Run the self-test and the normal check **sequentially, never
+concurrently**: the self-test plants a fixed offender at
+`internal/compiler/zz_determinism_selftest.go`, and the normal scan
+covers that same path — a concurrent run fails on the planted file and
+can race the self-test's cleanup, leaving the plant behind. Verify the
+plant file is absent both before and after the two runs (this gotcha
+was observed during verification and is stored in project memory).
+
+- `bash scripts/check-determinism.sh --self-test` — plants a fixed
+  offender and runs fixture witnesses against temporary allowlists
+  (the live one is never read, so drift cannot mask witness results);
+  green confirms planted candidates are accepted and detected exactly,
+  and that source-bound and reverse validation hold.
+- `bash scripts/check-determinism.sh` — the normal check; green means
+  all map-range loops near serializers are sorted or allowlisted.
 
 ## Honest limits
 
