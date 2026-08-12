@@ -15,6 +15,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/metrics"
 	"github.com/xoai/sage-wiki/internal/ontology"
+	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/vectors"
@@ -35,6 +36,9 @@ type OnDemandOpts struct {
 	Embedder    embed.Embedder
 	Client      *llm.Client
 	Coordinator *CompileCoordinator
+	// Prompts, when set, is the per-workspace template registry (SPEC-01);
+	// nil = the prompts package default. The caller owns loading overrides.
+	Prompts *prompts.Registry
 	// Sink, when set, receives the on-demand events (SPEC-07):
 	// promotion_triggered for each promoted source, plus the pipeline-
 	// interior events of the triggered run (edge, entity, usage). The
@@ -196,6 +200,7 @@ func CompileTopic(ctx context.Context, opts OnDemandOpts) (*OnDemandResult, erro
 			OntStore:     ontStore,
 			TrustStore:   trustStore,
 			Embedder:     opts.Embedder,
+			Prompts:      opts.Prompts,
 			Backpressure: bp,
 			ItemStore:    items,
 			CacheEnabled: cacheEnabled,

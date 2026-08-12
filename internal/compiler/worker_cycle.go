@@ -11,6 +11,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/metrics"
+	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/pkg/events"
 )
@@ -61,7 +62,15 @@ func (w *Worker) openCycleRun(ctx context.Context) (*cycleRun, error) {
 	// SPEC-07: build opts BEFORE the client so newTrackedClient's
 	// recorder fallback bridges usage to the installed sink — a client
 	// built with empty opts would record to the file ledger only.
-	opts := CompileOpts{Ctx: ctx, Backend: w.deps.Backend, Sink: w.eventSink()}
+	// R2: each cycle loads a FRESH registry (embedded defaults +
+	// <projectDir>/prompts); a missing dir stays silent, a malformed
+	// override warns and keeps defaults. run.opts.Prompts feeds both the
+	// full pipeline and storeCompileKeysForCompleted below.
+	pr := prompts.NewRegistry()
+	if err := pr.LoadFromDir(filepath.Join(projectDir, "prompts")); err != nil {
+		log.Warn("failed to load custom prompts", "error", err)
+	}
+	opts := CompileOpts{Ctx: ctx, Backend: w.deps.Backend, Sink: w.eventSink(), Prompts: pr}
 	client, _, err := newTrackedClient(projectDir, cfg, &opts)
 	if err != nil {
 		return nil, fmt.Errorf("worker: create LLM client: %w", err)
@@ -294,6 +303,7 @@ func (w *Worker) processCycle(ctx context.Context) (bool, error) {
 				CacheEnabled: cacheEnabled,
 				Progress:     run.progress,
 				Sink:         run.opts.Sink,
+				Prompts:      run.opts.Prompts,
 			})
 		}()
 		run.progress.EndPhase()

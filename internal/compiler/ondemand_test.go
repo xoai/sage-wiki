@@ -2,10 +2,12 @@ package compiler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/hybrid"
 	"github.com/xoai/sage-wiki/internal/llm"
 	"github.com/xoai/sage-wiki/internal/memory"
+	"github.com/xoai/sage-wiki/internal/prompts"
 	"github.com/xoai/sage-wiki/internal/vectors"
 	"github.com/xoai/sage-wiki/pkg/events"
 )
@@ -360,6 +363,124 @@ func TestCompileTopic_EmitsPromotionEvents(t *testing.T) {
 	}
 	if found.DocID != "raw/attention.md" || found.FromTier != 1 || found.ToTier != 3 || found.Trigger != "compile-on-demand" {
 		t.Errorf("payload = %+v, want raw/attention.md 1→3 compile-on-demand", found)
+	}
+}
+
+// TestCompileTopic_ForwardsPromptRegistry pins spec R3 (AC5): OnDemandOpts.Prompts
+// must reach FullPipelineOpts.Prompts so the full pipeline renders the caller's
+// project prompt overrides. The override-only sentinel lives ONLY in the
+// prompts/summarize-article.md override file — never in source content, mock
+// responses, fixture names, or generic assertions (spec Test Integrity
+// Constraints). The captured summarize user message must contain the sentinel;
+// a direct Registry.Render unit assertion would not prove the forwarding.
+func TestCompileTopic_ForwardsPromptRegistry(t *testing.T) {
+	const sentinel = "ONDEMAND-OVERRIDE-REGISTRY-SENTINEL"
+
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	memStore := memory.NewStore(db)
+	vecStore := vectors.NewStore(db)
+	items := NewCompileItemStore(db, config.NowUTC)
+
+	projectDir := t.TempDir()
+	os.MkdirAll(filepath.Join(projectDir, "raw"), 0o755)
+	os.WriteFile(filepath.Join(projectDir, "raw/attention.md"),
+		[]byte("# Flash Attention\n\nFlash attention optimizes memory access patterns for transformer models."), 0o644)
+	items.Upsert(CompileItem{
+		SourcePath: "raw/attention.md", Hash: "aaa", FileType: "md",
+		Tier: 1, SourceType: "compiler",
+	})
+	memStore.Add(memory.Entry{
+		ID:      "src:raw/attention.md",
+		Content: "Flash attention optimizes memory access patterns for transformer models.",
+		Tags:    []string{"md", "tier:1"},
+	})
+
+	promptsDir := filepath.Join(projectDir, "prompts")
+	os.MkdirAll(promptsDir, 0o755)
+	os.WriteFile(filepath.Join(promptsDir, "summarize-article.md"), []byte(sentinel+" {{.SourcePath}}"), 0o644)
+	reg := prompts.NewRegistry()
+	if err := reg.LoadFromDir(promptsDir); err != nil {
+		t.Fatalf("load override into registry: %v", err)
+	}
+
+	var mu sync.Mutex
+	var summarizeMsg string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+
+		messages, _ := body["messages"].([]any)
+		lastMsg := ""
+		if len(messages) > 0 {
+			if m, ok := messages[len(messages)-1].(map[string]any); ok {
+				lastMsg, _ = m["content"].(string)
+			}
+		}
+
+		var content string
+		switch {
+		case strings.Contains(lastMsg, "concept extraction system"):
+			content = `[{"name":"test-concept","aliases":[],"sources":["raw/attention.md"],"type":"concept"}]`
+		case strings.Contains(lastMsg, "wiki author writing a comprehensive article"):
+			content = "---\nconcept: test-concept\n---\n\n# Test Concept\n\nA test concept."
+		default:
+			mu.Lock()
+			summarizeMsg = lastMsg
+			mu.Unlock()
+			content = "## Key claims\n\nThis document discusses the main concepts and findings related to the test subject matter at length.\n\n## Concepts\n\ntest-concept: A fundamental concept extracted from the source material."
+		}
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]string{"content": content}},
+			},
+			"model": "gpt-4o-mini",
+			"usage": map[string]int{"total_tokens": 100},
+		})
+	}))
+	defer server.Close()
+
+	stubClient, err := llm.NewClient("openai", "fake-key", server.URL, 100)
+	if err != nil {
+		t.Fatalf("create stub client: %v", err)
+	}
+
+	cfg := &config.Config{
+		Project: "test",
+		Sources: []config.Source{{Path: "raw", Type: "auto"}},
+		Output:  "wiki",
+		Models:  config.ModelsConfig{Summarize: "gpt-4o-mini"},
+		Compiler: config.CompilerConfig{
+			MaxParallel:      2,
+			SummaryMaxTokens: 500,
+		},
+	}
+
+	result, err := CompileTopic(context.Background(), OnDemandOpts{
+		Topic:      "attention transformer",
+		MaxSources: 10,
+		ProjectDir: projectDir,
+		Config:     cfg,
+		DB:         db,
+		Searcher:   hybrid.NewSearcher(memStore, vecStore),
+		Embedder:   nil, // BM25 only
+		Client:     stubClient,
+		Prompts:    reg,
+	})
+	if err != nil {
+		t.Fatalf("CompileTopic: %v", err)
+	}
+	if result.CompiledSources != 1 {
+		t.Errorf("compiled sources = %d, want 1", result.CompiledSources)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(summarizeMsg, sentinel) {
+		t.Errorf("rendered summarize user message missing override sentinel; msg=%q", summarizeMsg)
 	}
 }
 

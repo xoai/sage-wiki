@@ -4,6 +4,10 @@ sage-wiki uses built-in prompts for summarization, article writing, concept
 and triple extraction, entity resolution, image captioning, and knowledge
 capture. Every one of them can be replaced with your own version.
 
+Overrides are loaded from the workspace's `prompts/` directory and apply to
+every full-compilation surface: standard `sage-wiki compile`, serve background
+worker cycles, and MCP/REST on-demand topic compilation.
+
 ## Scaffolding the prompt files
 
 ```bash

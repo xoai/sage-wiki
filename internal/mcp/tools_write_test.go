@@ -1,20 +1,27 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
+	"github.com/xoai/sage-wiki/internal/compiler"
+	"github.com/xoai/sage-wiki/internal/config"
+	"github.com/xoai/sage-wiki/internal/log"
 	"github.com/xoai/sage-wiki/internal/manifest"
+	"github.com/xoai/sage-wiki/internal/memory"
 	"github.com/xoai/sage-wiki/internal/ontology"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/trust"
@@ -950,5 +957,223 @@ func TestAddOntologyContradictsConflict(t *testing.T) {
 	}
 	if !strings.Contains(rows[0].Question, "a1 contradicts a2") {
 		t.Errorf("conflict question: %q", rows[0].Question)
+	}
+}
+
+// compileTopicProject builds a greenfield project whose config.yaml routes
+// LLM calls to the fake server (the TestCapture_UntrustedDelimiter /
+// graphQueryProject mechanism), so mcp.Server.CompileTopic's own
+// config.Load → auth.NewLLMClient path hits the mock.
+func compileTopicProject(t *testing.T, baseURL string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := wiki.InitGreenfield(dir, "test", "gpt-4o-mini"); err != nil {
+		t.Fatalf("InitGreenfield: %v", err)
+	}
+	cfg := `
+version: 1
+project: test
+sources:
+  - path: raw
+    type: auto
+output: wiki
+api:
+  provider: openai
+  api_key: sk-test
+  base_url: ` + baseURL + `
+models:
+  summarize: gpt-4o-mini
+  extract: gpt-4o-mini
+  write: gpt-4o-mini
+  lint: gpt-4o-mini
+  query: gpt-4o-mini
+compiler:
+  max_parallel: 2
+  auto_commit: false
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfg), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// compileTopicMockLLM serves the three default-pipeline passes (summarize,
+// concept extraction, article writing) and captures the rendered summarize
+// user message into dst. Embedding probes (requests without a "messages"
+// field) are refused with 400 — the pipeline's best-effort embed path warns
+// and continues. The dispatched branches identify the RELEVANT request
+// rather than searching every body indiscriminately (spec Test Integrity
+// Constraints).
+func compileTopicMockLLM(t *testing.T, dst *string, mu *sync.Mutex) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+
+		messages, _ := body["messages"].([]any)
+		if len(messages) == 0 {
+			http.Error(w, `{"error":{"message":"mock: embeddings not served"}}`, http.StatusBadRequest)
+			return
+		}
+		lastMsg := ""
+		if m, ok := messages[len(messages)-1].(map[string]any); ok {
+			lastMsg, _ = m["content"].(string)
+		}
+
+		var content string
+		switch {
+		case strings.Contains(lastMsg, "concept extraction system"):
+			content = `[{"name":"test-concept","aliases":[],"sources":["raw/attention.md"],"type":"concept"}]`
+		case strings.Contains(lastMsg, "wiki author writing a comprehensive article"):
+			content = "---\nconcept: test-concept\n---\n\n# Test Concept\n\nA test concept."
+		default:
+			mu.Lock()
+			*dst = lastMsg
+			mu.Unlock()
+			content = "## Key claims\n\nThis document discusses the main concepts and findings related to the test subject matter at length.\n\n## Concepts\n\ntest-concept: A fundamental concept extracted from the source material."
+		}
+
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]string{"content": content}},
+			},
+			"model": "gpt-4o-mini",
+			"usage": map[string]int{"total_tokens": 100},
+		})
+	}))
+}
+
+// seedCompileTopicSource seeds one uncompiled tier-1 source on disk, in FTS
+// (srv.mem) and in the compile_items table, so CompileTopic's search finds
+// it and the fixture reaches the LLM instead of short-circuiting with "All
+// matching sources are already compiled."
+func seedCompileTopicSource(t *testing.T, srv *Server, path, hash, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(srv.projectDir, "raw"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srv.projectDir, path), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.mem.Add(memory.Entry{
+		ID:      "src:" + path,
+		Content: content,
+		Tags:    []string{"md", "tier:1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := compiler.NewCompileItemStore(srv.db, config.NowUTC).Upsert(compiler.CompileItem{
+		SourcePath: path, Hash: hash, FileType: "md",
+		Tier: 1, SourceType: "compiler",
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCompileTopic_LoadsProjectPromptOverride pins spec R3 (AC5) at the
+// production MCP boundary: mcp.Server.CompileTopic must load the project's
+// prompts/summarize-article.md override and supply it through
+// OnDemandOpts.Prompts so the full pipeline renders it. The override-only
+// sentinel lives ONLY in the override file — never in source content, mock
+// responses, or fixture names (spec Test Integrity Constraints). The
+// captured summarize user message is the witness: it must carry the sentinel
+// through mcp.Server.CompileTopic → compiler.CompileTopic → runFullPipeline.
+func TestCompileTopic_LoadsProjectPromptOverride(t *testing.T) {
+	const sentinel = "MCP-BOUNDARY-OVERRIDE-SENTINEL"
+
+	var mu sync.Mutex
+	var summarizeMsg string
+	fake := compileTopicMockLLM(t, &summarizeMsg, &mu)
+	defer fake.Close()
+
+	dir := compileTopicProject(t, fake.URL)
+
+	promptsDir := filepath.Join(dir, "prompts")
+	if err := os.MkdirAll(promptsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(promptsDir, "summarize-article.md"), []byte(sentinel+" {{.SourcePath}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	srv, err := NewServer(dir)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer srv.Close()
+
+	seedCompileTopicSource(t, srv, "raw/attention.md", "aaa",
+		"# Flash Attention\n\nFlash attention optimizes memory access patterns for transformer models.")
+
+	result, err := srv.CompileTopic(context.Background(), "attention transformer", 10)
+	if err != nil {
+		t.Fatalf("CompileTopic: %v", err)
+	}
+	if result.CompiledSources != 1 {
+		t.Fatalf("compiled sources = %d, want 1 (fixture must reach the LLM, not short-circuit)", result.CompiledSources)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(summarizeMsg, sentinel) {
+		t.Errorf("summarize user message missing override sentinel; msg=%q", summarizeMsg)
+	}
+}
+
+// TestCompileTopic_MalformedPromptOverrideWarnsAndFallsBack pins spec R4
+// (AC6): a malformed prompts/ override logs a warning at the MCP boundary and
+// topic compilation continues with the embedded defaults — prompt loading
+// must not abort on-demand compilation (unlike the neighboring wiki_capture
+// hard-error path in extractKnowledgeItems).
+func TestCompileTopic_MalformedPromptOverrideWarnsAndFallsBack(t *testing.T) {
+	const malformed = "MCPTOPIC-MALFORMED-{{.SourcePath"
+
+	var mu sync.Mutex
+	var summarizeMsg string
+	fake := compileTopicMockLLM(t, &summarizeMsg, &mu)
+	defer fake.Close()
+
+	dir := compileTopicProject(t, fake.URL)
+
+	promptsDir := filepath.Join(dir, "prompts")
+	if err := os.MkdirAll(promptsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Unclosed template action — LoadFromDir must fail with a parse error.
+	if err := os.WriteFile(filepath.Join(promptsDir, "summarize-article.md"), []byte(malformed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	restore := log.SetLoggerForTest(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer restore()
+
+	srv, err := NewServer(dir)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer srv.Close()
+
+	seedCompileTopicSource(t, srv, "raw/attention.md", "aaa",
+		"# Flash Attention\n\nFlash attention optimizes memory access patterns for transformer models.")
+
+	result, err := srv.CompileTopic(context.Background(), "attention transformer", 10)
+	if err != nil {
+		t.Fatalf("CompileTopic must not abort on a malformed override: %v", err)
+	}
+	if result.CompiledSources != 1 {
+		t.Fatalf("compiled sources = %d, want 1 (fixture must reach the LLM, not short-circuit)", result.CompiledSources)
+	}
+	if !strings.Contains(buf.String(), "failed to load custom prompts") {
+		t.Errorf("no warning for malformed override; log=%q", buf.String())
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Contains(summarizeMsg, "MCPTOPIC-MALFORMED") {
+		t.Errorf("malformed body leaked into rendered prompt: %q", summarizeMsg)
+	}
+	if !strings.Contains(summarizeMsg, "research assistant") {
+		t.Errorf("embedded default summarize prompt not rendered: %q", summarizeMsg)
 	}
 }
