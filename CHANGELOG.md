@@ -19,11 +19,12 @@
   instead of at first write.
 
 - **Deterministic idle-close and worker-cycle tests.** The engine manager's
-  idle-close tests are driven by an injected synchronous controlled-time
-  evaluator instead of real-time sleeps, and the compile worker harness now
+  idle-close tests drive the idle evaluator directly with explicit
+  timestamps instead of real-time sleeps, and the compile worker harness now
   mirrors serve backend ownership (one handle, same backend, for every pass
-  store). Both suites reproduce the single-backend topology on purpose, so a
-  second SQLite handle can never hide the cross-handle race again.
+  store) — removing the stray second handle that distorted worker-cycle runs
+  with `BUSY_SNAPSHOT` flakes. The cross-handle production class stays
+  covered by the dedicated two-handle storage test.
 
 ### Added
 
@@ -32,8 +33,10 @@
   required job (build, parity, go-test, fuzz-short, skill-drift, postgres,
   minio, lint, frontend, translations) and reports failure unless all
   succeed — including on runs where a dependency failed. One stable status
-  for pre-main merges: `make ci` stays mandatory local evidence, but only a
-  green `CI required` on the latest PR SHA clears the hosted gate.
+  for pre-main merges: `make ci` stays mandatory local evidence, and a green
+  `CI required` on the latest PR SHA is the gate maintainers hold before
+  merging — a policy gate today, mechanical once branch protection requires
+  the check on `main`.
 
 ## [0.2.8] — 2026-08-05
 
