@@ -188,22 +188,12 @@ type ghAttempt struct {
 	Conclusion string `json:"conclusion"`
 }
 
-type ghJob struct {
-	Name       string `json:"name"`
-	Conclusion string `json:"conclusion"`
-	AppID      *int64 `json:"check_suite_app_id,omitempty"`
-}
-
 type ghAttemptsResp struct {
 	Attempts []ghAttempt `json:"workflow_runs"`
 }
 
 type ghRunsResp struct {
 	Runs []ghRun `json:"workflow_runs"`
-}
-
-type ghJobsResp struct {
-	Jobs []ghJob `json:"jobs"`
 }
 
 func ghAPI(repo, apiPath string) ([]byte, error) {
@@ -244,25 +234,27 @@ func loadFromAPI(repo, sha string) (ProofFixture, error) {
 		for _, a := range aResp.Attempts {
 			attempts = append(attempts, AttemptFixture(a))
 		}
-		latestAttempt := r.RunAttempt
-		if latestAttempt == 0 {
-			latestAttempt = 1
-		}
-		jData, err := ghAPI(repo, fmt.Sprintf("actions/runs/%d/attempts/%d/jobs", r.ID, latestAttempt))
+		// Query check-runs for this SHA: the jobs API does NOT expose app_id,
+		// but check-runs does. The proof needs CI required from app 15368.
+		crData, err := ghAPI(repo, "commits/"+sha+"/check-runs?per_page=100")
 		if err != nil {
-			jData, _ = ghAPI(repo, fmt.Sprintf("actions/runs/%d/jobs", r.ID))
+			continue
 		}
-		var jResp ghJobsResp
-		if err := json.Unmarshal(jData, &jResp); err != nil {
+		var crResp struct {
+			CheckRuns []struct {
+				Name       string `json:"name"`
+				Conclusion string `json:"conclusion"`
+				App        struct {
+					ID int64 `json:"id"`
+				} `json:"app"`
+			} `json:"check_runs"`
+		}
+		if err := json.Unmarshal(crData, &crResp); err != nil {
 			continue
 		}
 		var jobs []JobFixture
-		for _, j := range jResp.Jobs {
-			appID := int64(0)
-			if j.AppID != nil {
-				appID = *j.AppID
-			}
-			jobs = append(jobs, JobFixture{Name: j.Name, Conclusion: j.Conclusion, AppID: appID})
+		for _, cr := range crResp.CheckRuns {
+			jobs = append(jobs, JobFixture{Name: cr.Name, Conclusion: cr.Conclusion, AppID: cr.App.ID})
 		}
 		fixture.Runs = append(fixture.Runs, RunFixture{
 			ID:                r.ID,
