@@ -1,0 +1,231 @@
+name: CI Diagnostics
+
+# Scheduled broad diagnostics (20260812-ci-quality-system Task 11).
+#
+# Every job here carries explicit NON-BLOCKING ownership (standards.yaml
+# owner: scheduled-diagnostics / pr-advisory): this workflow has no aggregate,
+# is not referenced by ci.yml's `CI required`, and nothing in it can block a
+# merge. Its purpose is evidence — full-OS coverage, parity repetition,
+# performance trend, mutable vulnerability intelligence, and broad
+# client/example health — with fail-closed validation so a broken diagnostic
+# is red, never silently green.
+
+on:
+  schedule:
+    - cron: '47 3 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  diagnostics-validation:
+    name: Diagnostics responsibility validation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Self-tests first: a broken checker must be visible before the live
+      # validation below could produce a false green.
+      - name: Checker self-tests
+        run: |
+          bash scripts/ci/check-format.sh --self-test
+          bash scripts/ci/check-modules.sh --self-test
+          bash scripts/ci/run-go-tests.sh --self-test
+          bash scripts/ci/classify-client-paths.sh --self-test
+
+      - name: Validate manifests against this diagnostics workflow
+        run: |
+          go run ./tools/civalidate \
+            --standards ci/standards.yaml \
+            --packages ci/package-ownership.yaml \
+            --platforms ci/platform-contracts.yaml \
+            --services ci/service-contracts.yaml \
+            --fuzz-targets ci/fuzz-targets.yaml \
+            --workflow .github/workflows/ci-diagnostics.yml \
+            --makefile Makefile
+
+  full-suite-windows:
+    name: Scheduled full Windows suite
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Full OS coverage beyond the PR shards: every package, no race
+      # (Windows has no guaranteed C compiler), matching ci.yml's Windows leg.
+      - name: Test (full suite)
+        run: CGO_ENABLED=0 go test -timeout 15m ./...
+
+  full-suite-macos:
+    name: Scheduled full macOS suite
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test (full suite)
+        run: CGO_ENABLED=0 go test -timeout 15m ./...
+
+  parity-repetition:
+    name: Scheduled parity repetition
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Repeat the golden-corpus replay to surface low-probability flakes the
+      # single PR pass can miss; a flake here is diagnostic evidence, not a
+      # merge verdict.
+      - name: Parity suite (10x)
+        run: CGO_ENABLED=0 go test -count=10 ./internal/parity/
+
+  performance-warmcheck:
+    name: Scheduled performance warmcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # SPEC-06 warm-latency gate: warm mmap search must stay within 2x of the
+      # memory backend on the same fixture. Fails loud (never a silent pass).
+      - name: Warmcheck
+        run: bash scripts/spec06/warmcheck.sh
+
+  vuln-scan:
+    name: Scheduled vulnerability scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Record tool identity so a trend is attributable; a scan FAILURE is a
+      # red diagnostic, never "no findings" (fail-closed, no continue-on-error).
+      - name: Install govulncheck and record version
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck --version
+          go version
+
+      - name: govulncheck
+        run: govulncheck ./...
+
+  clients-broad:
+    name: Scheduled broad client diagnostics
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - client: python
+            python: '3.12'
+          - client: typescript
+            node: '20'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        if: matrix.client == 'python'
+        with:
+          python-version: ${{ matrix.python }}
+
+      - uses: actions/setup-node@v4
+        if: matrix.client == 'typescript'
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Python unit
+        if: matrix.client == 'python'
+        run: |
+          pip install -e "clients/python[dev]"
+          cd clients/python && python -m pytest -q -m "not contract"
+
+      - name: TypeScript unit + typecheck
+        if: matrix.client == 'typescript'
+        run: |
+          cd clients/typescript && npm ci
+          npm run typecheck
+          npm test
+
+  examples-broad:
+    name: Scheduled broad example diagnostics
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: cd examples/langgraph && pip install -r requirements.txt
+      - run: cd clients/typescript && npm ci && npm run build
+      - run: cd examples/vercel-ai-sdk && npm ci
+
+      - name: Start fixture server
+        run: bash scripts/p4-fixture-server.sh | sed 's/^export //' >> "$GITHUB_ENV"
+
+      - name: LangGraph example
+        run: |
+          cd examples/langgraph
+          python main.py | tee /tmp/langgraph.out
+          python main.py recursion | tee /tmp/langgraph-recursion.out
+          grep -q "PASS: retrieved >= 1 result" /tmp/langgraph.out
+          grep -q "PASS: retrieved >= 1 result" /tmp/langgraph-recursion.out
+          grep -q "uncompiled_sources=1 > 0" /tmp/langgraph-recursion.out
+
+      - name: Vercel AI SDK example
+        run: |
+          cd examples/vercel-ai-sdk
+          npm start | tee /tmp/vercel.out
+          grep -q "PASS: retrieved >= 1 result" /tmp/vercel.out
+
+      - name: Stop fixture server
+        if: always()
+        run: bash scripts/p4-fixture-server.sh --stop

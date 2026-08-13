@@ -1,0 +1,76 @@
+schema_version: 1
+
+# Dedicated service contracts (20260812-ci-quality-system Task 10).
+#
+# Each service selects ONLY env-gated contract tests by name — civalidate
+# discovers them with `go test -list` and fails on any count or name drift,
+# so a renamed or removed contract test turns the shadow job red instead of
+# silently shrinking coverage. Images and clients are pinned by immutable
+# sha256 digest/checksum; the shadow workflow must contain the same pins
+# (civalidate checks the workflow text), so hermeticity is asserted on facts,
+# not tags.
+#
+# internal/hub is deliberately NOT a PostgreSQL contract package: it has no
+# TEST_DATABASE_URL-gated tests (only a comment about a future pool-size
+# leg). Ordinary hub tests stay in the Linux race shards.
+
+services:
+  - id: postgres
+    workflow: CI Shadow
+    job: postgres-contract
+    image:
+      repository: pgvector/pgvector
+      tag: pg16
+      digest: "sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b"
+    env: TEST_DATABASE_URL
+    # -p 1: every pg package talks to the SAME database and drops/recreates
+    # schema, so parallel packages would race on shared tables.
+    parallel: 1
+    packages:
+      - internal/storage/postgres
+      - internal/storetest
+      - internal/wiki
+    # TestOpenWithoutPgvectorFailsActionably is excluded: it is gated on
+    # TEST_DATABASE_URL_NOVECTOR (a database without the extension), which
+    # neither the current nor the shadow job provides — it skips today and
+    # would be a vacuous selected test here.
+    selected_tests:
+      - TestPGGetChunksMeta
+      - TestCompileKeyStore_RoundTripPG
+      - TestMigrationV9CompileKeyColumns
+      - TestOpenOptionsNow_LandsInTimestamps
+      - TestPostgresStore_ClassifyPrimitives
+      - TestPGDerivedUnion
+      - TestPGDerivedGuardSeesWritesFromAnotherBackend
+      - TestPGSearchDFPrunesFrequentTerms
+      - TestPGSearchChunksDFPrunesFrequentTerms
+      - TestPGSearchColumnWeights
+      - TestOntologyStoreEmitsEdgeEvents
+      - TestMigrationV2QueueColumns
+      - TestMigrationV3EvidenceColumns
+      - TestMigrationV4AliasTable
+      - TestMigrationV5DerivedRelations
+      - TestMigrationV8Communities
+      - TestCurrentSchemaVersionTracksMigrations
+      - TestConformancePostgres
+      - TestReconcileBackendPostgres
+
+  - id: minio
+    workflow: CI Shadow
+    job: minio-contract
+    image:
+      repository: minio/minio
+      # Pinned by digest only; there is no floating tag. The workflow pulls
+      # minio/minio@sha256:... directly.
+      digest: "sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
+    client:
+      name: mc
+      url: "https://dl.min.io/client/mc/release/linux-amd64/mc"
+      sha256: "01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891"
+    env: SAGE_TEST_MINIO
+    packages:
+      - internal/mirror
+    selected_tests:
+      - TestMinIO_RoundTrip
+      - TestMinIO_CorruptionDetects
+      - TestMinIO_EncryptionRoundTrip

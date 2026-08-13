@@ -1,5 +1,15 @@
 name: fuzz
 
+# Nightly scheduled fuzz exploration (20260812-ci-quality-system Task 11).
+# Random exploration is a scheduled diagnostic, never merge authority: this
+# workflow has no aggregate and is not referenced by ci.yml's `CI required`.
+#
+# The target matrix is manifest-driven: ci/fuzz-targets.yaml is the single
+# source of truth, validated fail-closed against the source tree (a new
+# source target without inventory, a stale entry, or an empty scheduled
+# suite turns the inventory job red). Committed seed corpora run in ordinary
+# package tests — this workflow only runs time-bounded random exploration.
+
 'on':
   schedule:
     - cron: '17 3 * * *'
@@ -9,10 +19,11 @@ permissions:
   contents: read
 
 jobs:
-  fuzz:
-    name: Fuzz targets (nightly)
+  inventory:
+    name: Fuzz inventory validation
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    outputs:
+      targets: ${{ steps.list.outputs.targets }}
     steps:
       - uses: actions/checkout@v4
 
@@ -20,106 +31,49 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # REQUIRED per-target invocations: Go's -fuzz errors when one
-      # invocation matches multiple targets. continue-on-error per step
-      # so one crasher never masks the other targets that night — but
-      # OUTCOME (not conclusion) is what the aggregation step reads: a
-      # failed target ends the job RED via the aggregation step below.
-      - id: docx
-        name: FuzzExtractDocx
-        run: go test -run=NONE -fuzz=FuzzExtractDocx -fuzztime=60s ./internal/extract/
-        continue-on-error: true
-      - id: xlsx
-        name: FuzzExtractXlsx
-        run: go test -run=NONE -fuzz=FuzzExtractXlsx -fuzztime=60s ./internal/extract/
-        continue-on-error: true
-      - id: pptx
-        name: FuzzExtractPptx
-        run: go test -run=NONE -fuzz=FuzzExtractPptx -fuzztime=60s ./internal/extract/
-        continue-on-error: true
-      - id: epub
-        name: FuzzExtractEpub
-        run: go test -run=NONE -fuzz=FuzzExtractEpub -fuzztime=60s ./internal/extract/
-        continue-on-error: true
-      - id: eml
-        name: FuzzExtractEmail
-        run: go test -run=NONE -fuzz=FuzzExtractEmail -fuzztime=60s ./internal/extract/
-        continue-on-error: true
-      - id: pdf
-        name: FuzzExtractPdfGo
-        run: go test -run=NONE -fuzz=FuzzExtractPdfGo -fuzztime=60s ./internal/extract/
-        continue-on-error: true
+      # Fail closed on any manifest drift before expanding the matrix.
+      - name: Validate responsibility manifests
+        run: |
+          go run ./tools/civalidate \
+            --standards ci/standards.yaml \
+            --packages ci/package-ownership.yaml \
+            --platforms ci/platform-contracts.yaml \
+            --services ci/service-contracts.yaml \
+            --fuzz-targets ci/fuzz-targets.yaml \
+            --workflow .github/workflows/fuzz.yml \
+            --makefile Makefile
 
-      # SPEC-08 hardening targets (30s each). FuzzFrontmatter runs once per
-      # owning package — the five pure-string frontmatter sites live in five
-      # packages (Go visibility forbids one cross-package target).
-      - id: fm-extract
-        name: FuzzFrontmatter (extract)
-        run: go test -run=NONE -fuzz=FuzzFrontmatter -fuzztime=30s ./internal/extract/
-        continue-on-error: true
-      - id: fm-web
-        name: FuzzFrontmatter (web)
-        run: go test -run=NONE -fuzz=FuzzFrontmatter -fuzztime=30s ./internal/web/
-        continue-on-error: true
-      - id: fm-ontology
-        name: FuzzFrontmatter (ontology)
-        run: go test -run=NONE -fuzz=FuzzFrontmatter -fuzztime=30s ./internal/ontology/
-        continue-on-error: true
-      - id: fm-wiki
-        name: FuzzFrontmatter (wiki)
-        run: go test -run=NONE -fuzz=FuzzFrontmatter -fuzztime=30s ./internal/wiki/
-        continue-on-error: true
-      - id: fm-compiler
-        name: FuzzFrontmatter (compiler)
-        run: go test -run=NONE -fuzz=FuzzFrontmatter -fuzztime=30s ./internal/compiler/
-        continue-on-error: true
-      - id: wikilink
-        name: FuzzWikilink
-        run: go test -run=NONE -fuzz=FuzzWikilink -fuzztime=30s ./internal/compiler/
-        continue-on-error: true
-      - id: alias
-        name: FuzzAliasNormalize
-        run: go test -run=NONE -fuzz=FuzzAliasNormalize -fuzztime=30s ./internal/compiler/
-        continue-on-error: true
-      - id: canonical
-        name: FuzzCanonical
-        run: go test -run=NONE -fuzz=FuzzCanonical -fuzztime=30s ./internal/compiler/
-        continue-on-error: true
+      - id: list
+        name: Expand the scheduled target matrix from the manifest
+        run: echo "targets=$(go run ./tools/civalidate --print-fuzz-targets-json scheduled)" >> "$GITHUB_OUTPUT"
 
-      - name: Upload crashers (when any target failed)
-        if: always() && (steps.docx.outcome == 'failure' || steps.xlsx.outcome == 'failure' || steps.pptx.outcome == 'failure' || steps.epub.outcome == 'failure' || steps.eml.outcome == 'failure' || steps.pdf.outcome == 'failure' || steps.fm-extract.outcome == 'failure' || steps.fm-web.outcome == 'failure' || steps.fm-ontology.outcome == 'failure' || steps.fm-wiki.outcome == 'failure' || steps.fm-compiler.outcome == 'failure' || steps.wikilink.outcome == 'failure' || steps.alias.outcome == 'failure' || steps.canonical.outcome == 'failure')
+  fuzz:
+    name: Fuzz ${{ matrix.target.target }} (${{ matrix.target.package }})
+    needs: inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.inventory.outputs.targets) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # One target per invocation: Go's -fuzz errors when a pattern matches
+      # more than one target. A crasher turns this leg red visibly; legs are
+      # independent so one crasher never masks the other targets.
+      - name: Fuzz (time-bounded)
+        run: go test -run=NONE -fuzz=${{ matrix.target.target }} -fuzztime=${{ matrix.target.budget }} ./${{ matrix.target.package }}/
+
+      - name: Upload crashers
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: fuzz-crashers
-          path: |
-            internal/extract/testdata/fuzz/
-            internal/web/testdata/fuzz/
-            internal/ontology/testdata/fuzz/
-            internal/wiki/testdata/fuzz/
-            internal/compiler/testdata/fuzz/
+          name: fuzz-crashers-${{ matrix.target.target }}
+          path: ${{ matrix.target.package }}/testdata/fuzz/
           if-no-files-found: ignore
           retention-days: 14
-
-      # Aggregation: continue-on-error keeps all targets running, but any
-      # failed OUTCOME must turn the job red — a crasher can never be
-      # mistaken for a pass.
-      - name: Fail if any target crashed
-        if: always()
-        run: |
-          if [ "${{ steps.docx.outcome }}" = "failure" ] || \
-             [ "${{ steps.xlsx.outcome }}" = "failure" ] || \
-             [ "${{ steps.pptx.outcome }}" = "failure" ] || \
-             [ "${{ steps.epub.outcome }}" = "failure" ] || \
-             [ "${{ steps.eml.outcome }}" = "failure" ] || \
-             [ "${{ steps.pdf.outcome }}" = "failure" ] || \
-             [ "${{ steps.fm-extract.outcome }}" = "failure" ] || \
-             [ "${{ steps.fm-web.outcome }}" = "failure" ] || \
-             [ "${{ steps.fm-ontology.outcome }}" = "failure" ] || \
-             [ "${{ steps.fm-wiki.outcome }}" = "failure" ] || \
-             [ "${{ steps.fm-compiler.outcome }}" = "failure" ] || \
-             [ "${{ steps.wikilink.outcome }}" = "failure" ] || \
-             [ "${{ steps.alias.outcome }}" = "failure" ] || \
-             [ "${{ steps.canonical.outcome }}" = "failure" ]; then
-            echo "fuzz findings — see the fuzz-crashers artifact"
-            exit 1
-          fi

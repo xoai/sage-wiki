@@ -275,6 +275,51 @@ standards:
         coverage: {packages: [internal/parity], package_classes: [], package_roles: [], platform_contracts: [], paths: [testdata/golden/, testdata/fixtures/], generated_paths: []}
         diagnostics: {local_command: go test -count=1 ./internal/parity/, local_make_target: parity, hosted_artifact: parity-shadow-log, failure_artifact: replay-diff, formats: [text, diff]}
         qualification: {state: candidate, history: []}
+      - id: parity-repetition-candidate
+        status: nonblocking
+        command: CGO_ENABLED=0 go test -count=10 ./internal/parity/
+        triggers: [schedule, manual]
+        platforms: [linux]
+        job: {workflow: CI Diagnostics, id: parity-repetition, aggregate: false}
+        purpose: {met: [], evidence: "Repetition surfaces low-probability flakes; it is diagnostic evidence, not a merge verdict."}
+        authority: {met: [anti-vacuous, bounded, reproducible-or-diagnosable, owned], evidence: "A flake under repetition is evidence, never authority."}
+        anti_vacuity: Fixture and replay counts remain asserted on every repetition.
+        runtime: {bound_seconds: 1800, recent: null}
+        coverage: {packages: [internal/parity], package_classes: [], package_roles: [], platform_contracts: [], paths: [testdata/golden/, testdata/fixtures/], generated_paths: []}
+        diagnostics: {local_command: go test -count=10 ./internal/parity/, local_make_target: null, hosted_artifact: parity-repetition-log, failure_artifact: replay-diff, formats: [text, diff]}
+        qualification: {state: candidate, history: []}
+
+  - id: scheduled-full-os-suites
+    rationale: Full Windows and macOS suites beyond the PR shards remain diagnostic coverage, not merge authority.
+    owner: scheduled-diagnostics
+    fallback_owner: human-review
+    witnesses:
+      - id: full-suite-windows-candidate
+        status: nonblocking
+        command: CGO_ENABLED=0 go test -timeout 15m ./...
+        triggers: [schedule, manual]
+        platforms: [windows]
+        job: {workflow: CI Diagnostics, id: full-suite-windows, aggregate: false}
+        purpose: {met: [], evidence: "Scheduled full-OS coverage is diagnostic, not a candidate-merge property."}
+        authority: {met: [anti-vacuous, bounded, reproducible-or-diagnosable, owned], evidence: "Full-suite discovery must stay nonempty; failures are diagnostic evidence."}
+        anti_vacuity: An empty package list or a skipped suite is diagnostic-red.
+        runtime: {bound_seconds: 2700, recent: null}
+        coverage: {packages: [], package_classes: [test-owned, helper-library], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
+        diagnostics: {local_command: null, local_make_target: null, hosted_artifact: full-os-suite-log, failure_artifact: full-os-suite-log, formats: [text]}
+        qualification: {state: candidate, history: []}
+      - id: full-suite-macos-candidate
+        status: nonblocking
+        command: CGO_ENABLED=0 go test -timeout 15m ./...
+        triggers: [schedule, manual]
+        platforms: [darwin]
+        job: {workflow: CI Diagnostics, id: full-suite-macos, aggregate: false}
+        purpose: {met: [], evidence: "Scheduled full-OS coverage is diagnostic, not a candidate-merge property."}
+        authority: {met: [anti-vacuous, bounded, reproducible-or-diagnosable, owned], evidence: "Full-suite discovery must stay nonempty; failures are diagnostic evidence."}
+        anti_vacuity: An empty package list or a skipped suite is diagnostic-red.
+        runtime: {bound_seconds: 2700, recent: null}
+        coverage: {packages: [], package_classes: [test-owned, helper-library], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
+        diagnostics: {local_command: null, local_make_target: null, hosted_artifact: full-os-suite-log, failure_artifact: full-os-suite-log, formats: [text]}
+        qualification: {state: candidate, history: []}
 
   - id: fuzz-exploration
     rationale: Random exploration discovers crashers but does not provide deterministic merge authority.
@@ -301,12 +346,12 @@ standards:
         command: go test -run=NONE -fuzz=<target> -fuzztime=<bound> <package>
         triggers: [schedule, manual]
         platforms: [linux]
-        job: null
+        job: {workflow: fuzz, id: fuzz, aggregate: false}
         purpose: {met: [], evidence: "Random exploration is not a deterministic candidate-merge property."}
         authority: {met: [anti-vacuous, bounded, reproducible-or-diagnosable, owned], evidence: "Target inventory and crasher upload remain mandatory for the diagnostic."}
         anti_vacuity: Missing targets are diagnostic-red and crashers are retained as artifacts.
         runtime: {bound_seconds: 3600, recent: null}
-        coverage: {packages: [internal/extract, internal/web, internal/ontology, internal/wiki, internal/compiler], package_classes: [], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
+        coverage: {packages: [internal/extract, internal/web, internal/ontology, internal/wiki, internal/compiler], package_classes: [], package_roles: [], platform_contracts: [], paths: [ci/fuzz-targets.yaml], generated_paths: []}
         diagnostics: {local_command: "go test -run=NONE -fuzz=<target> -fuzztime=<bound> <package>", local_make_target: null, hosted_artifact: fuzz-crashers, failure_artifact: fuzz-crashers, formats: [text]}
         qualification: {state: candidate, history: []}
 
@@ -406,16 +451,16 @@ standards:
     witnesses:
       - id: performance-nightly-candidate
         status: nonblocking
-        command: <repository-benchmark-command>
+        command: bash scripts/spec06/warmcheck.sh
         triggers: [schedule, manual]
         platforms: [linux]
-        job: null
+        job: {workflow: CI Diagnostics, id: performance-warmcheck, aggregate: false}
         purpose: {met: [], evidence: "Host timing is not a reliable candidate-merge property."}
         authority: {met: [anti-vacuous, bounded, reproducible-or-diagnosable, owned], evidence: "Baseline count and environment identity are required for trend evidence."}
         anti_vacuity: Missing samples or environment identity is diagnostic-red.
-        runtime: {bound_seconds: 3600, recent: null}
-        coverage: {packages: [], package_classes: [], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
-        diagnostics: {local_command: <repository-benchmark-command>, local_make_target: null, hosted_artifact: benchmark-trend, failure_artifact: raw-benchmark-data, formats: [benchmark-data]}
+        runtime: {bound_seconds: 1200, recent: null}
+        coverage: {packages: [internal/vectors], package_classes: [], package_roles: [], platform_contracts: [], paths: [scripts/spec06/warmcheck.sh], generated_paths: []}
+        diagnostics: {local_command: bash scripts/spec06/warmcheck.sh, local_make_target: null, hosted_artifact: benchmark-trend, failure_artifact: raw-benchmark-data, formats: [benchmark-data]}
         qualification: {state: candidate, history: []}
 
   - id: frontend-contract
@@ -457,6 +502,19 @@ standards:
         coverage: {packages: [], package_classes: [], package_roles: [], platform_contracts: [], paths: [clients/], generated_paths: []}
         diagnostics: {local_command: <client-lockfile-unit-and-build-commands>, local_make_target: null, hosted_artifact: client-build-log, failure_artifact: client-build-log, formats: [text]}
         qualification: {state: candidate, history: []}
+      - id: clients-broad-nightly
+        status: nonblocking
+        command: client unit and typecheck suites from each lockfile
+        triggers: [schedule, manual]
+        platforms: [linux]
+        job: {workflow: CI Diagnostics, id: clients-broad, aggregate: false}
+        purpose: {met: [], evidence: "Scheduled broad client health is diagnostic, not a candidate-merge property."}
+        authority: {met: [anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Nonzero test discovery and path-classifier self-tests remain mandatory."}
+        anti_vacuity: Zero test discovery or a skipped client is diagnostic-red.
+        runtime: {bound_seconds: 1800, recent: null}
+        coverage: {packages: [], package_classes: [], package_roles: [], platform_contracts: [], paths: [clients/], generated_paths: []}
+        diagnostics: {local_command: null, local_make_target: null, hosted_artifact: client-build-log, failure_artifact: client-build-log, formats: [text]}
+        qualification: {state: candidate, history: []}
 
   - id: examples
     rationale: Examples must stay offline and runnable, without turning experiments into merge authority.
@@ -491,6 +549,19 @@ standards:
         coverage: {packages: [examples/embed], package_classes: [example-smoke], package_roles: [], platform_contracts: [], paths: [examples/], generated_paths: []}
         diagnostics: {local_command: <offline-example-smoke-commands>, local_make_target: null, hosted_artifact: examples-log, failure_artifact: example-output, formats: [text]}
         qualification: {state: candidate, history: []}
+      - id: examples-broad-nightly
+        status: nonblocking
+        command: offline example smoke commands against the fixture server
+        triggers: [schedule, manual]
+        platforms: [linux]
+        job: {workflow: CI Diagnostics, id: examples-broad, aggregate: false}
+        purpose: {met: [], evidence: "Scheduled broad example health is diagnostic, not a candidate-merge property."}
+        authority: {met: [anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Explicit inventory and offline execution remain mandatory."}
+        anti_vacuity: Zero examples or a live credential dependency is diagnostic-red.
+        runtime: {bound_seconds: 1800, recent: null}
+        coverage: {packages: [examples/embed], package_classes: [example-smoke], package_roles: [], platform_contracts: [], paths: [examples/], generated_paths: []}
+        diagnostics: {local_command: null, local_make_target: null, hosted_artifact: examples-log, failure_artifact: example-output, formats: [text]}
+        qualification: {state: candidate, history: []}
 
   - id: vulnerability-intelligence
     rationale: Mutable vulnerability intelligence informs maintenance and release disposition without impersonating candidate correctness.
@@ -510,6 +581,19 @@ standards:
         coverage: {packages: [], package_classes: [test-owned, compile-only, example-smoke, helper-library], package_roles: [], platform_contracts: [], paths: [go.mod, go.sum], generated_paths: []}
         diagnostics: {local_command: make vuln, local_make_target: vuln, hosted_artifact: vulnerability-report, failure_artifact: vulnerability-report, formats: [text]}
         qualification: {state: not-applicable, history: []}
+      - id: vulnerability-nightly-candidate
+        status: nonblocking
+        command: govulncheck ./...
+        triggers: [schedule, manual]
+        platforms: [linux]
+        job: {workflow: CI Diagnostics, id: vuln-scan, aggregate: false}
+        purpose: {met: [], evidence: "The mutable database is not a candidate-merge property."}
+        authority: {met: [anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Tool and database identity are recorded; scan failure is not no findings."}
+        anti_vacuity: Tool failure and zero evidence are distinct from no vulnerabilities.
+        runtime: {bound_seconds: 1200, recent: null}
+        coverage: {packages: [], package_classes: [test-owned, compile-only, example-smoke, helper-library], package_roles: [], platform_contracts: [], paths: [go.mod, go.sum], generated_paths: []}
+        diagnostics: {local_command: make vuln, local_make_target: vuln, hosted_artifact: vulnerability-report, failure_artifact: vulnerability-report, formats: [text]}
+        qualification: {state: candidate, history: []}
 
   - id: translation-structure
     rationale: README translation structure and explicit lag waivers must remain mechanically valid.
