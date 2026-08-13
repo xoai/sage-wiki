@@ -296,8 +296,9 @@ type CompilerConfig struct {
 	DemoteSignals     DemoteSignals  `yaml:"demote_signals,omitempty"`
 
 	// Document splitting (Phase B)
-	SplitThreshold int    `yaml:"split_threshold,omitempty"` // chars, enable section-aware writing above this (default: 15000)
-	SplitStrategy  string `yaml:"split_strategy,omitempty"`  // "headings" (default)
+	SplitThreshold         int    `yaml:"split_threshold,omitempty"`           // chars, enable section-aware writing above this (default: 15000)
+	MaxSourceContextTokens *int   `yaml:"max_source_context_tokens,omitempty"` // max estimated tokens in source context (default: 100000)
+	SplitStrategy          string `yaml:"split_strategy,omitempty"`            // "headings" (default)
 
 	// Backpressure
 	BackpressureEnabled *bool `yaml:"backpressure,omitempty"` // enable adaptive backpressure (default: true)
@@ -393,6 +394,17 @@ func (c CompilerConfig) MinConceptSourcesOrDefault() int {
 		return 1
 	}
 	return *c.MinConceptSources
+}
+
+// MaxSourceContextTokensOrDefault resolves the budget: nil → 100000, explicit 0 → 100000.
+func (c CompilerConfig) MaxSourceContextTokensOrDefault() int {
+	if c.MaxSourceContextTokens == nil {
+		return 100000
+	}
+	if *c.MaxSourceContextTokens <= 0 {
+		return 100000
+	}
+	return *c.MaxSourceContextTokens
 }
 
 // QualityThreshold returns the configured low-quality warning threshold,

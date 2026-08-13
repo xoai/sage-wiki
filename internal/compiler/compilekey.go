@@ -273,6 +273,7 @@ func compileConfigSubset(cfg *config.Config) map[string]any {
 	put("compiler.dedup_threshold", floatOrDefault(c.DedupThreshold, 0.85)) // dedup.go:37
 	put("compiler.dedup_strategy", strOrDefault(c.DedupStrategy, "embedding"))
 	put("compiler.split_threshold", intOrDefault(c.SplitThreshold, 15000)) // write.go:60
+	put("compiler.max_source_context_tokens", c.MaxSourceContextTokensOrDefault())
 	put("compiler.split_strategy", strOrDefault(c.SplitStrategy, "headings"))
 	put("compiler.min_concept_sources", c.MinConceptSourcesOrDefault())
 	put("compiler.strip_broken_links", c.StripBrokenLinks)
@@ -459,6 +460,7 @@ var subsetPolicy = map[string]string{
 	"compiler.tier_defaults":                       "",
 	"compiler.timezone":                            "",
 	"compiler.max_parallel":                        "runtime scheduling; D3 makes output order-independent",
+	"compiler.max_source_context_tokens":           "",
 	"compiler.debounce_seconds":                    "watch-mode runtime knob",
 	"compiler.auto_commit":                         "git side effect, not artifact content",
 	"compiler.auto_lint":                           "lint trigger, not compile output",
