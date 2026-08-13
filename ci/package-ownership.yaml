@@ -71,6 +71,7 @@ packages:
   - {path: tests/pathological, class: test-owned, owner: go-tests-current, roles: []}
   - {path: tools/civalidate, class: test-owned, owner: go-tests-current, roles: []}
   - {path: tools/ciobserve, class: test-owned, owner: go-tests-current, roles: []}
+  - {path: tools/ciproof, class: test-owned, owner: go-tests-current, roles: []}
   - {path: tools/skillgen, class: test-owned, owner: go-tests-current, roles: []}
   - {path: tools/testsummary, class: test-owned, owner: go-tests-current, roles: []}
 
@@ -141,5 +142,6 @@ linux_race_shards:
         - tests/pathological
         - tools/civalidate
         - tools/ciobserve
+        - tools/ciproof
         - tools/skillgen
         - tools/testsummary
