@@ -1,0 +1,603 @@
+schema_version: 1
+
+aggregates:
+  - workflow: CI
+    job: ci-required
+
+standards:
+  - id: go-format
+    rationale: Tracked Go source must use the canonical formatter.
+    owner: merge-required-ci
+    fallback_owner: local-pre-push
+    witnesses:
+      - id: format-preflight-candidate
+        status: advisory
+        command: bash scripts/ci/check-format.sh
+        triggers: [pull-request, merge-group, main-push]
+        platforms: [linux]
+        job: null
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "The candidate tree is the formatter input and failures identify changed files."}
+        authority: {met: [deterministic, hermetic-enough, anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "The target script must reject an unformatted fixture and zero inspected files."}
+        anti_vacuity: An unformatted fixture and an empty inspected-file set both fail.
+        runtime: {bound_seconds: 60, recent: null}
+        coverage: {packages: [], package_classes: [], package_roles: [], platform_contracts: [], paths: ["**/*.go"], generated_paths: []}
+        diagnostics: {local_command: bash scripts/ci/check-format.sh, local_make_target: null, hosted_artifact: preflight-log, failure_artifact: changed-file-list, formats: [text, github-annotation]}
+        qualification: {state: candidate, history: []}
+
+  - id: dependency-cleanliness
+    rationale: The module graph and downloaded content must be reproducible from committed inputs.
+    owner: merge-required-ci
+    fallback_owner: local-pre-push
+    witnesses:
+      - id: modules-preflight-candidate
+        status: advisory
+        command: bash scripts/ci/check-modules.sh
+        triggers: [pull-request, merge-group, main-push]
+        platforms: [linux]
+        job: null
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "CI can prove candidate go.mod/go.sum drift in a clean checkout."}
+        authority: {met: [deterministic, anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Separate module-drift and missing-cache mutations must fail."}
+        anti_vacuity: Mutated go.mod and missing verified module content fail independently.
+        runtime: {bound_seconds: 180, recent: null}
+        coverage: {packages: [], package_classes: [], package_roles: [], platform_contracts: [], paths: [go.mod, go.sum], generated_paths: []}
+        diagnostics: {local_command: bash scripts/ci/check-modules.sh, local_make_target: null, hosted_artifact: preflight-log, failure_artifact: module-diff, formats: [text, diff]}
+        qualification: {state: candidate, history: []}
+
+  - id: go-build
+    rationale: The repository must compile as pure Go with normal and webui build variants.
+    owner: merge-required-ci
+    fallback_owner: local-pre-push
+    witnesses:
+      - id: build-current
+        status: required
+        command: CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go build -tags webui ./...
+        triggers: [pull-request, main-push]
+        platforms: [linux, darwin, windows]
+        job: {workflow: CI, id: build, aggregate: true}
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "Compilation proves candidate source and build constraints on each supported OS."}
+        authority: {met: [deterministic, hermetic-enough, anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "The package inventory must be nonempty and compile mutations fail."}
+        anti_vacuity: A nonempty package inventory is required and an undefined symbol mutation turns the job red.
+        runtime: {bound_seconds: 180, recent: null}
+        coverage: {packages: [], package_classes: [compile-only, test-owned, example-smoke, helper-library], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
+        diagnostics: {local_command: "CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go build -tags webui ./...", local_make_target: build, hosted_artifact: null, failure_artifact: compiler-output, formats: [text, github-annotation]}
+        qualification:
+          state: required-requalifying
+          history: [{date: "2026-08-12", state: required-requalifying, reason: "Imported from the existing required build matrix."}]
+      - id: build-target-candidate
+        status: advisory
+        command: CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go build -tags webui ./...
+        triggers: [pull-request, merge-group, main-push]
+        platforms: [linux, darwin, windows]
+        job: null
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "The target keeps supported compilation while separating generic and OS-specific claims."}
+        authority: {met: [deterministic, hermetic-enough, anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Qualification has not started."}
+        anti_vacuity: A compile mutation must fail on every assigned platform.
+        runtime: {bound_seconds: 180, recent: null}
+        coverage: {packages: [], package_classes: [compile-only, test-owned, example-smoke, helper-library], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
+        diagnostics: {local_command: "CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go build -tags webui ./...", local_make_target: build, hosted_artifact: build-shadow-log, failure_artifact: compiler-output, formats: [text, github-annotation]}
+        qualification: {state: candidate, history: []}
+
+  - id: go-vet
+    rationale: Go's static checks must reject mechanically invalid candidate code.
+    owner: merge-required-ci
+    fallback_owner: local-pre-push
+    witnesses:
+      - id: vet-current
+        status: required
+        command: CGO_ENABLED=0 go vet ./...
+        triggers: [pull-request, main-push]
+        platforms: [linux, darwin, windows]
+        job: {workflow: CI, id: build, aggregate: true}
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "Vet checks candidate packages and points to source diagnostics."}
+        authority: {met: [deterministic, hermetic-enough, anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "A pinned bad fixture and nonempty package inventory are required."}
+        anti_vacuity: A pinned vet violation is detected and zero packages is red.
+        runtime: {bound_seconds: 180, recent: null}
+        coverage: {packages: [], package_classes: [test-owned, compile-only, example-smoke, helper-library], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
+        diagnostics: {local_command: CGO_ENABLED=0 go vet ./..., local_make_target: vet, hosted_artifact: null, failure_artifact: vet-output, formats: [text, github-annotation]}
+        qualification:
+          state: required-requalifying
+          history: [{date: "2026-08-12", state: required-requalifying, reason: "Imported from the required build matrix."}]
+
+  - id: static-analysis-new-issues
+    rationale: New static-analysis defects must not increase the tracked backlog.
+    owner: merge-required-ci
+    fallback_owner: local-pre-push
+    witnesses:
+      - id: lint-current
+        status: required
+        command: golangci-lint run --new-from-merge-base=origin/main --timeout=5m ./...
+        triggers: [pull-request, main-push]
+        platforms: [linux]
+        job: {workflow: CI, id: lint, aggregate: true}
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "A merge-base checkout isolates candidate-introduced findings."}
+        authority: {met: [deterministic, anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Missing merge base or zero packages must fail; the tool version is pinned."}
+        anti_vacuity: A pinned bad fixture, missing merge base, and empty package inventory are red.
+        runtime: {bound_seconds: 300, recent: null}
+        coverage: {packages: [], package_classes: [test-owned, compile-only, example-smoke, helper-library], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
+        diagnostics: {local_command: golangci-lint run --new-from-merge-base=origin/main --timeout=5m ./..., local_make_target: lint-new, hosted_artifact: null, failure_artifact: lint-annotations, formats: [text, sarif, github-annotation]}
+        qualification:
+          state: required-requalifying
+          history: [{date: "2026-08-12", state: required-requalifying, reason: "Imported from the existing required lint job."}]
+
+  - id: deterministic-serialization
+    rationale: Serialized artifacts must not depend on Go map iteration order.
+    owner: merge-required-ci
+    fallback_owner: local-pre-push
+    witnesses:
+      - id: determinism-current
+        status: required
+        command: bash scripts/check-determinism.sh
+        triggers: [pull-request, main-push]
+        platforms: [linux]
+        job: {workflow: CI, id: lint, aggregate: true}
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "The check inspects candidate writer source and reports exact lines."}
+        authority: {met: [deterministic, hermetic-enough, anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Source-bound self-tests reject planted writers and stale allowlist entries."}
+        anti_vacuity: Planted unallowlisted writers, an empty matcher, and stale allowlist entries are red.
+        runtime: {bound_seconds: 60, recent: null}
+        coverage: {packages: [], package_classes: [], package_roles: [determinism-writer], platform_contracts: [], paths: [scripts/check-determinism.sh, scripts/determinism-allowlist.txt], generated_paths: []}
+        diagnostics: {local_command: bash scripts/check-determinism.sh, local_make_target: null, hosted_artifact: null, failure_artifact: determinism-report, formats: [text]}
+        qualification:
+          state: required-requalifying
+          history: [{date: "2026-08-12", state: required-requalifying, reason: "Imported from the current lint job after a stale-line incident."}]
+      - id: determinism-preflight-candidate
+        status: advisory
+        command: bash scripts/check-determinism.sh
+        triggers: [pull-request, merge-group, main-push]
+        platforms: [linux]
+        job: null
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "The same mechanical claim moves to preflight after qualification."}
+        authority: {met: [deterministic, hermetic-enough, anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Shadow observation has not started."}
+        anti_vacuity: The existing source-bound self-test remains authoritative.
+        runtime: {bound_seconds: 60, recent: null}
+        coverage: {packages: [], package_classes: [], package_roles: [determinism-writer], platform_contracts: [], paths: [scripts/check-determinism.sh, scripts/determinism-allowlist.txt], generated_paths: []}
+        diagnostics: {local_command: bash scripts/check-determinism.sh, local_make_target: null, hosted_artifact: determinism-shadow-log, failure_artifact: determinism-report, formats: [text]}
+        qualification: {state: candidate, history: []}
+
+  - id: go-correctness-race
+    rationale: Every ordinary Go package must have exactly one accountable Linux race-test owner.
+    owner: merge-required-ci
+    fallback_owner: local-pre-push
+    witnesses:
+      - id: go-tests-current
+        status: required
+        command: CGO_ENABLED=1 go test -race -timeout 15m <current-shard-packages>
+        triggers: [pull-request, main-push]
+        platforms: [linux, darwin, windows]
+        job: {workflow: CI, id: go-test, aggregate: true}
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "Current broad shards execute candidate package tests across the supported matrix."}
+        authority: {met: [anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Current package selection is broad but not yet manifest-validated or qualified."}
+        anti_vacuity: Resolved shard package output must be nonempty and package failures remain red.
+        runtime: {bound_seconds: 900, recent: null}
+        coverage: {packages: [], package_classes: [test-owned, helper-library], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
+        diagnostics: {local_command: go test -race ./..., local_make_target: test, hosted_artifact: go-test-log, failure_artifact: go-test-log, formats: [text]}
+        qualification:
+          state: required-requalifying
+          history: [{date: "2026-08-12", state: required-requalifying, reason: "Imported from the broad current OS shard matrix."}]
+      - id: linux-race-candidate
+        status: advisory
+        command: CGO_ENABLED=1 go test -race -timeout 15m <manifest-owned-packages>
+        triggers: [pull-request, merge-group, main-push]
+        platforms: [linux]
+        job: null
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "A manifest partitions every ordinary package exactly once."}
+        authority: {met: [deterministic, anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Balanced shard timings and hosted qualification are pending."}
+        anti_vacuity: go list equality, exact ownership, and nonempty test metadata are required.
+        runtime: {bound_seconds: 360, recent: null}
+        coverage: {packages: [], package_classes: [test-owned, helper-library], package_roles: [], platform_contracts: [], paths: [ci/package-ownership.yaml], generated_paths: []}
+        diagnostics: {local_command: go test -race <focused-packages>, local_make_target: null, hosted_artifact: go-test-json, failure_artifact: go-test-json, formats: [go-test-json, github-annotation]}
+        qualification: {state: candidate, history: []}
+
+  - id: platform-behavior
+    rationale: Supported OS behavior must be witnessed by named platform invariants rather than duplicate generic suites.
+    owner: merge-required-ci
+    fallback_owner: scheduled-diagnostics
+    witnesses:
+      - id: platform-broad-current
+        status: required
+        command: go test -timeout 15m <current-shard-packages>
+        triggers: [pull-request, main-push]
+        platforms: [darwin, windows]
+        job: {workflow: CI, id: go-test, aggregate: true}
+        purpose: {met: [candidate-property, ci-best-environment], evidence: "Current broad native suites preserve supported-OS evidence during migration."}
+        authority: {met: [anti-vacuous, bounded, owned], evidence: "Broad suites remain required while focused contracts qualify."}
+        anti_vacuity: Every current shard must resolve a nonempty package list.
+        runtime: {bound_seconds: 900, recent: null}
+        coverage: {packages: [], package_classes: [test-owned, helper-library], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
+        diagnostics: {local_command: null, local_make_target: null, hosted_artifact: full-os-suite-log, failure_artifact: full-os-suite-log, formats: [text]}
+        qualification:
+          state: required-requalifying
+          history: [{date: "2026-08-12", state: required-requalifying, reason: "Existing full macOS and Windows suites remain fallback authority."}]
+      - id: platform-focused-candidate
+        status: advisory
+        command: go test -timeout 15m <platform-contract-packages>
+        triggers: [pull-request, merge-group, main-push, schedule]
+        platforms: [darwin, windows]
+        job: null
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "Each focused package carries a named native-OS invariant."}
+        authority: {met: [anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Source classification and seven-day hosted qualification are pending."}
+        anti_vacuity: Platform inventories, contracts, and assigned tests must all be nonempty and mutation-tested.
+        runtime: {bound_seconds: 480, recent: null}
+        coverage: {packages: [], package_classes: [], package_roles: [], platform_contracts: [manifest-lock-windows, compiler-checkpoint-windows, engine-lock-windows, mirror-lock-windows, vectors-fallback-windows, engine-flock-darwin, mirror-flock-darwin, vectors-mmap-darwin, serve-signal-darwin, pack-containment-darwin], paths: [ci/platform-contracts.yaml], generated_paths: []}
+        diagnostics: {local_command: null, local_make_target: null, hosted_artifact: platform-contract-json, failure_artifact: platform-contract-json, formats: [go-test-json, github-annotation]}
+        qualification: {state: candidate, history: []}
+
+  - id: generated-contract-drift
+    rationale: Generated API, skill, and frontend artifacts must match their declared sources.
+    owner: merge-required-ci
+    fallback_owner: local-pre-push
+    witnesses:
+      - id: generated-drift-current
+        status: required
+        command: go run ./tools/skillgen/ && git diff --exit-code -- skills/
+        triggers: [pull-request, main-push]
+        platforms: [linux]
+        job: {workflow: CI, id: skill-drift, aggregate: true}
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "A clean checkout can regenerate and compare committed artifacts."}
+        authority: {met: [deterministic, hermetic-enough, anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "A stale generated fixture and empty inventory must fail."}
+        anti_vacuity: Each declared generator has a stale-output mutation and generated paths cannot be empty.
+        runtime: {bound_seconds: 120, recent: null}
+        coverage: {packages: [tools/skillgen], package_classes: [], package_roles: [], platform_contracts: [], paths: [tools/skillgen/], generated_paths: [skills/, internal/web/dist/]}
+        diagnostics: {local_command: go run ./tools/skillgen/, local_make_target: null, hosted_artifact: null, failure_artifact: generated-diff, formats: [text, diff]}
+        qualification:
+          state: required-requalifying
+          history: [{date: "2026-08-12", state: required-requalifying, reason: "Imported from required skill and frontend drift jobs."}]
+
+  - id: golden-parity
+    rationale: Offline golden replay must preserve byte, graph, search, and API parity.
+    owner: merge-required-ci
+    fallback_owner: scheduled-diagnostics
+    witnesses:
+      - id: parity-current
+        status: required
+        command: CGO_ENABLED=0 go test -count=1 ./internal/parity/
+        triggers: [pull-request, main-push]
+        platforms: [linux, darwin]
+        job: {workflow: CI, id: parity, aggregate: true}
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "Replay checks candidate output against committed fixtures without credentials."}
+        authority: {met: [deterministic, hermetic-enough, anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Fixture and replay counts are asserted and golden mutation turns red."}
+        anti_vacuity: Fixture count, replay count, and a mutated golden are checked.
+        runtime: {bound_seconds: 480, recent: null}
+        coverage: {packages: [internal/parity], package_classes: [], package_roles: [], platform_contracts: [], paths: [testdata/golden/, testdata/fixtures/], generated_paths: []}
+        diagnostics: {local_command: go test -count=1 ./internal/parity/, local_make_target: parity, hosted_artifact: parity-log, failure_artifact: replay-diff, formats: [text, diff]}
+        qualification:
+          state: required-requalifying
+          history: [{date: "2026-08-12", state: required-requalifying, reason: "Current Linux replay remains required; repetition and macOS execution are migration candidates."}]
+      - id: parity-linux-candidate
+        status: advisory
+        command: CGO_ENABLED=0 go test -count=1 ./internal/parity/
+        triggers: [pull-request, merge-group, main-push]
+        platforms: [linux]
+        job: null
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "One deterministic Linux replay owns the candidate parity claim."}
+        authority: {met: [deterministic, hermetic-enough, anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Shadow comparison with the current matrix is pending."}
+        anti_vacuity: Existing fixture-count and sabotage tests remain mandatory.
+        runtime: {bound_seconds: 360, recent: null}
+        coverage: {packages: [internal/parity], package_classes: [], package_roles: [], platform_contracts: [], paths: [testdata/golden/, testdata/fixtures/], generated_paths: []}
+        diagnostics: {local_command: go test -count=1 ./internal/parity/, local_make_target: parity, hosted_artifact: parity-shadow-log, failure_artifact: replay-diff, formats: [text, diff]}
+        qualification: {state: candidate, history: []}
+
+  - id: fuzz-exploration
+    rationale: Random exploration discovers crashers but does not provide deterministic merge authority.
+    owner: scheduled-diagnostics
+    fallback_owner: local-pre-push
+    witnesses:
+      - id: fuzz-short-current
+        status: required
+        command: go test -run=NONE -fuzz=<target> -fuzztime=30s <package>
+        triggers: [pull-request, main-push]
+        platforms: [linux]
+        job: {workflow: CI, id: fuzz-short, aggregate: true}
+        purpose: {met: [candidate-property], evidence: "The current workflow runs time-bounded random exploration on every candidate."}
+        authority: {met: [anti-vacuous, bounded, owned], evidence: "Random duration cannot be deterministic merge evidence and is requalifying for demotion."}
+        anti_vacuity: Every target is invoked separately and any target failure turns the aggregate red.
+        runtime: {bound_seconds: 720, recent: null}
+        coverage: {packages: [internal/extract, internal/web, internal/ontology, internal/wiki, internal/compiler], package_classes: [], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
+        diagnostics: {local_command: null, local_make_target: null, hosted_artifact: fuzz-short-crashers, failure_artifact: fuzz-short-crashers, formats: [text]}
+        qualification:
+          state: required-requalifying
+          history: [{date: "2026-08-12", state: required-requalifying, reason: "Current required random fuzz job is targeted for scheduled ownership."}]
+      - id: fuzz-nightly-candidate
+        status: nonblocking
+        command: go test -run=NONE -fuzz=<target> -fuzztime=<bound> <package>
+        triggers: [schedule, manual]
+        platforms: [linux]
+        job: null
+        purpose: {met: [], evidence: "Random exploration is not a deterministic candidate-merge property."}
+        authority: {met: [anti-vacuous, bounded, reproducible-or-diagnosable, owned], evidence: "Target inventory and crasher upload remain mandatory for the diagnostic."}
+        anti_vacuity: Missing targets are diagnostic-red and crashers are retained as artifacts.
+        runtime: {bound_seconds: 3600, recent: null}
+        coverage: {packages: [internal/extract, internal/web, internal/ontology, internal/wiki, internal/compiler], package_classes: [], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
+        diagnostics: {local_command: "go test -run=NONE -fuzz=<target> -fuzztime=<bound> <package>", local_make_target: null, hosted_artifact: fuzz-crashers, failure_artifact: fuzz-crashers, formats: [text]}
+        qualification: {state: candidate, history: []}
+
+  - id: fuzz-regressions
+    rationale: Committed fuzz seeds are deterministic regression tests owned by ordinary package tests.
+    owner: merge-required-ci
+    fallback_owner: local-pre-push
+    witnesses:
+      - id: fuzz-seeds-current
+        status: required
+        command: go test <seed-owning-packages>
+        triggers: [pull-request, main-push]
+        platforms: [linux, darwin, windows]
+        job: {workflow: CI, id: go-test, aggregate: true}
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "Committed seed corpora execute deterministically during normal package tests."}
+        authority: {met: [deterministic, hermetic-enough, anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "A seed mutation makes its owning package red."}
+        anti_vacuity: Every committed crasher remains in the owning package corpus and a mutation is red.
+        runtime: {bound_seconds: 900, recent: null}
+        coverage: {packages: [internal/extract, internal/web, internal/ontology, internal/wiki, internal/compiler], package_classes: [], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
+        diagnostics: {local_command: go test <seed-owning-package>, local_make_target: test, hosted_artifact: go-test-log, failure_artifact: go-test-log, formats: [text]}
+        qualification:
+          state: required-requalifying
+          history: [{date: "2026-08-12", state: required-requalifying, reason: "Seed execution is currently embedded in broad test shards."}]
+
+  - id: postgres-contract
+    rationale: PostgreSQL-specific storage behavior requires a real pinned service witness.
+    owner: merge-required-ci
+    fallback_owner: local-pre-push
+    witnesses:
+      - id: postgres-current
+        status: required
+        command: TEST_DATABASE_URL=<url> go test -p 1 -count=1 <postgres-packages>
+        triggers: [pull-request, main-push]
+        platforms: [linux]
+        job: {workflow: CI, id: postgres, aggregate: true}
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "Hosted CI provides the service and extension required by env-gated tests."}
+        authority: {met: [anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Current broad service packages remain required while focused selection qualifies."}
+        anti_vacuity: Extension probe and a nonempty selected-test count are mandatory.
+        runtime: {bound_seconds: 300, recent: null}
+        coverage: {packages: [internal/storage/postgres, internal/storetest, internal/hub, internal/wiki], package_classes: [], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
+        diagnostics: {local_command: null, local_make_target: null, hosted_artifact: postgres-service-log, failure_artifact: postgres-service-log, formats: [text, service-logs]}
+        qualification:
+          state: required-requalifying
+          history: [{date: "2026-08-12", state: required-requalifying, reason: "Imported from the current broad PostgreSQL job."}]
+      - id: postgres-focused-candidate
+        status: advisory
+        command: TEST_DATABASE_URL=<url> go test -p 1 -count=1 <postgres-contract-packages>
+        triggers: [pull-request, merge-group, main-push]
+        platforms: [linux]
+        job: null
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "Focused env-gated contracts avoid repeating ordinary package ownership."}
+        authority: {met: [anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Pinned service details and selected-test discovery are deferred to Task 10."}
+        anti_vacuity: Service probe, selected-test count, and a contract mutation must fail closed.
+        runtime: {bound_seconds: 300, recent: null}
+        coverage: {packages: [internal/storage/postgres, internal/storetest, internal/hub, internal/wiki], package_classes: [], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
+        diagnostics: {local_command: null, local_make_target: null, hosted_artifact: postgres-shadow-log, failure_artifact: postgres-service-log, formats: [go-test-json, service-logs]}
+        qualification: {state: candidate, history: []}
+
+  - id: minio-contract
+    rationale: S3 mirror behavior requires a real pinned MinIO service witness.
+    owner: merge-required-ci
+    fallback_owner: local-pre-push
+    witnesses:
+      - id: minio-current
+        status: required
+        command: SAGE_TEST_MINIO=1 go test -count=1 -timeout 10m ./internal/mirror/...
+        triggers: [pull-request, main-push]
+        platforms: [linux]
+        job: {workflow: CI, id: minio, aggregate: true}
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "Hosted CI provides a real object store for env-gated mirror contracts."}
+        authority: {met: [anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Current broad package execution stays required while focused selection qualifies."}
+        anti_vacuity: Health and bucket probes plus a nonempty selected-test count are mandatory.
+        runtime: {bound_seconds: 600, recent: null}
+        coverage: {packages: [internal/mirror, internal/mirror/s3], package_classes: [], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
+        diagnostics: {local_command: null, local_make_target: null, hosted_artifact: minio-service-log, failure_artifact: minio-service-log, formats: [text, service-logs]}
+        qualification:
+          state: required-requalifying
+          history: [{date: "2026-08-12", state: required-requalifying, reason: "Imported from the current broad MinIO job after a fake-store reliability incident."}]
+      - id: minio-focused-candidate
+        status: advisory
+        command: SAGE_TEST_MINIO=1 go test -count=1 -timeout 10m <minio-contract-packages>
+        triggers: [pull-request, merge-group, main-push]
+        platforms: [linux]
+        job: null
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "Focused env-gated contracts avoid repeating ordinary mirror tests."}
+        authority: {met: [anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Pinned image/client details and test discovery are deferred to Task 10."}
+        anti_vacuity: Pinned service probes, selected-test count, and a contract mutation must fail closed.
+        runtime: {bound_seconds: 600, recent: null}
+        coverage: {packages: [internal/mirror, internal/mirror/s3], package_classes: [], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
+        diagnostics: {local_command: null, local_make_target: null, hosted_artifact: minio-shadow-log, failure_artifact: minio-service-log, formats: [go-test-json, service-logs]}
+        qualification: {state: candidate, history: []}
+
+  - id: timing-performance
+    rationale: Wall-clock and memory trends are diagnostic evidence, not deterministic merge semantics.
+    owner: scheduled-diagnostics
+    fallback_owner: human-review
+    witnesses:
+      - id: performance-nightly-candidate
+        status: nonblocking
+        command: <repository-benchmark-command>
+        triggers: [schedule, manual]
+        platforms: [linux]
+        job: null
+        purpose: {met: [], evidence: "Host timing is not a reliable candidate-merge property."}
+        authority: {met: [anti-vacuous, bounded, reproducible-or-diagnosable, owned], evidence: "Baseline count and environment identity are required for trend evidence."}
+        anti_vacuity: Missing samples or environment identity is diagnostic-red.
+        runtime: {bound_seconds: 3600, recent: null}
+        coverage: {packages: [], package_classes: [], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
+        diagnostics: {local_command: <repository-benchmark-command>, local_make_target: null, hosted_artifact: benchmark-trend, failure_artifact: raw-benchmark-data, formats: [benchmark-data]}
+        qualification: {state: candidate, history: []}
+
+  - id: frontend-contract
+    rationale: Frontend types, production build output, and committed distribution bytes must agree.
+    owner: merge-required-ci
+    fallback_owner: local-pre-push
+    witnesses:
+      - id: frontend-current
+        status: required
+        command: cd web && npm ci && npm run build
+        triggers: [pull-request, main-push]
+        platforms: [node22-alpine]
+        job: {workflow: CI, id: frontend, aggregate: true}
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "A pinned container produces and compares candidate frontend artifacts."}
+        authority: {met: [deterministic, hermetic-enough, anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Lockfile install, nonempty output, and stale-dist mutation are required."}
+        anti_vacuity: Empty build output and stale committed dist both fail.
+        runtime: {bound_seconds: 180, recent: null}
+        coverage: {packages: [], package_classes: [], package_roles: [], platform_contracts: [], paths: [web/], generated_paths: [internal/web/dist/]}
+        diagnostics: {local_command: "docker run --rm -v $PWD:/src node:22-alpine sh -c 'cd /src/web && npm ci && npm run build'", local_make_target: null, hosted_artifact: frontend-log, failure_artifact: frontend-dist-diff, formats: [text, diff]}
+        qualification:
+          state: required-requalifying
+          history: [{date: "2026-08-12", state: required-requalifying, reason: "Imported from the pinned required frontend job."}]
+
+  - id: client-source-contracts
+    rationale: Client source remains reviewable on relevant changes while release certification owns published artifacts.
+    owner: pr-advisory
+    fallback_owner: release-certification
+    witnesses:
+      - id: clients-advisory-candidate
+        status: advisory
+        command: <client-lockfile-unit-and-build-commands>
+        triggers: [pull-request]
+        platforms: [linux]
+        job: null
+        purpose: {met: [candidate-property, contributor-actionable], evidence: "Relevant client source changes have local unit and build commands."}
+        authority: {met: [anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Path classifier and discovery counts must qualify before any authority change."}
+        anti_vacuity: Nonzero test/build discovery and path-classifier self-tests are mandatory.
+        runtime: {bound_seconds: 300, recent: null}
+        coverage: {packages: [], package_classes: [], package_roles: [], platform_contracts: [], paths: [clients/], generated_paths: []}
+        diagnostics: {local_command: <client-lockfile-unit-and-build-commands>, local_make_target: null, hosted_artifact: client-build-log, failure_artifact: client-build-log, formats: [text]}
+        qualification: {state: candidate, history: []}
+
+  - id: examples
+    rationale: Examples must stay offline and runnable, without turning experiments into merge authority.
+    owner: pr-advisory
+    fallback_owner: scheduled-diagnostics
+    witnesses:
+      - id: examples-current
+        status: required
+        command: CGO_ENABLED=0 go run ./examples/embed
+        triggers: [pull-request, main-push]
+        platforms: [linux, darwin, windows]
+        job: {workflow: CI, id: build, aggregate: true}
+        purpose: {met: [candidate-property, contributor-actionable], evidence: "The current build matrix incidentally requires the embed smoke."}
+        authority: {met: [deterministic, hermetic-enough, anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "The example inventory is not yet explicit."}
+        anti_vacuity: The example inventory must be nonempty and live credentials are forbidden.
+        runtime: {bound_seconds: 120, recent: null}
+        coverage: {packages: [examples/embed], package_classes: [example-smoke], package_roles: [], platform_contracts: [], paths: [examples/embed/], generated_paths: []}
+        diagnostics: {local_command: CGO_ENABLED=0 go run ./examples/embed, local_make_target: null, hosted_artifact: build-log, failure_artifact: example-output, formats: [text]}
+        qualification:
+          state: required-requalifying
+          history: [{date: "2026-08-12", state: required-requalifying, reason: "Current example smoke is embedded in required build jobs; target ownership is advisory."}]
+      - id: examples-advisory-candidate
+        status: advisory
+        command: <offline-example-smoke-commands>
+        triggers: [pull-request, schedule]
+        platforms: [linux]
+        job: null
+        purpose: {met: [candidate-property, contributor-actionable], evidence: "Relevant example changes can be checked without live credentials."}
+        authority: {met: [anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Explicit inventory and path qualification are pending."}
+        anti_vacuity: Zero examples or a live credential dependency is diagnostic-red.
+        runtime: {bound_seconds: 180, recent: null}
+        coverage: {packages: [examples/embed], package_classes: [example-smoke], package_roles: [], platform_contracts: [], paths: [examples/], generated_paths: []}
+        diagnostics: {local_command: <offline-example-smoke-commands>, local_make_target: null, hosted_artifact: examples-log, failure_artifact: example-output, formats: [text]}
+        qualification: {state: candidate, history: []}
+
+  - id: vulnerability-intelligence
+    rationale: Mutable vulnerability intelligence informs maintenance and release disposition without impersonating candidate correctness.
+    owner: scheduled-diagnostics
+    fallback_owner: release-certification
+    witnesses:
+      - id: vulnerability-current
+        status: nonblocking
+        command: govulncheck ./...
+        triggers: [pull-request, main-push]
+        platforms: [linux]
+        job: {workflow: CI, id: vuln, aggregate: false}
+        purpose: {met: [], evidence: "The mutable database is not a candidate-merge property."}
+        authority: {met: [anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Tool and database identity must be recorded; scan failure is not no findings."}
+        anti_vacuity: Tool failure and zero evidence are distinct from no vulnerabilities.
+        runtime: {bound_seconds: 300, recent: null}
+        coverage: {packages: [], package_classes: [test-owned, compile-only, example-smoke, helper-library], package_roles: [], platform_contracts: [], paths: [go.mod, go.sum], generated_paths: []}
+        diagnostics: {local_command: make vuln, local_make_target: vuln, hosted_artifact: vulnerability-report, failure_artifact: vulnerability-report, formats: [text]}
+        qualification: {state: not-applicable, history: []}
+
+  - id: translation-structure
+    rationale: README translation structure and explicit lag waivers must remain mechanically valid.
+    owner: merge-required-ci
+    fallback_owner: local-pre-push
+    witnesses:
+      - id: translations-current
+        status: required
+        command: bash scripts/check-readme-translations.sh
+        triggers: [pull-request, main-push]
+        platforms: [linux]
+        job: {workflow: CI, id: translations, aggregate: true}
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "The candidate diff and commit messages define the translation obligation."}
+        authority: {met: [deterministic, hermetic-enough, anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Malformed ranges, empty inventories, and invalid waivers fail self-tests."}
+        anti_vacuity: Required files, range parsing, and waiver validation have negative self-tests.
+        runtime: {bound_seconds: 60, recent: null}
+        coverage: {packages: [], package_classes: [], package_roles: [], platform_contracts: [], paths: [README.md, docs/translations/], generated_paths: []}
+        diagnostics: {local_command: make translations translations-self-test, local_make_target: translations, hosted_artifact: null, failure_artifact: translation-report, formats: [text, github-annotation]}
+        qualification:
+          state: required-requalifying
+          history: [{date: "2026-08-12", state: required-requalifying, reason: "Imported from the current required translation job."}]
+      - id: translations-preflight-candidate
+        status: advisory
+        command: bash scripts/check-readme-translations.sh
+        triggers: [pull-request, merge-group, main-push]
+        platforms: [linux]
+        job: null
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "The same source-bound contract moves to preflight after qualification."}
+        authority: {met: [deterministic, hermetic-enough, anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Shadow observation is pending."}
+        anti_vacuity: Existing translation self-tests remain mandatory.
+        runtime: {bound_seconds: 60, recent: null}
+        coverage: {packages: [], package_classes: [], package_roles: [], platform_contracts: [], paths: [README.md, docs/translations/], generated_paths: []}
+        diagnostics: {local_command: make translations translations-self-test, local_make_target: translations, hosted_artifact: translation-shadow-log, failure_artifact: translation-report, formats: [text, github-annotation]}
+        qualification: {state: candidate, history: []}
+
+  - id: documentation-semantics
+    rationale: Semantic documentation quality requires accountable human judgment rather than a mechanical pass.
+    owner: human-review
+    fallback_owner: null
+    witnesses:
+      - id: documentation-review
+        status: review-required
+        command: repository documentation review checklist
+        triggers: [pull-request]
+        platforms: [human-review]
+        job: null
+        purpose: {met: [], evidence: "Semantic clarity is not a mechanical candidate property."}
+        authority: {met: [anti-vacuous, actionable, owned], evidence: "A review record must carry an explicit disposition."}
+        anti_vacuity: Advisory spelling or link output cannot substitute for review approval.
+        runtime: {bound_seconds: 0, recent: null}
+        coverage: {packages: [], package_classes: [], package_roles: [], platform_contracts: [], paths: ["**/*.md"], generated_paths: []}
+        diagnostics: {local_command: null, local_make_target: null, hosted_artifact: review-record, failure_artifact: review-record, formats: [review-record]}
+        qualification: {state: not-applicable, history: []}
+
+  - id: architecture-maintainability
+    rationale: Standard-plus architecture and maintainability decisions require an approved artifact and independent review.
+    owner: human-review
+    fallback_owner: null
+    witnesses:
+      - id: architecture-review
+        status: review-required
+        command: Sage architecture and independent review workflow
+        triggers: [pull-request]
+        platforms: [human-review]
+        job: null
+        purpose: {met: [], evidence: "Architecture quality is judgment-heavy and not reducible to a merge script."}
+        authority: {met: [anti-vacuous, actionable, owned], evidence: "Approved spec/ADR and independent verdict are required artifacts."}
+        anti_vacuity: Missing approval or independent review leaves the initiative incomplete.
+        runtime: {bound_seconds: 0, recent: null}
+        coverage: {packages: [], package_classes: [], package_roles: [], platform_contracts: [], paths: [.sage/docs/, .sage/work/], generated_paths: []}
+        diagnostics: {local_command: null, local_make_target: null, hosted_artifact: review-record, failure_artifact: decision-log, formats: [review-record]}
+        qualification: {state: not-applicable, history: []}
+
+  - id: release-package-integrity
+    rationale: Publication must consume exact-SHA CI proof and add release-specific provenance, checksums, and smoke evidence.
+    owner: release-certification
+    fallback_owner: human-review
+    witnesses:
+      - id: release-proof-candidate
+        status: publication-blocking
+        command: "target: shared exact-SHA proof verifier then release target commands"
+        triggers: [workflow-run, tag, manual]
+        platforms: [release-targets]
+        job: null
+        purpose: {met: [], evidence: "Publication consumes prior candidate proof and is separate release work."}
+        authority: {met: [deterministic, anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Wrong SHA, app, context, event, red attempt, missing proof, or artifact mutation must block."}
+        anti_vacuity: Every proof identity and artifact mutation has a negative test.
+        runtime: {bound_seconds: 1800, recent: null}
+        coverage: {packages: [], package_classes: [], package_roles: [], platform_contracts: [], paths: [.github/workflows/release.yml, .github/workflows/docker.yml], generated_paths: []}
+        diagnostics: {local_command: "target: proof verifier dry run", local_make_target: null, hosted_artifact: provenance-and-checksums, failure_artifact: proof-record, formats: [provenance, text]}
+        qualification: {state: candidate, history: []}
