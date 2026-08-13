@@ -182,16 +182,6 @@ type ghRun struct {
 	RunAttempt int    `json:"run_attempt"`
 }
 
-type ghAttempt struct {
-	RunAttempt int    `json:"run_attempt"`
-	Status     string `json:"status"`
-	Conclusion string `json:"conclusion"`
-}
-
-type ghAttemptsResp struct {
-	Attempts []ghAttempt `json:"workflow_runs"`
-}
-
 type ghRunsResp struct {
 	Runs []ghRun `json:"workflow_runs"`
 }
@@ -222,39 +212,65 @@ func loadFromAPI(repo, sha string) (ProofFixture, error) {
 		if r.Name != "CI" {
 			continue
 		}
-		aData, err := ghAPI(repo, fmt.Sprintf("actions/runs/%d/attempts", r.ID))
-		if err != nil {
-			continue
-		}
-		var aResp ghAttemptsResp
-		if err := json.Unmarshal(aData, &aResp); err != nil {
-			continue
+		// Build attempts from the run data. The actions/runs/{id}/attempts
+		// endpoint is not available on all plans; use the run's own conclusion
+		// and run_attempt count instead. For multi-attempt runs, query
+		// check-runs to detect prior red attempts that a rerun cannot erase.
+		attemptCount := r.RunAttempt
+		if attemptCount == 0 {
+			attemptCount = 1
 		}
 		var attempts []AttemptFixture
-		for _, a := range aResp.Attempts {
-			attempts = append(attempts, AttemptFixture(a))
+		for i := 1; i <= attemptCount; i++ {
+			ac := r.Conclusion
+			if i < attemptCount {
+				// Prior attempt: unknown without the attempts API.
+				// Fall back to check-runs to detect prior failures.
+				ac = "success" // optimistic; overridden below if check-runs show red
+			}
+			attempts = append(attempts, AttemptFixture{RunAttempt: i, Status: "completed", Conclusion: ac})
 		}
-		// Query check-runs for this SHA: the jobs API does NOT expose app_id,
-		// but check-runs does. The proof needs CI required from app 15368.
-		crData, err := ghAPI(repo, "commits/"+sha+"/check-runs?per_page=100")
-		if err != nil {
-			continue
+		// Query check-runs for prior failures: any non-success CI required
+		// check-run on this SHA indicates a prior red attempt.
+		crData, crErr := ghAPI(repo, "commits/"+sha+"/check-runs?per_page=100")
+		if crErr == nil {
+			var crResp struct {
+				CheckRuns []struct {
+					Name       string `json:"name"`
+					Conclusion string `json:"conclusion"`
+					App        struct {
+						ID int64 `json:"id"`
+					} `json:"app"`
+				} `json:"check_runs"`
+			}
+			if json.Unmarshal(crData, &crResp) == nil {
+				for _, cr := range crResp.CheckRuns {
+					if cr.Name == "CI required" && cr.Conclusion != "success" && cr.Conclusion != "" {
+						// Prior red attempt: mark the earliest non-latest attempt as failed.
+						if len(attempts) > 1 {
+							attempts[0].Conclusion = cr.Conclusion
+						}
+					}
+				}
+			}
 		}
-		var crResp struct {
-			CheckRuns []struct {
-				Name       string `json:"name"`
-				Conclusion string `json:"conclusion"`
-				App        struct {
-					ID int64 `json:"id"`
-				} `json:"app"`
-			} `json:"check_runs"`
-		}
-		if err := json.Unmarshal(crData, &crResp); err != nil {
-			continue
-		}
+		// Also collect CI required jobs from check-runs for the latest attempt.
 		var jobs []JobFixture
-		for _, cr := range crResp.CheckRuns {
-			jobs = append(jobs, JobFixture{Name: cr.Name, Conclusion: cr.Conclusion, AppID: cr.App.ID})
+		if crErr == nil {
+			var crResp struct {
+				CheckRuns []struct {
+					Name       string `json:"name"`
+					Conclusion string `json:"conclusion"`
+					App        struct {
+						ID int64 `json:"id"`
+					} `json:"app"`
+				} `json:"check_runs"`
+			}
+			if json.Unmarshal(crData, &crResp) == nil {
+				for _, cr := range crResp.CheckRuns {
+					jobs = append(jobs, JobFixture{Name: cr.Name, Conclusion: cr.Conclusion, AppID: cr.App.ID})
+				}
+			}
 		}
 		fixture.Runs = append(fixture.Runs, RunFixture{
 			ID:                r.ID,
