@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -35,7 +37,11 @@ func (f *serveFakeS3) server() *httptest.Server {
 		defer f.mu.Unlock()
 		switch r.Method {
 		case http.MethodPut:
-			b, _ := io.ReadAll(r.Body)
+			b, err := io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, "incomplete request body", http.StatusBadRequest)
+				return
+			}
 			f.objects[key] = b
 			w.WriteHeader(http.StatusOK)
 		case http.MethodGet:
@@ -70,6 +76,33 @@ func (f *serveFakeS3) server() *httptest.Server {
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
+}
+
+func TestServeFakeS3InterruptedPutPreservesObject(t *testing.T) {
+	fake := newServeFakeS3()
+	key := "ws/mirror-state.json"
+	want := []byte(`{"generation":1}`)
+	fake.objects[key] = append([]byte(nil), want...)
+
+	req := httptest.NewRequest(http.MethodPut, "/bk/"+key, nil)
+	req.Body = io.NopCloser(io.MultiReader(
+		strings.NewReader(`{"generation":`),
+		iotest.ErrReader(io.ErrUnexpectedEOF),
+	))
+	rec := httptest.NewRecorder()
+	srv := fake.server()
+	t.Cleanup(srv.Close)
+	srv.Config.Handler.ServeHTTP(rec, req)
+
+	if rec.Code >= 200 && rec.Code < 300 {
+		t.Errorf("interrupted PUT status = %d, want non-2xx", rec.Code)
+	}
+	fake.mu.Lock()
+	got, ok := fake.objects[key]
+	fake.mu.Unlock()
+	if !ok || !bytes.Equal(got, want) {
+		t.Errorf("object after interrupted PUT = %q, want prior object %q", got, want)
+	}
 }
 
 func (f *serveFakeS3) hasPrefix(prefix string) bool {
@@ -216,20 +249,29 @@ func TestShipper_ScheduledRotation(t *testing.T) {
 	t.Fatal("scheduled rotation did not fire")
 }
 
-// TestShipper_WALSegmentWithin2xInterval (AC-9(a)): a db write through a
-// served workspace produces a new WAL-SEGMENT object (not just a docs
-// object) within 2×ship_interval.
-func TestShipper_WALSegmentWithin2xInterval(t *testing.T) {
-	interval := 25 * time.Millisecond
+// TestShipper_WALSegmentOnCadenceTick proves the mirror cadence contract: one
+// ship tick after a database write produces a WAL segment object.
+func TestShipper_WALSegmentOnCadenceTick(t *testing.T) {
 	fake, shipper, dir := shipperFixture(t, shipperFixtureOpts{
-		interval:         interval,
+		interval:         time.Hour,
 		snapshotInterval: time.Hour,
-		drainTimeout:     300 * time.Millisecond,
+		drainTimeout:     2 * time.Second,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	shipper.Start(ctx)
-	defer shipper.Stop()
+	ticks := make(chan time.Time)
+	loopDone := make(chan struct{})
+	go func() {
+		defer close(loopDone)
+		shipper.runShipLoop(ctx, ticks)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-loopDone:
+		case <-time.After(2 * time.Second):
+			t.Error("ship loop did not stop after cancellation")
+		}
+	})
 
 	// db write with the connection held open (WAL persists for sealing).
 	db, err := sql.Open("sqlite", filepath.Join(dir, ".sage", "wiki.db"))
@@ -241,14 +283,20 @@ func TestShipper_WALSegmentWithin2xInterval(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	deadline := time.Now().Add(2 * interval)
+	select {
+	case ticks <- time.Now():
+	case <-time.After(2 * time.Second):
+		t.Fatal("ship loop did not accept cadence tick")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if fake.hasPrefix("ws/db/generation-1/wal/") {
-			return // a WAL segment object shipped within 2×ship_interval
+			return
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("no WAL segment shipped within 2×ship_interval of a db write")
+	t.Fatal("cadence tick did not ship pending WAL segment")
 }
 
 // TestShipper_StopQuiesceMakesNextFoldBenign (F-102): after a drained

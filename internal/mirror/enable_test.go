@@ -1,6 +1,7 @@
 package mirror
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 
 	_ "modernc.org/sqlite"
 )
@@ -32,7 +34,11 @@ func (f *fakeS3) handler() http.Handler {
 		defer f.mu.Unlock()
 		switch r.Method {
 		case http.MethodPut:
-			b, _ := io.ReadAll(r.Body)
+			b, err := io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, "incomplete request body", http.StatusBadRequest)
+				return
+			}
 			f.objects[key] = b
 			f.putLog = append(f.putLog, key)
 			w.WriteHeader(http.StatusOK)
@@ -55,6 +61,32 @@ func (f *fakeS3) handler() http.Handler {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
 	})
+}
+
+func TestFakeS3InterruptedPutPreservesObject(t *testing.T) {
+	fake := newFakeS3()
+	key := StateKey("ws/")
+	want := []byte(`{"generation":1}`)
+	fake.objects[key] = append([]byte(nil), want...)
+
+	req := httptest.NewRequest(http.MethodPut, "/b/"+key, nil)
+	req.Body = io.NopCloser(io.MultiReader(
+		strings.NewReader(`{"generation":`),
+		iotest.ErrReader(io.ErrUnexpectedEOF),
+	))
+	rec := httptest.NewRecorder()
+	fake.handler().ServeHTTP(rec, req)
+
+	if rec.Code >= 200 && rec.Code < 300 {
+		t.Errorf("interrupted PUT status = %d, want non-2xx", rec.Code)
+	}
+	got, ok := fake.get(key)
+	if !ok || !bytes.Equal(got, want) {
+		t.Errorf("object after interrupted PUT = %q, want prior object %q", got, want)
+	}
+	if len(fake.putLog) != 0 {
+		t.Errorf("successful PUT log = %v, want empty", fake.putLog)
+	}
 }
 
 func (f *fakeS3) get(key string) ([]byte, bool) {
