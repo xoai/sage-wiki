@@ -1,0 +1,52 @@
+schema_version: 1
+
+# Publication policy (20260812-ci-quality-system Milestone 5).
+#
+# Every publication surface (Docker, release, client) must consume a successful
+# exact-SHA quality proof before any write-capable step. The proof verifier
+# (tools/ciproof) resolves the authoritative CI push run for the exact SHA,
+# enumerates all attempts (a rerun never erases a red attempt), and verifies
+# the latest attempt's CI required check from app 15368.
+#
+# workflow_run publication uses the publisher definition from the default
+# branch — the first post-merge main run is the first end-to-end execution.
+
+ci_authority:
+  workflow: CI
+  context: CI required
+  app_id: 15368
+  workflow_file: .github/workflows/ci.yml
+
+publications:
+  - id: docker-main
+    trigger: workflow_run
+    workflow: CI
+    checkout_ref: workflow_run.head_sha
+    proof_required: true
+    write_steps_after_proof: [login, build-push]
+
+  - id: docker-tag
+    trigger: tag
+    proof_required: true
+    write_steps_after_proof: [login, build-push]
+
+  - id: release-tag
+    trigger: tag
+    proof_required: true
+    write_steps_after_proof: [cross-build, release-create]
+
+  - id: client-python
+    trigger: manual
+    proof_required: true
+    version_sync_required: true
+    write_steps_after_proof: [build, publish]
+
+  - id: client-typescript
+    trigger: manual
+    proof_required: true
+    version_sync_required: true
+    write_steps_after_proof: [build, publish]
+
+emergency_waiver:
+  required_fields: [approver, reason, incident_link, sha, expires_at, original_evidence]
+  max_duration_hours: 168

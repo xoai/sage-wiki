@@ -1,8 +1,20 @@
 name: Docker
 
+# Exact-SHA publication gate (20260812-ci-quality-system Milestone 5).
+#
+# Main images are built only AFTER a successful main-push CI run, and the
+# proof verifier (tools/ciproof) enumerates every CI attempt for the exact
+# SHA — a green rerun cannot erase a prior red. Tag images require the same
+# proof. The verifier runs before checkout-for-build, login, or push.
+#
+# workflow_run uses the publisher definition from the default branch, so the
+# first post-merge main run is the first end-to-end execution of this trigger.
+
 on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
   push:
-    branches: [main]
     tags: ["v*"]
 
 permissions:
@@ -10,31 +22,59 @@ permissions:
   packages: write
 
 jobs:
-  docker:
+  docker-main:
+    name: Docker (main, exact-SHA proof)
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     steps:
+      # Proof verification BEFORE any artifact checkout, build, login, or push.
+      - name: Verify exact-SHA CI proof
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          sparse-checkout: |
+            tools/ciproof
+            go.mod
+            go.sum
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run proof verifier (fail closed on any red attempt)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          go run ./tools/ciproof \
+            --repository "${{ github.repository }}" \
+            --sha "${{ github.event.workflow_run.head_sha }}" \
+            --output /tmp/proof.json
+          cat /tmp/proof.json
+
+      # Only after proof: full checkout of the trusted main SHA.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
 
-      # GHCR login — uses the built-in GITHUB_TOKEN, no secrets needed
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Docker Hub login — requires DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets
       - uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Generate tags:
-      #   push to main  → :latest, :sha-abc1234
-      #   push tag v1.0 → :v1.0, :latest, :sha-abc1234
       - uses: docker/metadata-action@v5
         id: meta
         with:
@@ -42,7 +82,80 @@ jobs:
             ghcr.io/${{ github.repository }}
             ${{ secrets.DOCKERHUB_USERNAME }}/sage-wiki
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest
+            type=sha,prefix=sha-
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  docker-tag:
+    name: Docker (tag, exact-SHA proof)
+    if: >-
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag commit SHA
+        id: tag-sha
+        run: echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify exact-SHA CI proof
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag-sha.outputs.sha }}
+          sparse-checkout: |
+            tools/ciproof
+            go.mod
+            go.sum
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run proof verifier (fail closed on any red attempt)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          go run ./tools/ciproof \
+            --repository "${{ github.repository }}" \
+            --sha "${{ steps.tag-sha.outputs.sha }}" \
+            --output /tmp/proof.json
+          cat /tmp/proof.json
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag-sha.outputs.sha }}
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: |
+            ghcr.io/${{ github.repository }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/sage-wiki
+          tags: |
             type=semver,pattern=v{{version}}
             type=semver,pattern=v{{major}}.{{minor}}
             type=sha,prefix=sha-
