@@ -32,9 +32,9 @@ func triplesServer(t *testing.T, payload string) (*httptest.Server, func() []str
 		}
 		mu.Unlock()
 		json.NewEncoder(w).Encode(map[string]any{
-			"choices":	[]map[string]any{{"message": map[string]string{"content": payload}}},
-			"model":	"m",
-			"usage":	map[string]int{"total_tokens": 10},
+			"choices": []map[string]any{{"message": map[string]string{"content": payload}}},
+			"model":   "m",
+			"usage":   map[string]int{"total_tokens": 10},
 		})
 	}))
 	t.Cleanup(srv.Close)

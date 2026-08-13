@@ -1,0 +1,4 @@
+{"Action":"start","Package":"example.com/project/widget"}
+{"Action":"run","Package":"example.com/project/widget","Test":"TestPass"}
+{"Action":"pass","Package":"example.com/project/widget","Test":"TestPass","Elapsed":0.01}
+{"Action":"pass","Package":"example.com/project/widget","Elapsed":0.02}

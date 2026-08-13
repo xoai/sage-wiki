@@ -1,9 +1,10 @@
 // Package postgres implements the store.Backend seam over PostgreSQL +
 // pgvector (P2-1). Dialect rules per spec §5: $N placeholders, ON CONFLICT
 // spellings, now() for datetime('now'), sage_fts tsvector/tsquery for FTS5,
-// to_char quirk reproduction for the demotion query, ''↔NULL mappings for
-// optional RFC3339 columns, per-column-family timestamp rendering, one
-// statement per Exec in migrations (pgx stdlib rejects multi-statement).
+// to_char quirk reproduction for the demotion query, empty-string↔NULL
+// mappings for optional RFC3339 columns, per-column-family timestamp
+// rendering, one statement per Exec in migrations (pgx stdlib rejects
+// multi-statement).
 //
 // Concurrency (design D9): process-local writeMu on every write tx +
 // session advisory lock (writer open, pinned conn) + per-tx advisory xact
@@ -36,15 +37,15 @@ func advisoryKey(scope, dbName string) int64 {
 }
 
 type backend struct {
-	pool    *sql.DB
-	mode    store.Mode
-	opts    store.OpenOptions
-	lockCon *sql.Conn // pinned advisory-lock conn (writer only)
-	writeMu sync.Mutex
-	session int64
-	txKey   int64
-	host    string
-	dbName  string
+	pool      *sql.DB
+	mode      store.Mode
+	opts      store.OpenOptions
+	lockCon   *sql.Conn // pinned advisory-lock conn (writer only)
+	writeMu   sync.Mutex
+	session   int64
+	txKey     int64
+	host      string
+	dbName    string
 	closeOnce sync.Once
 
 	// Alias-derived edges (decision-035). On the backend, not the store:
@@ -325,4 +326,3 @@ func (b *backend) Trust() store.TrustStore              { return &trustStore{b: 
 func (b *backend) CompileItems() store.CompileItemStore { return &itemStore{b: b} }
 func (b *backend) OutputIndex() store.OutputIndexStore  { return &outputIndexStore{b: b} }
 func (b *backend) Learnings() store.LearningStore       { return &learningStore{b: b} }
-

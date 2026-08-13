@@ -12,15 +12,15 @@ import (
 // Type is one of: phase, item, error, queue, done. Status qualifies item
 // events ("start"/"done"); queue events carry the transition in Detail.
 type ProgressEvent struct {
-	Type    string
-	Phase   string
-	Item    string
-	Status  string
-	Detail  string
-	Total   int
-	Done    int
-	Errors  int
-	Time    time.Time
+	Type   string
+	Phase  string
+	Item   string
+	Status string
+	Detail string
+	Total  int
+	Done   int
+	Errors int
+	Time   time.Time
 }
 
 // Progress tracks and displays real-time compilation progress.

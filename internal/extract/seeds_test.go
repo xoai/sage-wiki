@@ -37,7 +37,7 @@ func seedsDocx() [][]byte {
 
 func seedsXlsx() [][]byte {
 	return [][]byte{buildSeedZip(map[string][]byte{
-		"xl/sharedStrings.xml":   []byte(`<sst><si><t>shared text</t></si></sst>`),
+		"xl/sharedStrings.xml":     []byte(`<sst><si><t>shared text</t></si></sst>`),
 		"xl/worksheets/sheet1.xml": []byte(`<sheetData><row><c><v>42</v></c><c><t>cell text</t></c></row></sheetData>`),
 	})}
 }

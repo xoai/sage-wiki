@@ -138,12 +138,12 @@ func (s *SessionScribe) Process(ctx context.Context, input []byte) (*Result, err
 
 // entityCandidate is the LLM output format for extracted entities.
 type entityCandidate struct {
-	ID         string              `json:"id"`         // kebab-case unique identifier
-	Name       string              `json:"name"`       // human-readable name
-	Type       string              `json:"type"`       // concept, technique, decision, etc.
-	Definition string              `json:"definition"` // one-line definition
-	Relations  []entityRelation    `json:"relations,omitempty"`
-	UpdatedAt  string              `json:"updated_at,omitempty"`
+	ID         string           `json:"id"`         // kebab-case unique identifier
+	Name       string           `json:"name"`       // human-readable name
+	Type       string           `json:"type"`       // concept, technique, decision, etc.
+	Definition string           `json:"definition"` // one-line definition
+	Relations  []entityRelation `json:"relations,omitempty"`
+	UpdatedAt  string           `json:"updated_at,omitempty"`
 }
 
 type entityRelation struct {

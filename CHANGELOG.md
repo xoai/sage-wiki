@@ -35,6 +35,27 @@
 
 ### Added
 
+- **CI responsibility foundation (advisory).** Quality responsibility is now
+  machine-readable: `ci/standards.yaml` records every standard with owner,
+  witness, purpose/authority evidence, diagnostics, and qualification state;
+  `ci/package-ownership.yaml` partitions all Go packages exactly once;
+  `ci/platform-contracts.yaml` inventories platform-sensitive source against
+  focused Windows/macOS contracts. A fail-closed validator
+  (`tools/civalidate`) checks these manifests against the live tree — exact
+  package partition, aggregate membership, Make targets, determinism roles,
+  and platform-signal ownership — and a Go-test JSON summarizer
+  (`tools/testsummary`) produces actionable annotations while preserving the
+  source command's exit status. `make ci` is redefined as the accurate local
+  fast gate (formatting, module verification, builds, vet, new-issue lint,
+  responsibility validation, determinism, generated/API/skill drift,
+  translation checks, non-race tests) and prints the hosted-only evidence it
+  does not cover; `make ci-race` is the canonical local race contract. A new
+  advisory CI job runs the checker self-tests and live validation: it may
+  turn red but is deliberately outside the `CI required` aggregate, which is
+  unchanged. Current required jobs remain `required-requalifying`; target
+  jobs are candidates that must earn promotion through the qualification
+  window.
+
 - **Hosted CI aggregate check-run (`CI required`).** The main CI workflow
   now emits a single stable check-run that explicitly inspects every
   required job (build, parity, go-test, fuzz-short, skill-drift, postgres,

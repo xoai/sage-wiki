@@ -24,7 +24,6 @@ func migrationTestDSN(t *testing.T) string {
 	return dsn
 }
 
-
 // createClone retries CREATE DATABASE TEMPLATE through SQLSTATE 55006
 // ("source database is being accessed by other users"). go test runs PACKAGES
 // in parallel — two packages cloning the same template concurrently collide

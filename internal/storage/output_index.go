@@ -1,10 +1,10 @@
 package storage
 
 import (
-	"github.com/xoai/sage-wiki/internal/store"
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
+	"github.com/xoai/sage-wiki/internal/store"
 )
 
 // HashBytes returns the hex sha256 of b. It is the canonical output-content hash

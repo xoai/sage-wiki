@@ -479,6 +479,47 @@ jobs:
           export BASE HEAD COMMIT_MSGS
           bash scripts/check-readme-translations.sh
 
+  # 20260812-ci-quality-system Task 8: advisory responsibility validation.
+  # Deliberately NOT in ci-required's needs: it may turn red (a validator or
+  # parser failure stays visible) but can never alter or block the stable
+  # `CI required` aggregate. Shadow ownership is earned under the qualification
+  # protocol; promotion is a later milestone and requires explicit approval.
+  responsibility:
+    name: Responsibility validation (advisory)
+    runs-on: ubuntu-latest
+    # Explicit least-privilege (parity with ci-required): this job executes
+    # PR-supplied code, so a future broadening of the workflow-level
+    # permissions block must not grant it write scope.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      # Self-tests first: a broken checker must be visible before the live
+      # validation below can produce a false green.
+      - name: Checker self-tests
+        run: |
+          bash scripts/ci/check-format.sh --self-test
+          bash scripts/ci/check-modules.sh --self-test
+          bash scripts/ci/run-go-tests.sh --self-test
+
+      - name: Responsibility tool suites
+        run: go test ./tools/civalidate ./tools/testsummary -count=1
+
+      - name: Live fail-closed manifest validation
+        run: |
+          go run ./tools/civalidate \
+            --standards ci/standards.yaml \
+            --packages ci/package-ownership.yaml \
+            --platforms ci/platform-contracts.yaml \
+            --workflow .github/workflows/ci.yml \
+            --makefile Makefile
+
   # The ONE stable required result: `CI required` is the unique displayed
   # check-run context this repo protects (R5-R6). Every non-advisory job is
   # a dependency; vuln stays advisory (continue-on-error) and is deliberately

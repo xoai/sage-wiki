@@ -241,8 +241,8 @@ func TestCompileWiresCommunitiesPass(t *testing.T) {
 		}
 		json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{"message": map[string]string{"content": content}}},
-			"model": "gpt-4o-mini",
-			"usage": map[string]int{"total_tokens": 100},
+			"model":   "gpt-4o-mini",
+			"usage":   map[string]int{"total_tokens": 100},
 		})
 	}))
 	defer server.Close()

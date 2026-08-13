@@ -112,7 +112,7 @@ func TestVerifyLimit(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		store.InsertPending(&PendingOutput{
-			ID: strings.Replace("test-#.md", "#", string(rune('a'+i)), 1),
+			ID:       strings.Replace("test-#.md", "#", string(rune('a'+i)), 1),
 			Question: "Q", QuestionHash: "h", Answer: "A", AnswerHash: "ah",
 			State: StatePending, Confirmations: 1, SourcesUsed: `[]`,
 			FilePath: "p", CreatedAt: time.Now(),

@@ -64,11 +64,15 @@ func fuzzZipExtractor(f *testing.F, fn extractFn, ext string, seeds [][]byte, pe
 }
 
 func FuzzExtractDocx(f *testing.F) { fuzzZipExtractor(f, extractDocx, ".docx", seedsDocx(), nil) }
-func FuzzExtractXlsx(f *testing.F) { fuzzZipExtractor(f, extractXlsx, ".xlsx", seedsXlsx(), xlsxHeader) }
+func FuzzExtractXlsx(f *testing.F) {
+	fuzzZipExtractor(f, extractXlsx, ".xlsx", seedsXlsx(), xlsxHeader)
+}
 func FuzzExtractPptx(f *testing.F) {
 	fuzzZipExtractor(f, extractPptx, ".pptx", seedsPptx(), xlsxHeader)
 }
-func FuzzExtractEpub(f *testing.F) { fuzzZipExtractor(f, extractEpub, ".epub", seedsEpub(), epubHeader) }
+func FuzzExtractEpub(f *testing.F) {
+	fuzzZipExtractor(f, extractEpub, ".epub", seedsEpub(), epubHeader)
+}
 
 // FuzzExtractEmail asserts: no panic, and on success the output stays
 // within input + 1KB (email.go copies body bytes verbatim and adds only

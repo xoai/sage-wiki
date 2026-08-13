@@ -117,7 +117,7 @@ func TestDedupTransitiveAlias(t *testing.T) {
 	out := deduplicateConcepts([]ExtractedConcept{
 		{Name: "remedial-action-plan", Aliases: []string{"rap"}, Sources: []string{"raw/1.md"}},
 		{Name: "rap", Aliases: []string{"wsp"}, Sources: []string{"raw/2.md"}}, // folds, gains wsp as alias
-		{Name: "wsp", Sources: []string{"raw/3.md"}}, // must see the merged alias
+		{Name: "wsp", Sources: []string{"raw/3.md"}},                           // must see the merged alias
 	}, nil)
 	if len(out) != 1 {
 		t.Fatalf("transitive fold: got %+v", out)
@@ -134,9 +134,9 @@ func TestDedupRule2RenameRule2Chain(t *testing.T) {
 		"remedial-action-plan": {ArticlePath: "wiki/x.md", Sources: []string{"raw/old.md"}, Aliases: []string{"rap"}},
 	}
 	out := deduplicateConcepts([]ExtractedConcept{
-		{Name: "rap", Sources: []string{"raw/1.md"}},                                          // rule 2 entry
+		{Name: "rap", Sources: []string{"raw/1.md"}},                                                                 // rule 2 entry
 		{Name: "remedial action planning", Aliases: []string{"remedial-action-plan"}, Sources: []string{"raw/2.md"}}, // rule 1: its alias matches the canonical name
-		{Name: "rap", Sources: []string{"raw/3.md"}},                                          // rule 2 again — must reach the WINNER
+		{Name: "rap", Sources: []string{"raw/3.md"}},                                                                 // rule 2 again — must reach the WINNER
 	}, existing)
 	if len(out) != 1 {
 		t.Fatalf("want 1 entry, got %+v", out)

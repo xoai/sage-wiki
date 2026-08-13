@@ -1,0 +1,5 @@
+{"ImportPath":"example.com/project/broken","Action":"build-output","Output":"./broken.go:7:2: undefined: missingSymbol\n"}
+{"ImportPath":"example.com/project/broken","Action":"build-fail"}
+{"Action":"start","Package":"example.com/project/broken"}
+{"Action":"output","Package":"example.com/project/broken","Output":"FAIL\texample.com/project/broken [build failed]\n"}
+{"Action":"fail","Package":"example.com/project/broken","FailedBuild":"example.com/project/broken"}

@@ -1,18 +1,57 @@
 # Contributing to sage-wiki
 
-**Before opening a PR:** run `make ci` on your feature branch — it mirrors the
-CI quality gate (build, vet, race tests, new-issue lint, translation drift).
-On `main` itself the *local* drift range is empty (CI's push path checks
-`before..after` and is not), so always check from your branch.
+**Before opening a PR:** run `make ci` on your feature branch — the accurate
+local fast gate. It runs, in order: canonical formatting over all tracked Go
+source (`scripts/ci/check-format.sh`), module tidy-drift and content
+verification (`scripts/ci/check-modules.sh`, worktree-preserving), pure-Go
+and webui builds, vet, new-issue lint, responsibility-manifest validation
+(`tools/civalidate`: exact package partition, aggregate membership, Make
+targets, determinism roles, platform inventory), the determinism tripwire
+with its self-test, generated/API/skill drift checks, translation self-test
+and header inventory, and the ordinary (non-race) test suite.
+On `main` itself the *local* translation-drift range is empty (CI's push path
+checks `before..after` and is not), so run `make translations` from your
+branch for the range-based check.
 
-**Local `make ci` is mandatory but not a substitute for hosted CI.** The
-hosted `CI required` check-run on the latest PR SHA is the merge gate: a
-green `make ci` mirrors the quality gate (build, vet, race tests, new-issue
-lint, translation drift) but does not replace a green hosted run, and a
+**`make ci-race`** is the canonical local race contract: `-race` over every
+manifest-owned package (`make test` is the legacy race alias). Run it before
+pushing compiler/concurrency work; `make ci` deliberately stays non-race for
+speed.
+
+**Local `make ci` is mandatory but not a substitute for hosted CI.** It
+prints, on success, exactly what it does NOT cover — hosted-only evidence:
+Windows/macOS execution, PostgreSQL/MinIO service contracts, the
+pinned-container frontend build, scheduled fuzz exploration, and exact-SHA
+publication proof. The hosted `CI required` check-run on the latest PR SHA is
+the merge gate: a green `make ci` does not replace a green hosted run, and a
 hosted result that predates your last push does not count. Today that gate
 is maintainer policy — a PR is not mergeable without `CI required` success
 on the HEAD SHA — and it becomes mechanical once branch protection requires
 the check on `main`.
+
+## CI responsibility and ownership states
+
+Quality responsibility is recorded in machine-readable manifests under
+`ci/` (`standards.yaml`, `package-ownership.yaml`,
+`platform-contracts.yaml`), validated fail-closed by `tools/civalidate`
+against the live tree. Two ownership states matter when reading CI:
+
+- **Required now (`required-requalifying`).** The current required jobs —
+  build, parity, go-test, fuzz-short, skill-drift, postgres, minio, lint,
+  frontend, translations — stay in the `CI required` aggregate and keep
+  merge authority while they re-qualify under the shadow protocol.
+- **Candidate (advisory).** Target witnesses (preflight checks, focused OS
+  contracts, service-contract shards) run advisory only. The CI workflow's
+  `Responsibility validation (advisory)` job may turn red — a validator or
+  parser failure stays visible — but it is deliberately outside the
+  `CI required` aggregate and cannot block a merge. Candidates earn
+  promotion only through a recorded qualification window (at least 20
+  relevant executions over seven days, zero unexplained divergence) and
+  explicit maintainer approval.
+
+If the advisory job is red on your PR, treat it as a real signal — fix the
+underlying manifest/validation failure — but it does not gate merging while
+it remains advisory.
 
 ## Repository layout
 
@@ -26,6 +65,9 @@ Selected entries (illustrative, not exhaustive):
 ├── pkg/sagewiki/         # public Go module for embedding (in-process MCP)
 ├── clients/              # SDKs: python/ + typescript/
 ├── tools/skillgen/       # agent-skill generator (skills/ is generated output)
+├── tools/civalidate/     # fail-closed CI responsibility validator
+├── tools/testsummary/    # go test -json summarizer (annotations, exit-preserving)
+├── ci/                   # responsibility manifests (standards, ownership, contracts)
 ├── skills/               # generated agent skills — never hand-edit; CI drift-checked
 ├── examples/             # CI-exercised framework examples (langgraph, vercel-ai-sdk)
 ├── eval/                 # benchmarks (LOCOMO, LongMemEval, BEAM)

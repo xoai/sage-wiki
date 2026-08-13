@@ -12,7 +12,7 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	queryPkg "github.com/xoai/sage-wiki/internal/query"
-		"github.com/xoai/sage-wiki/internal/store"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/tui"
 	"github.com/xoai/sage-wiki/internal/tui/components"
 )

@@ -1,10 +1,10 @@
 package compiler
 
 import (
-	"sort"
-	"strings"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/xoai/sage-wiki/internal/config"
@@ -286,9 +286,9 @@ func TestDiff_NoChangeWhenTypeMatches(t *testing.T) {
 
 func TestIsIgnored(t *testing.T) {
 	tests := []struct {
-		path    string
-		ignore  []string
-		want    bool
+		path   string
+		ignore []string
+		want   bool
 	}{
 		// Prefix match
 		{"Personal/diary.md", []string{"Personal"}, true},

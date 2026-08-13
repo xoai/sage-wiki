@@ -16,6 +16,8 @@ sage/
 
 # Build
 /sage-wiki
+/civalidate
+/testsummary
 bin/
 
 # memory-benchmark working data (datasets, projects, checkpoints)

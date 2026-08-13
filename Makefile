@@ -2,8 +2,13 @@
 # on a feature branch to reproduce the checks CI *gates* on.
 #
 # CGO policy matches CI: build/vet stay CGO_ENABLED=0 (the release binary is
-# pure-Go, modernc.org/sqlite); `test` uses CGO_ENABLED=1 because the race
+# pure-Go, modernc.org/sqlite); race targets use CGO_ENABLED=1 because the race
 # detector hard-requires cgo. Enabling cgo for tests pulls in no cgo module deps.
+#
+# Honesty contract (20260812-ci-quality-system Task 7): `make ci` is the fast
+# local gate and prints what it does NOT cover. Hosted-only evidence — OS
+# execution, PostgreSQL/MinIO services, pinned-container frontend, scheduled
+# fuzz exploration, and exact-SHA publication proof — is never claimed here.
 
 GO ?= go
 GOLANGCI_LINT_VERSION ?= v2.12.2
@@ -13,7 +18,10 @@ GOLANGCI_LINT_VERSION ?= v2.12.2
 BASE ?= main
 LINT_BASE ?= $(BASE)
 
-.PHONY: build build-webui vet test lint lint-new vuln tidy ci translations translations-self-test
+.PHONY: build build-webui vet test test-norace lint lint-new vuln tidy \
+        format-check modules-check responsibility-check determinism-check \
+        generated-check translations translations-self-test translations-headers \
+        ci ci-race record-fixtures regen-goldens parity
 
 build:
 	CGO_ENABLED=0 $(GO) build ./...
@@ -24,8 +32,14 @@ build-webui:
 vet:
 	CGO_ENABLED=0 $(GO) vet ./...
 
+# Full race suite (legacy name kept for contributors and manifest references).
 test:
 	CGO_ENABLED=1 $(GO) test -race ./...
+
+# Ordinary (non-race) suite — the `make ci` test leg. Environment-gated
+# service tests (TEST_DATABASE_URL, SAGE_TEST_MINIO) keep their local skips.
+test-norace:
+	CGO_ENABLED=0 $(GO) test ./...
 
 # Full report incl. the pre-existing backlog — for chipping away at it locally.
 lint:
@@ -45,6 +59,41 @@ vuln:
 tidy:
 	$(GO) mod tidy
 
+# --- Local-contract checks (fail-closed; each has a --self-test mutation suite) ---
+
+# Canonical formatting over ALL tracked Go source (empty inventory is red).
+format-check:
+	bash scripts/ci/check-format.sh
+
+# go.mod/go.sum tidy drift + module content verification (never mutates the
+# worktree: tidy runs with -diff).
+modules-check:
+	bash scripts/ci/check-modules.sh
+
+# Responsibility manifests: parser/validation suite plus the live fail-closed
+# validator (exact package partition, aggregate membership, Make targets,
+# determinism roles, platform inventory).
+responsibility-check:
+	$(GO) test ./tools/civalidate -count=1
+	$(GO) run ./tools/civalidate \
+		--standards ci/standards.yaml \
+		--packages ci/package-ownership.yaml \
+		--platforms ci/platform-contracts.yaml \
+		--workflow .github/workflows/ci.yml \
+		--makefile Makefile
+
+# Determinism tripwire: contract self-test first, then the live scan.
+# Run sequentially — the self-test plants a temporary in-tree offender.
+determinism-check:
+	bash scripts/check-determinism.sh --self-test
+	bash scripts/check-determinism.sh
+
+# Generated/API/skill drift: byte-identical skill regeneration, committed-output
+# match, and the OpenAPI/route/MCP agreement tests.
+generated-check:
+	$(GO) test ./tools/skillgen -run '^(TestRegenerateIdempotent|TestOutputMatchesCommitted)$$' -count=1
+	$(GO) test ./internal/api -run '^TestDrift_' -count=1
+
 # Translation drift (MAINT-05): README.md must move with at least one
 # docs/translations/README_*.md translation, or a commit in the range carries
 # `translations: lag-ok`. One shell per target: recipe lines would otherwise
@@ -56,11 +105,29 @@ translations:
 translations-self-test:
 	bash scripts/check-readme-translations.sh --self-test
 
-# The CI *gates* only (build/vet/test/new-issue lint/translations). `vuln` is
-# advisory in CI, so it is deliberately excluded here — run `make vuln`
-# separately. Run on your feature branch: on main itself the drift range is
-# empty and `translations` is a no-op by design.
-ci: build build-webui vet test lint-new translations
+# The six committed translation files must carry their lag headers.
+translations-headers:
+	bash scripts/check-readme-translations.sh --verify-headers
+
+# The accurate local fast gate. Deliberately excludes `vuln` (advisory in CI)
+# and the range-based `translations` drift check (branch-context dependent;
+# hosted CI computes the real range — run `make translations` on your branch).
+# Ends with the hosted-only omissions so nobody mistakes this for full CI.
+ci: format-check modules-check build build-webui vet lint-new \
+    responsibility-check determinism-check generated-check \
+    translations-self-test translations-headers test-norace
+	@echo "make ci: local gate passed. NOT covered locally (hosted-only evidence):"
+	@echo "  - Windows/macOS execution — hosted workflow artifacts"
+	@echo "  - PostgreSQL/MinIO service contracts — hosted service logs"
+	@echo "  - Frontend dist — pinned node:22-alpine build and diff"
+	@echo "  - Random fuzz exploration — scheduled crasher artifacts"
+	@echo "  - Release/publication — exact-SHA proof and provenance"
+
+# The canonical local race contract: -race over every manifest-owned package.
+# (`make test` is the legacy race alias, kept for contributors and manifest
+# references; ci-race is the named contract target.)
+ci-race:
+	CGO_ENABLED=1 $(GO) test -race -timeout 15m ./...
 
 # SPEC-09: record LLM fixtures via the scripted origin (default) or a real
 # vendor (ORIGIN=https://... KEY=...). Maintainer action — CI never records.

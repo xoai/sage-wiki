@@ -97,12 +97,12 @@ func searchProject(projectDir string, query string, limit int) ([]hybrid.SearchR
 	if cfgErr == nil {
 		lt, _ := cfg.Storage.LockTimeoutDuration()
 		b, _ = storedial.Open(cfg.Storage, store.OpenOptions{
-			Mode:        store.ModeReader,
-			ProjectDir:  projectDir,
-			LockTimeout: lt,
-			Pool:        store.PoolConfig{MaxOpen: 4, MaxIdle: 2},
+			Mode:            store.ModeReader,
+			ProjectDir:      projectDir,
+			LockTimeout:     lt,
+			Pool:            store.PoolConfig{MaxOpen: 4, MaxIdle: 2},
 			TemporalEnabled: cfg.Ontology.Temporal.Enabled,
-			ANN:         cfg.Search.ANNEnabled(),
+			ANN:             cfg.Search.ANNEnabled(),
 		})
 	}
 	if b == nil {

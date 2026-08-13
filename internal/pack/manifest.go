@@ -20,21 +20,21 @@ var namePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 // PackManifest represents a pack.yaml file.
 type PackManifest struct {
-	Name          string            `yaml:"name"`
-	Version       string            `yaml:"version"`
-	Description   string            `yaml:"description"`
-	Author        string            `yaml:"author"`
-	License       string            `yaml:"license,omitempty"`
-	MinVersion    string            `yaml:"min_version,omitempty"`
-	Tags          []string          `yaml:"tags,omitempty"`
-	Homepage      string            `yaml:"homepage,omitempty"`
-	Config        map[string]any    `yaml:"config,omitempty"`
-	Ontology      OntologyOverlay   `yaml:"ontology,omitempty"`
-	ArticleFields []string          `yaml:"article_fields,omitempty"`
-	Prompts       []string          `yaml:"prompts,omitempty"`
-	Skills        []string          `yaml:"skills,omitempty"`
-	Parsers       []string          `yaml:"parsers,omitempty"`
-	Samples       []string          `yaml:"samples,omitempty"`
+	Name          string          `yaml:"name"`
+	Version       string          `yaml:"version"`
+	Description   string          `yaml:"description"`
+	Author        string          `yaml:"author"`
+	License       string          `yaml:"license,omitempty"`
+	MinVersion    string          `yaml:"min_version,omitempty"`
+	Tags          []string        `yaml:"tags,omitempty"`
+	Homepage      string          `yaml:"homepage,omitempty"`
+	Config        map[string]any  `yaml:"config,omitempty"`
+	Ontology      OntologyOverlay `yaml:"ontology,omitempty"`
+	ArticleFields []string        `yaml:"article_fields,omitempty"`
+	Prompts       []string        `yaml:"prompts,omitempty"`
+	Skills        []string        `yaml:"skills,omitempty"`
+	Parsers       []string        `yaml:"parsers,omitempty"`
+	Samples       []string        `yaml:"samples,omitempty"`
 }
 
 // OntologyOverlay defines ontology extensions provided by a pack.
