@@ -1,9 +1,8 @@
 name: Publish TypeScript client
 
-# Publishes clients/typescript to npm with provenance (requires NPM_TOKEN
-# secret with publish rights, or npm trusted publishing). Manual dispatch is
-# the primary path; a ts-v* tag also triggers. Publishing is irreversible —
-# this workflow is user-gated by design.
+# Publishes clients/typescript to npm with provenance. Exact-SHA proof (Task 20):
+# the commit being published must have passed CI before any build, publish, or
+# irreversible write. Human confirmation stays but is not treated as quality proof.
 
 on:
   workflow_dispatch:
@@ -16,6 +15,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   check-version:
@@ -33,8 +33,33 @@ jobs:
             [[ "${{ inputs.confirm }}" == "$VERSION" ]] || { echo "::error::confirmation '${{ inputs.confirm }}' != package $VERSION"; exit 1; }
           fi
 
-  test:
+  proof:
+    name: Exact-SHA CI proof
     needs: check-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            tools/ciproof
+            go.mod
+            go.sum
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Verify exact-SHA CI proof
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          go run ./tools/ciproof \
+            --repository "${{ github.repository }}" \
+            --sha "$GITHUB_SHA" \
+            --output /tmp/proof.json
+          cat /tmp/proof.json
+
+  test:
+    needs: [check-version, proof]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,8 +70,39 @@ jobs:
       - run: cd clients/typescript && npm run typecheck
       - run: cd clients/typescript && npm test
 
+  certify:
+    name: Release-certify (contract + smoke-install)
+    needs: [check-version, proof]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: cd clients/typescript && npm ci
+      - run: cd clients/typescript && npm run build
+      - name: Start fixture server
+        run: bash scripts/p4-fixture-server.sh | sed 's/^export //' >> "$GITHUB_ENV"
+      - name: Contract tests
+        run: cd clients/typescript && npm run test:contract
+      - name: Stop fixture server
+        if: always()
+        run: bash scripts/p4-fixture-server.sh --stop
+      - name: Build and pack tarball
+        run: |
+          cd clients/typescript && npm run build && npm pack
+      - name: Smoke-install packed tarball
+        run: |
+          mkdir /tmp/smoke && cd /tmp/smoke
+          npm init -y >/dev/null
+          npm install "$GITHUB_WORKSPACE/clients/typescript"/*.tgz
+          node --input-type=module -e "import { VERSION } from 'sagewiki'; console.log('smoke import OK:', VERSION)"
+
   publish:
-    needs: test
+    needs: [test, certify]
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -57,8 +113,6 @@ jobs:
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
-      # npm ci is mandatory: without it, tsc resolves to the runner's global
-      # compiler (wrong version → TS5011 rootDir error).
       - run: cd clients/typescript && npm ci
       - run: cd clients/typescript && npm run build
       - run: cd clients/typescript && npm publish --provenance --access public
