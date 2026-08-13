@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	maxLearnings  = 500
-	learningTTL   = 180 * 24 * time.Hour // 180 days
+	maxLearnings = 500
+	learningTTL  = 180 * 24 * time.Hour // 180 days
 )
 
 // StoreLearning saves a learning entry with deduplication.

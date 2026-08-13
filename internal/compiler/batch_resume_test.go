@@ -1,9 +1,9 @@
 package compiler
 
 import (
-	"io"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,12 +21,12 @@ import (
 // test; call counts assert no double-submit / no re-poll.
 type fakeBatchServer struct {
 	*httptest.Server
-	status       atomic.Value // string: in_progress | completed | expired | failed
-	pollCount    atomic.Int32
-	submitCount  atomic.Int32
-	resultsJSONL atomic.Value // string: JSONL body for the output file
-	failIDs      atomic.Value // map[string]bool: custom_ids that return an error result
-	failPaths    atomic.Value // string: source path whose standard-path calls get a 500
+	status        atomic.Value // string: in_progress | completed | expired | failed
+	pollCount     atomic.Int32
+	submitCount   atomic.Int32
+	resultsJSONL  atomic.Value // string: JSONL body for the output file
+	failIDs       atomic.Value // map[string]bool: custom_ids that return an error result
+	failPaths     atomic.Value // string: source path whose standard-path calls get a 500
 	uploadedJSONL atomic.Value // string: last batch input JSONL uploaded to /files (multipart)
 }
 

@@ -365,4 +365,3 @@ func parserYamlExists(packDir string) bool {
 	_, err := os.Stat(filepath.Join(packDir, "parsers", "parser.yaml"))
 	return err == nil
 }
-

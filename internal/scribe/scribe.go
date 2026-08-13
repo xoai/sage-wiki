@@ -32,11 +32,11 @@ type Result struct {
 	Sources   []SourceFile // optional: generated source files to add to raw/
 
 	// Metadata
-	InputSize    int    // original input size in bytes
-	CompressedTo int    // size after compression (0 if no compression)
-	Extracted    int    // entity candidates found
-	Kept         int    // entities after dedup/filtering
-	Skipped      int    // entities filtered out (duplicates, noise)
+	InputSize    int // original input size in bytes
+	CompressedTo int // size after compression (0 if no compression)
+	Extracted    int // entity candidates found
+	Kept         int // entities after dedup/filtering
+	Skipped      int // entities filtered out (duplicates, noise)
 }
 
 // SourceFile represents a file to be written to the source directory.

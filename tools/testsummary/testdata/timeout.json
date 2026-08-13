@@ -1,0 +1,7 @@
+{"Action":"start","Package":"example.com/project/slow"}
+{"Action":"run","Package":"example.com/project/slow","Test":"TestSlow"}
+{"Action":"output","Package":"example.com/project/slow","Output":"panic: test timed out after 1s\n"}
+{"Action":"output","Package":"example.com/project/slow","Output":"running tests:\n\tTestSlow (1s)\n"}
+{"Action":"output","Package":"example.com/project/slow","Output":"\t/usr/local/go/src/testing/testing.go:2802 +0x42\n"}
+{"Action":"output","Package":"example.com/project/slow","Output":"\t/work/slow_test.go:27 +0x42\n"}
+{"Action":"fail","Package":"example.com/project/slow","Elapsed":1.01}

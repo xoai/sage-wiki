@@ -169,7 +169,7 @@ standards:
         anti_vacuity: Resolved shard package output must be nonempty and package failures remain red.
         runtime: {bound_seconds: 900, recent: null}
         coverage: {packages: [], package_classes: [test-owned, helper-library], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
-        diagnostics: {local_command: go test -race ./..., local_make_target: test, hosted_artifact: go-test-log, failure_artifact: go-test-log, formats: [text]}
+        diagnostics: {local_command: go test -race ./..., local_make_target: ci-race, hosted_artifact: go-test-log, failure_artifact: go-test-log, formats: [text]}
         qualification:
           state: required-requalifying
           history: [{date: "2026-08-12", state: required-requalifying, reason: "Imported from the broad current OS shard matrix."}]

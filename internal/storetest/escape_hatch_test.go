@@ -17,15 +17,15 @@ var allowedRawHandleDirs = []string{
 	"internal/storage/",
 	"internal/sqlitestore/",
 	"internal/store/",
-	"internal/memory/",   // sqlite EntryStore/ChunkStore impl
-	"internal/vectors/",  // sqlite VectorStore impl
-	"internal/ontology/", // sqlite OntologyStore impl
-	"internal/trust/",    // sqlite TrustStore impl
-	"internal/compiler/", // sqlite CompileItemStore impl + pipeline (T9a-2 pending)
-	"internal/linter/",   // learning fns are the sqlite LearningStore impl
-	"internal/query/",    // query pipeline — Backend injection pending (T9a-2)
-	"internal/wiki/",     // reconciler/status — Backend injection pending (T9a-2)
-	"internal/app/",      // container: Unwrap bridge for concrete App fields (T5)
+	"internal/memory/",    // sqlite EntryStore/ChunkStore impl
+	"internal/vectors/",   // sqlite VectorStore impl
+	"internal/ontology/",  // sqlite OntologyStore impl
+	"internal/trust/",     // sqlite TrustStore impl
+	"internal/compiler/",  // sqlite CompileItemStore impl + pipeline (T9a-2 pending)
+	"internal/linter/",    // learning fns are the sqlite LearningStore impl
+	"internal/query/",     // query pipeline — Backend injection pending (T9a-2)
+	"internal/wiki/",      // reconciler/status — Backend injection pending (T9a-2)
+	"internal/app/",       // container: Unwrap bridge for concrete App fields (T5)
 	"internal/storedial/", // the OpenConcrete transitional helper itself (T6)
 }
 

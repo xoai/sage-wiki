@@ -12,11 +12,11 @@ import (
 func TestRateLimitedSitesPinned(t *testing.T) {
 	root := repoRoot(t)
 	sites := map[string]string{
-		"internal/llm/client.go":  "llm_rate_limited_total",
-		"internal/llm/cache.go":   "llm_rate_limited_total",
-		"internal/llm/stream.go":  "llm_rate_limited_total",
-		"internal/llm/batch.go":   "recordRateLimited",
-		"internal/llm/gemini.go":  "recordRateLimited",
+		"internal/llm/client.go": "llm_rate_limited_total",
+		"internal/llm/cache.go":  "llm_rate_limited_total",
+		"internal/llm/stream.go": "llm_rate_limited_total",
+		"internal/llm/batch.go":  "recordRateLimited",
+		"internal/llm/gemini.go": "recordRateLimited",
 	}
 	for file, needle := range sites {
 		data, err := os.ReadFile(filepath.Join(root, file))

@@ -3,9 +3,9 @@ package compiler
 import (
 	"sync"
 
-		"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/log"
+	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/vectors"
 )
 
@@ -24,7 +24,7 @@ const (
 type DedupCache struct {
 	embedder  embed.Embedder
 	vecStore  store.VectorStore // optional — load pre-stored embeddings
-	threshold float64        // cosine similarity threshold (default 0.85)
+	threshold float64           // cosine similarity threshold (default 0.85)
 
 	mu    sync.RWMutex // protects cache
 	cache map[string][]float32

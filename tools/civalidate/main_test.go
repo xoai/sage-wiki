@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 const validStandards = `
@@ -56,6 +57,18 @@ schema_version: 1
 module: github.com/xoai/sage-wiki
 packages:
   - path: .
+    class: test-owned
+    owner: generated-drift-current
+    roles: []
+  - path: internal/manifest
+    class: test-owned
+    owner: generated-drift-current
+    roles: []
+  - path: pkg/engine
+    class: test-owned
+    owner: generated-drift-current
+    roles: []
+  - path: tools/skillgen
     class: test-owned
     owner: generated-drift-current
     roles: []
@@ -122,6 +135,16 @@ func TestParse(t *testing.T) {
 		{
 			name: "multiple platform documents",
 			data: validPlatforms + "---\n" + validPlatforms,
+			parse: func(name string, data []byte) error {
+				_, err := parsePlatformContracts(name, data)
+				return err
+			},
+		},
+		{
+			name: "flow mapping prose with an unquoted colon",
+			data: strings.Replace(validPlatforms,
+				"reason: The generic lock implementation classifies Windows sharing errors.",
+				"reason: Native separators: Windows sharing errors are classified.", 1),
 			parse: func(name string, data []byte) error {
 				_, err := parsePlatformContracts(name, data)
 				return err
@@ -292,6 +315,16 @@ inventory:
 			code: ProblemUnknownEnum,
 		},
 		{
+			name: "unknown signal GOOS",
+			edit: func(s string) string { return strings.Replace(s, "goos: [windows]", "goos: [windwos]", 1) },
+			code: ProblemUnknownEnum,
+		},
+		{
+			name: "unknown signal GOARCH",
+			edit: func(s string) string { return strings.Replace(s, "goarch: []", "goarch: [quantum]", 1) },
+			code: ProblemUnknownEnum,
+		},
+		{
 			name: "dangling inventory contract",
 			edit: func(s string) string {
 				return strings.Replace(s, "contracts: [manifest-lock-windows]", "contracts: [missing-contract]", 1)
@@ -304,6 +337,20 @@ inventory:
 				return strings.Replace(s, "tests: [TestConcurrentManifestUpdates]", "tests: []", 1)
 			},
 			code: ProblemPlatformContractEmpty,
+		},
+		{
+			name: "unknown contract GOOS",
+			edit: func(s string) string {
+				return strings.Replace(s, "goos: windows", "goos: windwos", 1)
+			},
+			code: ProblemUnknownEnum,
+		},
+		{
+			name: "unknown contract GOARCH",
+			edit: func(s string) string {
+				return strings.Replace(s, "goarch: any", "goarch: quantum", 1)
+			},
+			code: ProblemUnknownEnum,
 		},
 	}
 	for _, tt := range tests {
@@ -319,6 +366,319 @@ inventory:
 			assertProblemCode(t, validateStatic(Manifests{Standards: standards, Platforms: platforms}), tt.code)
 		})
 	}
+}
+
+func TestRepositoryValidation(t *testing.T) {
+	baseManifests := parseValidManifests(t)
+	baseFacts := RepositoryFacts{
+		GoPackages: map[string][]string{
+			"linux": {
+				"github.com/xoai/sage-wiki",
+				"github.com/xoai/sage-wiki/internal/manifest",
+				"github.com/xoai/sage-wiki/pkg/engine",
+				"github.com/xoai/sage-wiki/tools/skillgen",
+			},
+		},
+		Workflow: WorkflowFacts{
+			Name: "CI",
+			Jobs: map[string]WorkflowJob{
+				"skill-drift": {},
+				"ci-required": {Needs: []string{"skill-drift"}},
+			},
+		},
+		MakeTargets:         map[string]struct{}{},
+		DeterminismPackages: nil,
+		PlatformSignals: []DiscoveredPlatformSignal{
+			{Path: "internal/manifest/lock.go", Kind: PlatformSignalRuntimeGOOS},
+		},
+		ExistingPaths: map[string]struct{}{
+			"skills/":                   {},
+			"internal/web/dist/":        {},
+			"internal/manifest/lock.go": {},
+		},
+	}
+	if problems := validateRepository(baseManifests, baseFacts); len(problems) != 0 {
+		t.Fatalf("valid repository facts: %#v", problems)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*Manifests, *RepositoryFacts)
+		code   ProblemCode
+	}{
+		{
+			name: "new package is unowned",
+			mutate: func(_ *Manifests, facts *RepositoryFacts) {
+				facts.GoPackages["linux"] = append(facts.GoPackages["linux"], "github.com/xoai/sage-wiki/internal/newpkg")
+			},
+			code: ProblemPackageUnowned,
+		},
+		{
+			name: "deleted package remains declared",
+			mutate: func(_ *Manifests, facts *RepositoryFacts) {
+				facts.GoPackages["linux"] = facts.GoPackages["linux"][:3]
+			},
+			code: ProblemPackageDeleted,
+		},
+		{
+			name: "required aggregate omits job",
+			mutate: func(_ *Manifests, facts *RepositoryFacts) {
+				facts.Workflow.Jobs["ci-required"] = WorkflowJob{}
+			},
+			code: ProblemAggregateMissing,
+		},
+		{
+			name: "required aggregate has undeclared job",
+			mutate: func(_ *Manifests, facts *RepositoryFacts) {
+				facts.Workflow.Jobs["extra"] = WorkflowJob{}
+				facts.Workflow.Jobs["ci-required"] = WorkflowJob{Needs: []string{"skill-drift", "extra"}}
+			},
+			code: ProblemAggregateExtra,
+		},
+		{
+			name: "required workflow job is missing",
+			mutate: func(_ *Manifests, facts *RepositoryFacts) {
+				delete(facts.Workflow.Jobs, "skill-drift")
+			},
+			code: ProblemWorkflowJobMissing,
+		},
+		{
+			name: "witness workflow reference is stale",
+			mutate: func(manifests *Manifests, _ *RepositoryFacts) {
+				manifests.Standards.Standards[0].Witnesses[0].Job.Workflow = "Other"
+			},
+			code: ProblemWorkflowMismatch,
+		},
+		{
+			name: "aggregate workflow reference is stale",
+			mutate: func(manifests *Manifests, _ *RepositoryFacts) {
+				manifests.Standards.Aggregates[0].Workflow = "Other"
+			},
+			code: ProblemWorkflowMismatch,
+		},
+		{
+			name: "required workflow witness is not aggregated",
+			mutate: func(manifests *Manifests, _ *RepositoryFacts) {
+				manifests.Standards.Standards[0].Witnesses[0].Job.Aggregate = false
+			},
+			code: ProblemAggregateMissing,
+		},
+		{
+			name: "local make target is missing",
+			mutate: func(manifests *Manifests, _ *RepositoryFacts) {
+				target := "ci"
+				manifests.Standards.Standards[0].Witnesses[0].Diagnostics.LocalMakeTarget = &target
+			},
+			code: ProblemMakeTargetMissing,
+		},
+		{
+			name: "determinism package list drifts",
+			mutate: func(_ *Manifests, facts *RepositoryFacts) {
+				facts.DeterminismPackages = []string{"internal/compiler"}
+			},
+			code: ProblemDeterminismDrift,
+		},
+		{
+			name: "platform signal is unowned",
+			mutate: func(_ *Manifests, facts *RepositoryFacts) {
+				facts.PlatformSignals = append(facts.PlatformSignals, DiscoveredPlatformSignal{Path: "internal/new.go", Kind: PlatformSignalRuntimeGOARCH})
+			},
+			code: ProblemPlatformUnowned,
+		},
+		{
+			name: "platform inventory path is stale",
+			mutate: func(_ *Manifests, facts *RepositoryFacts) {
+				delete(facts.ExistingPaths, "internal/manifest/lock.go")
+			},
+			code: ProblemPlatformStale,
+		},
+		{
+			name: "generated inventory path is stale",
+			mutate: func(_ *Manifests, facts *RepositoryFacts) {
+				delete(facts.ExistingPaths, "skills/")
+			},
+			code: ProblemGeneratedPathStale,
+		},
+		{
+			name: "platform inventory signal is stale",
+			mutate: func(manifests *Manifests, _ *RepositoryFacts) {
+				manifests.Platforms.Inventory[0].Signals = append(manifests.Platforms.Inventory[0].Signals, PlatformSignal{Kind: PlatformSignalBuildExpression})
+			},
+			code: ProblemPlatformStale,
+		},
+		{
+			name: "platform source parse fails closed",
+			mutate: func(_ *Manifests, facts *RepositoryFacts) {
+				facts.PlatformParseErrors = []string{"internal/broken.go: malformed build expression"}
+			},
+			code: ProblemPlatformParse,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manifests := parseValidManifests(t)
+			facts := cloneRepositoryFacts(baseFacts)
+			tt.mutate(&manifests, &facts)
+			assertProblemCode(t, validateRepository(manifests, facts), tt.code)
+		})
+	}
+
+	for _, kind := range []PlatformSignalKind{
+		PlatformSignalFilenameSuffix,
+		PlatformSignalBuildExpression,
+		PlatformSignalRuntimeGOOS,
+		PlatformSignalRuntimeGOARCH,
+		PlatformSignalPlatformImport,
+	} {
+		t.Run("unowned signal "+string(kind), func(t *testing.T) {
+			facts := cloneRepositoryFacts(baseFacts)
+			facts.PlatformSignals = append(facts.PlatformSignals, DiscoveredPlatformSignal{Path: "new-signal.go", Kind: kind})
+			assertProblemCode(t, validateRepository(baseManifests, facts), ProblemPlatformUnowned)
+		})
+	}
+}
+
+func TestPlatformSignals(t *testing.T) {
+	good := fstest.MapFS{
+		"suffix_linux.go": {Data: []byte("//go:build linux\n\npackage fixture\n")},
+		"signals.go": {Data: []byte(`package fixture
+
+import (
+	"runtime"
+	"golang.org/x/sys/unix"
+)
+
+var _, _ = runtime.GOOS, runtime.GOARCH
+var _ = unix.Mmap
+`)},
+	}
+	signals, err := scanPlatformSignals(good)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	for _, want := range []PlatformSignalKind{
+		PlatformSignalFilenameSuffix,
+		PlatformSignalBuildExpression,
+		PlatformSignalRuntimeGOOS,
+		PlatformSignalRuntimeGOARCH,
+		PlatformSignalPlatformImport,
+	} {
+		if !hasSignalKind(signals, want) {
+			t.Errorf("signals = %#v, want kind %q", signals, want)
+		}
+	}
+
+	bad := fstest.MapFS{
+		"broken.go": {Data: []byte("//go:build (\n\npackage fixture\n")},
+	}
+	if _, err := scanPlatformSignals(bad); err == nil {
+		t.Fatal("malformed build expression accepted")
+	}
+}
+
+func TestPlatformFilenameSuffixRequiresConcreteGOOS(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{path: "lock_linux.go", want: true},
+		{path: "lock_windows_test.go", want: true},
+		{path: "lock_windows_amd64_test.go", want: true},
+		{path: "lock_hurd.go", want: true},
+		{path: "lock_unix.go", want: false},
+		{path: "lock_unix_test.go", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			kinds, err := scanGoFile(tt.path, []byte("package fixture\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, got := kinds[PlatformSignalFilenameSuffix]
+			if got != tt.want {
+				t.Fatalf("filename suffix detected = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPlatformBuildExpressionIncludesFeatureTags(t *testing.T) {
+	kinds, err := scanGoFile("feature.go", []byte("//go:build webui\n\npackage fixture\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := kinds[PlatformSignalBuildExpression]; !ok {
+		t.Fatal("non-platform build expression was not detected")
+	}
+}
+
+func TestPlatformRuntimeSignalUsesImportedName(t *testing.T) {
+	aliased, err := scanGoFile("aliased.go", []byte("package fixture\n\nimport goruntime \"runtime\"\n\nvar _ = goruntime.GOOS\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := aliased[PlatformSignalRuntimeGOOS]; !ok {
+		t.Fatal("aliased runtime.GOOS was not detected")
+	}
+
+	shadowed, err := scanGoFile("shadowed.go", []byte("package fixture\n\ntype platform struct{ GOOS string }\n\nvar runtime platform\nvar _ = runtime.GOOS\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := shadowed[PlatformSignalRuntimeGOOS]; ok {
+		t.Fatal("selector on a local runtime variable was treated as runtime.GOOS")
+	}
+}
+
+func parseValidManifests(t *testing.T) Manifests {
+	t.Helper()
+	standards, err := parseStandards("standards.yaml", []byte(validStandards))
+	if err != nil {
+		t.Fatal(err)
+	}
+	packages, err := parsePackageOwnership("package-ownership.yaml", []byte(validOwnership))
+	if err != nil {
+		t.Fatal(err)
+	}
+	platforms, err := parsePlatformContracts("platform-contracts.yaml", []byte(validPlatforms))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Manifests{Standards: standards, Packages: packages, Platforms: platforms}
+}
+
+func cloneRepositoryFacts(in RepositoryFacts) RepositoryFacts {
+	out := in
+	out.GoPackages = make(map[string][]string, len(in.GoPackages))
+	for goos, packages := range in.GoPackages {
+		out.GoPackages[goos] = append([]string(nil), packages...)
+	}
+	out.Workflow.Jobs = make(map[string]WorkflowJob, len(in.Workflow.Jobs))
+	for id, job := range in.Workflow.Jobs {
+		job.Needs = append([]string(nil), job.Needs...)
+		out.Workflow.Jobs[id] = job
+	}
+	out.MakeTargets = make(map[string]struct{}, len(in.MakeTargets))
+	for target := range in.MakeTargets {
+		out.MakeTargets[target] = struct{}{}
+	}
+	out.DeterminismPackages = append([]string(nil), in.DeterminismPackages...)
+	out.PlatformSignals = append([]DiscoveredPlatformSignal(nil), in.PlatformSignals...)
+	out.PlatformParseErrors = append([]string(nil), in.PlatformParseErrors...)
+	out.ExistingPaths = make(map[string]struct{}, len(in.ExistingPaths))
+	for path := range in.ExistingPaths {
+		out.ExistingPaths[path] = struct{}{}
+	}
+	return out
+}
+
+func hasSignalKind(signals []DiscoveredPlatformSignal, want PlatformSignalKind) bool {
+	for _, signal := range signals {
+		if signal.Kind == want {
+			return true
+		}
+	}
+	return false
 }
 
 func assertProblemCode(t *testing.T, problems Problems, want ProblemCode) {

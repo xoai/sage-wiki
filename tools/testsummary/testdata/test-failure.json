@@ -1,0 +1,5 @@
+{"Action":"start","Package":"example.com/project/widget"}
+{"Action":"run","Package":"example.com/project/widget","Test":"TestWidget"}
+{"Action":"output","Package":"example.com/project/widget","Test":"TestWidget","Output":"    widget_test.go:42: want 1, got 2\n"}
+{"Action":"fail","Package":"example.com/project/widget","Test":"TestWidget","Elapsed":0.01}
+{"Action":"fail","Package":"example.com/project/widget","Elapsed":0.02}

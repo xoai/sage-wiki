@@ -71,3 +71,4 @@ packages:
   - {path: tests/pathological, class: test-owned, owner: go-tests-current, roles: []}
   - {path: tools/civalidate, class: test-owned, owner: go-tests-current, roles: []}
   - {path: tools/skillgen, class: test-owned, owner: go-tests-current, roles: []}
+  - {path: tools/testsummary, class: test-owned, owner: go-tests-current, roles: []}

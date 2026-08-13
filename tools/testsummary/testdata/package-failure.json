@@ -1,0 +1,3 @@
+{"Action":"start","Package":"example.com/project/setup"}
+{"Action":"output","Package":"example.com/project/setup","Output":"setup failed: fixture server unavailable\n"}
+{"Action":"fail","Package":"example.com/project/setup","Elapsed":0.01}

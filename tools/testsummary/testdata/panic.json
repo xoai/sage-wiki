@@ -1,0 +1,7 @@
+{"Action":"start","Package":"example.com/project/panic"}
+{"Action":"run","Package":"example.com/project/panic","Test":"TestPanics"}
+{"Action":"output","Package":"example.com/project/panic","Test":"TestPanics","Output":"panic: boom [recovered]\n"}
+{"Action":"output","Package":"example.com/project/panic","Test":"TestPanics","Output":"\t/usr/local/go/src/testing/testing.go:1974 +0x42\n"}
+{"Action":"output","Package":"example.com/project/panic","Test":"TestPanics","Output":"\t/work/panic_test.go:19 +0x42\n"}
+{"Action":"fail","Package":"example.com/project/panic","Test":"TestPanics","Elapsed":0.01}
+{"Action":"fail","Package":"example.com/project/panic","Elapsed":0.02}

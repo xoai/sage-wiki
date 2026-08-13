@@ -1,9 +1,9 @@
 package wiki
 
 import (
-	"errors"
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -23,10 +23,13 @@ import (
 // that a consistent output is NOT re-embedded.
 type countingEmbedder struct{ n int32 }
 
-func (e *countingEmbedder) Embed(string) ([]float32, error) { atomic.AddInt32(&e.n, 1); return []float32{0.1, 0.2}, nil }
-func (e *countingEmbedder) Dimensions() int                 { return 2 }
-func (e *countingEmbedder) Name() string                    { return "counting" }
-func (e *countingEmbedder) calls() int                      { return int(atomic.LoadInt32(&e.n)) }
+func (e *countingEmbedder) Embed(string) ([]float32, error) {
+	atomic.AddInt32(&e.n, 1)
+	return []float32{0.1, 0.2}, nil
+}
+func (e *countingEmbedder) Dimensions() int { return 2 }
+func (e *countingEmbedder) Name() string    { return "counting" }
+func (e *countingEmbedder) calls() int      { return int(atomic.LoadInt32(&e.n)) }
 
 // failingEmbedder is online but every Embed call fails, modelling a
 // misconfigured/quota-exhausted provider.

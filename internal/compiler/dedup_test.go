@@ -39,8 +39,8 @@ func (m *mockEmbedder) Embed(text string) ([]float32, error) {
 	return vec, nil
 }
 
-func (m *mockEmbedder) Name() string       { return "mock" }
-func (m *mockEmbedder) Dimensions() int    { return 4 }
+func (m *mockEmbedder) Name() string    { return "mock" }
+func (m *mockEmbedder) Dimensions() int { return 4 }
 
 func TestDedupCache_SimilarConcepts(t *testing.T) {
 	// Create embeddings where "flash attention" and "flash-attention" are very similar
@@ -51,8 +51,8 @@ func TestDedupCache_SimilarConcepts(t *testing.T) {
 
 	embedder := &mockEmbedder{
 		embeddings: map[string][]float32{
-			"flash attention":  flashVec,
-			"flash-attention":  flashAltVec,
+			"flash attention":   flashVec,
+			"flash-attention":   flashAltVec,
 			"database indexing": dbVec,
 		},
 	}

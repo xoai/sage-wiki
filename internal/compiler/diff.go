@@ -31,10 +31,10 @@ type DiffResult struct {
 
 // SourceInfo describes a source file.
 type SourceInfo struct {
-	Path     string
-	Hash     string
-	Type     string
-	Size     int64
+	Path string
+	Hash string
+	Type string
+	Size int64
 }
 
 // Diff scans source directories and compares against the manifest.

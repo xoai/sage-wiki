@@ -263,9 +263,9 @@ func TestSynthesizeHierarchicalSingleSummary(t *testing.T) {
 
 func TestValidateSummary(t *testing.T) {
 	tests := []struct {
-		name	string
-		text	string
-		wantErr	bool
+		name    string
+		text    string
+		wantErr bool
 	}{
 		{"empty", "", true},
 		{"too short", "This is short.", true},

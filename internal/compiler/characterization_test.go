@@ -27,9 +27,9 @@ type compileSnapshot struct {
 }
 
 type compileResultSnapshot struct {
-	Added, Modified, Removed          int
-	Summarized, Concepts, Articles    int
-	Errors, EmbedErrors               int
+	Added, Modified, Removed                int
+	Summarized, Concepts, Articles          int
+	Errors, EmbedErrors                     int
 	TierIndexed, TierEmbedded, TierCompiled int
 }
 

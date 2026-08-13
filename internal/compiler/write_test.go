@@ -479,10 +479,10 @@ func TestStripAntiPatternSentences_UnclosedFence(t *testing.T) {
 func TestBuildRelatedConceptsIndex(t *testing.T) {
 	concepts := []ExtractedConcept{
 		{Name: "a", Sources: []string{"s1", "s2"}},
-		{Name: "b", Sources: []string{"s1"}},        // shares s1 with a
-		{Name: "c", Sources: []string{"s2"}},        // shares s2 with a
-		{Name: "d", Sources: []string{"s9"}},        // isolated
-		{Name: "e", Sources: []string{"s1", "s1"}},  // duplicate source; shares s1 with a
+		{Name: "b", Sources: []string{"s1"}},       // shares s1 with a
+		{Name: "c", Sources: []string{"s2"}},       // shares s2 with a
+		{Name: "d", Sources: []string{"s9"}},       // isolated
+		{Name: "e", Sources: []string{"s1", "s1"}}, // duplicate source; shares s1 with a
 	}
 	idx := buildRelatedConceptsIndex(concepts, maxRelatedConcepts)
 

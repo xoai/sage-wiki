@@ -46,8 +46,8 @@ func TestBatchState_PathByID_JSONRoundTrip(t *testing.T) {
 		Pass:        "summarize",
 		SubmittedAt: "2026-06-01T00:00:00Z",
 		PathByID: map[string]string{
-			"abc123":   "raw/article-one.md",
-			"def456":   "domains/research/raw/papers/very-long-paper-title.md",
+			"abc123": "raw/article-one.md",
+			"def456": "domains/research/raw/papers/very-long-paper-title.md",
 		},
 	}
 

@@ -118,10 +118,10 @@ func TestSummaryFilenameMode_FullDelegates(t *testing.T) {
 func TestSummaryFilenameMode_Relative(t *testing.T) {
 	tests := []struct{ path, root, want string }{
 		{"wiki/pdf2md/Final FS Letter/Final FS Letter.md", "wiki/pdf2md", "Final FS Letter.md"}, // strip + collapse
-		{"docs/Report/Report.md", "docs", "Report.md"},                                         // strip + collapse
+		{"docs/Report/Report.md", "docs", "Report.md"},                                          // strip + collapse
 		{"docs/Report/Summary.md", "docs", "Report-Summary.md"},                                 // strip, no dup
 		{"Report/Report.md", "", "Report.md"},                                                   // collapse, no root
-		{"a/a/b.md", "", "a-a-b.md"},                                                             // non-trailing dup preserved
+		{"a/a/b.md", "", "a-a-b.md"},                                                            // non-trailing dup preserved
 		{"other/Report/Report.md", "docs", "other-Report.md"},                                   // root not a prefix → no strip, still collapse
 		{"docs/Report.md", "docs", "Report.md"},                                                 // root == parent → stem only
 		{"docs", "docs", "summary.md"},                                                          // empty after strip
@@ -141,9 +141,9 @@ func TestResolveSourceRoot(t *testing.T) {
 		{"wiki/pdf2md/X/X.md", "wiki/pdf2md"}, // longest-prefix wins over "wiki"
 		{"wiki/other/a.md", "wiki"},
 		{"docs/a.md", "docs"},
-		{"unrelated/a.md", ""},        // no match
-		{"docsite/a.md", ""},          // segment match, not raw string prefix
-		{"./docs/a.md", "docs"},       // path normalized before match
+		{"unrelated/a.md", ""},  // no match
+		{"docsite/a.md", ""},    // segment match, not raw string prefix
+		{"./docs/a.md", "docs"}, // path normalized before match
 	}
 	for _, tt := range tests {
 		if got := resolveSourceRoot(tt.path, sources); got != tt.want {

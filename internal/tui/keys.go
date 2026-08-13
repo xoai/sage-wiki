@@ -4,16 +4,16 @@ import "github.com/charmbracelet/bubbles/key"
 
 // KeyMap defines shared key bindings across TUI views.
 type KeyMap struct {
-	Quit       key.Binding
-	Help       key.Binding
-	Tab        key.Binding
-	Enter      key.Binding
-	Search     key.Binding
-	Escape     key.Binding
-	Up         key.Binding
-	Down       key.Binding
-	PageUp     key.Binding
-	PageDown   key.Binding
+	Quit     key.Binding
+	Help     key.Binding
+	Tab      key.Binding
+	Enter    key.Binding
+	Search   key.Binding
+	Escape   key.Binding
+	Up       key.Binding
+	Down     key.Binding
+	PageUp   key.Binding
+	PageDown key.Binding
 }
 
 // DefaultKeys returns the shared key bindings.

@@ -136,7 +136,7 @@ func (s *Store) ReplaceDetection(comms []store.Community, members map[string][]s
 }
 
 // nilIfEmpty binds empty strings as NULL so SQLite matches the Postgres
-// representation (communityCols COALESCEs both to '').
+// representation (communityCols COALESCEs both to the empty string).
 func nilIfEmpty(s string) any {
 	if s == "" {
 		return nil

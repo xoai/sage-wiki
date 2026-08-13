@@ -75,13 +75,13 @@ contracts:
 
 inventory:
   # Mechanically discoverable build constraints and file suffixes.
-  - {path: internal/extract/sandbox_linux.go, signals: [{kind: filename-suffix, goos: [linux], goarch: []}, {kind: build-expression, goos: [linux], goarch: []}], contracts: [], reason: Linux-only process sandbox; recorded outside Windows and Darwin focused ownership.}
-  - {path: internal/extract/sandbox_other.go, signals: [{kind: build-expression, goos: [darwin, windows], goarch: []}], contracts: [], reason: Non-Linux process cancellation; Windows shell fixtures currently skip, so this is not focused authority.}
+  - {path: internal/extract/sandbox_linux.go, signals: [{kind: filename-suffix, goos: [linux], goarch: []}, {kind: build-expression, goos: [linux], goarch: []}, {kind: platform-import, goos: [linux], goarch: []}], contracts: [], reason: Linux-only process sandbox; recorded outside Windows and Darwin focused ownership.}
+  - {path: internal/extract/sandbox_other.go, signals: [{kind: build-expression, goos: [darwin, windows], goarch: []}], contracts: [], reason: "Non-Linux process cancellation; Windows shell fixtures currently skip, so this is not focused authority."}
   - {path: internal/serve/signal_unix.go, signals: [{kind: build-expression, goos: [linux, darwin], goarch: []}, {kind: platform-import, goos: [linux, darwin], goarch: []}], contracts: [serve-signal-darwin], reason: Unix signal registration owns the Darwin SIGTERM contract.}
   - {path: internal/serve/drain_unix_test.go, signals: [{kind: build-expression, goos: [linux, darwin], goarch: []}, {kind: platform-import, goos: [linux, darwin], goarch: []}], contracts: [serve-signal-darwin], reason: Unix integration witness sends SIGTERM to a subprocess.}
   - {path: internal/vectors/mmap_unix.go, signals: [{kind: build-expression, goos: [linux, darwin], goarch: []}, {kind: platform-import, goos: [linux, darwin], goarch: []}], contracts: [vectors-mmap-darwin], reason: Unix mmap implementation supplies the Darwin correctness contract.}
   - {path: internal/vectors/mmap_other.go, signals: [{kind: build-expression, goos: [windows], goarch: []}], contracts: [vectors-fallback-windows], reason: Non-Unix resident-file fallback supplies the Windows vector contract.}
-  - {path: internal/vectors/resident_unix_test.go, signals: [{kind: build-expression, goos: [linux, darwin], goarch: []}], contracts: [], reason: Host-sensitive resident-memory ratio is scheduled performance evidence, not focused correctness authority.}
+  - {path: internal/vectors/resident_unix_test.go, signals: [{kind: build-expression, goos: [linux, darwin], goarch: []}], contracts: [], reason: "Host-sensitive resident-memory ratio is scheduled performance evidence, not focused correctness authority."}
   - {path: pkg/engine/lock_unix.go, signals: [{kind: build-expression, goos: [linux, darwin], goarch: []}, {kind: platform-import, goos: [linux, darwin], goarch: []}], contracts: [engine-flock-darwin], reason: Unix flock implementation supplies the Darwin workspace lock contract.}
   - {path: pkg/engine/lock_other.go, signals: [{kind: build-expression, goos: [windows], goarch: []}], contracts: [engine-lock-windows], reason: Non-Unix lockfile implementation supplies the Windows workspace lock contract.}
   - {path: internal/mirror/shipmutex_unix.go, signals: [{kind: build-expression, goos: [linux, darwin], goarch: []}, {kind: platform-import, goos: [linux, darwin], goarch: []}], contracts: [mirror-flock-darwin], reason: Unix flock implementation supplies Darwin mirror exclusion.}
@@ -101,6 +101,15 @@ inventory:
   - {path: internal/auth/keyring.go, signals: [{kind: platform-import, goos: [linux, darwin, windows], goarch: []}], contracts: [], reason: Keyring adapter dispatch is recorded; native desktop keychain availability remains scheduled or manual evidence.}
   - {path: internal/auth/backend.go, signals: [{kind: platform-import, goos: [linux, darwin, windows], goarch: []}], contracts: [], reason: Credential backend selection is platform-sensitive but native stores are mocked in unit tests.}
   - {path: internal/auth/migrate.go, signals: [{kind: platform-import, goos: [linux, darwin, windows], goarch: []}], contracts: [], reason: Credential migration crosses platform keychain implementations; native availability is not focused authority.}
+  - {path: internal/auth/backend_test.go, signals: [{kind: platform-import, goos: [linux, darwin, windows], goarch: []}], contracts: [], reason: "Backend tests replace native keyring behavior with a deterministic mock."}
+  - {path: internal/auth/keyring_test.go, signals: [{kind: platform-import, goos: [linux, darwin, windows], goarch: []}], contracts: [], reason: "Keyring adapter tests use a deterministic mock instead of native desktop keychains."}
+  - {path: internal/auth/store_test.go, signals: [{kind: runtime-goos, goos: [windows], goarch: []}], contracts: [], reason: "Credential-store permission assertions distinguish Windows filesystem behavior."}
+  - {path: internal/extract/external_test.go, signals: [{kind: runtime-goos, goos: [windows], goarch: []}], contracts: [], reason: "Material shell fixtures skip on Windows and cannot be focused authority."}
+  - {path: internal/fsutil/atomic_test.go, signals: [{kind: runtime-goos, goos: [windows], goarch: []}], contracts: [], reason: "Atomic replacement tests select Windows permission and replacement expectations."}
+  - {path: internal/mcp/tools_write_test.go, signals: [{kind: runtime-goos, goos: [windows], goarch: []}], contracts: [], reason: "MCP write tests skip unsupported Windows symlink behavior."}
+  - {path: internal/mirror/crash_test.go, signals: [{kind: runtime-goos, goos: [linux, darwin], goarch: []}], contracts: [mirror-flock-darwin], reason: "Crash recovery requires the Unix flock implementation and skips lockfile fallback platforms."}
+  - {path: internal/pathsafe/pathsafe_test.go, signals: [{kind: runtime-goos, goos: [windows], goarch: []}], contracts: [], reason: "Containment tests skip a symlink capability case on Windows."}
+  - {path: tests/pathological/pathological_test.go, signals: [{kind: runtime-goos, goos: [linux], goarch: []}], contracts: [], reason: "Pathological fixtures select a Linux-specific expectation outside focused ownership."}
   - {path: cmd/sage-wiki/main.go, signals: [{kind: platform-import, goos: [linux, darwin], goarch: []}], contracts: [], reason: Process and signal wiring is reviewed; focused signal ownership lives in internal/serve.}
 
   # Explicit reviewed inventory for generic platform-sensitive source.
@@ -132,7 +141,7 @@ inventory:
   - {path: internal/serve/auth.go, signals: [{kind: reviewed-generic, goos: [linux, darwin, windows], goarch: []}], contracts: [], reason: Authentication state and path checks use native filesystem behavior.}
   - {path: pkg/events/file_sink.go, signals: [{kind: reviewed-generic, goos: [linux, darwin, windows], goarch: []}], contracts: [], reason: Event files require portable append and permission behavior.}
   - {path: internal/config/config.go, signals: [{kind: reviewed-generic, goos: [windows], goarch: []}], contracts: [], reason: Volume-aware path resolution is a Windows candidate not yet in the focused list.}
-  - {path: internal/pathsafe/pathsafe.go, signals: [{kind: reviewed-generic, goos: [darwin, windows], goarch: []}], contracts: [], reason: Native separators, volumes, and symlink capabilities affect containment; Windows symlink tests may skip.}
+  - {path: internal/pathsafe/pathsafe.go, signals: [{kind: reviewed-generic, goos: [darwin, windows], goarch: []}], contracts: [], reason: "Native separators, volumes, and symlink capabilities affect containment; Windows symlink tests may skip."}
   - {path: internal/compiler/diff.go, signals: [{kind: reviewed-generic, goos: [linux, darwin, windows], goarch: []}], contracts: [], reason: Source paths are normalized before manifest comparison.}
   - {path: internal/compiler/fullpipeline.go, signals: [{kind: reviewed-generic, goos: [linux, darwin, windows], goarch: []}], contracts: [], reason: Pipeline source paths cross native and repository-relative forms.}
   - {path: internal/compiler/pipeline.go, signals: [{kind: reviewed-generic, goos: [linux, darwin, windows], goarch: []}], contracts: [], reason: Pipeline artifact paths must remain slash-canonical.}
@@ -158,15 +167,15 @@ inventory:
   - {path: pkg/engine/methods.go, signals: [{kind: reviewed-generic, goos: [linux, darwin, windows], goarch: []}], contracts: [], reason: Engine methods translate native paths to stable public values.}
   - {path: pkg/events/events.go, signals: [{kind: reviewed-generic, goos: [linux, darwin, windows], goarch: []}], contracts: [], reason: Event payload paths are host-independent contracts.}
   - {path: cmd/sage-wiki/pack_cmd.go, signals: [{kind: reviewed-generic, goos: [darwin, windows], goarch: []}], contracts: [], reason: CLI pack paths use native containment rules.}
-  - {path: internal/extract/readhead.go, signals: [{kind: reviewed-generic, goos: [linux, darwin, windows], goarch: []}], contracts: [], reason: Optional executable discovery is an environment contract, not OS-focused authority.}
+  - {path: internal/extract/readhead.go, signals: [{kind: reviewed-generic, goos: [linux, darwin, windows], goarch: []}], contracts: [], reason: "Optional executable discovery is an environment contract, not OS-focused authority."}
   - {path: internal/extract/pdf.go, signals: [{kind: reviewed-generic, goos: [linux, darwin, windows], goarch: []}], contracts: [], reason: pdftotext availability is diagnostic environment evidence.}
   - {path: internal/git/git.go, signals: [{kind: reviewed-generic, goos: [linux, darwin, windows], goarch: []}], contracts: [], reason: Git executable and process behavior vary by host environment.}
   - {path: internal/tui/search/model.go, signals: [{kind: reviewed-generic, goos: [linux, darwin, windows], goarch: []}], contracts: [], reason: Editor and terminal process behavior is environment-dependent.}
   - {path: internal/web/server.go, signals: [{kind: reviewed-generic, goos: [darwin, windows], goarch: []}], contracts: [], reason: Native fsnotify behavior remains a candidate requiring timing qualification.}
-  - {path: internal/compiler/extract_triples.go, signals: [{kind: reviewed-generic, goos: [linux, darwin, windows], goarch: []}], contracts: [], reason: CRLF compatibility is ordinary deterministic fixture ownership, not focused OS authority.}
+  - {path: internal/compiler/extract_triples.go, signals: [{kind: reviewed-generic, goos: [linux, darwin, windows], goarch: []}], contracts: [], reason: "CRLF compatibility is ordinary deterministic fixture ownership, not focused OS authority."}
   - {path: internal/ontology/article.go, signals: [{kind: reviewed-generic, goos: [linux, darwin, windows], goarch: []}], contracts: [], reason: CRLF compatibility is ordinary deterministic fixture ownership.}
   - {path: internal/sourcedate/sourcedate.go, signals: [{kind: reviewed-generic, goos: [linux, darwin, windows], goarch: []}], contracts: [], reason: Source date parsing accepts platform-authored line endings without needing native OS execution.}
   - {path: internal/vectors/backend_mmap.go, signals: [{kind: reviewed-generic, goos: [darwin, windows], goarch: []}], contracts: [vectors-fallback-windows, vectors-mmap-darwin], reason: Generic dispatch selects the platform mmap implementation.}
 
   # Custom build feature recorded outside platform ownership.
-  - {path: internal/web/static_webui.go, signals: [{kind: build-expression, goos: [], goarch: []}], contracts: [], reason: webui is a feature build tag owned by go-build, not a GOOS contract.}
+  - {path: internal/web/static_webui.go, signals: [{kind: build-expression, goos: [], goarch: []}], contracts: [], reason: "webui is a feature build tag owned by go-build, not a GOOS contract."}

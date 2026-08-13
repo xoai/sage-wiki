@@ -138,4 +138,3 @@ func TestMirrorRoundtrip(t *testing.T) {
 		t.Fatalf("byte parity on restored dir: %v", err)
 	}
 }
-

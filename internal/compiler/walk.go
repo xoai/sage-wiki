@@ -16,8 +16,9 @@ import (
 // keeps behavior predictable).
 //
 // For each regular file, fn is called with:
-//   absPath — the resolved absolute file path (use for file I/O)
-//   relPath — the path relative to the resolved directory root
+//
+//	absPath — the resolved absolute file path (use for file I/O)
+//	relPath — the path relative to the resolved directory root
 func WalkSourceDir(srcDir string, fn func(absPath, relPath string, d os.DirEntry) error) error {
 	walkPath := srcDir
 	if resolved, err := filepath.EvalSymlinks(srcDir); err == nil {

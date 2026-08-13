@@ -23,17 +23,17 @@ func TestStoreInsertAndGet(t *testing.T) {
 	store := NewStore(db)
 
 	o := &PendingOutput{
-		ID:           "2026-05-09-test.md",
-		Question:     "What is X?",
-		QuestionHash: HashQuestion("What is X?"),
-		Answer:       "X is a thing.",
-		AnswerHash:   HashAnswer("X is a thing."),
-		State:        StatePending,
+		ID:            "2026-05-09-test.md",
+		Question:      "What is X?",
+		QuestionHash:  HashQuestion("What is X?"),
+		Answer:        "X is a thing.",
+		AnswerHash:    HashAnswer("X is a thing."),
+		State:         StatePending,
 		Confirmations: 1,
-		SourcesHash:  "abc123",
-		SourcesUsed:  `["wiki/concepts/x.md"]`,
-		FilePath:     "wiki/outputs/2026-05-09-test.md",
-		CreatedAt:    time.Now(),
+		SourcesHash:   "abc123",
+		SourcesUsed:   `["wiki/concepts/x.md"]`,
+		FilePath:      "wiki/outputs/2026-05-09-test.md",
+		CreatedAt:     time.Now(),
 	}
 
 	if err := store.InsertPending(o); err != nil {

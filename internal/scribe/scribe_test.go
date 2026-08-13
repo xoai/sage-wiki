@@ -173,7 +173,7 @@ func TestTruncateUTF8(t *testing.T) {
 
 	// 4-byte characters (emoji): U+1F600 "😀" = 4 bytes
 	emoji := strings.Repeat("😀", 50) // 200 bytes
-	got = truncateUTF8(emoji, 6) // 1 full emoji = 4 bytes, 2nd starts at byte 4
+	got = truncateUTF8(emoji, 6)     // 1 full emoji = 4 bytes, 2nd starts at byte 4
 	if !utf8.ValidString(got) {
 		t.Errorf("truncated emoji is not valid UTF-8: %q", got)
 	}
