@@ -1,10 +1,9 @@
 name: Publish Python client
 
-# Publishes clients/python to PyPI via Trusted Publisher (no stored token —
-# configure the publisher on PyPI once: repo xoai/sage-wiki, workflow
-# publish-python.yml). Manual dispatch is the primary path; a py-v* tag also
-# triggers. Publishing is irreversible — this workflow is user-gated by
-# design (workflow_dispatch requires a human click).
+# Publishes clients/python to PyPI via Trusted Publisher (no stored token).
+# Exact-SHA proof (Task 20): the commit being published must have passed CI
+# before any build, publish, or irreversible write. Human confirmation stays
+# but is not treated as quality proof.
 
 on:
   workflow_dispatch:
@@ -17,6 +16,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   check-version:
@@ -34,8 +34,33 @@ jobs:
             [[ "${{ inputs.confirm }}" == "$VERSION" ]] || { echo "::error::confirmation '${{ inputs.confirm }}' != package $VERSION"; exit 1; }
           fi
 
-  test:
+  proof:
+    name: Exact-SHA CI proof
     needs: check-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            tools/ciproof
+            go.mod
+            go.sum
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Verify exact-SHA CI proof
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          go run ./tools/ciproof \
+            --repository "${{ github.repository }}" \
+            --sha "$GITHUB_SHA" \
+            --output /tmp/proof.json
+          cat /tmp/proof.json
+
+  test:
+    needs: [check-version, proof]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,8 +70,36 @@ jobs:
       - run: pip install -e "clients/python[dev]"
       - run: cd clients/python && python -m pytest -q -m "not contract"
 
+  certify:
+    name: Release-certify (contract + smoke-install)
+    needs: [check-version, proof]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e "clients/python[dev]" build
+      - name: Start fixture server
+        run: bash scripts/p4-fixture-server.sh | sed 's/^export //' >> "$GITHUB_ENV"
+      - name: Contract tests
+        run: cd clients/python && python -m pytest -q -m contract
+      - name: Stop fixture server
+        if: always()
+        run: bash scripts/p4-fixture-server.sh --stop
+      - name: Build wheel/sdist
+        run: cd clients/python && python -m build
+      - name: Smoke-install built wheel
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install clients/python/dist/*.whl
+          /tmp/smoke/bin/python -c "import sagewiki; print('smoke import OK:', sagewiki.__version__)"
+
   publish:
-    needs: test
+    needs: [test, certify]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
