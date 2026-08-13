@@ -78,7 +78,7 @@ jobs:
         name: Resolve shard packages from the manifest
         run: echo "packages=$(go run ./tools/civalidate --print-shard linux-race-parity)" >> "$GITHUB_OUTPUT"
       - name: Test (race)
-        run: bash scripts/ci/run-go-tests.sh --standard go-correctness-race --raw "$RUNNER_TEMP/linux-race-parity.json" -- go test -race -timeout 15m ${{ steps.pkgs.outputs.packages }}
+        run: bash scripts/ci/run-go-tests.sh --standard go-correctness-race --raw "$RUNNER_TEMP/linux-race-parity.json" -- go test -json -race -timeout 15m ${{ steps.pkgs.outputs.packages }}
 
   linux-race-compiler:
     name: Shadow Linux race shard compiler
@@ -93,7 +93,7 @@ jobs:
         name: Resolve shard packages from the manifest
         run: echo "packages=$(go run ./tools/civalidate --print-shard linux-race-compiler)" >> "$GITHUB_OUTPUT"
       - name: Test (race)
-        run: bash scripts/ci/run-go-tests.sh --standard go-correctness-race --raw "$RUNNER_TEMP/linux-race-compiler.json" -- go test -race -timeout 15m ${{ steps.pkgs.outputs.packages }}
+        run: bash scripts/ci/run-go-tests.sh --standard go-correctness-race --raw "$RUNNER_TEMP/linux-race-compiler.json" -- go test -json -race -timeout 15m ${{ steps.pkgs.outputs.packages }}
 
   linux-race-core:
     name: Shadow Linux race shard core
@@ -108,7 +108,7 @@ jobs:
         name: Resolve shard packages from the manifest
         run: echo "packages=$(go run ./tools/civalidate --print-shard linux-race-core)" >> "$GITHUB_OUTPUT"
       - name: Test (race)
-        run: bash scripts/ci/run-go-tests.sh --standard go-correctness-race --raw "$RUNNER_TEMP/linux-race-core.json" -- go test -race -timeout 15m ${{ steps.pkgs.outputs.packages }}
+        run: bash scripts/ci/run-go-tests.sh --standard go-correctness-race --raw "$RUNNER_TEMP/linux-race-core.json" -- go test -json -race -timeout 15m ${{ steps.pkgs.outputs.packages }}
 
   linux-race-platform:
     name: Shadow Linux race shard platform
@@ -123,7 +123,7 @@ jobs:
         name: Resolve shard packages from the manifest
         run: echo "packages=$(go run ./tools/civalidate --print-shard linux-race-platform)" >> "$GITHUB_OUTPUT"
       - name: Test (race)
-        run: bash scripts/ci/run-go-tests.sh --standard go-correctness-race --raw "$RUNNER_TEMP/linux-race-platform.json" -- go test -race -timeout 15m ${{ steps.pkgs.outputs.packages }}
+        run: bash scripts/ci/run-go-tests.sh --standard go-correctness-race --raw "$RUNNER_TEMP/linux-race-platform.json" -- go test -json -race -timeout 15m ${{ steps.pkgs.outputs.packages }}
 
   linux-race-rest:
     name: Shadow Linux race shard rest
@@ -138,7 +138,7 @@ jobs:
         name: Resolve shard packages from the manifest
         run: echo "packages=$(go run ./tools/civalidate --print-shard linux-race-rest)" >> "$GITHUB_OUTPUT"
       - name: Test (race)
-        run: bash scripts/ci/run-go-tests.sh --standard go-correctness-race --raw "$RUNNER_TEMP/linux-race-rest.json" -- go test -race -timeout 15m ${{ steps.pkgs.outputs.packages }}
+        run: bash scripts/ci/run-go-tests.sh --standard go-correctness-race --raw "$RUNNER_TEMP/linux-race-rest.json" -- go test -json -race -timeout 15m ${{ steps.pkgs.outputs.packages }}
 
   # Focused OS contracts: only the packages with a named invariant for this
   # GOOS, from ci/platform-contracts.yaml. Full OS suites stay required in
