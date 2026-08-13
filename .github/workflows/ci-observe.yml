@@ -1,0 +1,131 @@
+name: CI Observe
+
+# Read-only qualification observer (20260812-ci-quality-system Task 12).
+#
+# Collects metrics from completed CI and CI Shadow workflow runs, evaluates
+# qualification thresholds (>= 20 matched pairs over >= 7 days, zero
+# unexplained identical-tree divergence, p95 within bound), and persists the
+# verdict to ci/qualification.json. This workflow is advisory: it has no
+# aggregate, is not referenced by CI required, and cannot alter any result.
+
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  observe:
+    name: Collect qualification metrics
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Fetch recent completed runs into fixtures
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/observe
+          repo="$GITHUB_REPOSITORY"
+
+          fetch_runs() { # workflow_name output_prefix
+            local wf="$1" prefix="$2"
+            gh api "repos/$repo/actions/workflows" --paginate \
+              -q ".workflows[] | select(.name==\"$wf\") | .id" 2>/dev/null | while read -r wf_id; do
+              gh api "repos/$repo/actions/workflows/$wf_id/runs?status=completed&per_page=30" \
+                -q '.workflow_runs[] | select(.head_repository.full_name=="'"${repo%/*}'/${repo#*/}"' or .head_repository.full_name=="'"$repo"'") | .id' 2>/dev/null
+            done > "/tmp/${prefix}_runs.txt"
+          }
+
+          fetch_runs "CI" ci
+          fetch_runs "CI Shadow" shadow
+
+          python3 - <<'PYEOF'
+          import json, os, subprocess, sys
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+
+          def gh(path):
+              r = subprocess.run(["gh", "api", path, "-q", "."], capture_output=True, text=True)
+              if r.returncode != 0:
+                  return None
+              try:
+                  return json.loads(r.stdout)
+              except:
+                  return None
+
+          def collect(prefix, wf_name):
+              runs = []
+              ids_file = f"/tmp/{prefix}_runs.txt"
+              if not os.path.exists(ids_file):
+                  return runs
+              with open(ids_file) as f:
+                  run_ids = [int(l.strip()) for l in f if l.strip()][:30]
+              for rid in run_ids:
+                  run = gh(f"repos/{repo}/actions/runs/{rid}")
+                  if not run:
+                      continue
+                  jobs_resp = gh(f"repos/{repo}/actions/runs/{rid}/jobs")
+                  jobs = []
+                  if jobs_resp and "jobs" in jobs_resp:
+                      for j in jobs_resp["jobs"]:
+                          jobs.append({
+                              "name": j.get("name",""),
+                              "status": j.get("status",""),
+                              "started_at": j.get("started_at",""),
+                              "completed_at": j.get("completed_at",""),
+                              "conclusion": j.get("conclusion",""),
+                              "runner_os": next((l for l in j.get("labels",[]) if any(o in l for o in ("ubuntu","windows","macos"))), ""),
+                          })
+                  obs = {
+                      "workflow": wf_name,
+                      "run_id": rid,
+                      "event": run.get("event",""),
+                      "attempt": run.get("run_attempt", 1),
+                      "head_sha": run.get("head_sha",""),
+                      "head_branch": run.get("head_branch",""),
+                      "checkout_sha": run.get("head_sha",""),
+                      "created_at": run.get("created_at",""),
+                      "status": run.get("status",""),
+                      "conclusion": run.get("conclusion",""),
+                      "jobs": jobs,
+                  }
+                  runs.append(obs)
+              return runs
+
+          all_runs = collect("ci", "CI") + collect("shadow", "CI Shadow")
+          if all_runs:
+              with open("/tmp/observe/runs.json", "w") as f:
+                  json.dump(all_runs, f, indent=2)
+              print(f"collected {len(all_runs)} run observations")
+          else:
+              print("no runs collected", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
+
+      - name: Evaluate qualification
+        run: |
+          go run ./tools/ciobserve \
+            --fixtures /tmp/observe \
+            --output /tmp/qualification.json \
+            --minimum-runs 20 \
+            --minimum-days 7 \
+            --max-p95-seconds 480
+
+      - name: Show qualification verdict
+        run: cat /tmp/qualification.json

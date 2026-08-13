@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -72,6 +75,34 @@ packages:
     class: test-owned
     owner: generated-drift-current
     roles: []
+linux_race_shards:
+  workflow: CI Shadow
+  shards:
+    - id: linux-race-alpha
+      packages: [., internal/manifest]
+    - id: linux-race-beta
+      packages: [pkg/engine, tools/skillgen]
+`
+
+const validServices = `
+schema_version: 1
+services:
+  - id: fixture-db
+    workflow: CI Shadow
+    job: fixture-db-contract
+    image: {repository: pgvector/pgvector, tag: pg16, digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+    env: TEST_DATABASE_URL
+    packages: [internal/manifest]
+    selected_tests: [TestConcurrentManifestUpdates]
+    parallel: 1
+  - id: fixture-object
+    workflow: CI Shadow
+    job: fixture-object-contract
+    image: {repository: minio/minio, tag: latest, digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+    client: {name: mc, url: "https://dl.min.io/client/mc/release/linux-amd64/mc", sha256: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}
+    env: SAGE_TEST_MINIO
+    packages: [internal/manifest]
+    selected_tests: [TestConcurrentManifestUpdates]
 `
 
 const validPlatforms = `
@@ -249,7 +280,7 @@ func TestOwnership(t *testing.T) {
 		{
 			name: "duplicate package",
 			edit: func(s string) string {
-				return s + "  - path: .\n    class: test-owned\n    owner: generated-drift-current\n    roles: []\n"
+				return strings.Replace(s, "linux_race_shards:\n", "  - path: .\n    class: test-owned\n    owner: generated-drift-current\n    roles: []\nlinux_race_shards:\n", 1)
 			},
 			code: ProblemDuplicateID,
 		},
@@ -388,6 +419,7 @@ func TestRepositoryValidation(t *testing.T) {
 		},
 		MakeTargets:         map[string]struct{}{},
 		DeterminismPackages: nil,
+		ExpectedWorkflows:   map[string]struct{}{"CI Shadow": {}},
 		PlatformSignals: []DiscoveredPlatformSignal{
 			{Path: "internal/manifest/lock.go", Kind: PlatformSignalRuntimeGOOS},
 		},
@@ -630,6 +662,25 @@ func TestPlatformRuntimeSignalUsesImportedName(t *testing.T) {
 	}
 }
 
+func TestWorkflowNameOnly(t *testing.T) {
+	if name := workflowNameOnly([]byte("name: CI Shadow\non: push\n")); name != "CI Shadow" {
+		t.Fatalf("workflowNameOnly = %q, want CI Shadow", name)
+	}
+	if name := workflowNameOnly([]byte("jobs: {}\n")); name != "" {
+		t.Fatalf("workflowNameOnly = %q, want empty", name)
+	}
+	if name := workflowNameOnly([]byte("not: [valid")); name != "" {
+		t.Fatalf("workflowNameOnly = %q, want empty on malformed input", name)
+	}
+}
+
+const validFuzzTargets = `
+schema_version: 1
+targets:
+  - {package: internal/manifest, target: FuzzWidget, tier: pr, budget_seconds: 30}
+  - {package: pkg/engine, target: FuzzGadget, tier: scheduled, budget_seconds: 60}
+`
+
 func parseValidManifests(t *testing.T) Manifests {
 	t.Helper()
 	standards, err := parseStandards("standards.yaml", []byte(validStandards))
@@ -644,7 +695,507 @@ func parseValidManifests(t *testing.T) Manifests {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Manifests{Standards: standards, Packages: packages, Platforms: platforms}
+	services, err := parseServiceContracts("service-contracts.yaml", []byte(validServices))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fuzz, err := parseFuzzTargets("fuzz-targets.yaml", []byte(validFuzzTargets))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Manifests{Standards: standards, Packages: packages, Platforms: platforms, Services: services, Fuzz: fuzz}
+}
+
+func TestFuzzTargetsStatic(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(string) string
+		code ProblemCode
+	}{
+		{
+			name: "duplicate package target pair",
+			edit: func(s string) string {
+				return s + "  - {package: internal/manifest, target: FuzzWidget, tier: scheduled, budget_seconds: 60}\n"
+			},
+			code: ProblemDuplicateID,
+		},
+		{
+			name: "unknown tier",
+			edit: func(s string) string {
+				return strings.Replace(s, "tier: pr", "tier: always", 1)
+			},
+			code: ProblemUnknownEnum,
+		},
+		{
+			name: "zero budget",
+			edit: func(s string) string {
+				return strings.Replace(s, "budget_seconds: 30", "budget_seconds: 0", 1)
+			},
+			code: ProblemMissingField,
+		},
+		{
+			name: "unowned fuzz package",
+			edit: func(s string) string {
+				return strings.Replace(s, "package: internal/manifest", "package: package/does-not-exist", 1)
+			},
+			code: ProblemDanglingReference,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manifests := parseValidManifests(t)
+			fuzz, err := parseFuzzTargets("fuzz-targets.yaml", []byte(tt.edit(validFuzzTargets)))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			manifests.Fuzz = fuzz
+			assertProblemCode(t, validateStatic(manifests), tt.code)
+		})
+	}
+}
+
+func TestFuzzInventory(t *testing.T) {
+	base := func() RepositoryFacts {
+		return RepositoryFacts{
+			GoPackages: map[string][]string{
+				"linux": {
+					"github.com/xoai/sage-wiki",
+					"github.com/xoai/sage-wiki/internal/manifest",
+					"github.com/xoai/sage-wiki/pkg/engine",
+					"github.com/xoai/sage-wiki/tools/skillgen",
+				},
+			},
+			Workflow: WorkflowFacts{
+				Name: "CI",
+				Jobs: map[string]WorkflowJob{
+					"skill-drift": {},
+					"ci-required": {Needs: []string{"skill-drift"}},
+				},
+			},
+			ExpectedWorkflows: map[string]struct{}{"CI Shadow": {}},
+			MakeTargets:       map[string]struct{}{},
+			FuzzTargets: []DiscoveredFuzzTarget{
+				{Package: "internal/manifest", Target: "FuzzWidget"},
+				{Package: "pkg/engine", Target: "FuzzGadget"},
+			},
+			PlatformSignals: []DiscoveredPlatformSignal{
+				{Path: "internal/manifest/lock.go", Kind: PlatformSignalRuntimeGOOS},
+			},
+			ExistingPaths: map[string]struct{}{
+				"skills/":                   {},
+				"internal/web/dist/":        {},
+				"internal/manifest/lock.go": {},
+			},
+		}
+	}
+	if problems := validateRepository(parseValidManifests(t), base()); len(problems) != 0 {
+		t.Fatalf("valid fuzz inventory: %#v", problems)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*Manifests, *RepositoryFacts)
+		code   ProblemCode
+	}{
+		{
+			name: "source fuzz target added without inventory",
+			mutate: func(_ *Manifests, facts *RepositoryFacts) {
+				facts.FuzzTargets = append(facts.FuzzTargets, DiscoveredFuzzTarget{Package: "internal/manifest", Target: "FuzzSurprise"})
+			},
+			code: ProblemFuzzTargetUnowned,
+		},
+		{
+			name: "removed target kept in inventory",
+			mutate: func(_ *Manifests, facts *RepositoryFacts) {
+				facts.FuzzTargets = facts.FuzzTargets[:1]
+			},
+			code: ProblemFuzzTargetStale,
+		},
+		{
+			name: "empty scheduled suite",
+			mutate: func(manifests *Manifests, facts *RepositoryFacts) {
+				manifests.Fuzz.Targets[1].Tier = "pr"
+				facts.FuzzTargets = facts.FuzzTargets[:1]
+			},
+			code: ProblemFuzzScheduledEmpty,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manifests := parseValidManifests(t)
+			facts := cloneRepositoryFacts(base())
+			tt.mutate(&manifests, &facts)
+			assertProblemCode(t, validateRepository(manifests, facts), tt.code)
+		})
+	}
+}
+
+func TestScanFuzzTargets(t *testing.T) {
+	fsys := fstest.MapFS{
+		"internal/widget/fuzz_test.go":  {Data: []byte("package widget\n\nimport \"testing\"\n\nfunc FuzzAlpha(f *testing.F) {}\n\nfunc TestBeta(t *testing.T) {}\n")},
+		"internal/widget/other_test.go": {Data: []byte("package widget\n\nfunc FuzzGamma(f *testing.F) {}\n")},
+		"internal/plain/plain.go":       {Data: []byte("package plain\n")},
+	}
+	targets, err := scanFuzzTargets(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]struct{}{
+		"internal/widget|FuzzAlpha": {},
+		"internal/widget|FuzzGamma": {},
+	}
+	if len(targets) != len(want) {
+		t.Fatalf("targets = %#v, want %v", targets, want)
+	}
+	for _, target := range targets {
+		if _, exists := want[target.Package+"|"+target.Target]; !exists {
+			t.Fatalf("unexpected target %#v", target)
+		}
+	}
+}
+
+func TestPrintFuzzTargetsJSON(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	common := []string{
+		"--standards", write("standards.yaml", validStandards),
+		"--packages", write("package-ownership.yaml", validOwnership),
+		"--platforms", write("platform-contracts.yaml", validPlatforms),
+		"--services", write("service-contracts.yaml", validServices),
+		"--fuzz-targets", write("fuzz-targets.yaml", validFuzzTargets),
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := run(append(common, "--print-fuzz-targets-json", "scheduled"), &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"package":"pkg/engine"`) || !strings.Contains(stdout.String(), `"target":"FuzzGadget"`) || !strings.Contains(stdout.String(), `"budget":"60s"`) {
+		t.Fatalf("print-fuzz-targets-json = %q", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "FuzzWidget") {
+		t.Fatalf("scheduled filter leaked pr targets: %q", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := run(append(common, "--print-fuzz-targets-json", "bogus"), &stdout, &stderr); code == 0 {
+		t.Fatal("unknown tier accepted")
+	}
+}
+
+func TestShards(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(string) string
+		code ProblemCode
+	}{
+		{
+			name: "empty shard packages",
+			edit: func(s string) string {
+				return strings.Replace(s, "packages: [., internal/manifest]", "packages: []", 1)
+			},
+			code: ProblemShardEmpty,
+		},
+		{
+			name: "ordinary package duplicated across shards",
+			edit: func(s string) string {
+				return strings.Replace(s, "packages: [pkg/engine, tools/skillgen]", "packages: [pkg/engine, tools/skillgen, internal/manifest]", 1)
+			},
+			code: ProblemShardDuplicate,
+		},
+		{
+			name: "ordinary package missing from every shard",
+			edit: func(s string) string {
+				return strings.Replace(s, "packages: [pkg/engine, tools/skillgen]", "packages: [pkg/engine]", 1)
+			},
+			code: ProblemShardMissing,
+		},
+		{
+			name: "shard package is unowned",
+			edit: func(s string) string {
+				return strings.Replace(s, "packages: [pkg/engine, tools/skillgen]", "packages: [pkg/engine, tools/skillgen, package/does-not-exist]", 1)
+			},
+			code: ProblemShardUnowned,
+		},
+		{
+			name: "duplicate shard id",
+			edit: func(s string) string {
+				return strings.Replace(s, "id: linux-race-beta", "id: linux-race-alpha", 1)
+			},
+			code: ProblemDuplicateID,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manifests := parseValidManifests(t)
+			packages, err := parsePackageOwnership("package-ownership.yaml", []byte(tt.edit(validOwnership)))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			manifests.Packages = packages
+			assertProblemCode(t, validateStatic(manifests), tt.code)
+		})
+	}
+}
+
+func TestServiceContracts(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(string) string
+		code ProblemCode
+	}{
+		{
+			name: "skipped service selector",
+			edit: func(s string) string {
+				return strings.Replace(s, "selected_tests: [TestConcurrentManifestUpdates]\n    parallel: 1", "selected_tests: []\n    parallel: 1", 1)
+			},
+			code: ProblemServiceSelectorEmpty,
+		},
+		{
+			name: "service test count drifts",
+			edit: func(s string) string {
+				return strings.Replace(s, "selected_tests: [TestConcurrentManifestUpdates]\n    parallel: 1", "selected_tests: [TestConcurrentManifestUpdates, TestMissingFromDiscovery]\n    parallel: 1", 1)
+			},
+			code: ProblemServiceTestDrift,
+		},
+		{
+			name: "unpinned service image",
+			edit: func(s string) string {
+				return strings.Replace(s, `digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"`, `digest: ""`, 1)
+			},
+			code: ProblemServicePinMissing,
+		},
+		{
+			name: "malformed image digest",
+			edit: func(s string) string {
+				return strings.Replace(s, `digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"`, `digest: "sha256:short"`, 1)
+			},
+			code: ProblemServicePinMissing,
+		},
+		{
+			name: "unpinned service client",
+			edit: func(s string) string {
+				return strings.Replace(s, `sha256: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"`, `sha256: ""`, 1)
+			},
+			code: ProblemServicePinMissing,
+		},
+		{
+			name: "duplicate service id",
+			edit: func(s string) string {
+				return strings.Replace(s, "id: fixture-object", "id: fixture-db", 1)
+			},
+			code: ProblemDuplicateID,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manifests := parseValidManifests(t)
+			services, err := parseServiceContracts("service-contracts.yaml", []byte(tt.edit(validServices)))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			manifests.Services = services
+			problems := validateStatic(manifests)
+			if tt.code == ProblemServiceTestDrift {
+				facts := baseShadowFacts(t)
+				problems = append(problems, validateRepository(manifests, facts)...)
+			}
+			assertProblemCode(t, problems, tt.code)
+		})
+	}
+}
+
+func baseShadowFacts(t *testing.T) RepositoryFacts {
+	t.Helper()
+	return RepositoryFacts{
+		GoPackages: map[string][]string{
+			"linux": {
+				"github.com/xoai/sage-wiki",
+				"github.com/xoai/sage-wiki/internal/manifest",
+				"github.com/xoai/sage-wiki/pkg/engine",
+				"github.com/xoai/sage-wiki/tools/skillgen",
+			},
+		},
+		Workflow: WorkflowFacts{
+			Name: "CI Shadow",
+			Jobs: map[string]WorkflowJob{
+				"linux-race-alpha":        {},
+				"linux-race-beta":         {},
+				"fixture-db-contract":     {},
+				"fixture-object-contract": {},
+			},
+		},
+		WorkflowRaw: "image: pgvector/pgvector@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n" +
+			"minio/minio@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n" +
+			"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n",
+		ExpectedWorkflows: map[string]struct{}{"CI": {}},
+		MakeTargets:       map[string]struct{}{},
+		ServiceTests: map[string][]string{
+			"fixture-db":     {"TestConcurrentManifestUpdates"},
+			"fixture-object": {"TestConcurrentManifestUpdates"},
+		},
+		PlatformSignals: []DiscoveredPlatformSignal{
+			{Path: "internal/manifest/lock.go", Kind: PlatformSignalRuntimeGOOS},
+		},
+		ExistingPaths: map[string]struct{}{
+			"skills/":                   {},
+			"internal/web/dist/":        {},
+			"internal/manifest/lock.go": {},
+		},
+	}
+}
+
+func TestShadowWorkflowValidation(t *testing.T) {
+	facts := baseShadowFacts(t)
+	manifests := parseValidManifests(t)
+	if problems := validateRepository(manifests, facts); len(problems) != 0 {
+		t.Fatalf("valid shadow facts: %#v", problems)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*Manifests, *RepositoryFacts)
+		code   ProblemCode
+	}{
+		{
+			name: "shard job missing from shadow workflow",
+			mutate: func(_ *Manifests, facts *RepositoryFacts) {
+				delete(facts.Workflow.Jobs, "linux-race-beta")
+			},
+			code: ProblemShadowJobMissing,
+		},
+		{
+			name: "service job missing from shadow workflow",
+			mutate: func(_ *Manifests, facts *RepositoryFacts) {
+				delete(facts.Workflow.Jobs, "fixture-db-contract")
+			},
+			code: ProblemShadowJobMissing,
+		},
+		{
+			name: "shadow workflow omits the pinned image",
+			mutate: func(_ *Manifests, facts *RepositoryFacts) {
+				facts.WorkflowRaw = "no pins here"
+			},
+			code: ProblemServicePinMissing,
+		},
+		{
+			name: "service discovery finds a different test set",
+			mutate: func(_ *Manifests, facts *RepositoryFacts) {
+				facts.ServiceTests["fixture-db"] = []string{"TestSomethingElse"}
+			},
+			code: ProblemServiceTestDrift,
+		},
+		{
+			name: "service discovery is empty",
+			mutate: func(_ *Manifests, facts *RepositoryFacts) {
+				facts.ServiceTests["fixture-object"] = nil
+			},
+			code: ProblemServiceTestDrift,
+		},
+		{
+			name: "shadow references an unknown workflow",
+			mutate: func(manifests *Manifests, _ *RepositoryFacts) {
+				manifests.Services.Services[0].Workflow = "CI Shadw"
+			},
+			code: ProblemWorkflowMismatch,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manifests := parseValidManifests(t)
+			facts := cloneRepositoryFacts(baseShadowFacts(t))
+			tt.mutate(&manifests, &facts)
+			assertProblemCode(t, validateRepository(manifests, facts), tt.code)
+		})
+	}
+
+	t.Run("current-workflow references are skipped when validating shadow", func(t *testing.T) {
+		manifests := parseValidManifests(t)
+		facts := cloneRepositoryFacts(baseShadowFacts(t))
+		facts.ExpectedWorkflows = map[string]struct{}{"CI": {}}
+		problems := validateRepository(manifests, facts)
+		for _, problem := range problems {
+			if problem.Code == ProblemWorkflowMismatch || problem.Code == ProblemWorkflowJobMissing || problem.Code == ProblemAggregateMissing {
+				t.Fatalf("CI references must not fail shadow validation: %#v", problems)
+			}
+		}
+	})
+}
+
+func TestPrintModes(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	standards := write("standards.yaml", validStandards)
+	ownership := write("package-ownership.yaml", validOwnership)
+	platforms := write("platform-contracts.yaml", validPlatforms)
+	services := write("service-contracts.yaml", validServices)
+	common := []string{
+		"--standards", standards,
+		"--packages", ownership,
+		"--platforms", platforms,
+		"--services", services,
+		"--fuzz-targets", write("fuzz-targets.yaml", validFuzzTargets),
+	}
+
+	t.Run("print-shard", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		code := run(append(common, "--print-shard", "linux-race-alpha"), &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("exit = %d, stderr=%q", code, stderr.String())
+		}
+		if got := strings.TrimSpace(stdout.String()); got != ". ./internal/manifest" {
+			t.Fatalf("print-shard = %q", got)
+		}
+	})
+
+	t.Run("print-shard unknown", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		if code := run(append(common, "--print-shard", "linux-race-missing"), &stdout, &stderr); code == 0 {
+			t.Fatal("unknown shard accepted")
+		}
+	})
+
+	t.Run("print-platform-packages", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		code := run(append(common, "--print-platform-packages", "windows"), &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("exit = %d, stderr=%q", code, stderr.String())
+		}
+		if got := strings.TrimSpace(stdout.String()); got != "./internal/manifest" {
+			t.Fatalf("print-platform-packages = %q", got)
+		}
+	})
+
+	t.Run("print-platform-packages empty goos", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		if code := run(append(common, "--print-platform-packages", "aix"), &stdout, &stderr); code == 0 {
+			t.Fatal("empty platform package list accepted")
+		}
+	})
+
+	t.Run("print-service-run", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		code := run(append(common, "--print-service-run", "fixture-db"), &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("exit = %d, stderr=%q", code, stderr.String())
+		}
+		got := strings.TrimSpace(stdout.String())
+		if !strings.Contains(got, "-run ^(TestConcurrentManifestUpdates)$") || !strings.Contains(got, "-p 1") || !strings.Contains(got, "./internal/manifest") {
+			t.Fatalf("print-service-run = %q", got)
+		}
+	})
 }
 
 func cloneRepositoryFacts(in RepositoryFacts) RepositoryFacts {
@@ -669,6 +1220,21 @@ func cloneRepositoryFacts(in RepositoryFacts) RepositoryFacts {
 	for path := range in.ExistingPaths {
 		out.ExistingPaths[path] = struct{}{}
 	}
+	out.ExpectedWorkflows = nil
+	if in.ExpectedWorkflows != nil {
+		out.ExpectedWorkflows = make(map[string]struct{}, len(in.ExpectedWorkflows))
+		for name := range in.ExpectedWorkflows {
+			out.ExpectedWorkflows[name] = struct{}{}
+		}
+	}
+	out.ServiceTests = nil
+	if in.ServiceTests != nil {
+		out.ServiceTests = make(map[string][]string, len(in.ServiceTests))
+		for id, tests := range in.ServiceTests {
+			out.ServiceTests[id] = append([]string(nil), tests...)
+		}
+	}
+	out.FuzzTargets = append([]DiscoveredFuzzTarget(nil), in.FuzzTargets...)
 	return out
 }
 

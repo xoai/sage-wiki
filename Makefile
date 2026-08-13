@@ -72,14 +72,44 @@ modules-check:
 
 # Responsibility manifests: parser/validation suite plus the live fail-closed
 # validator (exact package partition, aggregate membership, Make targets,
-# determinism roles, platform inventory).
+# determinism roles, platform inventory, shards, service contracts, fuzz
+# inventory). Every workflow is validated so a witness job reference can
+# never point at a job that does not exist: ci.yml (required aggregate),
+# ci-shadow.yml (advisory candidates), fuzz.yml (scheduled exploration),
+# and ci-diagnostics.yml (scheduled broad diagnostics).
 responsibility-check:
 	$(GO) test ./tools/civalidate -count=1
 	$(GO) run ./tools/civalidate \
 		--standards ci/standards.yaml \
 		--packages ci/package-ownership.yaml \
 		--platforms ci/platform-contracts.yaml \
+		--services ci/service-contracts.yaml \
+		--fuzz-targets ci/fuzz-targets.yaml \
 		--workflow .github/workflows/ci.yml \
+		--makefile Makefile
+	$(GO) run ./tools/civalidate \
+		--standards ci/standards.yaml \
+		--packages ci/package-ownership.yaml \
+		--platforms ci/platform-contracts.yaml \
+		--services ci/service-contracts.yaml \
+		--fuzz-targets ci/fuzz-targets.yaml \
+		--workflow .github/workflows/ci-shadow.yml \
+		--makefile Makefile
+	$(GO) run ./tools/civalidate \
+		--standards ci/standards.yaml \
+		--packages ci/package-ownership.yaml \
+		--platforms ci/platform-contracts.yaml \
+		--services ci/service-contracts.yaml \
+		--fuzz-targets ci/fuzz-targets.yaml \
+		--workflow .github/workflows/fuzz.yml \
+		--makefile Makefile
+	$(GO) run ./tools/civalidate \
+		--standards ci/standards.yaml \
+		--packages ci/package-ownership.yaml \
+		--platforms ci/platform-contracts.yaml \
+		--services ci/service-contracts.yaml \
+		--fuzz-targets ci/fuzz-targets.yaml \
+		--workflow .github/workflows/ci-diagnostics.yml \
 		--makefile Makefile
 
 # Determinism tripwire: contract self-test first, then the live scan.

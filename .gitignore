@@ -17,6 +17,7 @@ sage/
 # Build
 /sage-wiki
 /civalidate
+/ciobserve
 /testsummary
 bin/
 

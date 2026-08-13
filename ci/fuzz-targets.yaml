@@ -1,0 +1,33 @@
+schema_version: 1
+
+# Fuzz target inventory (20260812-ci-quality-system Task 11).
+#
+# Every `func Fuzz*` in the repository must appear here, and every entry must
+# still exist in source — civalidate scans *_test.go and fails closed on
+# drift in either direction, plus an empty scheduled suite. Committed seed
+# corpora run deterministically in ordinary package tests (fuzz-regressions
+# standard); everything here is time-bounded random exploration.
+#
+# Tiers:
+#   pr        — mirrored in ci.yml's PR-gated fuzz-short job (hardening
+#               surfaces, 30s each) and nightly. Descriptive mirror today:
+#               ci.yml's step list is not yet manifest-driven; civalidate
+#               cross-check is wired when fuzz-short becomes manifest-driven
+#               (Task 15). Both lists agree now (8 targets).
+#   scheduled — nightly fuzz.yml only (broad extractor exploration, 60s each).
+
+targets:
+  - {package: internal/extract, target: FuzzExtractDocx, tier: scheduled, budget_seconds: 60}
+  - {package: internal/extract, target: FuzzExtractXlsx, tier: scheduled, budget_seconds: 60}
+  - {package: internal/extract, target: FuzzExtractPptx, tier: scheduled, budget_seconds: 60}
+  - {package: internal/extract, target: FuzzExtractEpub, tier: scheduled, budget_seconds: 60}
+  - {package: internal/extract, target: FuzzExtractEmail, tier: scheduled, budget_seconds: 60}
+  - {package: internal/extract, target: FuzzExtractPdfGo, tier: scheduled, budget_seconds: 60}
+  - {package: internal/extract, target: FuzzFrontmatter, tier: pr, budget_seconds: 30}
+  - {package: internal/web, target: FuzzFrontmatter, tier: pr, budget_seconds: 30}
+  - {package: internal/ontology, target: FuzzFrontmatter, tier: pr, budget_seconds: 30}
+  - {package: internal/wiki, target: FuzzFrontmatter, tier: pr, budget_seconds: 30}
+  - {package: internal/compiler, target: FuzzFrontmatter, tier: pr, budget_seconds: 30}
+  - {package: internal/compiler, target: FuzzWikilink, tier: pr, budget_seconds: 30}
+  - {package: internal/compiler, target: FuzzAliasNormalize, tier: pr, budget_seconds: 30}
+  - {package: internal/compiler, target: FuzzCanonical, tier: pr, budget_seconds: 30}

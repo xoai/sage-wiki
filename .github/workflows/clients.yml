@@ -8,14 +8,28 @@ name: Clients
 on:
   push:
     branches: [main]
-    paths: ["clients/**", "examples/**", "scripts/p4-fixture-server.sh", "internal/**", "cmd/**", ".github/workflows/clients.yml"]
+    paths: ["clients/**", "examples/**", "scripts/p4-fixture-server.sh", "scripts/ci/classify-client-paths.sh", "internal/**", "cmd/**", "api/openapi.yaml", ".github/workflows/clients.yml"]
   pull_request:
-    paths: ["clients/**", "examples/**", "scripts/p4-fixture-server.sh", "internal/**", "cmd/**", ".github/workflows/clients.yml"]
+    paths: ["clients/**", "examples/**", "scripts/p4-fixture-server.sh", "scripts/ci/classify-client-paths.sh", "internal/**", "cmd/**", "api/openapi.yaml", ".github/workflows/clients.yml"]
 
 permissions:
   contents: read
 
 jobs:
+  # Contract test for the client path classifier (20260812-ci-quality-system
+  # Task 11): the classifier decides which changes are client-relevant, and a
+  # weakened classifier would silently skip client contract tests on exactly
+  # the changes that break clients. This self-test must pass before the
+  # classifier is trusted with relevant-change execution; it runs on every
+  # triggered build so a regression is immediately red.
+  path-classifier-self-test:
+    name: Client path classifier self-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Classifier self-test
+        run: bash scripts/ci/classify-client-paths.sh --self-test
+
   python-unit:
     name: Python unit (${{ matrix.python }})
     runs-on: ubuntu-latest
@@ -38,7 +52,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26"
+          go-version-file: go.mod
           cache: true
       - uses: actions/setup-python@v5
         with:
@@ -74,7 +88,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26"
+          go-version-file: go.mod
           cache: true
       - uses: actions/setup-node@v4
         with:
@@ -95,7 +109,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26"
+          go-version-file: go.mod
           cache: true
       - uses: actions/setup-python@v5
         with:

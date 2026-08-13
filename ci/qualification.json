@@ -1,0 +1,10 @@
+{
+  "candidate_workflow": "CI Shadow",
+  "current_workflow": "CI",
+  "sample_count": 0,
+  "date_span_days": 0,
+  "status": "pending",
+  "reason": "Qualification window not yet started.",
+  "owner_disposition": "pending",
+  "generated_at": ""
+}

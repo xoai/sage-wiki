@@ -98,10 +98,14 @@ that assert security invariants only (no panic, no unbounded growth,
 deterministic output): `FuzzFrontmatter` (one per owning package —
 extract, web, ontology, wiki, compiler), `FuzzWikilink`,
 `FuzzAliasNormalize`, and `FuzzCanonical`, alongside the extractor
-`FuzzExtract{Docx,Xlsx,Pptx,Epub,Email,PdfGo}` targets. A PR-gated
-short pass runs every target for 30s and a nightly job runs longer; any
-crasher is committed to the corpus. See
-[CONTRIBUTING § Fuzzing](../CONTRIBUTING.md#fuzzing) for running them
+`FuzzExtract{Docx,Xlsx,Pptx,Epub,Email,PdfGo}` targets. All targets are
+recorded in the machine-readable inventory at
+[`ci/fuzz-targets.yaml`](../ci/fuzz-targets.yaml), validated fail-closed
+against the source tree. A PR-gated short pass runs the 8 hardening
+targets for 30s each (`fuzz-short` in ci.yml); the 6 extractor format
+targets run nightly only (fuzz.yml), where all 14 targets get
+time-bounded random exploration. Any crasher is committed to the corpus.
+See [CONTRIBUTING § Fuzzing](../CONTRIBUTING.md#fuzzing) for running them
 locally.
 
 ## Residual risks

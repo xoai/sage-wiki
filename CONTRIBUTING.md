@@ -130,10 +130,23 @@ malformed docx/xlsx/pptx/epub/eml/pdf inputs and checks the caps hold.
 
 ## Fuzzing
 
-Native Go fuzz targets guard the parsing and hardening surfaces. A PR-gated
-short pass runs every target for 30s (`fuzz-short` job in
-[.github/workflows/ci.yml](.github/workflows/ci.yml)); a nightly job runs the
-same targets longer ([.github/workflows/fuzz.yml](.github/workflows/fuzz.yml)).
+Native Go fuzz targets guard the parsing and hardening surfaces. Two tiers run
+in CI, both driven by the machine-readable inventory in
+[`ci/fuzz-targets.yaml`](ci/fuzz-targets.yaml) (validated fail-closed against
+the source tree — a new target without an inventory entry, or a stale entry,
+turns the nightly job red):
+
+- **PR-gated short pass** (`fuzz-short` job in
+  [.github/workflows/ci.yml](.github/workflows/ci.yml)): the 8 hardening
+  targets (`FuzzFrontmatter` ×5 packages, `FuzzWikilink`,
+  `FuzzAliasNormalize`, `FuzzCanonical`) for 30s each.
+- **Nightly exploration** ([.github/workflows/fuzz.yml](.github/workflows/fuzz.yml)):
+  every target in the inventory — the 8 hardening targets plus the 6 extractor
+  format targets (`FuzzExtract{Docx,Xlsx,Pptx,Epub,Email,PdfGo}`), which do
+  **not** run on PRs.
+
+Committed seed corpora run deterministically as ordinary package tests on
+every PR; only the time-bounded random exploration above is scheduled.
 
 Run a target locally (pick one target per invocation — Go's `-fuzz` errors if
 a pattern matches more than one):

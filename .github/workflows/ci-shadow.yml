@@ -1,0 +1,347 @@
+# CI Shadow — advisory candidate DAG (20260812-ci-quality-system Task 10).
+#
+# Every job here is a CANDIDATE witness earning qualification under the
+# shadow protocol (>= 20 relevant executions over >= 7 days, zero unexplained
+# divergence, explicit promotion approval — ADR-042). None of these jobs is
+# in the required `CI required` aggregate in ci.yml, and this workflow has no
+# aggregate of its own: nothing in this file can block a merge.
+#
+# Package lists, service selectors, and pins are manifest-driven: civalidate
+# prints them from ci/package-ownership.yaml, ci/platform-contracts.yaml, and
+# ci/service-contracts.yaml, and the shadow-validation job re-checks this
+# workflow against those manifests on every run.
+
+name: CI Shadow
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Nightly: scheduled diagnostics (fuzz exploration) run here; PR/push
+    # events run only the merge-candidate jobs below.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  shadow-validation:
+    name: Shadow responsibility validation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      # Self-tests first: a broken checker must be visible before the live
+      # validation below could produce a false green.
+      - name: Checker self-tests
+        run: |
+          bash scripts/ci/check-format.sh --self-test
+          bash scripts/ci/check-modules.sh --self-test
+          bash scripts/ci/run-go-tests.sh --self-test
+
+      - name: Validate manifests against this shadow workflow
+        run: |
+          go run ./tools/civalidate \
+            --standards ci/standards.yaml \
+            --packages ci/package-ownership.yaml \
+            --platforms ci/platform-contracts.yaml \
+            --services ci/service-contracts.yaml \
+            --workflow .github/workflows/ci-shadow.yml \
+            --makefile Makefile
+
+  # Candidate Linux race shards — rebalanced from measured package timings.
+  # Package lists come from the ownership manifest, so a shard edit drifts
+  # the manifest and the shadow-validation job, never just this job.
+  linux-race-parity:
+    name: Shadow Linux race shard parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - id: pkgs
+        name: Resolve shard packages from the manifest
+        run: echo "packages=$(go run ./tools/civalidate --print-shard linux-race-parity)" >> "$GITHUB_OUTPUT"
+      - name: Test (race)
+        run: bash scripts/ci/run-go-tests.sh --standard go-correctness-race --raw "$RUNNER_TEMP/linux-race-parity.json" -- go test -race -timeout 15m ${{ steps.pkgs.outputs.packages }}
+
+  linux-race-compiler:
+    name: Shadow Linux race shard compiler
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - id: pkgs
+        name: Resolve shard packages from the manifest
+        run: echo "packages=$(go run ./tools/civalidate --print-shard linux-race-compiler)" >> "$GITHUB_OUTPUT"
+      - name: Test (race)
+        run: bash scripts/ci/run-go-tests.sh --standard go-correctness-race --raw "$RUNNER_TEMP/linux-race-compiler.json" -- go test -race -timeout 15m ${{ steps.pkgs.outputs.packages }}
+
+  linux-race-core:
+    name: Shadow Linux race shard core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - id: pkgs
+        name: Resolve shard packages from the manifest
+        run: echo "packages=$(go run ./tools/civalidate --print-shard linux-race-core)" >> "$GITHUB_OUTPUT"
+      - name: Test (race)
+        run: bash scripts/ci/run-go-tests.sh --standard go-correctness-race --raw "$RUNNER_TEMP/linux-race-core.json" -- go test -race -timeout 15m ${{ steps.pkgs.outputs.packages }}
+
+  linux-race-platform:
+    name: Shadow Linux race shard platform
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - id: pkgs
+        name: Resolve shard packages from the manifest
+        run: echo "packages=$(go run ./tools/civalidate --print-shard linux-race-platform)" >> "$GITHUB_OUTPUT"
+      - name: Test (race)
+        run: bash scripts/ci/run-go-tests.sh --standard go-correctness-race --raw "$RUNNER_TEMP/linux-race-platform.json" -- go test -race -timeout 15m ${{ steps.pkgs.outputs.packages }}
+
+  linux-race-rest:
+    name: Shadow Linux race shard rest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - id: pkgs
+        name: Resolve shard packages from the manifest
+        run: echo "packages=$(go run ./tools/civalidate --print-shard linux-race-rest)" >> "$GITHUB_OUTPUT"
+      - name: Test (race)
+        run: bash scripts/ci/run-go-tests.sh --standard go-correctness-race --raw "$RUNNER_TEMP/linux-race-rest.json" -- go test -race -timeout 15m ${{ steps.pkgs.outputs.packages }}
+
+  # Focused OS contracts: only the packages with a named invariant for this
+  # GOOS, from ci/platform-contracts.yaml. Full OS suites stay required in
+  # ci.yml until these focused lists qualify.
+  platform-windows:
+    name: Shadow focused Windows contracts
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - id: pkgs
+        name: Resolve contract packages from the manifest
+        run: echo "packages=$(go run ./tools/civalidate --print-platform-packages windows)" >> "$GITHUB_OUTPUT"
+      - name: Test focused contracts
+        run: CGO_ENABLED=0 go test -timeout 15m ${{ steps.pkgs.outputs.packages }}
+
+  platform-macos:
+    name: Shadow focused macOS contracts
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - id: pkgs
+        name: Resolve contract packages from the manifest
+        run: echo "packages=$(go run ./tools/civalidate --print-platform-packages darwin)" >> "$GITHUB_OUTPUT"
+      - name: Test focused contracts
+        run: CGO_ENABLED=0 go test -timeout 15m ${{ steps.pkgs.outputs.packages }}
+
+  # PostgreSQL contract — pinned image digest, selected env-gated tests only.
+  postgres-contract:
+    name: Shadow PostgreSQL contract
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sage_wiki_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - name: Enable pgvector in the test database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          for i in $(seq 1 15); do
+            pg_isready -h localhost -U postgres && break
+            sleep 2
+          done
+          psql -h localhost -U postgres -d sage_wiki_test \
+            -c 'CREATE EXTENSION IF NOT EXISTS vector;'
+          psql -h localhost -U postgres -d sage_wiki_test \
+            -c "SELECT extname FROM pg_extension WHERE extname='vector';" | grep -q vector
+
+      - id: args
+        name: Resolve selected tests from the manifest
+        run: echo "args=$(go run ./tools/civalidate --print-service-run postgres)" >> "$GITHUB_OUTPUT"
+
+      # Args pass through an env var: ${{ }} is textual substitution, and the
+      # -run regex contains parentheses that would be bash syntax errors if
+      # substituted directly into the script.
+      - name: Test selected contract tests
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/sage_wiki_test?sslmode=disable
+          SELECTED_ARGS: ${{ steps.args.outputs.args }}
+        run: CGO_ENABLED=0 go test $SELECTED_ARGS
+
+  # MinIO contract — pinned image digest AND pinned mc client checksum
+  # (verified before use), selected env-gated tests only.
+  minio-contract:
+    name: Shadow MinIO contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      # Background docker container (not a service container) so the server
+      # command is explicit — the image's default CMD no longer starts it.
+      - name: Start MinIO
+        run: >
+          docker run -d --name minio
+          -p 9000:9000
+          -e MINIO_ROOT_USER=minioadmin
+          -e MINIO_ROOT_PASSWORD=minioadmin
+          minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+          server /data --console-address ":9001"
+
+      - name: Wait for MinIO
+        run: |
+          for i in $(seq 1 20); do
+            if curl -fsS http://localhost:9000/minio/health/live 2>/dev/null; then
+              echo "MinIO ready"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "MinIO failed to start" && docker logs minio && exit 1
+
+      - name: Create test buckets (pinned mc)
+        run: |
+          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /tmp/mc
+          echo "01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891  /tmp/mc" | sha256sum -c -
+          chmod +x /tmp/mc
+          /tmp/mc alias set local http://localhost:9000 minioadmin minioadmin
+          /tmp/mc mb --ignore-existing local/sage-it-roundtrip
+          /tmp/mc mb --ignore-existing local/sage-it-corrupt
+          /tmp/mc mb --ignore-existing local/sage-it-crypt
+
+      - id: args
+        name: Resolve selected tests from the manifest
+        run: echo "args=$(go run ./tools/civalidate --print-service-run minio)" >> "$GITHUB_OUTPUT"
+
+      # Env-var indirection: see postgres-contract for why ${{ }} must not
+      # substitute the -run regex directly into the script.
+      - name: Test selected contract tests
+        env:
+          SAGE_TEST_MINIO: "1"
+          SAGE_TEST_MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+          SAGE_MIRROR_CRASH_LOOPS: "100"
+          SELECTED_ARGS: ${{ steps.args.outputs.args }}
+        run: CGO_ENABLED=0 go test -timeout 10m $SELECTED_ARGS
+
+  # Fuzz exploration, parallelized: one advisory matrix leg per target.
+  # Random exploration is a SCHEDULED diagnostic (spec §3), not a merge
+  # candidate — so it runs only on the nightly schedule / manual dispatch.
+  # Task 11 adds the target-inventory contract; a future milestone may
+  # compare this parallel shape against the sequential fuzz-short job.
+  fuzz-targets:
+    name: Shadow fuzz ${{ matrix.target }}
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: fm-extract
+            fuzz: FuzzFrontmatter
+            package: ./internal/extract/
+            crashers: internal/extract/testdata/fuzz/
+          - target: fm-web
+            fuzz: FuzzFrontmatter
+            package: ./internal/web/
+            crashers: internal/web/testdata/fuzz/
+          - target: fm-ontology
+            fuzz: FuzzFrontmatter
+            package: ./internal/ontology/
+            crashers: internal/ontology/testdata/fuzz/
+          - target: fm-wiki
+            fuzz: FuzzFrontmatter
+            package: ./internal/wiki/
+            crashers: internal/wiki/testdata/fuzz/
+          - target: fm-compiler
+            fuzz: FuzzFrontmatter
+            package: ./internal/compiler/
+            crashers: internal/compiler/testdata/fuzz/
+          - target: wikilink
+            fuzz: FuzzWikilink
+            package: ./internal/compiler/
+            crashers: internal/compiler/testdata/fuzz/
+          - target: alias
+            fuzz: FuzzAliasNormalize
+            package: ./internal/compiler/
+            crashers: internal/compiler/testdata/fuzz/
+          - target: canonical
+            fuzz: FuzzCanonical
+            package: ./internal/compiler/
+            crashers: internal/compiler/testdata/fuzz/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: Fuzz (30s)
+        run: go test -run=NONE -fuzz=${{ matrix.fuzz }} -fuzztime=30s ${{ matrix.package }}
+      - name: Upload crashers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-shadow-crashers-${{ matrix.target }}
+          path: ${{ matrix.crashers }}
+          if-no-files-found: ignore
+          retention-days: 14

@@ -70,5 +70,76 @@ packages:
   - {path: pkg/sagewiki, class: test-owned, owner: go-tests-current, roles: []}
   - {path: tests/pathological, class: test-owned, owner: go-tests-current, roles: []}
   - {path: tools/civalidate, class: test-owned, owner: go-tests-current, roles: []}
+  - {path: tools/ciobserve, class: test-owned, owner: go-tests-current, roles: []}
   - {path: tools/skillgen, class: test-owned, owner: go-tests-current, roles: []}
   - {path: tools/testsummary, class: test-owned, owner: go-tests-current, roles: []}
+
+# Candidate Linux race shards (20260812-ci-quality-system Task 10). Boundaries
+# come from measured package race timings; the shadow DAG measures hosted wall
+# time and Milestone 6 rebalances one variable at a time. Every ordinary
+# package (test-owned + helper-library) appears in exactly one shard —
+# civalidate enforces coverage, duplication, and shadow-job presence.
+linux_race_shards:
+  workflow: CI Shadow
+  shards:
+    - id: linux-race-parity
+      packages: [internal/parity]
+    - id: linux-race-compiler
+      packages: [internal/compiler]
+    - id: linux-race-core
+      packages: [internal/api, internal/mcp, internal/llm, internal/extract, internal/extract/parsers]
+    - id: linux-race-platform
+      packages: [internal/web, pkg/engine, internal/serve, internal/vectors, internal/vectors/hnsw]
+    - id: linux-race-rest
+      packages:
+        - .
+        - cmd/sage-wiki
+        - internal/app
+        - internal/auth
+        - internal/capturefmt
+        - internal/cli
+        - internal/config
+        - internal/embed
+        - internal/export
+        - internal/fsutil
+        - internal/git
+        - internal/graph
+        - internal/graph/community
+        - internal/hub
+        - internal/hybrid
+        - internal/limits
+        - internal/linter
+        - internal/log
+        - internal/manifest
+        - internal/memory
+        - internal/metrics
+        - internal/mirror
+        - internal/mirror/s3
+        - internal/ontology
+        - internal/pack
+        - internal/pathsafe
+        - internal/prompts
+        - internal/query
+        - internal/scribe
+        - internal/search
+        - internal/skill
+        - internal/sourcedate
+        - internal/sqlitestore
+        - internal/storage
+        - internal/storage/postgres
+        - internal/store
+        - internal/storedial
+        - internal/storetest
+        - internal/traversaltest
+        - internal/trust
+        - internal/tui
+        - internal/tui/compile
+        - internal/wiki
+        - pkg/events
+        - pkg/provider/providerfake
+        - pkg/sagewiki
+        - tests/pathological
+        - tools/civalidate
+        - tools/ciobserve
+        - tools/skillgen
+        - tools/testsummary

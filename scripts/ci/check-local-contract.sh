@@ -9,6 +9,7 @@ printf '%s\n' 'local-contract: checker self-tests'
 bash scripts/ci/check-format.sh --self-test
 bash scripts/ci/check-modules.sh --self-test
 bash scripts/ci/run-go-tests.sh --self-test
+bash scripts/ci/classify-client-paths.sh --self-test
 
 printf '%s\n' 'local-contract: format and module inputs'
 bash scripts/ci/check-format.sh
@@ -16,12 +17,16 @@ bash scripts/ci/check-modules.sh
 
 printf '%s\n' 'local-contract: responsibility manifests'
 go test ./tools/civalidate -count=1
-go run ./tools/civalidate \
-	--standards ci/standards.yaml \
-	--packages ci/package-ownership.yaml \
-	--platforms ci/platform-contracts.yaml \
-	--workflow .github/workflows/ci.yml \
-	--makefile Makefile
+for wf in ci ci-shadow fuzz ci-diagnostics; do
+	go run ./tools/civalidate \
+		--standards ci/standards.yaml \
+		--packages ci/package-ownership.yaml \
+		--platforms ci/platform-contracts.yaml \
+		--services ci/service-contracts.yaml \
+		--fuzz-targets ci/fuzz-targets.yaml \
+		--workflow ".github/workflows/$wf.yml" \
+		--makefile Makefile
+done
 
 printf '%s\n' 'local-contract: determinism self-test and scan'
 bash scripts/check-determinism.sh --self-test

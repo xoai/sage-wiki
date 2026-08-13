@@ -1,0 +1,64 @@
+[
+  {
+    "workflow": "CI",
+    "run_id": 1001,
+    "event": "pull_request",
+    "attempt": 1,
+    "head_sha": "fixture-sha-001",
+    "head_branch": "feature/example",
+    "checkout_sha": "merge-sha-001",
+    "created_at": "2026-08-13T10:00:00Z",
+    "status": "completed",
+    "conclusion": "success",
+    "jobs": [
+      {"name": "build", "status": "completed", "conclusion": "success", "started_at": "2026-08-13T10:00:30Z", "completed_at": "2026-08-13T10:01:30Z", "runtime_seconds": 60, "runner_os": "ubuntu-latest"},
+      {"name": "ci-required", "status": "completed", "conclusion": "success", "started_at": "2026-08-13T10:08:00Z", "completed_at": "2026-08-13T10:08:05Z", "runtime_seconds": 5, "runner_os": "ubuntu-latest"}
+    ]
+  },
+  {
+    "workflow": "CI Shadow",
+    "run_id": 2001,
+    "event": "pull_request",
+    "attempt": 1,
+    "head_sha": "fixture-sha-001",
+    "head_branch": "feature/example",
+    "checkout_sha": "merge-sha-001",
+    "created_at": "2026-08-13T10:00:31Z",
+    "status": "completed",
+    "conclusion": "success",
+    "jobs": [
+      {"name": "linux-race-parity", "status": "completed", "conclusion": "success", "started_at": "2026-08-13T10:00:30Z", "completed_at": "2026-08-13T10:06:00Z", "runtime_seconds": 330, "runner_os": "ubuntu-latest"},
+      {"name": "postgres-contract", "status": "completed", "conclusion": "success", "started_at": "2026-08-13T10:00:30Z", "completed_at": "2026-08-13T10:02:00Z", "runtime_seconds": 90, "runner_os": "ubuntu-latest"}
+    ]
+  },
+  {
+    "workflow": "CI",
+    "run_id": 1002,
+    "event": "pull_request",
+    "attempt": 1,
+    "head_sha": "fixture-sha-002",
+    "head_branch": "feature/another",
+    "checkout_sha": "merge-sha-002",
+    "created_at": "2026-08-14T12:00:00Z",
+    "status": "completed",
+    "conclusion": "success",
+    "jobs": [
+      {"name": "build", "status": "completed", "conclusion": "success", "started_at": "2026-08-14T12:00:30Z", "completed_at": "2026-08-14T12:01:30Z", "runtime_seconds": 60, "runner_os": "ubuntu-latest"}
+    ]
+  },
+  {
+    "workflow": "CI Shadow",
+    "run_id": 2002,
+    "event": "pull_request",
+    "attempt": 1,
+    "head_sha": "fixture-sha-002",
+    "head_branch": "feature/another",
+    "checkout_sha": "merge-sha-002",
+    "created_at": "2026-08-14T12:00:31Z",
+    "status": "completed",
+    "conclusion": "success",
+    "jobs": [
+      {"name": "linux-race-parity", "status": "completed", "conclusion": "success", "started_at": "2026-08-14T12:00:30Z", "completed_at": "2026-08-14T12:05:00Z", "runtime_seconds": 270, "runner_os": "ubuntu-latest"}
+    ]
+  }
+]
