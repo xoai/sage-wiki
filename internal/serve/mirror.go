@@ -48,38 +48,42 @@ func (s *MirrorShipper) Start(ctx context.Context) {
 		tick := time.NewTicker(s.shipInterval)
 		defer tick.Stop()
 		s.lastShip.Store(time.Now().Unix()) // baseline: the shipper just started
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-s.stop:
-				return
-			case <-tick.C:
-				if err := s.m.Ship(ctx, pkmirror.ChangeBatch{}); err != nil {
-					slog.Warn("mirror ship pass failed (retrying next tick)", "err", err)
-					// SPEC-07: lag grows until a pass succeeds.
-					metrics.GaugeNamed("mirror_ship_lag_seconds").Set(time.Now().Unix() - s.lastShip.Load())
-					continue
-				}
-				s.lastShip.Store(time.Now().Unix())
-				metrics.GaugeNamed("mirror_ship_lag_seconds").Set(0)
-				// Scheduled rotation on its OWN goroutine (F-087): a busy-
-				// writer rotation (~20s of retries) must not starve the
-				// segment-sealing cadence that RPO depends on. One in flight
-				// at a time.
-				if s.m.ScheduledRotationDue() && s.rotating.CompareAndSwap(false, true) {
-					s.rotWG.Add(1)
-					go func() {
-						defer s.rotWG.Done()
-						defer s.rotating.Store(false)
-						if _, err := s.m.Snapshot(ctx); err != nil {
-							slog.Warn("mirror scheduled rotation failed", "err", err)
-						}
-					}()
-				}
+		s.runShipLoop(ctx, tick.C)
+	}()
+}
+
+func (s *MirrorShipper) runShipLoop(ctx context.Context, ticks <-chan time.Time) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.stop:
+			return
+		case <-ticks:
+			if err := s.m.Ship(ctx, pkmirror.ChangeBatch{}); err != nil {
+				slog.Warn("mirror ship pass failed (retrying next tick)", "err", err)
+				// SPEC-07: lag grows until a pass succeeds.
+				metrics.GaugeNamed("mirror_ship_lag_seconds").Set(time.Now().Unix() - s.lastShip.Load())
+				continue
+			}
+			s.lastShip.Store(time.Now().Unix())
+			metrics.GaugeNamed("mirror_ship_lag_seconds").Set(0)
+			// Scheduled rotation on its OWN goroutine (F-087): a busy-
+			// writer rotation (~20s of retries) must not starve the
+			// segment-sealing cadence that RPO depends on. One in flight
+			// at a time.
+			if s.m.ScheduledRotationDue() && s.rotating.CompareAndSwap(false, true) {
+				s.rotWG.Add(1)
+				go func() {
+					defer s.rotWG.Done()
+					defer s.rotating.Store(false)
+					if _, err := s.m.Snapshot(ctx); err != nil {
+						slog.Warn("mirror scheduled rotation failed", "err", err)
+					}
+				}()
 			}
 		}
-	}()
+	}
 }
 
 // Stop signals the loop, waits for the ticker AND any in-flight rotation
