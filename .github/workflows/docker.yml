@@ -20,6 +20,7 @@ on:
 permissions:
   contents: read
   packages: write
+  actions: read
 
 jobs:
   docker-main:
