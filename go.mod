@@ -1,6 +1,7 @@
 module github.com/xoai/sage-wiki
 
 go 1.26
+toolchain go1.26.6
 
 require (
 	github.com/charmbracelet/bubbles v1.0.0
