@@ -69,10 +69,21 @@ func classifySkips(
 	diff *DiffResult,
 	force, dryRun bool,
 ) (*skipClassification, error) {
+	return classifySkipsForMode(cfg, pr, items, mf, diff, force, dryRun, false)
+}
+
+func classifySkipsForMode(
+	cfg *config.Config,
+	pr *prompts.Registry,
+	items store.CompileItemStore,
+	mf *manifest.Manifest,
+	diff *DiffResult,
+	force, dryRun, injected bool,
+) (*skipClassification, error) {
 	out := &skipClassification{driftReasons: map[string]string{}, hasRow: map[string]bool{}}
 
 	// One computation per run, not per doc (review M3).
-	kc, err := NewKeyContext(cfg, pr)
+	kc, err := NewKeyContextForMode(cfg, pr, injected)
 	if err != nil {
 		return nil, fmt.Errorf("classify: key context: %w", err)
 	}
@@ -227,7 +238,11 @@ func classifySkips(
 // Called only on the success path: a cancelled/failed run marks nothing
 // (P1-1), and a doc that failed stays tier-incomplete and untouched here.
 func storeCompileKeysForCompleted(cfg *config.Config, pr *prompts.Registry, items store.CompileItemStore) error {
-	kc, err := NewKeyContext(cfg, pr)
+	return storeCompileKeysForCompletedForMode(cfg, pr, items, false)
+}
+
+func storeCompileKeysForCompletedForMode(cfg *config.Config, pr *prompts.Registry, items store.CompileItemStore, injected bool) error {
+	kc, err := NewKeyContextForMode(cfg, pr, injected)
 	if err != nil {
 		return fmt.Errorf("store keys: key context: %w", err)
 	}
@@ -259,15 +274,16 @@ func storeCompileKeysForCompleted(cfg *config.Config, pr *prompts.Registry, item
 // the pre-run evidence R0/R3-R5 read).
 func runSkipClassification(projectDir string, run *compileRun, diff *DiffResult) (*skipClassification, error) {
 	pr := run.opts.Prompts // nil = package default (overrides already loaded)
+	injected := run.opts.CompletionProvider != nil
 	if b := run.opts.Backend; b != nil {
-		return classifySkips(run.cfg, pr, b.CompileItems(), run.mf, diff, run.opts.Force, run.opts.DryRun)
+		return classifySkipsForMode(run.cfg, pr, b.CompileItems(), run.mf, diff, run.opts.Force, run.opts.DryRun, injected)
 	}
 	sdb, err := storage.Open(filepath.Join(projectDir, ".sage", "wiki.db"))
 	if err != nil {
 		return nil, fmt.Errorf("skip classification: open db: %w", err)
 	}
 	defer sdb.Close()
-	return classifySkips(run.cfg, pr, NewCompileItemStore(sdb, config.NowUTC), run.mf, diff, run.opts.Force, run.opts.DryRun)
+	return classifySkipsForMode(run.cfg, pr, NewCompileItemStore(sdb, config.NowUTC), run.mf, diff, run.opts.Force, run.opts.DryRun, injected)
 }
 
 // CompileExplanation is the --explain report for one doc (spec §Observability
@@ -290,6 +306,12 @@ type CompileExplanation struct {
 // ExplainCompileKey computes the --explain report for one doc, side-effect
 // free (no adoptions, no resets — the skip rule as a pure query).
 func ExplainCompileKey(projectDir, doc string, cfg *config.Config, pr *prompts.Registry, items store.CompileItemStore) (*CompileExplanation, error) {
+	return ExplainCompileKeyForMode(projectDir, doc, cfg, pr, items, false)
+}
+
+// ExplainCompileKeyForMode computes the verdict against the caller's active
+// completion mode without mutating compile state.
+func ExplainCompileKeyForMode(projectDir, doc string, cfg *config.Config, pr *prompts.Registry, items store.CompileItemStore, injected bool) (*CompileExplanation, error) {
 	// SPEC-08 AC1: doc is a workspace-relative name — reject traversal and
 	// malformed inputs BEFORE any filesystem access, then containment-check
 	// the join (pathsafe is the single containment answer).
@@ -312,7 +334,7 @@ func ExplainCompileKey(projectDir, doc string, cfg *config.Config, pr *prompts.R
 
 	ex := &CompileExplanation{Path: doc, SourceHash: diskHash, Pipeline: PipelineVersion}
 
-	kc, err := NewKeyContext(cfg, pr)
+	kc, err := NewKeyContextForMode(cfg, pr, injected)
 	if err != nil {
 		return nil, fmt.Errorf("explain %s: %w", doc, err)
 	}

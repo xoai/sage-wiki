@@ -37,6 +37,7 @@ packages:
   - {path: internal/parity, class: test-owned, owner: go-tests-current, roles: [determinism-writer]}
   - {path: internal/pathsafe, class: test-owned, owner: go-tests-current, roles: []}
   - {path: internal/prompts, class: test-owned, owner: go-tests-current, roles: []}
+  - {path: internal/providerutil, class: test-owned, owner: go-tests-current, roles: []}
   - {path: internal/query, class: test-owned, owner: go-tests-current, roles: []}
   - {path: internal/scribe, class: test-owned, owner: go-tests-current, roles: []}
   - {path: internal/search, class: test-owned, owner: go-tests-current, roles: []}
@@ -120,6 +121,7 @@ linux_race_shards:
         - internal/pack
         - internal/pathsafe
         - internal/prompts
+        - internal/providerutil
         - internal/query
         - internal/scribe
         - internal/search

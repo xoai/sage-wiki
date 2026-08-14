@@ -43,6 +43,15 @@
 
 ### Added
 
+- **Opt-in in-memory compile providers for Go embedders.** `pkg/engine` now
+  exposes `WithCompileProvider`, allowing `Workspace.Compile` completions to
+  use a caller-owned `pkg/provider.Provider` without storing its credential in
+  `config.yaml`. Existing `WithProvider` behavior remains search-only, and
+  callers that do not opt in remain config-backed. Injected completion errors
+  fail closed without config fallback; usage accounting, compile-key mode
+  separation, structured-output validation, and synchronous-mode enforcement
+  remain active.
+
 - **CI responsibility foundation (advisory).** Quality responsibility is now
   machine-readable: `ci/standards.yaml` records every standard with owner,
   witness, purpose/authority evidence, diagnostics, and qualification state;

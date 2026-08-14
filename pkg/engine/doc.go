@@ -32,10 +32,12 @@
 // # Options
 //
 // WithConfigFile (alternate config path), WithProvider (inject an
-// embedding provider for the vector search legs — v1 scope; LLM calls
-// stay config-driven), WithEventSink (usage events today; the typed event
-// union arrives with SPEC-07), WithLogger, WithUpgrade, WithReadOnly,
-// WithLimits (per-caller limits override — SPEC-08).
+// embedding provider for vector search), WithCompileProvider (opt into
+// caller-owned synchronous Workspace.Compile completions without config
+// credentials), WithEventSink (usage events today; the typed event union
+// arrives with SPEC-07), WithLogger, WithUpgrade, WithReadOnly, WithLimits
+// (per-caller limits override — SPEC-08). The two provider options are
+// independent; callers may pass the same provider to both.
 //
 // # Process-global state (documented adaptation)
 //

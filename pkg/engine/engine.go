@@ -14,6 +14,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/limits"
 	"github.com/xoai/sage-wiki/internal/manifest"
 	"github.com/xoai/sage-wiki/internal/prompts"
+	"github.com/xoai/sage-wiki/internal/providerutil"
 	"github.com/xoai/sage-wiki/internal/store"
 	"github.com/xoai/sage-wiki/internal/wiki"
 	"github.com/xoai/sage-wiki/pkg/events"
@@ -42,13 +43,14 @@ var (
 type Option func(*options)
 
 type options struct {
-	configFile     string
-	provider       provider.Provider
-	sink           events.Sink
-	logger         *slog.Logger
-	upgrade        bool
-	readOnly       bool
-	limitsOverride limits.Limits
+	configFile      string
+	provider        provider.Provider
+	compileProvider provider.Provider
+	sink            events.Sink
+	logger          *slog.Logger
+	upgrade         bool
+	readOnly        bool
+	limitsOverride  limits.Limits
 }
 
 // WithConfigFile loads config from an explicit path instead of
@@ -60,11 +62,29 @@ func WithConfigFile(path string) Option {
 // WithProvider injects an embedding provider for the vector search legs
 // (tests, examples, self-hosters' custom backends). Default: built from
 // the workspace config. v1 SCOPE: the provider feeds search embeddings
-// only — compile and expand/rerank LLM calls are config-driven (threading
-// an injected provider into the compiler is future work; recorded in the
-// initiative decisions log).
+// only; compile and expand/rerank LLM calls remain config-driven unless
+// callers separately opt into WithCompileProvider for compilation. p must
+// be non-nil; the existing typed-nil behavior is retained for compatibility.
 func WithProvider(p provider.Provider) Option {
 	return func(o *options) { o.provider = p }
+}
+
+// WithCompileProvider injects a completion provider for Workspace.Compile.
+// It is independent from WithProvider, which remains search-embedding-only.
+// Workspace config still supplies models, prompts, tiers, limits, paths, and
+// embedding settings. The caller-owned provider controls completion retries,
+// rate limits, and temperature; failures never fall back to config credentials.
+// Injected compilation is synchronous-only, and unknown prices keep MaxCost
+// inactive unless the injected identity is explicitly priced. Nil and
+// typed-nil values normalize to the existing config-backed behavior.
+func WithCompileProvider(p provider.Provider) Option {
+	return func(o *options) {
+		if providerutil.IsNil(p) {
+			o.compileProvider = nil
+			return
+		}
+		o.compileProvider = p
+	}
 }
 
 // WithEventSink subscribes to engine events (usage events today; SPEC-07

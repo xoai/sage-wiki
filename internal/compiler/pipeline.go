@@ -36,6 +36,7 @@ import (
 	"github.com/xoai/sage-wiki/internal/trust"
 	"github.com/xoai/sage-wiki/internal/vectors"
 	"github.com/xoai/sage-wiki/pkg/events"
+	publicprovider "github.com/xoai/sage-wiki/pkg/provider"
 )
 
 // CompileOpts configures a compilation run.
@@ -54,6 +55,9 @@ type CompileOpts struct {
 	NoCache bool             // disable prompt caching
 	Prune   bool             // delete orphaned articles when sources removed
 	Tracker *llm.CostTracker // optional cost tracker
+	// CompletionProvider, when set by pkg/engine, replaces config-backed LLM
+	// completions for this run. Direct compiler callers leave it nil.
+	CompletionProvider publicprovider.Provider
 
 	// Prompts, when set, is the per-workspace template registry (SPEC-01) —
 	// overrides load into it instead of the process-global prompts default,
@@ -173,14 +177,25 @@ func orBackground(ctx context.Context) context.Context {
 // Extracted so the early batch-resume path and the lazy standard path
 // construct them identically (P1-3).
 func newTrackedClient(projectDir string, cfg *config.Config, opts *CompileOpts) (*llm.Client, *llm.CostTracker, error) {
-	client, err := auth.NewLLMClient(cfg)
+	providerName := cfg.API.Provider
+	var client *llm.Client
+	var err error
+	if opts.CompletionProvider != nil {
+		providerName = llm.InjectedProviderName
+		client, err = llm.NewClientWithProvider(opts.CompletionProvider)
+		if err == nil {
+			client.SetCallTimeout(cfg.Limits.Resolve().ProviderTimeout)
+		}
+	} else {
+		client, err = auth.NewLLMClient(cfg)
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("compile: create LLM client: %w", err)
 	}
 	tracker := opts.Tracker
 	if tracker == nil {
 		var err error
-		tracker, err = llm.NewCostTrackerWithTable(cfg.API.Provider, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
+		tracker, err = llm.NewCostTrackerWithTable(providerName, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
 		if err != nil {
 			return nil, nil, fmt.Errorf("compile: load price registry: %w", err)
 		}
@@ -465,7 +480,7 @@ func Compile(projectDir string, opts CompileOpts) (result *CompileResult, err er
 	// single storage point, gated on a COMPLETE run (P1-1: a cancelled or
 	// failed run marks nothing, so an interrupted doc recompiles next time).
 	if !run.pipelineIncomplete && !run.opts.DryRun {
-		if err := storeCompileKeysForCompleted(run.cfg, run.opts.Prompts, run.itemStore); err != nil {
+		if err := storeCompileKeysForCompletedForMode(run.cfg, run.opts.Prompts, run.itemStore, run.opts.CompletionProvider != nil); err != nil {
 			log.Warn("compile-key storage failed", "error", err)
 		}
 	}
@@ -742,6 +757,9 @@ func loadInputs(projectDir string, opts *CompileOpts, run *compileRun) (done boo
 		cfg.Models.Summarize = opts.Model
 		cfg.Models.Extract = opts.Model
 		cfg.Models.Write = opts.Model
+	}
+	if opts.CompletionProvider != nil && (opts.Batch || cfg.Compiler.Mode == "batch") {
+		return false, nil, fmt.Errorf("compile: provider %s does not support batch API", llm.InjectedProviderName)
 	}
 
 	// Load user prompt overrides if prompts/ directory exists — into the

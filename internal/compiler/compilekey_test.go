@@ -3,6 +3,7 @@ package compiler
 import (
 	"encoding/json"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -263,6 +264,127 @@ sources:
 	kB := partsB.Key(3)
 	if kA != kB {
 		t.Errorf("reordered YAML produced different keys:\nA %s\nB %s", kA, kB)
+	}
+}
+
+func TestCompileKey_InjectedSubsetExactDelta(t *testing.T) {
+	cfg := keyTestConfig()
+	base := compileConfigSubset(cfg)
+	injected := compileConfigSubsetForMode(cfg, true)
+	removed := map[string]bool{
+		"api.provider":          true,
+		"api.extra_params":      true,
+		"compiler.temperature":  true,
+		"compiler.mode":         true,
+		"compiler.prompt_cache": true,
+	}
+	for key, value := range base {
+		got, ok := injected[key]
+		if removed[key] {
+			if ok {
+				t.Errorf("injected subset retained %q", key)
+			}
+			continue
+		}
+		if !ok || !reflect.DeepEqual(got, value) {
+			t.Errorf("injected subset changed %q: got=%#v present=%v want=%#v", key, got, ok, value)
+		}
+	}
+	if got := injected["completion.mode"]; got != "injected" {
+		t.Errorf("completion.mode = %#v, want injected", got)
+	}
+	if len(injected) != len(base)-len(removed)+1 {
+		t.Errorf("subset sizes base=%d injected=%d, want exact five removals plus sentinel", len(base), len(injected))
+	}
+}
+
+func TestCompileKey_InjectedModeBehavior(t *testing.T) {
+	cfg := keyTestConfig()
+	configTier3, err := ComputeCompileKeyParts("sha256:mode", 3, cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	injectedTier3, err := ComputeCompileKeyPartsForMode("sha256:mode", 3, cfg, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configTier3.Key(3) == injectedTier3.Key(3) {
+		t.Fatal("config and injected Tier-3 keys are equal")
+	}
+	if got := DriftClass(configTier3, injectedTier3); got != "config" {
+		t.Errorf("mode switch drift = %q, want config", got)
+	}
+
+	configTier1, err := ComputeCompileKeyParts("sha256:mode", 1, cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	injectedTier1, err := ComputeCompileKeyPartsForMode("sha256:mode", 1, cfg, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configTier1.Key(1) != injectedTier1.Key(1) {
+		t.Fatal("injected mode changed Tier-1 key")
+	}
+
+	changed := *cfg
+	changed.API = cfg.API
+	changed.Compiler = cfg.Compiler
+	temperature := 0.9
+	promptCache := false
+	changed.API.ExtraParams = map[string]interface{}{"reasoning_effort": "high"}
+	changed.Compiler.Temperature = &temperature
+	changed.Compiler.Mode = "auto"
+	changed.Compiler.PromptCache = &promptCache
+	ignoredChanges, err := ComputeCompileKeyPartsForMode("sha256:mode", 3, &changed, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if injectedTier3.Key(3) != ignoredChanges.Key(3) {
+		t.Fatal("completion-unused config fields changed injected key")
+	}
+
+	providerChange := changed
+	providerChange.API = changed.API
+	providerChange.API.Provider = "anthropic"
+	providerParts, err := ComputeCompileKeyPartsForMode("sha256:mode", 3, &providerChange, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if injectedTier3.Config != providerParts.Config {
+		t.Fatal("api.provider changed injected completion Config component")
+	}
+	if injectedTier3.Embed == providerParts.Embed || injectedTier3.Key(3) == providerParts.Key(3) {
+		t.Fatal("api.provider fallback did not change the separate Embed component")
+	}
+
+	withEmbed := *cfg
+	withEmbed.API = cfg.API
+	withEmbed.Embed = &config.EmbedConfig{Provider: "openai", Model: "text-embedding-3-small", Dimensions: 4}
+	withEmbedProviderChange := withEmbed
+	withEmbedProviderChange.API = withEmbed.API
+	withEmbedProviderChange.API.Provider = "anthropic"
+	explicitEmbedA, err := ComputeCompileKeyPartsForMode("sha256:mode", 3, &withEmbed, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	explicitEmbedB, err := ComputeCompileKeyPartsForMode("sha256:mode", 3, &withEmbedProviderChange, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if explicitEmbedA.Key(3) != explicitEmbedB.Key(3) {
+		t.Fatal("api.provider rekeyed injected mode despite an explicit embed.provider")
+	}
+
+	modelChangeCfg := *cfg
+	modelChangeCfg.Models = cfg.Models
+	modelChangeCfg.Models.Summarize = "different-model"
+	modelChange, err := ComputeCompileKeyPartsForMode("sha256:mode", 3, &modelChangeCfg, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if injectedTier3.Key(3) == modelChange.Key(3) {
+		t.Fatal("model change did not change injected key")
 	}
 }
 
