@@ -2,7 +2,14 @@
 
 ## [Unreleased]
 
+## 0.2.9 — 2026-08-14
+
 ### Fixed
+
+- **Go 1.26.6 security toolchain.** `go.mod` now pins Go 1.26.6 for builds,
+  addressing GO-2026-6218 (CVE-2026-56860, quadratic-time URL path
+  resolution) and GO-2026-6090 (CVE-2026-56862, TLS KeyUpdate denial of
+  service).
 
 - **Bounded source context for high-fanout concepts (#146).** `buildSourceContext`
   now caps the total assembled source context to a configurable token budget
@@ -83,7 +90,7 @@
   merging — a policy gate today, mechanical once branch protection requires
   the check on `main`.
 
-## [0.2.8] — 2026-08-05
+## 0.2.8 — 2026-08-05
 
 ### Fixed
 
@@ -97,7 +104,7 @@
 
 ### Added
 
-## [0.2.7] — 2026-08-05
+## 0.2.7 — 2026-08-05
 
 ### Added
 
