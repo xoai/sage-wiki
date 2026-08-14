@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- **Bounded source context for high-fanout concepts (#146).** `buildSourceContext`
+  now caps the total assembled source context to a configurable token budget
+  (default 100,000 tokens). Sources are prioritized by match density so
+  high-relevance sources are kept when budget pressure forces truncation. A
+  visible warning is logged with concept name, sources kept/dropped, and budget.
+  Previously, a concept cited across many documents could silently exceed the
+  model's context window, producing a 400 error and no article.
+
 - **Deterministic document-budget timeout attribution.** Summarization and
   triple extraction now identify `compile_doc_timeout` from the exact child
   context deadline instead of comparing a separately started elapsed-time

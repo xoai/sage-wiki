@@ -40,28 +40,29 @@ type ArticleResult struct {
 
 // ArticleWriteOpts bundles all parameters for WriteArticles / writeOneArticle.
 type ArticleWriteOpts struct {
-	ProjectDir         string
-	OutputDir          string
-	Client             *llm.Client
-	Model              string
-	MaxTokens          int
-	MaxParallel        int
-	MemStore           store.EntryStore
-	VecStore           store.VectorStore
-	OntStore           store.OntologyStore
-	ChunkStore         store.ChunkStore
-	DB                 store.DBHandle
-	Embedder           embed.Embedder
-	UserTZ             *time.Location
-	ArticleFields      []string
-	RelationPatterns   []ontology.RelationPattern
-	ChunkSize          int // tokens per chunk (default 800)
-	ChunkOverlap       int // tokens of overlap between adjacent chunks (default 0)
-	SplitThreshold     int // chars — enable section-aware writing above this (default 15000)
-	Language           string
-	Backpressure       *BackpressureController // optional; if nil, uses fixed semaphore
-	Prompts            *prompts.Registry       // optional; nil = prompts package default
-	AntiPatternPhrases []string                // sentences containing these are stripped (issue #95); nil/empty → no strip
+	ProjectDir             string
+	OutputDir              string
+	Client                 *llm.Client
+	Model                  string
+	MaxTokens              int
+	MaxParallel            int
+	MemStore               store.EntryStore
+	VecStore               store.VectorStore
+	OntStore               store.OntologyStore
+	ChunkStore             store.ChunkStore
+	DB                     store.DBHandle
+	Embedder               embed.Embedder
+	UserTZ                 *time.Location
+	ArticleFields          []string
+	RelationPatterns       []ontology.RelationPattern
+	ChunkSize              int // tokens per chunk (default 800)
+	ChunkOverlap           int // tokens of overlap between adjacent chunks (default 0)
+	SplitThreshold         int // chars — enable section-aware writing above this (default 15000)
+	MaxSourceContextTokens int // max estimated tokens in assembled source context (default 100000)
+	Language               string
+	Backpressure           *BackpressureController // optional; if nil, uses fixed semaphore
+	Prompts                *prompts.Registry       // optional; nil = prompts package default
+	AntiPatternPhrases     []string                // sentences containing these are stripped (issue #95); nil/empty → no strip
 	// AllConcepts is the FULL manifest concept set (Name + Sources), used to
 	// seed each article's "See also" [[wikilinks]] from co-occurring concepts
 	// and to canonicalize display-form links to concepts outside the current
@@ -218,7 +219,7 @@ func prepareArticle(opts ArticleWriteOpts, concept ExtractedConcept, aliasMap ma
 	}
 
 	// Build source context from relevant sections (document splitting)
-	sourceContext := buildSourceContext(opts.ProjectDir, concept, opts.SplitThreshold)
+	sourceContext := buildSourceContext(opts.ProjectDir, concept, opts.SplitThreshold, opts.MaxSourceContextTokens)
 
 	// Build prompt. relatedNames are real, co-occurring concept slugs (issue
 	// #106) that resolve to existing article files and survive the strip pass.
@@ -1054,13 +1055,24 @@ func StripBrokenWikilinks(projectDir, outputDir string, memStore store.EntryStor
 // by headings, and returns the relevant sections as context for article writing.
 // For small sources (below threshold), includes the full content.
 // Returns empty string if no sources can be read.
-func buildSourceContext(projectDir string, concept ExtractedConcept, threshold int) string {
+type sourcePart struct {
+	text          string
+	matchCount    int
+	sourcePath    string
+	sectionOffset int
+}
+
+func buildSourceContext(projectDir string, concept ExtractedConcept, threshold int, maxTokens int) string {
 	if threshold <= 0 {
 		threshold = 15000 // default from spec
 	}
+	if maxTokens <= 0 {
+		maxTokens = 100000
+	}
 
-	var parts []string
 	terms := append([]string{concept.Name, ontology.FormatConceptName(concept.Name)}, concept.Aliases...)
+
+	var parts []sourcePart
 
 	for _, srcPath := range concept.Sources {
 		absPath := filepath.Join(projectDir, srcPath)
@@ -1076,17 +1088,24 @@ func buildSourceContext(projectDir string, concept ExtractedConcept, threshold i
 			if len(content) > 4000 {
 				content = content[:4000] + "\n[...truncated...]"
 			}
-			parts = append(parts, fmt.Sprintf("### Source: %s\n\n%s", srcPath, content))
+			parts = append(parts, sourcePart{
+				text:          fmt.Sprintf("### Source: %s\n\n%s", srcPath, content),
+				matchCount:    1,
+				sourcePath:    srcPath,
+				sectionOffset: 0,
+			})
 			continue
 		}
 
 		// Large doc — select relevant sections only
 		relevant := extract.SectionsContaining(sections, terms)
+		matchCount := len(relevant)
 		if len(relevant) == 0 {
 			// No sections match — use first section as fallback
 			if len(sections) > 0 {
 				relevant = sections[:1]
 			}
+			matchCount = 0
 		}
 
 		for _, s := range relevant {
@@ -1098,12 +1117,57 @@ func buildSourceContext(projectDir string, concept ExtractedConcept, threshold i
 			if len(text) > 4000 {
 				text = text[:4000] + "\n[...truncated...]"
 			}
-			parts = append(parts, fmt.Sprintf("### Source: %s\n\n%s", header, text))
+			parts = append(parts, sourcePart{
+				text:          fmt.Sprintf("### Source: %s\n\n%s", header, text),
+				matchCount:    matchCount,
+				sourcePath:    srcPath,
+				sectionOffset: s.StartOffset,
+			})
 		}
+	}
+
+	// Sort by relevance (match count desc), then source path, then section offset.
+	// Stable sort ensures determinism.
+	sort.SliceStable(parts, func(i, j int) bool {
+		if parts[i].matchCount != parts[j].matchCount {
+			return parts[i].matchCount > parts[j].matchCount
+		}
+		if parts[i].sourcePath != parts[j].sourcePath {
+			return parts[i].sourcePath < parts[j].sourcePath
+		}
+		return parts[i].sectionOffset < parts[j].sectionOffset
+	})
+
+	// Accumulate within the token budget.
+	var kept []string
+	totalTokens := 0
+	dropped := 0
+	for i, p := range parts {
+		partTokens := extract.EstimateTokens(p.text)
+		if i == 0 {
+			// Always keep the highest-ranked part, even if it exceeds budget.
+			kept = append(kept, p.text)
+			totalTokens = partTokens
+			continue
+		}
+		if totalTokens+partTokens > maxTokens {
+			dropped = len(parts) - i
+			break
+		}
+		kept = append(kept, p.text)
+		totalTokens += partTokens
+	}
+
+	if dropped > 0 {
+		log.Warn("source context budget exceeded; dropping lower-relevance sources",
+			"concept", concept.Name,
+			"kept", len(kept), "dropped", dropped,
+			"budget_tokens", maxTokens,
+			"estimated_tokens", totalTokens)
 	}
 
 	// Neutralize literal delimiter tags in the raw source text so a hostile
 	// document can't close the write_article template's untrusted frame
 	// early (SEC-04, site 5 — the template wraps this whole string).
-	return prompts.NeutralizeTags(strings.Join(parts, "\n\n---\n\n"))
+	return prompts.NeutralizeTags(strings.Join(kept, "\n\n---\n\n"))
 }

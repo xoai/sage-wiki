@@ -303,7 +303,7 @@ func TestBuildSourceContext_NeutralizesSpoofTags(t *testing.T) {
 	ctx := buildSourceContext(dir, ExtractedConcept{
 		Name:    "malicious",
 		Sources: []string{"raw/a.md"},
-	}, 15000)
+	}, 15000, 0)
 	if strings.Contains(ctx, "</untrusted_source>") {
 		t.Errorf("spoof closing tag survived in source context: %q", ctx)
 	}

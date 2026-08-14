@@ -1,6 +1,8 @@
 package compiler
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -618,5 +620,87 @@ func TestBuildAliasMap_AllConceptsCanonicalizesOutOfBatch(t *testing.T) {
 	// Display form of an out-of-batch concept canonicalizes to its slug.
 	if m["Flash Attention"] != "flash-attention" {
 		t.Errorf("out-of-batch display form not canonicalized: %q", m["Flash Attention"])
+	}
+}
+
+// helper: create a mock source file with N sections containing the term
+func makeMockSource(t *testing.T, dir, name, term string, matchSections, totalSections int) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	var content string
+	for i := 0; i < totalSections; i++ {
+		content += fmt.Sprintf("## Section %d\n\n", i)
+		if i < matchSections {
+			content += term + " is discussed here in detail with specific data.\n"
+		} else {
+			content += "Unrelated content for padding.\n"
+		}
+		content += strings.Repeat("x", 200) + "\n\n"
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return name
+}
+
+func TestBuildSourceContext_BudgetCap(t *testing.T) {
+	dir := t.TempDir()
+	concept := ExtractedConcept{Name: "barium", Sources: nil}
+	for i := 0; i < 50; i++ {
+		src := makeMockSource(t, dir, fmt.Sprintf("source-%03d.md", i), "barium", 3, 5)
+		concept.Sources = append(concept.Sources, src)
+	}
+	// Budget of 20000 tokens (~80K chars). Each source contributes ~1500 chars
+	// across 3 matching sections (~375 tokens). 50 sources = ~18750 tokens
+	// — just under. Tighten to force truncation.
+	ctx := buildSourceContext(dir, concept, 5000, 5000)
+	if ctx == "" {
+		t.Fatal("budget-capped context is empty")
+	}
+	if len(ctx) > 30000 {
+		t.Fatalf("context too large: %d chars (budget was 5000 tokens)", len(ctx))
+	}
+}
+
+func TestBuildSourceContext_RelevanceOrdering(t *testing.T) {
+	dir := t.TempDir()
+	concept := ExtractedConcept{Name: "barium", Sources: nil}
+	// Source A: 5 matching sections (high relevance)
+	concept.Sources = append(concept.Sources, makeMockSource(t, dir, "high.md", "barium", 5, 5))
+	// Source B: 1 matching section (low relevance)
+	concept.Sources = append(concept.Sources, makeMockSource(t, dir, "low.md", "barium", 1, 5))
+	// Add many padding sources to fill the budget
+	for i := 0; i < 40; i++ {
+		concept.Sources = append(concept.Sources, makeMockSource(t, dir, fmt.Sprintf("pad-%03d.md", i), "barium", 1, 2))
+	}
+	// Small budget: should keep high-relevance source preferentially
+	ctx := buildSourceContext(dir, concept, 5000, 3000)
+	if !strings.Contains(ctx, "high.md") {
+		t.Fatal("high-relevance source dropped under budget pressure")
+	}
+}
+
+func TestBuildSourceContext_AlwaysNonEmpty(t *testing.T) {
+	dir := t.TempDir()
+	concept := ExtractedConcept{
+		Name:    "barium",
+		Sources: []string{makeMockSource(t, dir, "only.md", "barium", 1, 1)},
+	}
+	ctx := buildSourceContext(dir, concept, 5000, 1)
+	if ctx == "" {
+		t.Fatal("budget=1 produced empty context")
+	}
+}
+
+func TestBuildSourceContext_Defaulting(t *testing.T) {
+	dir := t.TempDir()
+	concept := ExtractedConcept{
+		Name:    "barium",
+		Sources: []string{makeMockSource(t, dir, "only.md", "barium", 1, 1)},
+	}
+	// maxTokens=0 should use the default (not unbounded)
+	ctx := buildSourceContext(dir, concept, 5000, 0)
+	if ctx == "" {
+		t.Fatal("defaulting produced empty context")
 	}
 }
