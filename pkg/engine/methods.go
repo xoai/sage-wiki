@@ -306,20 +306,21 @@ func (w *Workspace) Compile(ctx context.Context, req CompileRequest) (*CompileRe
 		tierOverride = &req.Tier
 	}
 	res, err := compiler.Compile(w.dir, compiler.CompileOpts{
-		Ctx:     ctx,
-		DryRun:  req.DryRun,
-		Fresh:   req.Fresh,
-		Force:   req.Force,
-		Batch:   req.Batch,
-		NoCache: req.NoCache,
-		Prune:   req.Prune,
-		Tier:    tierOverride,
-		Model:   req.Model,
-		MaxDocs: req.MaxDocs,
-		MaxCost: req.MaxCost,
-		Prompts: w.prompts,
-		Sink:    w.opts.sink,
-		JobID:   req.JobID,
+		Ctx:                ctx,
+		DryRun:             req.DryRun,
+		Fresh:              req.Fresh,
+		Force:              req.Force,
+		Batch:              req.Batch,
+		NoCache:            req.NoCache,
+		Prune:              req.Prune,
+		Tier:               tierOverride,
+		Model:              req.Model,
+		MaxDocs:            req.MaxDocs,
+		MaxCost:            req.MaxCost,
+		Prompts:            w.prompts,
+		CompletionProvider: w.opts.compileProvider,
+		Sink:               w.opts.sink,
+		JobID:              req.JobID,
 	})
 	if err != nil && !errors.Is(err, compiler.ErrBudgetExceeded) {
 		return mapCompileResult(res), err
@@ -418,5 +419,5 @@ func (w *Workspace) ExplainCompile(ctx context.Context, doc string) (*CompileExp
 		return nil, err
 	}
 	items := compiler.NewCompileItemStore(w.app.DB, config.NowUTC)
-	return compiler.ExplainCompileKey(w.dir, doc, w.app.Config, w.prompts, items)
+	return compiler.ExplainCompileKeyForMode(w.dir, doc, w.app.Config, w.prompts, items, w.opts.compileProvider != nil)
 }

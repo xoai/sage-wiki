@@ -102,6 +102,7 @@ func (r *Response) EmptyContentDetails() string {
 // Client is a provider-agnostic LLM client.
 type Client struct {
 	provider      Provider
+	injected      *injectedCompletion
 	providerName  string  // the configured provider string (registry identity; provider.Name() is the wire adapter, not the config kind)
 	priceOverride float64 // compiler.token_price_per_million — keeps tracker-less ledger pricing consistent with tracked paths
 	priceTable    string  // compiler.price_table — the workspace overlay on tracker-less paths
@@ -251,6 +252,9 @@ func IsTruncatedBodyErr(err error) bool {
 // retries; a well-formed-but-invalid one returns (body, verr) and is wrapped
 // here, preserving the "llm: parse response" contract.
 func (c *Client) chatCompletionDirect(ctx context.Context, messages []Message, opts CallOpts) (*Response, error) {
+	if c.injected != nil {
+		return c.completeInjected(ctx, messages, opts)
+	}
 	var result *Response
 	validate := func(body []byte) error {
 		r, err := c.provider.ParseResponse(body)
