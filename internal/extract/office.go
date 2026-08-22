@@ -13,7 +13,7 @@ import (
 )
 
 // extractDocx extracts text from a .docx file (ZIP containing word/document.xml).
-func extractDocx(path string) (*SourceContent, error) {
+func extractDocx(path, sourceType string) (*SourceContent, error) {
 	r, err := zip.OpenReader(path)
 	if err != nil {
 		return nil, fmt.Errorf("extract docx: %w", err)
@@ -51,13 +51,13 @@ func extractDocx(path string) (*SourceContent, error) {
 
 	return &SourceContent{
 		Path: path,
-		Type: "article",
+		Type: orDefaultType(sourceType, "article"),
 		Text: extracted,
 	}, nil
 }
 
 // extractXlsx extracts text from a .xlsx file (ZIP containing xl/sharedStrings.xml + sheets).
-func extractXlsx(path string) (*SourceContent, error) {
+func extractXlsx(path, sourceType string) (*SourceContent, error) {
 	r, err := zip.OpenReader(path)
 	if err != nil {
 		return nil, fmt.Errorf("extract xlsx: %w", err)
@@ -122,13 +122,13 @@ func extractXlsx(path string) (*SourceContent, error) {
 
 	return &SourceContent{
 		Path: path,
-		Type: "dataset",
+		Type: orDefaultType(sourceType, "dataset"),
 		Text: extracted,
 	}, nil
 }
 
 // extractPptx extracts text from a .pptx file (ZIP containing ppt/slides/slide*.xml).
-func extractPptx(path string) (*SourceContent, error) {
+func extractPptx(path, sourceType string) (*SourceContent, error) {
 	r, err := zip.OpenReader(path)
 	if err != nil {
 		return nil, fmt.Errorf("extract pptx: %w", err)
@@ -171,13 +171,13 @@ func extractPptx(path string) (*SourceContent, error) {
 
 	return &SourceContent{
 		Path: path,
-		Type: "article",
+		Type: orDefaultType(sourceType, "article"),
 		Text: extracted,
 	}, nil
 }
 
 // extractCSV reads a CSV file and formats as readable text.
-func extractCSV(path string) (*SourceContent, error) {
+func extractCSV(path, sourceType string) (*SourceContent, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("extract csv: %w", err)
@@ -215,7 +215,7 @@ func extractCSV(path string) (*SourceContent, error) {
 
 	return &SourceContent{
 		Path: path,
-		Type: "dataset",
+		Type: orDefaultType(sourceType, "dataset"),
 		Text: strings.TrimSpace(text.String()),
 	}, nil
 }

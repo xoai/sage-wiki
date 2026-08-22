@@ -38,7 +38,7 @@ func epubHeader(name string) int {
 	return 30 + len(filepath.Base(name))
 }
 
-type extractFn func(path string) (*SourceContent, error)
+type extractFn func(path, sourceType string) (*SourceContent, error)
 
 func fuzzZipExtractor(f *testing.F, fn extractFn, ext string, seeds [][]byte, perEntryHeader func(name string) int) {
 	f.Helper()
@@ -51,7 +51,7 @@ func fuzzZipExtractor(f *testing.F, fn extractFn, ext string, seeds [][]byte, pe
 		if perEntryHeader != nil {
 			slack = headerBound(data, perEntryHeader)
 		}
-		sc, err := fn(path)
+		sc, err := fn(path, "")
 		if err != nil {
 			return // errors are not invariant violations
 		}
@@ -83,7 +83,7 @@ func FuzzExtractEmail(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, data []byte) {
 		path := writeFuzzInput(t, data, ".eml")
-		sc, err := extractEmail(path)
+		sc, err := extractEmail(path, "")
 		if err != nil {
 			return
 		}
@@ -104,7 +104,7 @@ func FuzzExtractPdfGo(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, data []byte) {
 		path := writeFuzzInput(t, data, ".pdf")
-		sc, err := extractPDFGo(path)
+		sc, err := extractPDFGo(path, "")
 		if err != nil {
 			return
 		}
