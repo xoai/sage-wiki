@@ -217,7 +217,7 @@ func TestProof(t *testing.T) {
 					Reason:           "Runner capacity outage caused red; confirmed not a code regression.",
 					IncidentLink:     "https://github.com/xoai/sage-wiki/issues/200",
 					SHA:              validSHA,
-					ExpiresAt:        "2026-08-20T00:00:00Z",
+					ExpiresAt:        "2036-08-20T00:00:00Z", // far-future: a "valid" fixture must not date-rot
 					OriginalEvidence: "CI required failed due to runner timeout, not code defect.",
 				}
 				return f
