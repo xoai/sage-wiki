@@ -12,47 +12,47 @@
         {
           "doc": "src:raw/notes/cache-economics.md",
           "rank": 2,
-          "score": 0.9767607226806456
+          "score": 0.9763374043312107
         },
         {
           "doc": "src:raw/unicode/mixed-scripts.md",
           "rank": 3,
-          "score": 0.956009649987885
+          "score": 0.9580530605914838
         },
         {
           "doc": "src:raw/alias/api-gateway.md",
           "rank": 4,
-          "score": 0.9515296607756062
-        },
-        {
-          "doc": "src:raw/unicode/emoji.md",
-          "rank": 5,
-          "score": 0.9448902265118613
+          "score": 0.9526548257730882
         },
         {
           "doc": "src:raw/alias/k8s-usage.md",
+          "rank": 5,
+          "score": 0.9447602126812085
+        },
+        {
+          "doc": "src:raw/unicode/emoji.md",
           "rank": 6,
-          "score": 0.9437189203656434
+          "score": 0.9447010436204524
+        },
+        {
+          "doc": "wiki/concepts/k8s-usage.md",
+          "rank": 7,
+          "score": 0.2935392040122702
         },
         {
           "doc": "wiki/concepts/system-prompt-bait.md",
-          "rank": 7,
-          "score": 0.28214345427186094
-        },
-        {
-          "doc": "wiki/concepts/api-gateway.md",
           "rank": 8,
-          "score": 0.2334675748566112
+          "score": 0.286756440432943
         },
         {
-          "doc": "wiki/concepts/instruction-lookalike.md",
+          "doc": "wiki/concepts/fact-v1.md",
           "rank": 9,
-          "score": 0.18920072098229765
+          "score": 0.2707435747808823
         },
         {
-          "doc": "wiki/concepts/distributed-systemstxt.md",
+          "doc": "wiki/concepts/fact-v2.md",
           "rank": 10,
-          "score": 0.16046281615531446
+          "score": 0.25587968085540863
         }
       ]
     },
@@ -67,47 +67,47 @@
         {
           "doc": "src:raw/code/example.go",
           "rank": 2,
-          "score": 0.9877196227818303
+          "score": 0.9830415777288495
         },
         {
           "doc": "src:raw/alias/kubernetes-k8s.md",
           "rank": 3,
-          "score": 0.939676605279742
+          "score": 0.9389320205646443
+        },
+        {
+          "doc": "wiki/concepts/kubernetes-k8s.md",
+          "rank": 4,
+          "score": 0.28807751882778143
+        },
+        {
+          "doc": "wiki/concepts/fact-v2.md",
+          "rank": 5,
+          "score": 0.27192232247243975
+        },
+        {
+          "doc": "wiki/concepts/rtl-arabic.md",
+          "rank": 6,
+          "score": 0.2658005183888432
         },
         {
           "doc": "wiki/concepts/dated-2024.md",
-          "rank": 4,
-          "score": 0.2615959080740524
+          "rank": 7,
+          "score": 0.25410934956785564
+        },
+        {
+          "doc": "wiki/concepts/tier-model.md",
+          "rank": 8,
+          "score": 0.232717313728007
         },
         {
           "doc": "wiki/concepts/distributed-systemstxt.md",
-          "rank": 5,
-          "score": 0.23551259851805992
-        },
-        {
-          "doc": "wiki/concepts/instruction-lookalike.md",
-          "rank": 6,
-          "score": 0.1803021738722078
-        },
-        {
-          "doc": "wiki/concepts/system-prompt-bait.md",
-          "rank": 7,
-          "score": 0.1600285932239778
-        },
-        {
-          "doc": "wiki/concepts/api-gateway.md",
-          "rank": 8,
-          "score": 0.1500032477520019
-        },
-        {
-          "doc": "wiki/concepts/examplejs.md",
           "rank": 9,
-          "score": 0.14220831866657704
+          "score": 0.22535856977820415
         },
         {
-          "doc": "wiki/summaries/raw-text-plain-txt.md",
+          "doc": "wiki/concepts/fact-v1.md",
           "rank": 10,
-          "score": 0.072173665870497
+          "score": 0.21588118732794437
         }
       ]
     },
@@ -115,54 +115,54 @@
       "q": "exponential backoff jitter retry",
       "expect": [
         {
-          "doc": "src:raw/code/example.js",
+          "doc": "src:raw/notes/tier-model.md",
           "rank": 1,
           "score": 1
         },
         {
-          "doc": "src:raw/notes/tier-model.md",
+          "doc": "src:raw/code/example.js",
           "rank": 2,
-          "score": 0.9980498197081416
+          "score": 0.9980097832633336
         },
         {
           "doc": "wiki/concepts/api-gateway.md",
           "rank": 3,
-          "score": 0.28479897485183403
+          "score": 0.29390694459659095
+        },
+        {
+          "doc": "wiki/concepts/fact-v1.md",
+          "rank": 4,
+          "score": 0.27127430815500125
+        },
+        {
+          "doc": "wiki/concepts/mixed-scripts.md",
+          "rank": 5,
+          "score": 0.2533814814375236
         },
         {
           "doc": "wiki/concepts/system-prompt-bait.md",
-          "rank": 4,
-          "score": 0.22815388984454862
+          "rank": 6,
+          "score": 0.2272701205958604
+        },
+        {
+          "doc": "wiki/concepts/k8s-usage.md",
+          "rank": 7,
+          "score": 0.21762334172909603
         },
         {
           "doc": "wiki/concepts/examplejs.md",
-          "rank": 5,
-          "score": 0.20610176731272362
-        },
-        {
-          "doc": "wiki/concepts/instruction-lookalike.md",
-          "rank": 6,
-          "score": 0.18467083133109083
-        },
-        {
-          "doc": "wiki/concepts/dated-2024.md",
-          "rank": 7,
-          "score": 0.1712957134659398
-        },
-        {
-          "doc": "wiki/concepts/distributed-systemstxt.md",
           "rank": 8,
-          "score": 0.14898788631166648
+          "score": 0.20213785496714076
         },
         {
-          "doc": "wiki/summaries/raw-multihop-b-links-c.md",
+          "doc": "wiki/concepts/tier-model.md",
           "rank": 9,
-          "score": 0.07060294626756163
+          "score": 0.19192379534525725
         },
         {
-          "doc": "src:raw/alias/k8s-usage.md",
+          "doc": "wiki/concepts/example-testgo.md",
           "rank": 10,
-          "score": 0.07060294626756163
+          "score": 0.18418806786403027
         }
       ]
     },
@@ -170,54 +170,54 @@
       "q": "mesoscale weather modeling ensemble",
       "expect": [
         {
-          "doc": "src:raw/dates/dated-2024.md",
+          "doc": "wiki/concepts/tier-model.md",
           "rank": 1,
           "score": 1
         },
         {
-          "doc": "src:raw/contradiction/fact-v2.md",
+          "doc": "src:raw/dates/dated-2024.md",
           "rank": 2,
-          "score": 0.984275811077357
+          "score": 0.9274585127756803
+        },
+        {
+          "doc": "src:raw/contradiction/fact-v2.md",
+          "rank": 3,
+          "score": 0.9017436304593129
         },
         {
           "doc": "src:raw/text/plain.txt",
-          "rank": 3,
-          "score": 0.9641802796955155
+          "rank": 4,
+          "score": 0.888073373064146
         },
         {
           "doc": "src:raw/adversarial/system-prompt-bait.md",
-          "rank": 4,
-          "score": 0.9316157228923179
-        },
-        {
-          "doc": "wiki/summaries/raw-notes-tier-model.md",
           "rank": 5,
-          "score": 0.47991867412474365
+          "score": 0.8519863581478712
         },
         {
           "doc": "wiki/summaries/raw-contradiction-fact-v2.md",
           "rank": 6,
-          "score": 0.47703851426288346
+          "score": 0.4416767556446574
+        },
+        {
+          "doc": "wiki/summaries/raw-notes-tier-model.md",
+          "rank": 7,
+          "score": 0.4393477041780768
         },
         {
           "doc": "src:raw/notes/tier-model.md",
-          "rank": 7,
-          "score": 0.4693546592028492
+          "rank": 8,
+          "score": 0.42608710471212874
         },
         {
           "doc": "wiki/concepts/distributed-systemstxt.md",
-          "rank": 8,
-          "score": 0.2472162791008652
+          "rank": 9,
+          "score": 0.23624700754483727
         },
         {
           "doc": "wiki/concepts/examplejs.md",
-          "rank": 9,
-          "score": 0.22535343911617015
-        },
-        {
-          "doc": "wiki/concepts/instruction-lookalike.md",
           "rank": 10,
-          "score": 0.21063553284761724
+          "score": 0.21611723711203168
         }
       ]
     },
@@ -232,47 +232,47 @@
         {
           "doc": "src:raw/code/example.py",
           "rank": 2,
-          "score": 0.9860761830021277
+          "score": 0.9877011421539822
         },
         {
           "doc": "src:raw/unicode/emoji.md",
           "rank": 3,
-          "score": 0.9329848733959094
+          "score": 0.9286063363270979
         },
         {
           "doc": "src:raw/unicode/mixed-scripts.md",
           "rank": 4,
-          "score": 0.9248159165875265
+          "score": 0.9222892751487763
         },
         {
           "doc": "wiki/summaries/raw-notes-cache-economics.md",
           "rank": 5,
-          "score": 0.5490796569048371
+          "score": 0.5572779740939798
+        },
+        {
+          "doc": "wiki/concepts/fact-v1.md",
+          "rank": 6,
+          "score": 0.2735702652084906
         },
         {
           "doc": "wiki/concepts/api-gateway.md",
-          "rank": 6,
-          "score": 0.2431268302760711
+          "rank": 7,
+          "score": 0.2470838567436614
+        },
+        {
+          "doc": "wiki/concepts/fact-v2.md",
+          "rank": 8,
+          "score": 0.23910350857554316
         },
         {
           "doc": "wiki/concepts/system-prompt-bait.md",
-          "rank": 7,
-          "score": 0.2322545915084649
-        },
-        {
-          "doc": "wiki/concepts/instruction-lookalike.md",
-          "rank": 8,
-          "score": 0.2169619587412016
-        },
-        {
-          "doc": "wiki/concepts/distributed-systemstxt.md",
           "rank": 9,
-          "score": 0.20745611757670432
+          "score": 0.2314940419729304
         },
         {
-          "doc": "wiki/concepts/dated-2024.md",
+          "doc": "wiki/concepts/k8s-usage.md",
           "rank": 10,
-          "score": 0.16313254795674925
+          "score": 0.2170953228977869
         }
       ]
     },
@@ -287,47 +287,47 @@
         {
           "doc": "src:raw/notes/wiki-links.md",
           "rank": 2,
-          "score": 0.9829850361666336
+          "score": 0.9806320038558862
         },
         {
           "doc": "src:raw/text/plain.txt",
           "rank": 3,
-          "score": 0.8890469444811911
+          "score": 0.8867984102591656
         },
         {
           "doc": "wiki/concepts/distributed-systemstxt.md",
           "rank": 4,
-          "score": 0.5695671789023196
-        },
-        {
-          "doc": "wiki/concepts/dated-2024.md",
-          "rank": 5,
-          "score": 0.5233899062147652
+          "score": 0.5568514220335354
         },
         {
           "doc": "wiki/summaries/raw-notes-wiki-links.md",
-          "rank": 6,
-          "score": 0.5210983515846422
+          "rank": 5,
+          "score": 0.5259740129332852
         },
         {
           "doc": "wiki/concepts/instruction-lookalike.md",
-          "rank": 7,
-          "score": 0.5149366675028747
+          "rank": 6,
+          "score": 0.5152947911312669
         },
         {
           "doc": "wiki/concepts/examplejs.md",
+          "rank": 7,
+          "score": 0.5101726174777145
+        },
+        {
+          "doc": "wiki/concepts/dated-2024.md",
           "rank": 8,
-          "score": 0.5093474639439873
+          "score": 0.5085729703364517
         },
         {
           "doc": "wiki/summaries/raw-notes-link-integrity.md",
           "rank": 9,
-          "score": 0.5022825580514059
+          "score": 0.5073497815664718
         },
         {
-          "doc": "wiki/summaries/raw-unicode-emoji.md",
+          "doc": "wiki/concepts/rtl-arabic.md",
           "rank": 10,
-          "score": 0.4671833284164147
+          "score": 0.5028217424804279
         }
       ]
     },
@@ -342,47 +342,47 @@
         {
           "doc": "src:raw/notes/frontmatter.md",
           "rank": 2,
-          "score": 0.995161196077882
+          "score": 0.9863306773835663
         },
         {
           "doc": "src:raw/dates/undated-notes.md",
           "rank": 3,
-          "score": 0.9699072708746309
+          "score": 0.9615344288158045
         },
         {
           "doc": "src:raw/text/plain.txt",
           "rank": 4,
-          "score": 0.9431621255396234
+          "score": 0.9346921908141428
         },
         {
           "doc": "wiki/summaries/raw-notes-frontmatter.md",
           "rank": 5,
-          "score": 0.48802693935853597
+          "score": 0.4851555168187995
         },
         {
           "doc": "wiki/concepts/distributed-systemstxt.md",
           "rank": 6,
-          "score": 0.2603524569999063
+          "score": 0.2682459235038506
+        },
+        {
+          "doc": "wiki/concepts/fact-v1.md",
+          "rank": 7,
+          "score": 0.24004218781691575
+        },
+        {
+          "doc": "wiki/concepts/tier-model.md",
+          "rank": 8,
+          "score": 0.21592241183992186
         },
         {
           "doc": "wiki/concepts/system-prompt-bait.md",
-          "rank": 7,
-          "score": 0.20507129005471422
+          "rank": 9,
+          "score": 0.20480097666392463
         },
         {
           "doc": "wiki/concepts/api-gateway.md",
-          "rank": 8,
-          "score": 0.1983211915819221
-        },
-        {
-          "doc": "wiki/concepts/examplejs.md",
-          "rank": 9,
-          "score": 0.18782064148083236
-        },
-        {
-          "doc": "wiki/concepts/dated-2024.md",
           "rank": 10,
-          "score": 0.17045585900814952
+          "score": 0.19846197531763082
         }
       ]
     },
@@ -395,49 +395,49 @@
           "score": 1
         },
         {
-          "doc": "wiki/concepts/system-prompt-bait.md",
+          "doc": "wiki/concepts/mixed-scripts.md",
           "rank": 2,
-          "score": 0.2499374446220729
+          "score": 0.26977465923602156
+        },
+        {
+          "doc": "wiki/concepts/tier-model.md",
+          "rank": 3,
+          "score": 0.25529999302071305
+        },
+        {
+          "doc": "wiki/concepts/system-prompt-bait.md",
+          "rank": 4,
+          "score": 0.24974299447564316
+        },
+        {
+          "doc": "wiki/concepts/example-testgo.md",
+          "rank": 5,
+          "score": 0.2418711489765465
+        },
+        {
+          "doc": "wiki/concepts/kubernetes-k8s.md",
+          "rank": 6,
+          "score": 0.23669260053328534
         },
         {
           "doc": "wiki/concepts/api-gateway.md",
-          "rank": 3,
-          "score": 0.24160561910472916
-        },
-        {
-          "doc": "wiki/concepts/dated-2024.md",
-          "rank": 4,
-          "score": 0.17884204583051627
-        },
-        {
-          "doc": "wiki/concepts/instruction-lookalike.md",
-          "rank": 5,
-          "score": 0.16569307703317043
-        },
-        {
-          "doc": "wiki/concepts/examplejs.md",
-          "rank": 6,
-          "score": 0.16217958444138655
-        },
-        {
-          "doc": "wiki/concepts/distributed-systemstxt.md",
           "rank": 7,
-          "score": 0.1396896651410864
+          "score": 0.23165742557365862
         },
         {
-          "doc": "wiki/summaries/raw-adversarial-instruction-lookalike.md",
+          "doc": "wiki/concepts/fact-v2.md",
           "rank": 8,
-          "score": 0.07476588460376597
+          "score": 0.22421604104092877
         },
         {
-          "doc": "src:raw/code/example_test.go",
+          "doc": "wiki/concepts/k8s-usage.md",
           "rank": 9,
-          "score": 0.07476588460376597
+          "score": 0.21951998227239852
         },
         {
-          "doc": "wiki/summaries/raw-code-example-py.md",
+          "doc": "wiki/concepts/fact-v1.md",
           "rank": 10,
-          "score": 0.07133089283800159
+          "score": 0.18229623020983182
         }
       ]
     },
@@ -452,47 +452,47 @@
         {
           "doc": "src:raw/alias/k8s-usage.md",
           "rank": 2,
-          "score": 0.9727813609966808
+          "score": 0.9712970472091766
         },
         {
           "doc": "wiki/summaries/raw-alias-kubernetes-k8s.md",
           "rank": 3,
-          "score": 0.5090981438249605
+          "score": 0.5126047440638084
         },
         {
           "doc": "wiki/concepts/instruction-lookalike.md",
           "rank": 4,
-          "score": 0.2731584105346954
+          "score": 0.2804814415721517
         },
         {
           "doc": "wiki/concepts/distributed-systemstxt.md",
           "rank": 5,
-          "score": 0.24854318160807054
+          "score": 0.2560495067812781
+        },
+        {
+          "doc": "wiki/concepts/fact-v1.md",
+          "rank": 6,
+          "score": 0.23482561906476046
         },
         {
           "doc": "wiki/concepts/api-gateway.md",
-          "rank": 6,
-          "score": 0.19395481325281744
+          "rank": 7,
+          "score": 0.19769505739832965
         },
         {
           "doc": "wiki/concepts/system-prompt-bait.md",
-          "rank": 7,
-          "score": 0.18565284396316659
+          "rank": 8,
+          "score": 0.18966096031136853
+        },
+        {
+          "doc": "wiki/concepts/k8s-usage.md",
+          "rank": 9,
+          "score": 0.18392713785385997
         },
         {
           "doc": "wiki/concepts/examplejs.md",
-          "rank": 8,
-          "score": 0.17212078338461098
-        },
-        {
-          "doc": "wiki/concepts/dated-2024.md",
-          "rank": 9,
-          "score": 0.16486833290271247
-        },
-        {
-          "doc": "wiki/summaries/raw-contradiction-fact-v2.md",
           "rank": 10,
-          "score": 0.07358568479008946
+          "score": 0.17299773207304933
         }
       ]
     },
@@ -505,49 +505,49 @@
           "score": 1
         },
         {
-          "doc": "src:raw/multihop/b-links-c.md",
+          "doc": "src:raw/multihop/delta-observability.md",
           "rank": 2,
-          "score": 0.9691845702782511
+          "score": 0.9597502025920447
         },
         {
-          "doc": "src:raw/multihop/delta-observability.md",
+          "doc": "src:raw/multihop/b-links-c.md",
           "rank": 3,
-          "score": 0.9618912113849575
+          "score": 0.9584801017411491
         },
         {
           "doc": "src:raw/multihop/a-links-b.md",
           "rank": 4,
-          "score": 0.9269641602689547
+          "score": 0.9096678457654449
         },
         {
           "doc": "wiki/summaries/raw-multihop-b-links-c.md",
           "rank": 5,
-          "score": 0.49066747824341633
+          "score": 0.5001828109858724
         },
         {
           "doc": "wiki/summaries/raw-unicode-cjk.md",
           "rank": 6,
-          "score": 0.47375004796439124
+          "score": 0.4765107182217531
         },
         {
           "doc": "wiki/summaries/raw-code-example-go.md",
           "rank": 7,
-          "score": 0.46435805317833534
+          "score": 0.46981834845764037
         },
         {
           "doc": "wiki/summaries/raw-adversarial-instruction-lookalike.md",
           "rank": 8,
-          "score": 0.4569750294452018
-        },
-        {
-          "doc": "wiki/summaries/raw-multihop-a-links-b.md",
-          "rank": 9,
-          "score": 0.45028100738012095
+          "score": 0.4625105867346541
         },
         {
           "doc": "wiki/summaries/raw-code-example-py.md",
+          "rank": 9,
+          "score": 0.4482327041705986
+        },
+        {
+          "doc": "wiki/summaries/raw-multihop-a-links-b.md",
           "rank": 10,
-          "score": 0.4450336512078195
+          "score": 0.4449484914807858
         }
       ]
     },
@@ -562,47 +562,47 @@
         {
           "doc": "src:raw/alias/api-gateway.md",
           "rank": 2,
-          "score": 0.9600158355677934
+          "score": 0.9557598383877186
         },
         {
           "doc": "src:raw/notes/cache-economics.md",
           "rank": 3,
-          "score": 0.9443421181211069
+          "score": 0.9449027945327082
         },
         {
           "doc": "src:raw/alias/k8s-usage.md",
           "rank": 4,
-          "score": 0.9407384455447461
+          "score": 0.9369251098870528
+        },
+        {
+          "doc": "wiki/concepts/fact-v1.md",
+          "rank": 5,
+          "score": 0.24757456218771332
+        },
+        {
+          "doc": "wiki/concepts/kubernetes-k8s.md",
+          "rank": 6,
+          "score": 0.21483233605642574
         },
         {
           "doc": "wiki/concepts/distributed-systemstxt.md",
-          "rank": 5,
-          "score": 0.2115540086803166
+          "rank": 7,
+          "score": 0.2102952345184443
         },
         {
           "doc": "wiki/concepts/instruction-lookalike.md",
-          "rank": 6,
-          "score": 0.19334382177197643
+          "rank": 8,
+          "score": 0.19321527245913828
         },
         {
           "doc": "wiki/concepts/dated-2024.md",
-          "rank": 7,
-          "score": 0.18912006638547288
-        },
-        {
-          "doc": "wiki/concepts/api-gateway.md",
-          "rank": 8,
-          "score": 0.18099543057420378
-        },
-        {
-          "doc": "wiki/concepts/system-prompt-bait.md",
           "rank": 9,
-          "score": 0.17520431296806468
+          "score": 0.18924577226111808
         },
         {
-          "doc": "wiki/concepts/examplejs.md",
+          "doc": "wiki/concepts/rtl-arabic.md",
           "rank": 10,
-          "score": 0.16238680167301986
+          "score": 0.18351299217931444
         }
       ]
     },
@@ -610,54 +610,54 @@
       "q": "container orchestration kubernetes",
       "expect": [
         {
-          "doc": "src:raw/alias/k8s-usage.md",
+          "doc": "wiki/concepts/kubernetes-k8s.md",
           "rank": 1,
           "score": 1
         },
         {
           "doc": "src:raw/alias/kubernetes-k8s.md",
           "rank": 2,
-          "score": 0.9894892621130187
+          "score": 0.8103195651539365
+        },
+        {
+          "doc": "src:raw/alias/k8s-usage.md",
+          "rank": 3,
+          "score": 0.809965398967684
         },
         {
           "doc": "wiki/summaries/raw-alias-kubernetes-k8s.md",
-          "rank": 3,
-          "score": 0.5375711216158144
+          "rank": 4,
+          "score": 0.4385785645011675
+        },
+        {
+          "doc": "wiki/concepts/mixed-scripts.md",
+          "rank": 5,
+          "score": 0.22268779812479034
         },
         {
           "doc": "wiki/concepts/api-gateway.md",
-          "rank": 4,
-          "score": 0.2576409540180491
+          "rank": 6,
+          "score": 0.21037607501319083
         },
         {
           "doc": "wiki/concepts/system-prompt-bait.md",
-          "rank": 5,
-          "score": 0.24865413915693252
-        },
-        {
-          "doc": "wiki/concepts/examplejs.md",
-          "rank": 6,
-          "score": 0.17386719468213
-        },
-        {
-          "doc": "wiki/concepts/instruction-lookalike.md",
           "rank": 7,
-          "score": 0.16453730894465565
+          "score": 0.2034407660194994
         },
         {
-          "doc": "wiki/concepts/dated-2024.md",
+          "doc": "wiki/concepts/example-testgo.md",
           "rank": 8,
-          "score": 0.15566182810303897
+          "score": 0.1989961375600641
         },
         {
-          "doc": "wiki/concepts/distributed-systemstxt.md",
+          "doc": "wiki/concepts/k8s-usage.md",
           "rank": 9,
-          "score": 0.13384999405681686
+          "score": 0.18844275331894011
         },
         {
-          "doc": "wiki/summaries/raw-code-example-py.md",
+          "doc": "wiki/concepts/tier-model.md",
           "rank": 10,
-          "score": 0.07174283359281985
+          "score": 0.1844191768706147
         }
       ]
     },
@@ -672,47 +672,47 @@
         {
           "doc": "src:raw/multihop/b-links-c.md",
           "rank": 2,
-          "score": 0.9899626711179631
+          "score": 0.9876678527555385
         },
         {
           "doc": "src:raw/multihop/delta-observability.md",
           "rank": 3,
-          "score": 0.9509534080178556
+          "score": 0.948508847418731
         },
         {
           "doc": "src:raw/multihop/a-links-b.md",
           "rank": 4,
-          "score": 0.9328994109447366
+          "score": 0.9269536449769007
         },
         {
           "doc": "wiki/summaries/raw-multihop-b-links-c.md",
           "rank": 5,
-          "score": 0.5003823372095327
+          "score": 0.5027198533272812
         },
         {
           "doc": "wiki/summaries/raw-unicode-cjk.md",
           "rank": 6,
-          "score": 0.49287618730211635
+          "score": 0.49806201550387597
         },
         {
           "doc": "wiki/summaries/raw-code-example-go.md",
           "rank": 7,
-          "score": 0.48401058839920125
+          "score": 0.48928707586732745
         },
         {
           "doc": "wiki/summaries/raw-multihop-a-links-b.md",
           "rank": 8,
-          "score": 0.45430664182781133
+          "score": 0.4492296511627906
         },
         {
           "doc": "wiki/summaries/raw-unicode-emoji.md",
           "rank": 9,
-          "score": 0.43800700354583294
+          "score": 0.4384788226042017
         },
         {
           "doc": "wiki/summaries/raw-code-example-js.md",
           "rank": 10,
-          "score": 0.43395566249973144
+          "score": 0.43392453486350197
         }
       ]
     },
@@ -727,47 +727,47 @@
         {
           "doc": "src:raw/text/plain.txt",
           "rank": 2,
-          "score": 0.9238526263432225
+          "score": 0.9145402659328172
+        },
+        {
+          "doc": "wiki/concepts/fact-v1.md",
+          "rank": 3,
+          "score": 0.2610844386110343
         },
         {
           "doc": "wiki/concepts/api-gateway.md",
-          "rank": 3,
-          "score": 0.23914658834125113
+          "rank": 4,
+          "score": 0.24133989801301212
         },
         {
           "doc": "wiki/concepts/system-prompt-bait.md",
-          "rank": 4,
-          "score": 0.2310535063338874
+          "rank": 5,
+          "score": 0.23356167490813412
+        },
+        {
+          "doc": "wiki/concepts/k8s-usage.md",
+          "rank": 6,
+          "score": 0.2163765561493813
         },
         {
           "doc": "wiki/concepts/instruction-lookalike.md",
-          "rank": 5,
-          "score": 0.20862354530199054
-        },
-        {
-          "doc": "wiki/concepts/distributed-systemstxt.md",
-          "rank": 6,
-          "score": 0.16365102621243274
-        },
-        {
-          "doc": "wiki/concepts/examplejs.md",
           "rank": 7,
-          "score": 0.15338976086777878
+          "score": 0.2075146764396485
         },
         {
-          "doc": "wiki/concepts/dated-2024.md",
+          "doc": "wiki/concepts/fact-v2.md",
           "rank": 8,
-          "score": 0.1408578557663403
+          "score": 0.20094057231387985
         },
         {
-          "doc": "wiki/summaries/raw-unicode-cjk.md",
+          "doc": "wiki/concepts/mixed-scripts.md",
           "rank": 9,
-          "score": 0.06996466431095405
+          "score": 0.16353740272592324
         },
         {
-          "doc": "wiki/summaries/raw-code-example-go.md",
+          "doc": "wiki/concepts/kubernetes-k8s.md",
           "rank": 10,
-          "score": 0.06675025646871083
+          "score": 0.1602825504615332
         }
       ]
     },
@@ -782,47 +782,47 @@
         {
           "doc": "src:raw/multihop/c-terminal.md",
           "rank": 2,
-          "score": 0.7398883729990734
+          "score": 0.7427097612772449
         },
         {
           "doc": "src:raw/alias/api-gateway.md",
           "rank": 3,
-          "score": 0.7361023366291255
+          "score": 0.7337919350464547
         },
         {
           "doc": "src:raw/alias/kubernetes-k8s.md",
           "rank": 4,
-          "score": 0.6870328748176827
+          "score": 0.6854524263181813
         },
         {
           "doc": "src:raw/unicode/emoji.md",
           "rank": 5,
-          "score": 0.6819039325689127
+          "score": 0.6790760052687146
         },
         {
           "doc": "wiki/summaries/raw-multihop-c-terminal.md",
           "rank": 6,
-          "score": 0.3673171436674125
+          "score": 0.36779309659403436
         },
         {
           "doc": "wiki/summaries/raw-alias-api-gateway.md",
           "rank": 7,
-          "score": 0.36529927925821354
+          "score": 0.3639893803306897
+        },
+        {
+          "doc": "wiki/concepts/fact-v1.md",
+          "rank": 8,
+          "score": 0.21674245396235817
         },
         {
           "doc": "wiki/concepts/system-prompt-bait.md",
-          "rank": 8,
-          "score": 0.17989564328334567
-        },
-        {
-          "doc": "wiki/concepts/instruction-lookalike.md",
           "rank": 9,
-          "score": 0.1697409777048357
+          "score": 0.18302064129568724
         },
         {
-          "doc": "wiki/concepts/distributed-systemstxt.md",
+          "doc": "wiki/concepts/k8s-usage.md",
           "rank": 10,
-          "score": 0.1517568726219247
+          "score": 0.1750907945270457
         }
       ]
     },
@@ -835,49 +835,49 @@
           "score": 1
         },
         {
-          "doc": "wiki/concepts/distributed-systemstxt.md",
-          "rank": 2,
-          "score": 0.9489748886692753
-        },
-        {
           "doc": "wiki/concepts/examplejs.md",
-          "rank": 3,
-          "score": 0.9267982444417394
+          "rank": 2,
+          "score": 0.9209924853120671
         },
         {
           "doc": "wiki/concepts/api-gateway.md",
+          "rank": 3,
+          "score": 0.9189271012059658
+        },
+        {
+          "doc": "wiki/concepts/fact-v1.md",
           "rank": 4,
-          "score": 0.9219632275244379
+          "score": 0.9106368293866773
         },
         {
           "doc": "src:raw/contradiction/fact-v1.md",
           "rank": 5,
-          "score": 0.9003542661866224
+          "score": 0.9011640400374165
         },
         {
-          "doc": "wiki/concepts/dated-2024.md",
+          "doc": "wiki/concepts/k8s-usage.md",
           "rank": 6,
-          "score": 0.8840979626932206
+          "score": 0.8945319308613189
         },
         {
-          "doc": "wiki/concepts/system-prompt-bait.md",
+          "doc": "wiki/concepts/distributed-systemstxt.md",
           "rank": 7,
-          "score": 0.8815833514630032
+          "score": 0.8929393848505331
+        },
+        {
+          "doc": "wiki/concepts/example-testgo.md",
+          "rank": 8,
+          "score": 0.8503063385097127
         },
         {
           "doc": "src:raw/code/example.go",
-          "rank": 8,
-          "score": 0.8553674628107476
-        },
-        {
-          "doc": "src:raw/contradiction/fact-v2.md",
           "rank": 9,
-          "score": 0.8455716003571457
+          "score": 0.8500972711929663
         },
         {
           "doc": "src:raw/alias/kubernetes-k8s.md",
           "rank": 10,
-          "score": 0.8230043532141293
+          "score": 0.8353438521972116
         }
       ]
     },
@@ -892,47 +892,47 @@
         {
           "doc": "src:raw/multihop/a-links-b.md",
           "rank": 2,
-          "score": 0.977541623404106
+          "score": 0.9736701225978738
         },
         {
           "doc": "src:raw/text/distributed-systems.txt",
           "rank": 3,
-          "score": 0.9679498729049164
+          "score": 0.9708982423933326
         },
         {
           "doc": "src:raw/multihop/delta-observability.md",
           "rank": 4,
-          "score": 0.9579456985403125
+          "score": 0.9583731531446361
         },
         {
           "doc": "src:raw/multihop/b-links-c.md",
           "rank": 5,
-          "score": 0.9554913517824289
+          "score": 0.9543068955951446
         },
         {
           "doc": "src:raw/notes/wiki-links.md",
           "rank": 6,
-          "score": 0.9479388850163791
+          "score": 0.9510166606435189
         },
         {
           "doc": "wiki/summaries/raw-multihop-a-links-b.md",
           "rank": 7,
-          "score": 0.46845435613559333
+          "score": 0.46503474474928175
         },
         {
           "doc": "wiki/concepts/instruction-lookalike.md",
           "rank": 8,
-          "score": 0.2750792723235191
+          "score": 0.2825082656349915
+        },
+        {
+          "doc": "wiki/concepts/fact-v1.md",
+          "rank": 9,
+          "score": 0.26671227426726496
         },
         {
           "doc": "wiki/concepts/distributed-systemstxt.md",
-          "rank": 9,
-          "score": 0.2203572314847084
-        },
-        {
-          "doc": "wiki/concepts/dated-2024.md",
           "rank": 10,
-          "score": 0.19067384532972448
+          "score": 0.22325414670707464
         }
       ]
     },
@@ -947,47 +947,47 @@
         {
           "doc": "src:raw/multihop/a-links-b.md",
           "rank": 2,
-          "score": 0.9926494677854973
+          "score": 0.9984206843843356
         },
         {
           "doc": "src:raw/multihop/c-terminal.md",
           "rank": 3,
-          "score": 0.9578794740721986
+          "score": 0.9572060697814907
         },
         {
           "doc": "src:raw/notes/wiki-links.md",
           "rank": 4,
-          "score": 0.9491001856424994
+          "score": 0.9491412951074619
         },
         {
           "doc": "wiki/summaries/raw-multihop-a-links-b.md",
           "rank": 5,
-          "score": 0.4996318688451624
+          "score": 0.5071927473561199
         },
         {
           "doc": "wiki/concepts/examplejs.md",
           "rank": 6,
-          "score": 0.27599459880018473
+          "score": 0.28436728424296376
         },
         {
           "doc": "wiki/concepts/dated-2024.md",
           "rank": 7,
-          "score": 0.2605277213404368
+          "score": 0.2689565518002469
         },
         {
           "doc": "wiki/concepts/distributed-systemstxt.md",
           "rank": 8,
-          "score": 0.20970255562281298
+          "score": 0.21831588226178078
         },
         {
           "doc": "wiki/concepts/api-gateway.md",
           "rank": 9,
-          "score": 0.2005828312230681
+          "score": 0.2092292626101064
         },
         {
-          "doc": "wiki/concepts/instruction-lookalike.md",
+          "doc": "wiki/concepts/tier-model.md",
           "rank": 10,
-          "score": 0.17548708340702593
+          "score": 0.19202707260008778
         }
       ]
     },
@@ -1002,47 +1002,47 @@
         {
           "doc": "src:raw/multihop/b-links-c.md",
           "rank": 2,
-          "score": 0.985669801816408
+          "score": 0.9878691847565481
         },
         {
           "doc": "src:raw/notes/wiki-links.md",
           "rank": 3,
-          "score": 0.9719903319921821
+          "score": 0.9742880292579079
         },
         {
           "doc": "src:raw/multihop/delta-observability.md",
           "rank": 4,
-          "score": 0.967115111600588
+          "score": 0.9645128081314265
         },
         {
           "doc": "wiki/summaries/raw-multihop-b-links-c.md",
           "rank": 5,
-          "score": 0.4784287242802294
+          "score": 0.4807877871179352
         },
         {
           "doc": "wiki/concepts/distributed-systemstxt.md",
           "rank": 6,
-          "score": 0.2437380704701861
+          "score": 0.2512697154595992
         },
         {
           "doc": "wiki/concepts/instruction-lookalike.md",
           "rank": 7,
-          "score": 0.22487759008114547
+          "score": 0.23254478530996814
         },
         {
           "doc": "wiki/concepts/examplejs.md",
           "rank": 8,
-          "score": 0.21495130047776384
+          "score": 0.222689835932521
+        },
+        {
+          "doc": "wiki/concepts/rtl-arabic.md",
+          "rank": 9,
+          "score": 0.20673495393960717
         },
         {
           "doc": "wiki/concepts/dated-2024.md",
-          "rank": 9,
-          "score": 0.19888092069358407
-        },
-        {
-          "doc": "wiki/concepts/system-prompt-bait.md",
           "rank": 10,
-          "score": 0.16708128034435016
+          "score": 0.20242962713724863
         }
       ]
     },
@@ -1057,47 +1057,47 @@
         {
           "doc": "src:raw/multihop/b-links-c.md",
           "rank": 2,
-          "score": 0.9928727504500762
+          "score": 0.989165408682214
         },
         {
           "doc": "src:raw/multihop/c-terminal.md",
           "rank": 3,
-          "score": 0.969154503836319
+          "score": 0.9639528625625642
         },
         {
           "doc": "src:raw/notes/wiki-links.md",
           "rank": 4,
-          "score": 0.941637959738231
+          "score": 0.9370827061677306
         },
         {
           "doc": "src:raw/multihop/delta-observability.md",
           "rank": 5,
-          "score": 0.9347415314130101
+          "score": 0.9222957449554704
         },
         {
           "doc": "wiki/summaries/raw-multihop-a-links-b.md",
           "rank": 6,
-          "score": 0.521817654667902
+          "score": 0.536764831004301
         },
         {
           "doc": "wiki/summaries/raw-notes-frontmatter.md",
           "rank": 7,
-          "score": 0.511740914705324
+          "score": 0.5197832160359068
         },
         {
           "doc": "wiki/summaries/raw-multihop-b-links-c.md",
           "rank": 8,
-          "score": 0.48384560185672487
+          "score": 0.48017876571640455
         },
         {
           "doc": "wiki/summaries/raw-unicode-emoji.md",
           "rank": 9,
-          "score": 0.4678904771135027
+          "score": 0.4670563057387478
         },
         {
           "doc": "wiki/summaries/raw-text-plain-txt.md",
           "rank": 10,
-          "score": 0.45767545263866943
+          "score": 0.460621495540568
         }
       ]
     },
@@ -1112,47 +1112,47 @@
         {
           "doc": "src:raw/contradiction/fact-v1.md",
           "rank": 2,
-          "score": 0.986556210377751
+          "score": 0.9870571153957918
         },
         {
           "doc": "src:raw/alias/api-gateway.md",
           "rank": 3,
-          "score": 0.8262183261315829
+          "score": 0.825825376195538
         },
         {
           "doc": "wiki/summaries/raw-notes-frontmatter.md",
           "rank": 4,
-          "score": 0.5230846593848669
+          "score": 0.532079809927701
         },
         {
           "doc": "wiki/summaries/raw-contradiction-fact-v1.md",
           "rank": 5,
-          "score": 0.4896715811921042
+          "score": 0.4914424886527178
         },
         {
           "doc": "wiki/summaries/raw-text-plain-txt.md",
           "rank": 6,
-          "score": 0.4723903050069743
+          "score": 0.4786829205253779
         },
         {
           "doc": "wiki/summaries/raw-contradiction-fact-v2.md",
           "rank": 7,
-          "score": 0.4715968758737735
+          "score": 0.47286940637950703
         },
         {
           "doc": "wiki/summaries/raw-unicode-emoji.md",
           "rank": 8,
-          "score": 0.4579659585878138
+          "score": 0.4601696336284883
         },
         {
           "doc": "wiki/summaries/raw-code-example-js.md",
           "rank": 9,
-          "score": 0.4529180070299618
+          "score": 0.45442944579496275
         },
         {
           "doc": "wiki/summaries/raw-unicode-cjk.md",
           "rank": 10,
-          "score": 0.45279153976117964
+          "score": 0.451886351108105
         }
       ]
     },
@@ -1160,54 +1160,54 @@
       "q": "lighthouse decentralized lease model",
       "expect": [
         {
-          "doc": "src:raw/contradiction/fact-v2.md",
+          "doc": "wiki/concepts/tier-model.md",
           "rank": 1,
           "score": 1
         },
         {
           "doc": "src:raw/contradiction/fact-v1.md",
           "rank": 2,
-          "score": 0.995621926775945
+          "score": 0.8811431257303215
+        },
+        {
+          "doc": "src:raw/contradiction/fact-v2.md",
+          "rank": 3,
+          "score": 0.8746537591672755
         },
         {
           "doc": "src:raw/dates/dated-2024.md",
-          "rank": 3,
-          "score": 0.9954130764947233
+          "rank": 4,
+          "score": 0.8680210064021112
         },
         {
           "doc": "src:raw/text/plain.txt",
-          "rank": 4,
-          "score": 0.9457922475446087
+          "rank": 5,
+          "score": 0.8194374738580936
         },
         {
           "doc": "src:raw/adversarial/system-prompt-bait.md",
-          "rank": 5,
-          "score": 0.9089827238029928
-        },
-        {
-          "doc": "wiki/summaries/raw-notes-tier-model.md",
           "rank": 6,
-          "score": 0.5224160930536308
+          "score": 0.7837194472584699
         },
         {
           "doc": "wiki/summaries/raw-contradiction-fact-v2.md",
           "rank": 7,
-          "score": 0.518167405575822
+          "score": 0.45671211302188147
+        },
+        {
+          "doc": "wiki/summaries/raw-notes-tier-model.md",
+          "rank": 8,
+          "score": 0.44883592635408337
         },
         {
           "doc": "wiki/summaries/raw-contradiction-fact-v1.md",
-          "rank": 8,
-          "score": 0.5076513013186936
+          "rank": 9,
+          "score": 0.442317859813267
         },
         {
           "doc": "src:raw/notes/tier-model.md",
-          "rank": 9,
-          "score": 0.4935474957701057
-        },
-        {
-          "doc": "wiki/concepts/api-gateway.md",
           "rank": 10,
-          "score": 0.2858164689462666
+          "score": 0.42913296940222295
         }
       ]
     },
@@ -1215,54 +1215,54 @@
       "q": "quantum entanglement teleportation",
       "expect": [
         {
-          "doc": "wiki/concepts/api-gateway.md",
+          "doc": "wiki/concepts/fact-v1.md",
           "rank": 1,
           "score": 1
         },
         {
-          "doc": "wiki/concepts/system-prompt-bait.md",
+          "doc": "wiki/concepts/fact-v2.md",
           "rank": 2,
-          "score": 0.9773620466999405
+          "score": 0.8637447110881435
+        },
+        {
+          "doc": "wiki/concepts/api-gateway.md",
+          "rank": 3,
+          "score": 0.8357731284837675
+        },
+        {
+          "doc": "wiki/concepts/system-prompt-bait.md",
+          "rank": 4,
+          "score": 0.8179097950427717
+        },
+        {
+          "doc": "wiki/concepts/k8s-usage.md",
+          "rank": 5,
+          "score": 0.7919747025975675
         },
         {
           "doc": "wiki/concepts/instruction-lookalike.md",
-          "rank": 3,
-          "score": 0.9445256931277376
+          "rank": 6,
+          "score": 0.7753084307459168
         },
         {
           "doc": "wiki/concepts/distributed-systemstxt.md",
-          "rank": 4,
-          "score": 0.8832633062127454
-        },
-        {
-          "doc": "wiki/concepts/dated-2024.md",
-          "rank": 5,
-          "score": 0.6729427181662704
-        },
-        {
-          "doc": "wiki/concepts/examplejs.md",
-          "rank": 6,
-          "score": 0.6178347795770799
-        },
-        {
-          "doc": "wiki/summaries/raw-notes-tier-model.md",
           "rank": 7,
-          "score": 0.3100775814765712
+          "score": 0.7281041958624455
         },
         {
-          "doc": "src:raw/multihop/delta-observability.md",
+          "doc": "wiki/concepts/mixed-scripts.md",
           "rank": 8,
-          "score": 0.3100775814765712
+          "score": 0.6984886693681631
         },
         {
-          "doc": "wiki/summaries/raw-unicode-mixed-scripts.md",
+          "doc": "wiki/concepts/kubernetes-k8s.md",
           "rank": 9,
-          "score": 0.2958315928847836
+          "score": 0.5760047592247509
         },
         {
-          "doc": "src:raw/unicode/rtl-arabic.md",
+          "doc": "wiki/concepts/tier-model.md",
           "rank": 10,
-          "score": 0.2958315928847836
+          "score": 0.5646371833986626
         }
       ]
     },
@@ -1277,47 +1277,47 @@
         {
           "doc": "src:raw/multihop/c-terminal.md",
           "rank": 2,
-          "score": 0.9556987649735351
+          "score": 0.9522010194738805
         },
         {
           "doc": "src:raw/multihop/delta-observability.md",
           "rank": 3,
-          "score": 0.9360032956224116
+          "score": 0.9319543176088597
         },
         {
           "doc": "wiki/summaries/raw-multihop-b-links-c.md",
           "rank": 4,
-          "score": 0.4614379103648777
+          "score": 0.45932799395250284
+        },
+        {
+          "doc": "wiki/concepts/rtl-arabic.md",
+          "rank": 5,
+          "score": 0.2842296596485132
         },
         {
           "doc": "wiki/concepts/distributed-systemstxt.md",
-          "rank": 5,
-          "score": 0.2525314685314685
+          "rank": 6,
+          "score": 0.2563432506400635
         },
         {
           "doc": "wiki/concepts/dated-2024.md",
-          "rank": 6,
-          "score": 0.21239055333134357
-        },
-        {
-          "doc": "wiki/concepts/instruction-lookalike.md",
           "rank": 7,
-          "score": 0.1963462374945629
+          "score": 0.2175075300970997
         },
         {
-          "doc": "wiki/concepts/system-prompt-bait.md",
+          "doc": "wiki/concepts/kubernetes-k8s.md",
           "rank": 8,
-          "score": 0.1778958963923204
+          "score": 0.21291772588338317
         },
         {
-          "doc": "wiki/concepts/examplejs.md",
+          "doc": "wiki/concepts/example-testgo.md",
           "rank": 9,
-          "score": 0.16662309975024442
+          "score": 0.20200614310902723
         },
         {
-          "doc": "wiki/concepts/api-gateway.md",
+          "doc": "wiki/concepts/fact-v2.md",
           "rank": 10,
-          "score": 0.13277107278162315
+          "score": 0.195728033997577
         }
       ]
     },
@@ -1325,54 +1325,54 @@
       "q": "photosynthesis chlorophyll",
       "expect": [
         {
-          "doc": "wiki/concepts/distributed-systemstxt.md",
+          "doc": "wiki/concepts/rtl-arabic.md",
           "rank": 1,
           "score": 1
         },
         {
-          "doc": "wiki/concepts/dated-2024.md",
+          "doc": "wiki/concepts/distributed-systemstxt.md",
           "rank": 2,
-          "score": 0.8410458885240953
+          "score": 0.9018877585015763
+        },
+        {
+          "doc": "wiki/concepts/dated-2024.md",
+          "rank": 3,
+          "score": 0.7652527549942393
+        },
+        {
+          "doc": "wiki/concepts/kubernetes-k8s.md",
+          "rank": 4,
+          "score": 0.7491045309862577
+        },
+        {
+          "doc": "wiki/concepts/example-testgo.md",
+          "rank": 5,
+          "score": 0.7107145093824268
+        },
+        {
+          "doc": "wiki/concepts/fact-v2.md",
+          "rank": 6,
+          "score": 0.688626353208951
         },
         {
           "doc": "wiki/concepts/instruction-lookalike.md",
-          "rank": 3,
-          "score": 0.7775119617224883
+          "rank": 7,
+          "score": 0.6674632565675269
+        },
+        {
+          "doc": "wiki/concepts/tier-model.md",
+          "rank": 8,
+          "score": 0.6343284252283982
         },
         {
           "doc": "wiki/concepts/system-prompt-bait.md",
-          "rank": 4,
-          "score": 0.704450409395819
+          "rank": 9,
+          "score": 0.5966904829364873
         },
         {
           "doc": "wiki/concepts/examplejs.md",
-          "rank": 5,
-          "score": 0.6598112335036816
-        },
-        {
-          "doc": "wiki/concepts/api-gateway.md",
-          "rank": 6,
-          "score": 0.5257605064181466
-        },
-        {
-          "doc": "wiki/summaries/raw-text-plain-txt.md",
-          "rank": 7,
-          "score": 0.2818046335184934
-        },
-        {
-          "doc": "src:raw/contradiction/fact-v2.md",
-          "rank": 8,
-          "score": 0.2818046335184934
-        },
-        {
-          "doc": "wiki/summaries/raw-notes-wiki-links.md",
-          "rank": 9,
-          "score": 0.2685950413223141
-        },
-        {
-          "doc": "src:raw/alias/kubernetes-k8s.md",
           "rank": 10,
-          "score": 0.2685950413223141
+          "score": 0.5616065438715275
         }
       ]
     },
@@ -1387,47 +1387,47 @@
         {
           "doc": "src:raw/alias/kubernetes-k8s.md",
           "rank": 2,
-          "score": 0.9715991337626583
+          "score": 0.969462485270567
         },
         {
           "doc": "src:raw/alias/k8s-usage.md",
           "rank": 3,
-          "score": 0.9317173892351314
+          "score": 0.930578773237378
         },
         {
           "doc": "wiki/concepts/distributed-systemstxt.md",
           "rank": 4,
-          "score": 0.24577969375237319
+          "score": 0.252581777400337
         },
         {
           "doc": "wiki/concepts/dated-2024.md",
           "rank": 5,
-          "score": 0.23180409532360324
+          "score": 0.23873222064500832
+        },
+        {
+          "doc": "wiki/concepts/rtl-arabic.md",
+          "rank": 6,
+          "score": 0.2263337633706118
         },
         {
           "doc": "wiki/concepts/examplejs.md",
-          "rank": 6,
-          "score": 0.2046994998912807
+          "rank": 7,
+          "score": 0.20739888949088073
         },
         {
           "doc": "wiki/concepts/instruction-lookalike.md",
-          "rank": 7,
-          "score": 0.19373627729792117
-        },
-        {
-          "doc": "wiki/concepts/api-gateway.md",
           "rank": 8,
-          "score": 0.15416772188327385
+          "score": 0.1968187154276697
         },
         {
-          "doc": "wiki/concepts/system-prompt-bait.md",
+          "doc": "wiki/concepts/fact-v1.md",
           "rank": 9,
-          "score": 0.14610023918243098
+          "score": 0.1617960260541361
         },
         {
-          "doc": "wiki/summaries/raw-multihop-c-terminal.md",
+          "doc": "wiki/concepts/tier-model.md",
           "rank": 10,
-          "score": 0.0710371819960861
+          "score": 0.15856092299129856
         }
       ]
     },
@@ -1442,47 +1442,47 @@
         {
           "doc": "wiki/concepts/api-gateway.md",
           "rank": 2,
-          "score": 0.27703415433457934
+          "score": 0.2850035995791261
+        },
+        {
+          "doc": "wiki/concepts/fact-v1.md",
+          "rank": 3,
+          "score": 0.2662448093819989
+        },
+        {
+          "doc": "wiki/concepts/mixed-scripts.md",
+          "rank": 4,
+          "score": 0.2403182616664817
         },
         {
           "doc": "wiki/concepts/system-prompt-bait.md",
-          "rank": 3,
-          "score": 0.22689693842792805
+          "rank": 5,
+          "score": 0.22506005040017424
+        },
+        {
+          "doc": "wiki/concepts/k8s-usage.md",
+          "rank": 6,
+          "score": 0.20878703413139388
         },
         {
           "doc": "wiki/concepts/examplejs.md",
-          "rank": 4,
-          "score": 0.19828818140902468
-        },
-        {
-          "doc": "wiki/concepts/instruction-lookalike.md",
-          "rank": 5,
-          "score": 0.17963592605868198
-        },
-        {
-          "doc": "wiki/concepts/dated-2024.md",
-          "rank": 6,
-          "score": 0.16662547028430585
-        },
-        {
-          "doc": "wiki/concepts/distributed-systemstxt.md",
           "rank": 7,
-          "score": 0.14492584852849996
+          "score": 0.1939935037361192
         },
         {
-          "doc": "wiki/summaries/raw-multihop-b-links-c.md",
+          "doc": "wiki/concepts/tier-model.md",
           "rank": 8,
-          "score": 0.06867801235218428
+          "score": 0.18610983348271756
         },
         {
-          "doc": "src:raw/alias/k8s-usage.md",
+          "doc": "wiki/concepts/kubernetes-k8s.md",
           "rank": 9,
-          "score": 0.06867801235218428
+          "score": 0.17860844497167377
         },
         {
-          "doc": "wiki/summaries/raw-code-example-go.md",
+          "doc": "wiki/concepts/example-testgo.md",
           "rank": 10,
-          "score": 0.06547576376036614
+          "score": 0.17499252093273054
         }
       ]
     },
@@ -1490,54 +1490,54 @@
       "q": "النص العربي بحث",
       "expect": [
         {
-          "doc": "wiki/concepts/system-prompt-bait.md",
+          "doc": "wiki/concepts/k8s-usage.md",
           "rank": 1,
           "score": 1
         },
         {
-          "doc": "wiki/concepts/api-gateway.md",
+          "doc": "wiki/concepts/system-prompt-bait.md",
           "rank": 2,
-          "score": 0.8274782608695653
+          "score": 0.9768931594600779
+        },
+        {
+          "doc": "wiki/concepts/fact-v1.md",
+          "rank": 3,
+          "score": 0.9223421303873434
+        },
+        {
+          "doc": "wiki/concepts/fact-v2.md",
+          "rank": 4,
+          "score": 0.881586586731077
+        },
+        {
+          "doc": "wiki/concepts/mixed-scripts.md",
+          "rank": 5,
+          "score": 0.8432113209144283
+        },
+        {
+          "doc": "wiki/concepts/api-gateway.md",
+          "rank": 6,
+          "score": 0.7645001457301078
+        },
+        {
+          "doc": "wiki/concepts/tier-model.md",
+          "rank": 7,
+          "score": 0.6879455942208434
+        },
+        {
+          "doc": "wiki/concepts/kubernetes-k8s.md",
+          "rank": 8,
+          "score": 0.6469238115943441
+        },
+        {
+          "doc": "wiki/concepts/example-testgo.md",
+          "rank": 9,
+          "score": 0.6149025764452671
         },
         {
           "doc": "wiki/concepts/instruction-lookalike.md",
-          "rank": 3,
-          "score": 0.6705834146341464
-        },
-        {
-          "doc": "wiki/concepts/distributed-systemstxt.md",
-          "rank": 4,
-          "score": 0.5687277649925545
-        },
-        {
-          "doc": "wiki/concepts/examplejs.md",
-          "rank": 5,
-          "score": 0.5042666666666668
-        },
-        {
-          "doc": "wiki/concepts/dated-2024.md",
-          "rank": 6,
-          "score": 0.4776170212765957
-        },
-        {
-          "doc": "wiki/summaries/raw-alias-kubernetes-k8s.md",
-          "rank": 7,
-          "score": 0.24400000000000005
-        },
-        {
-          "doc": "src:raw/unicode/cjk.md",
-          "rank": 8,
-          "score": 0.24400000000000005
-        },
-        {
-          "doc": "wiki/summaries/raw-code-example-go.md",
-          "rank": 9,
-          "score": 0.23238095238095233
-        },
-        {
-          "doc": "src:raw/unicode/rtl-arabic.md",
           "rank": 10,
-          "score": 0.23238095238095233
+          "score": 0.5911976272523902
         }
       ]
     },
@@ -1550,49 +1550,49 @@
           "score": 1
         },
         {
-          "doc": "wiki/concepts/system-prompt-bait.md",
+          "doc": "wiki/concepts/tier-model.md",
           "rank": 2,
-          "score": 0.2216616552306581
+          "score": 0.2851919561243144
+        },
+        {
+          "doc": "wiki/concepts/kubernetes-k8s.md",
+          "rank": 3,
+          "score": 0.27862990344561384
+        },
+        {
+          "doc": "wiki/concepts/mixed-scripts.md",
+          "rank": 4,
+          "score": 0.22587002318343227
+        },
+        {
+          "doc": "wiki/concepts/system-prompt-bait.md",
+          "rank": 5,
+          "score": 0.2163913389453874
         },
         {
           "doc": "wiki/concepts/api-gateway.md",
-          "rank": 3,
-          "score": 0.21444488092492217
+          "rank": 6,
+          "score": 0.20977742549954614
+        },
+        {
+          "doc": "wiki/concepts/k8s-usage.md",
+          "rank": 7,
+          "score": 0.20343934195578284
         },
         {
           "doc": "wiki/concepts/examplejs.md",
-          "rank": 4,
-          "score": 0.20258981768949447
-        },
-        {
-          "doc": "wiki/concepts/dated-2024.md",
-          "rank": 5,
-          "score": 0.1872353727950356
-        },
-        {
-          "doc": "wiki/concepts/distributed-systemstxt.md",
-          "rank": 6,
-          "score": 0.15913027238222413
-        },
-        {
-          "doc": "wiki/concepts/instruction-lookalike.md",
-          "rank": 7,
-          "score": 0.13415680884743733
-        },
-        {
-          "doc": "wiki/summaries/raw-adversarial-instruction-lookalike.md",
           "rank": 8,
-          "score": 0.0718045424403183
+          "score": 0.19481449732580303
         },
         {
-          "doc": "src:raw/code/example.js",
+          "doc": "wiki/concepts/rtl-arabic.md",
           "rank": 9,
-          "score": 0.0718045424403183
+          "score": 0.18104438139239132
         },
         {
-          "doc": "wiki/summaries/raw-contradiction-fact-v1.md",
+          "doc": "wiki/concepts/example-testgo.md",
           "rank": 10,
-          "score": 0.06850560451784037
+          "score": 0.1773963317638352
         }
       ]
     },
@@ -1607,47 +1607,47 @@
         {
           "doc": "wiki/summaries/raw-unicode-emoji.md",
           "rank": 2,
-          "score": 0.49754534936164735
+          "score": 0.4966822525077157
+        },
+        {
+          "doc": "wiki/concepts/fact-v2.md",
+          "rank": 3,
+          "score": 0.2967400763103286
         },
         {
           "doc": "wiki/concepts/system-prompt-bait.md",
-          "rank": 3,
-          "score": 0.2785006580523527
-        },
-        {
-          "doc": "wiki/concepts/instruction-lookalike.md",
           "rank": 4,
-          "score": 0.21350031347363002
+          "score": 0.28330129829560846
         },
         {
-          "doc": "wiki/concepts/api-gateway.md",
+          "doc": "wiki/concepts/k8s-usage.md",
           "rank": 5,
-          "score": 0.19573880906023422
+          "score": 0.2768968806479684
         },
         {
-          "doc": "wiki/concepts/distributed-systemstxt.md",
+          "doc": "wiki/concepts/fact-v1.md",
           "rank": 6,
-          "score": 0.17580816827899845
+          "score": 0.2534916452447747
         },
         {
-          "doc": "wiki/concepts/dated-2024.md",
+          "doc": "wiki/concepts/mixed-scripts.md",
           "rank": 7,
-          "score": 0.14771801367675497
+          "score": 0.2347330022718612
         },
         {
-          "doc": "wiki/concepts/examplejs.md",
+          "doc": "wiki/concepts/rtl-arabic.md",
           "rank": 8,
-          "score": 0.14001913691589984
+          "score": 0.21545492018418763
         },
         {
-          "doc": "wiki/summaries/raw-alias-kubernetes-k8s.md",
+          "doc": "wiki/concepts/kubernetes-k8s.md",
           "rank": 9,
-          "score": 0.0741363968742016
+          "score": 0.20662743107351178
         },
         {
-          "doc": "src:raw/unicode/cjk.md",
+          "doc": "wiki/concepts/example-testgo.md",
           "rank": 10,
-          "score": 0.0741363968742016
+          "score": 0.19824414644872265
         }
       ]
     },
@@ -1696,54 +1696,54 @@
       ],
       "expect": [
         {
-          "doc": "wiki/concepts/distributed-systemstxt.md",
+          "doc": "wiki/concepts/rtl-arabic.md",
           "rank": 1,
           "score": 1
         },
         {
-          "doc": "wiki/concepts/dated-2024.md",
+          "doc": "wiki/concepts/distributed-systemstxt.md",
           "rank": 2,
-          "score": 0.8509555892250633
+          "score": 0.881586586731077
+        },
+        {
+          "doc": "wiki/concepts/dated-2024.md",
+          "rank": 3,
+          "score": 0.7564114683030453
+        },
+        {
+          "doc": "wiki/concepts/kubernetes-k8s.md",
+          "rank": 4,
+          "score": 0.7404498115136414
+        },
+        {
+          "doc": "wiki/concepts/example-testgo.md",
+          "rank": 5,
+          "score": 0.7025033259635725
+        },
+        {
+          "doc": "wiki/concepts/fact-v2.md",
+          "rank": 6,
+          "score": 0.6879455942208434
         },
         {
           "doc": "wiki/concepts/instruction-lookalike.md",
-          "rank": 3,
-          "score": 0.7866730680749766
+          "rank": 7,
+          "score": 0.6597517730496454
+        },
+        {
+          "doc": "wiki/concepts/tier-model.md",
+          "rank": 8,
+          "score": 0.6332669791327115
         },
         {
           "doc": "wiki/concepts/system-prompt-bait.md",
-          "rank": 4,
-          "score": 0.7053237849279718
+          "rank": 9,
+          "score": 0.584089373982991
         },
         {
           "doc": "wiki/concepts/examplejs.md",
-          "rank": 5,
-          "score": 0.6675855201774232
-        },
-        {
-          "doc": "wiki/concepts/api-gateway.md",
-          "rank": 6,
-          "score": 0.5319553280445102
-        },
-        {
-          "doc": "wiki/summaries/raw-text-plain-txt.md",
-          "rank": 7,
-          "score": 0.2851250225869363
-        },
-        {
-          "doc": "src:raw/contradiction/fact-v2.md",
-          "rank": 8,
-          "score": 0.2851250225869363
-        },
-        {
-          "doc": "wiki/summaries/raw-notes-wiki-links.md",
-          "rank": 9,
-          "score": 0.2717597871531737
-        },
-        {
-          "doc": "src:raw/alias/kubernetes-k8s.md",
           "rank": 10,
-          "score": 0.2717597871531737
+          "score": 0.5551180674438195
         }
       ]
     },

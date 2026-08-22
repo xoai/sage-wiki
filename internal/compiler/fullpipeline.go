@@ -320,7 +320,10 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		for _, c := range concepts {
 			match, score, vec := dc.CheckDuplicate(c.Name)
 			if match != "" {
-				log.Info("concept dedup: merging", "new", c.Name, "existing", match, "score", score)
+				// WARN, not INFO (issue #164): an auto-merge deletes a concept
+				// as its own entity — that must be discoverable, not one INFO
+				// line inside thousands.
+				log.Warn("concept dedup: merging", "new", c.Name, "existing", match, "score", score)
 				// Merge sources into existing concept (deduplicate source list)
 				mergeConceptIntoManifest(mf, match, c)
 				merged++
@@ -336,7 +339,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 		}
 
 		if merged > 0 {
-			log.Info("concept dedup complete", "original", len(concepts), "merged", merged, "remaining", len(dedupedConcepts))
+			log.Warn("concept dedup complete", "original", len(concepts), "merged", merged, "remaining", len(dedupedConcepts))
 		}
 		concepts = dedupedConcepts
 	}

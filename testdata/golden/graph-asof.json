@@ -59,11 +59,32 @@
       "ArticlePath": ""
     },
     {
+      "ID": "example-testgo",
+      "Type": "concept",
+      "Name": "Example Testgo",
+      "Definition": "",
+      "ArticlePath": "wiki/concepts/example-testgo.md"
+    },
+    {
       "ID": "examplejs",
       "Type": "concept",
       "Name": "Examplejs",
       "Definition": "",
       "ArticlePath": "wiki/concepts/examplejs.md"
+    },
+    {
+      "ID": "fact-v1",
+      "Type": "concept",
+      "Name": "Fact V1",
+      "Definition": "",
+      "ArticlePath": "wiki/concepts/fact-v1.md"
+    },
+    {
+      "ID": "fact-v2",
+      "Type": "concept",
+      "Name": "Fact V2",
+      "Definition": "",
+      "ArticlePath": "wiki/concepts/fact-v2.md"
     },
     {
       "ID": "gamma-proof",
@@ -80,11 +101,32 @@
       "ArticlePath": "wiki/concepts/instruction-lookalike.md"
     },
     {
+      "ID": "k8s-usage",
+      "Type": "concept",
+      "Name": "K8s Usage",
+      "Definition": "",
+      "ArticlePath": "wiki/concepts/k8s-usage.md"
+    },
+    {
       "ID": "kubernetes",
       "Type": "concept",
       "Name": "Kubernetes",
       "Definition": "The container orchestration system (alias K8s).",
       "ArticlePath": ""
+    },
+    {
+      "ID": "kubernetes-k8s",
+      "Type": "concept",
+      "Name": "Kubernetes K8s",
+      "Definition": "",
+      "ArticlePath": "wiki/concepts/kubernetes-k8s.md"
+    },
+    {
+      "ID": "mixed-scripts",
+      "Type": "concept",
+      "Name": "Mixed Scripts",
+      "Definition": "",
+      "ArticlePath": "wiki/concepts/mixed-scripts.md"
     },
     {
       "ID": "project-lighthouse",
@@ -115,9 +157,44 @@
       "ArticlePath": ""
     },
     {
+      "ID": "raw/alias/k8s-usage.md",
+      "Type": "source",
+      "Name": "k8s-usage.md",
+      "Definition": "",
+      "ArticlePath": ""
+    },
+    {
+      "ID": "raw/alias/kubernetes-k8s.md",
+      "Type": "source",
+      "Name": "kubernetes-k8s.md",
+      "Definition": "",
+      "ArticlePath": ""
+    },
+    {
       "ID": "raw/code/example.js",
       "Type": "source",
       "Name": "example.js",
+      "Definition": "",
+      "ArticlePath": ""
+    },
+    {
+      "ID": "raw/code/example_test.go",
+      "Type": "source",
+      "Name": "example_test.go",
+      "Definition": "",
+      "ArticlePath": ""
+    },
+    {
+      "ID": "raw/contradiction/fact-v1.md",
+      "Type": "source",
+      "Name": "fact-v1.md",
+      "Definition": "",
+      "ArticlePath": ""
+    },
+    {
+      "ID": "raw/contradiction/fact-v2.md",
+      "Type": "source",
+      "Name": "fact-v2.md",
       "Definition": "",
       "ArticlePath": ""
     },
@@ -129,6 +206,13 @@
       "ArticlePath": ""
     },
     {
+      "ID": "raw/notes/tier-model.md",
+      "Type": "source",
+      "Name": "tier-model.md",
+      "Definition": "",
+      "ArticlePath": ""
+    },
+    {
       "ID": "raw/text/distributed-systems.txt",
       "Type": "source",
       "Name": "distributed-systems.txt",
@@ -136,11 +220,39 @@
       "ArticlePath": ""
     },
     {
+      "ID": "raw/unicode/mixed-scripts.md",
+      "Type": "source",
+      "Name": "mixed-scripts.md",
+      "Definition": "",
+      "ArticlePath": ""
+    },
+    {
+      "ID": "raw/unicode/rtl-arabic.md",
+      "Type": "source",
+      "Name": "rtl-arabic.md",
+      "Definition": "",
+      "ArticlePath": ""
+    },
+    {
+      "ID": "rtl-arabic",
+      "Type": "concept",
+      "Name": "Rtl Arabic",
+      "Definition": "",
+      "ArticlePath": "wiki/concepts/rtl-arabic.md"
+    },
+    {
       "ID": "system-prompt-bait",
       "Type": "concept",
       "Name": "System Prompt Bait",
       "Definition": "",
       "ArticlePath": "wiki/concepts/system-prompt-bait.md"
+    },
+    {
+      "ID": "tier-model",
+      "Type": "concept",
+      "Name": "Tier Model",
+      "Definition": "",
+      "ArticlePath": "wiki/concepts/tier-model.md"
     }
   ],
   "relations": [
@@ -190,9 +302,36 @@
       "Confidence": 0
     },
     {
+      "ID": "example-testgo-cites-raw-code-example_test-go",
+      "SourceID": "example-testgo",
+      "TargetID": "raw/code/example_test.go",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
       "ID": "examplejs-cites-raw-code-example-js",
       "SourceID": "examplejs",
       "TargetID": "raw/code/example.js",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
+      "ID": "fact-v1-cites-raw-contradiction-fact-v1-md",
+      "SourceID": "fact-v1",
+      "TargetID": "raw/contradiction/fact-v1.md",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
+      "ID": "fact-v2-cites-raw-contradiction-fact-v2-md",
+      "SourceID": "fact-v2",
+      "TargetID": "raw/contradiction/fact-v2.md",
       "Relation": "cites",
       "Evidence": "",
       "SourceDoc": "",
@@ -208,6 +347,15 @@
       "Confidence": 0
     },
     {
+      "ID": "k8s-usage-cites-raw-alias-k8s-usage-md",
+      "SourceID": "k8s-usage",
+      "TargetID": "raw/alias/k8s-usage.md",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
       "ID": "triple:ecebeb8c3445db30",
       "SourceID": "kubernetes",
       "TargetID": "etcd",
@@ -215,6 +363,24 @@
       "Evidence": "K8s uses etcd for cluster state.",
       "SourceDoc": "raw/alias/kubernetes-k8s.md",
       "Confidence": 0.85
+    },
+    {
+      "ID": "kubernetes-k8s-cites-raw-alias-kubernetes-k8s-md",
+      "SourceID": "kubernetes-k8s",
+      "TargetID": "raw/alias/kubernetes-k8s.md",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
+      "ID": "mixed-scripts-cites-raw-unicode-mixed-scripts-md",
+      "SourceID": "mixed-scripts",
+      "TargetID": "raw/unicode/mixed-scripts.md",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
     },
     {
       "ID": "triple:ffa8696fcd816e1c",
@@ -226,9 +392,27 @@
       "Confidence": 0.9
     },
     {
+      "ID": "rtl-arabic-cites-raw-unicode-rtl-arabic-md",
+      "SourceID": "rtl-arabic",
+      "TargetID": "raw/unicode/rtl-arabic.md",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
       "ID": "system-prompt-bait-cites-raw-adversarial-system-prompt-bait-md",
       "SourceID": "system-prompt-bait",
       "TargetID": "raw/adversarial/system-prompt-bait.md",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
+      "ID": "tier-model-cites-raw-notes-tier-model-md",
+      "SourceID": "tier-model",
+      "TargetID": "raw/notes/tier-model.md",
       "Relation": "cites",
       "Evidence": "",
       "SourceDoc": "",
@@ -292,9 +476,36 @@
       "Confidence": 0
     },
     {
+      "ID": "example-testgo-cites-raw-code-example_test-go",
+      "SourceID": "example-testgo",
+      "TargetID": "raw/code/example_test.go",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
       "ID": "examplejs-cites-raw-code-example-js",
       "SourceID": "examplejs",
       "TargetID": "raw/code/example.js",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
+      "ID": "fact-v1-cites-raw-contradiction-fact-v1-md",
+      "SourceID": "fact-v1",
+      "TargetID": "raw/contradiction/fact-v1.md",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
+      "ID": "fact-v2-cites-raw-contradiction-fact-v2-md",
+      "SourceID": "fact-v2",
+      "TargetID": "raw/contradiction/fact-v2.md",
       "Relation": "cites",
       "Evidence": "",
       "SourceDoc": "",
@@ -310,6 +521,15 @@
       "Confidence": 0
     },
     {
+      "ID": "k8s-usage-cites-raw-alias-k8s-usage-md",
+      "SourceID": "k8s-usage",
+      "TargetID": "raw/alias/k8s-usage.md",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
       "ID": "triple:ecebeb8c3445db30",
       "SourceID": "kubernetes",
       "TargetID": "etcd",
@@ -319,9 +539,45 @@
       "Confidence": 0.85
     },
     {
+      "ID": "kubernetes-k8s-cites-raw-alias-kubernetes-k8s-md",
+      "SourceID": "kubernetes-k8s",
+      "TargetID": "raw/alias/kubernetes-k8s.md",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
+      "ID": "mixed-scripts-cites-raw-unicode-mixed-scripts-md",
+      "SourceID": "mixed-scripts",
+      "TargetID": "raw/unicode/mixed-scripts.md",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
+      "ID": "rtl-arabic-cites-raw-unicode-rtl-arabic-md",
+      "SourceID": "rtl-arabic",
+      "TargetID": "raw/unicode/rtl-arabic.md",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
       "ID": "system-prompt-bait-cites-raw-adversarial-system-prompt-bait-md",
       "SourceID": "system-prompt-bait",
       "TargetID": "raw/adversarial/system-prompt-bait.md",
+      "Relation": "cites",
+      "Evidence": "",
+      "SourceDoc": "",
+      "Confidence": 0
+    },
+    {
+      "ID": "tier-model-cites-raw-notes-tier-model-md",
+      "SourceID": "tier-model",
+      "TargetID": "raw/notes/tier-model.md",
       "Relation": "cites",
       "Evidence": "",
       "SourceDoc": "",
