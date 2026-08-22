@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -1120,5 +1121,54 @@ func TestWebhookTypesValidated(t *testing.T) {
 	bad.Serve.Webhooks[0].Types = []string{"compile_finish"} // typo
 	if err := bad.Validate(); err == nil {
 		t.Fatal("typo'd event type must fail validation")
+	}
+}
+
+// Issue #167: dedup_strategy must be validated at load — "llm" used to
+// silently disable dedup entirely (the opposite of the documented promise).
+func TestValidateDedupStrategy(t *testing.T) {
+	for _, v := range []string{"", "embedding", "llm"} {
+		c := &Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}}
+		c.Compiler.DedupStrategy = v
+		if err := c.Validate(); err != nil {
+			t.Errorf("DedupStrategy=%q: unexpected error %v", v, err)
+		}
+	}
+	c := &Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}}
+	c.Compiler.DedupStrategy = "fuzzy"
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("invalid dedup_strategy accepted")
+	}
+	if !strings.Contains(err.Error(), "dedup_strategy") {
+		t.Errorf("error should name dedup_strategy, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "llm") || !strings.Contains(err.Error(), "embedding") {
+		t.Errorf("error should name valid values, got: %v", err)
+	}
+}
+
+func TestLLMDedupDefaults(t *testing.T) {
+	c := &Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}}
+	if c.Compiler.LLMDedup.AllowDropOrDefault() {
+		t.Error("allow_drop must default false (drops are proposals until enabled)")
+	}
+	if got := c.Compiler.LLMDedup.BatchSizeOrDefault(); got != 200 {
+		t.Errorf("batch_size default = %d, want 200", got)
+	}
+	fifty := 50
+	c.Compiler.LLMDedup.BatchSize = &fifty
+	if got := c.Compiler.LLMDedup.BatchSizeOrDefault(); got != 50 {
+		t.Errorf("explicit batch_size = %d, want 50", got)
+	}
+}
+
+func TestValidateLLMDedupBatchSize(t *testing.T) {
+	zero := 0
+	c := &Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}}
+	c.Compiler.LLMDedup.BatchSize = &zero
+	err := c.Validate()
+	if err == nil || !strings.Contains(err.Error(), "llm_dedup.batch_size") {
+		t.Errorf("explicit batch_size=0 should be rejected (nil = default; 0 is a mistake), got: %v", err)
 	}
 }

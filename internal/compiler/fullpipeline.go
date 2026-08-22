@@ -355,6 +355,16 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	// Evidence gate (#128): source-less concepts are suppressed entirely —
 	// no manifest entry, no article, no entity, no cites.
 	concepts, _ = filterLowEvidence(concepts, cfg.Compiler.MinConceptSourcesOrDefault())
+
+	// LLM curation pass (#167): when dedup_strategy is "llm", this REPLACES
+	// the embedding dedup above. Runs at the same seam on all three write
+	// paths. Failure is advisory: count it and proceed uncurated.
+	if curated, cerr := maybeCurateConcepts(orBackground(opts.Ctx), client, extractModel, opts.Prompts, concepts, mf, cfg); cerr != nil {
+		result.Errors++
+		log.Warn("concept curation failed — proceeding uncurated", "error", cerr)
+	} else {
+		concepts = curated
+	}
 	result.ConceptsExtracted = len(concepts)
 
 	var conceptNames []string
