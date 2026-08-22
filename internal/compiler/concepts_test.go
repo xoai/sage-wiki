@@ -3,6 +3,8 @@ package compiler
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -110,15 +112,23 @@ func TestExtractConcepts_ParseErrorReturnsError(t *testing.T) {
 	}
 }
 
-// TestExtractConcepts_PartialFailureProceeds: one batch succeeds, one returns
-// empty → no error (partial failure tolerated), the successful concept is kept.
+// TestExtractConcepts_PartialFailureProceeds: one batch succeeds, one fails →
+// the surviving concept is kept AND a *PartialFailureError names the skipped
+// source (issue #166: partial failure must surface in result.Errors and name
+// the skipped documents — the old nil-error contract reported errors=0 while
+// half the corpus was silently skipped).
 func TestExtractConcepts_PartialFailureProceeds(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if calls.Add(1) == 1 {
-			json.NewEncoder(w).Encode(conceptChoiceResponse())
-		} else {
+		calls.Add(1)
+		// Fail by REQUEST CONTENT, not call order: with concurrency the batch
+		// goroutines' sem acquisition order is not guaranteed, and the prompt
+		// embeds the source path ("### Source: raw/b.md").
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), "raw/b.md") {
 			json.NewEncoder(w).Encode(emptyChoiceResponse())
+		} else {
+			json.NewEncoder(w).Encode(conceptChoiceResponse())
 		}
 	}))
 	defer server.Close()
@@ -135,8 +145,18 @@ func TestExtractConcepts_PartialFailureProceeds(t *testing.T) {
 	// batchSize=1 → 2 batches; concurrency=1 → serialized so the call counter is
 	// deterministic (exactly one batch succeeds, one fails).
 	concepts, err := ExtractConcepts(context.Background(), summaries, nil, client, "m", 1, 8192, 1, nil, nil)
-	if err != nil {
-		t.Fatalf("partial failure should not error: %v", err)
+	if err == nil {
+		t.Fatal("partial failure must return a non-nil *PartialFailureError (issue #166)")
+	}
+	var pfe *PartialFailureError
+	if !errors.As(err, &pfe) {
+		t.Fatalf("error type = %T, want *PartialFailureError (err=%v)", err, err)
+	}
+	if pfe.Failed != 1 || pfe.Total != 2 {
+		t.Errorf("Failed/Total = %d/%d, want 1/2", pfe.Failed, pfe.Total)
+	}
+	if len(pfe.Skipped) != 1 || pfe.Skipped[0] != "raw/b.md" {
+		t.Errorf("Skipped = %v, want [raw/b.md]", pfe.Skipped)
 	}
 	if len(concepts) != 1 {
 		t.Errorf("expected 1 concept from the successful batch, got %d", len(concepts))

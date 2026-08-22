@@ -291,11 +291,19 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	progress.StartPhase("Pass 2: Extract concepts", len(successfulSummaries))
 	concepts, err := ExtractConcepts(opts.Ctx, successfulSummaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel, opts.Prompts, cfg.Compiler.CompileTemperature())
 	if err != nil {
-		progress.ItemError("concept extraction", err)
-		result.Errors++
-		progress.EndPhase()
-		client.TeardownCache(extCacheID)
-		return result
+		var pfe *PartialFailureError
+		if errors.As(err, &pfe) {
+			// Partial failure (issue #166): count it and name the skipped
+			// documents, but keep going with the surviving concepts.
+			result.Errors++
+			progress.ItemError("concept extraction (partial)", err)
+		} else {
+			progress.ItemError("concept extraction", err)
+			result.Errors++
+			progress.EndPhase()
+			client.TeardownCache(extCacheID)
+			return result
+		}
 	}
 
 	// Budget guard: stop between passes when MaxCost is exceeded.

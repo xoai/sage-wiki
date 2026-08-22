@@ -1,9 +1,12 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -102,5 +105,72 @@ func TestStructuredCompletionValidationErrorNoFallback(t *testing.T) {
 	_, _, err := c.StructuredCompletion(t.Context(), []Message{{Role: "user", Content: "x"}}, schema, CallOpts{Model: "m"})
 	if err == nil {
 		t.Fatal("expected validation error (minItems), got nil — and it must NOT fall back")
+	}
+}
+
+// Issue #166: a payload truncated at the output-token cap fails JSON parsing
+// with a bare "unexpected end of JSON input", leaving users to guess the
+// cause. When finish_reason=length the error must name the cap.
+func TestWithTruncationHint(t *testing.T) {
+	base := errors.New("structured: unparseable payload: unexpected end of JSON input")
+
+	got := withTruncationHint(&Response{FinishReason: "length"}, 4096, base)
+	if !strings.Contains(got.Error(), "MaxTokens=4096") {
+		t.Errorf("length finish_reason should name the cap, got: %v", got)
+	}
+	if !errors.Is(got, base) {
+		t.Errorf("hint must wrap, not replace: %v", got)
+	}
+	if got := withTruncationHint(&Response{FinishReason: "stop"}, 4096, base); got != base {
+		t.Errorf("non-length finish_reason must pass through unchanged, got: %v", got)
+	}
+	if got := withTruncationHint(nil, 4096, base); got != base {
+		t.Errorf("nil resp must pass through unchanged, got: %v", got)
+	}
+}
+
+// structuredTruncProvider: native mechanism present, but the structured parse
+// always fails (truncated payload) and the usage parse reports
+// finish_reason=length — the truncation-at-cap shape.
+type structuredTruncProvider struct {
+	calls *int32
+	url   string
+}
+
+func (p structuredTruncProvider) Name() string { return "stub" }
+func (p structuredTruncProvider) FormatRequest(messages []Message, opts CallOpts) (*http.Request, error) {
+	return nil, nil
+}
+func (p structuredTruncProvider) ParseResponse(body []byte) (*Response, error) {
+	return &Response{Content: "x", Model: "m", FinishReason: "length", Usage: Usage{InputTokens: 1, OutputTokens: 1}}, nil
+}
+func (p structuredTruncProvider) SupportsVision() bool { return false }
+func (p structuredTruncProvider) FormatStructuredRequest(messages []Message, schema JSONSchema, opts CallOpts) (func() (*http.Request, error), bool, error) {
+	return func() (*http.Request, error) {
+		atomic.AddInt32(p.calls, 1)
+		return http.NewRequest("POST", p.url, nil)
+	}, true, nil
+}
+func (p structuredTruncProvider) ParseStructuredResponse(body []byte) (json.RawMessage, error) {
+	return nil, errors.New("unexpected end of JSON input")
+}
+
+func TestStructuredCompletionTruncationNamesMaxTokens(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"ok": true}`))
+	}))
+	defer server.Close()
+	var calls int32
+	p := structuredTruncProvider{calls: &calls, url: server.URL}
+	c := newStructuredClient(p, server)
+	schema := JSONSchema{Name: "t", IsArray: true, Schema: map[string]any{
+		"type": "array", "items": map[string]any{"type": "object"},
+	}}
+	_, _, err := c.StructuredCompletion(context.Background(), []Message{{Role: "user", Content: "x"}}, schema, CallOpts{Model: "m", MaxTokens: 8192})
+	if err == nil {
+		t.Fatal("expected parse failure, got nil")
+	}
+	if !strings.Contains(err.Error(), "MaxTokens=8192") {
+		t.Errorf("truncated-at-length parse failure must name the cap (issue #166), got: %v", err)
 	}
 }
