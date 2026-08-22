@@ -228,7 +228,7 @@ func TestExtractDocx_DeclaredBomb(t *testing.T) {
 	zeros := make([]byte, 60<<20) // 60 MB, compresses to ~KB
 	path := buildZip(t, map[string][]byte{"word/document.xml": zeros})
 
-	_, err := extractDocx(path)
+	_, err := extractDocx(path, "")
 	var zle *ZipLimitError
 	if !errors.As(err, &zle) {
 		t.Fatalf("expected ZipLimitError, got %v", err)
@@ -248,7 +248,7 @@ func TestExtractXlsx_AggregateBomb(t *testing.T) {
 	}
 	path := buildZip(t, entries)
 
-	_, err := extractXlsx(path)
+	_, err := extractXlsx(path, "")
 	var zle *ZipLimitError
 	if !errors.As(err, &zle) {
 		t.Fatalf("expected ZipLimitError, got %v", err)
@@ -275,7 +275,7 @@ func TestExtractDocx_LyingHeader_Rejected(t *testing.T) {
 	// declared size, so depending on flate's fill boundaries the outcome is
 	// either an extraction error OR a ≤1KB truncated result; both are safe.
 	// (An err!=nil assertion would be implementation-defined — Gate-3 i1.)
-	sc, _ := extractDocx(path)
+	sc, _ := extractDocx(path, "")
 	if sc != nil && len(sc.Text) > 2048 {
 		t.Errorf("inflated content returned (%d bytes) despite lying header", len(sc.Text))
 	}
@@ -293,7 +293,7 @@ func TestExtractDocx_UnmatchedMediaIgnored(t *testing.T) {
 		"word/document.xml": small,
 		"media/image1.png":  media,
 	})
-	sc, err := extractDocx(good)
+	sc, err := extractDocx(good, "")
 	if err != nil {
 		t.Fatalf("unmatched media part must not trip caps: %v", err)
 	}
@@ -305,7 +305,7 @@ func TestExtractDocx_UnmatchedMediaIgnored(t *testing.T) {
 		"word/document.xml": media, // same payload, but MATCHED
 		"media/image1.png":  small,
 	})
-	_, err = extractDocx(bomb)
+	_, err = extractDocx(bomb, "")
 	var zle *ZipLimitError
 	if !errors.As(err, &zle) {
 		t.Fatalf("matched over-cap entry must error: %v", err)
@@ -319,7 +319,7 @@ func TestExtractDocx_UnmatchedMediaIgnored(t *testing.T) {
 func TestExtractors_SmallFixturesRegression(t *testing.T) {
 	t.Run("docx", func(t *testing.T) {
 		path := buildZip(t, map[string][]byte{"word/document.xml": validDocxEntry(t, "alpha beta gamma")})
-		sc, err := extractDocx(path)
+		sc, err := extractDocx(path, "")
 		if err != nil || !strings.Contains(sc.Text, "alpha beta gamma") {
 			t.Errorf("docx: sc=%+v err=%v", sc, err)
 		}
@@ -330,7 +330,7 @@ func TestExtractors_SmallFixturesRegression(t *testing.T) {
 			"xl/worksheets/sheet1.xml": []byte(`<worksheet><sheetData><row><c><v>cell</v></c></row></sheetData></worksheet>`),
 			"xl/worksheets/sheet2.xml": []byte(`<worksheet><sheetData><row><c><v>cell2</v></c></row></sheetData></worksheet>`),
 		})
-		sc, err := extractXlsx(path)
+		sc, err := extractXlsx(path, "")
 		if err != nil || !strings.Contains(sc.Text, "shared one") {
 			t.Errorf("xlsx: sc=%+v err=%v", sc, err)
 		}
@@ -339,7 +339,7 @@ func TestExtractors_SmallFixturesRegression(t *testing.T) {
 		path := buildZip(t, map[string][]byte{
 			"ppt/slides/slide1.xml": []byte(`<p:sld xmlns:p="x"><p:cSld><p:spTree><p:sp><p:txBody><a:p xmlns:a="y"><a:r><a:t>slide text</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>`),
 		})
-		sc, err := extractPptx(path)
+		sc, err := extractPptx(path, "")
 		if err != nil || !strings.Contains(sc.Text, "slide text") {
 			t.Errorf("pptx: sc=%+v err=%v", sc, err)
 		}
@@ -348,7 +348,7 @@ func TestExtractors_SmallFixturesRegression(t *testing.T) {
 		path := buildZip(t, map[string][]byte{
 			"OPS/chapter1.xhtml": []byte(`<html><body><p><t>chapter content here</t></p></body></html>`),
 		})
-		sc, err := extractEpub(path)
+		sc, err := extractEpub(path, "")
 		if err != nil || !strings.Contains(sc.Text, "chapter content here") {
 			t.Errorf("epub: sc=%+v err=%v", sc, err)
 		}

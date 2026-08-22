@@ -60,6 +60,94 @@ func TestExtractCode(t *testing.T) {
 	}
 }
 
+// Issue #168: the configured source type (sources[].type) must survive
+// extraction for EVERY format, not just markdown/text — the summarize pass
+// picks prompts/summarize-<type>.md and writes source_type from
+// content.Type, so a hardcoded type here silently discards the user's
+// prompt override. Regression: pdf/docx/xlsx/pptx/csv/epub/eml all
+// hardcoded their detected type.
+func TestExtractPropagatesConfiguredType(t *testing.T) {
+	csvSeed := []byte("name,value\nalpha,1\nbeta,2\n")
+	fixtures := []struct {
+		name         string
+		ext          string
+		seed         []byte
+		defaultType  string
+		configuredTy string
+	}{
+		{"pdf", ".pdf", seedsPdf()[0], "paper", "governance"},
+		{"docx", ".docx", seedsDocx()[0], "article", "governance"},
+		{"xlsx", ".xlsx", seedsXlsx()[0], "dataset", "metrics"},
+		{"pptx", ".pptx", seedsPptx()[0], "article", "slides"},
+		{"csv", ".csv", csvSeed, "dataset", "metrics"},
+		{"epub", ".epub", seedsEpub()[0], "article", "book"},
+		{"eml", ".eml", seedsEmail()[0], "article", "correspondence"},
+	}
+
+	for _, fx := range fixtures {
+		t.Run(fx.name+" configured type wins", func(t *testing.T) {
+			path := writeFuzzInput(t, fx.seed, fx.ext)
+			sc, err := Extract(path, fx.configuredTy)
+			if err != nil {
+				t.Fatalf("Extract(%s): %v", fx.ext, err)
+			}
+			if sc.Type != fx.configuredTy {
+				t.Errorf("Extract(%s, %q).Type = %q, want configured type %q",
+					fx.ext, fx.configuredTy, sc.Type, fx.configuredTy)
+			}
+		})
+		t.Run(fx.name+" empty type falls back to format default", func(t *testing.T) {
+			path := writeFuzzInput(t, fx.seed, fx.ext)
+			sc, err := Extract(path, "")
+			if err != nil {
+				t.Fatalf("Extract(%s): %v", fx.ext, err)
+			}
+			if sc.Type != fx.defaultType {
+				t.Errorf("Extract(%s, \"\").Type = %q, want default %q",
+					fx.ext, sc.Type, fx.defaultType)
+			}
+		})
+		t.Run(fx.name+" auto falls back to format default", func(t *testing.T) {
+			path := writeFuzzInput(t, fx.seed, fx.ext)
+			sc, err := Extract(path, "auto")
+			if err != nil {
+				t.Fatalf("Extract(%s): %v", fx.ext, err)
+			}
+			if sc.Type != fx.defaultType {
+				t.Errorf("Extract(%s, \"auto\").Type = %q, want default %q",
+					fx.ext, sc.Type, fx.defaultType)
+			}
+		})
+	}
+}
+
+// Functional types stay pinned regardless of configured type: "image" gates
+// the vision pipeline (IsImageSource) and "code" has its own summarize path —
+// overriding them would misroute the source, not restyle its prompt.
+func TestExtractFunctionalTypesStayPinned(t *testing.T) {
+	dir := t.TempDir()
+
+	imgPath := filepath.Join(dir, "pic.png")
+	os.WriteFile(imgPath, []byte("\x89PNG\r\n\x1a\n"), 0644)
+	sc, err := Extract(imgPath, "governance")
+	if err != nil {
+		t.Fatalf("Extract(.png): %v", err)
+	}
+	if sc.Type != "image" {
+		t.Errorf("image Type = %q, want pinned \"image\"", sc.Type)
+	}
+
+	codePath := filepath.Join(dir, "main.go")
+	os.WriteFile(codePath, []byte("package main\nfunc main() {}"), 0644)
+	sc, err = Extract(codePath, "governance")
+	if err != nil {
+		t.Fatalf("Extract(.go): %v", err)
+	}
+	if sc.Type != "code" {
+		t.Errorf("code Type = %q, want pinned \"code\"", sc.Type)
+	}
+}
+
 func TestChunkIfNeededSmall(t *testing.T) {
 	content := &SourceContent{
 		Text: "Short text that fits in one chunk.",

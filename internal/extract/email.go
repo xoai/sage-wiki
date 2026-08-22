@@ -9,7 +9,7 @@ import (
 )
 
 // extractEmail extracts text from an .eml email file.
-func extractEmail(path string) (*SourceContent, error) {
+func extractEmail(path, sourceType string) (*SourceContent, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("extract email: %w", err)
@@ -23,7 +23,7 @@ func extractEmail(path string) (*SourceContent, error) {
 		data, _ := io.ReadAll(f)
 		return &SourceContent{
 			Path: path,
-			Type: "article",
+			Type: orDefaultType(sourceType, "article"),
 			Text: string(data),
 		}, nil
 	}
@@ -51,7 +51,7 @@ func extractEmail(path string) (*SourceContent, error) {
 
 	return &SourceContent{
 		Path: path,
-		Type: "article",
+		Type: orDefaultType(sourceType, "article"),
 		Text: strings.TrimSpace(text.String()),
 	}, nil
 }

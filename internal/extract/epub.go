@@ -9,7 +9,7 @@ import (
 )
 
 // extractEpub extracts text from an EPUB file (ZIP containing XHTML chapters).
-func extractEpub(path string) (*SourceContent, error) {
+func extractEpub(path, sourceType string) (*SourceContent, error) {
 	r, err := zip.OpenReader(path)
 	if err != nil {
 		return nil, fmt.Errorf("extract epub: %w", err)
@@ -58,7 +58,7 @@ func extractEpub(path string) (*SourceContent, error) {
 
 	return &SourceContent{
 		Path: path,
-		Type: "article",
+		Type: orDefaultType(sourceType, "article"),
 		Text: extracted,
 	}, nil
 }

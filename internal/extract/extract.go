@@ -34,6 +34,18 @@ type ExtractOpts struct {
 	ParsersEnabled  bool // must be true AND ExternalParsers non-nil to use external parsers
 }
 
+// orDefaultType resolves the effective source type: the caller-configured
+// type wins; an empty/"auto" type falls back to the format's historical
+// default. Issue #168 — binary extractors used to hardcode the default and
+// silently discard sources[].type, so type-specific summarize prompts and
+// source_type frontmatter never saw it.
+func orDefaultType(sourceType, formatDefault string) string {
+	if sourceType == "" || sourceType == "auto" {
+		return formatDefault
+	}
+	return sourceType
+}
+
 // Extract reads and extracts text from a source file.
 // Optional ExtractOpts can provide external parser support.
 func Extract(path string, sourceType string, opts ...ExtractOpts) (*SourceContent, error) {
@@ -43,19 +55,19 @@ func Extract(path string, sourceType string, opts ...ExtractOpts) (*SourceConten
 	case ext == ".md":
 		return extractMarkdown(path, sourceType)
 	case ext == ".pdf":
-		return extractPDF(path)
+		return extractPDF(path, sourceType)
 	case ext == ".docx":
-		return extractDocx(path)
+		return extractDocx(path, sourceType)
 	case ext == ".xlsx":
-		return extractXlsx(path)
+		return extractXlsx(path, sourceType)
 	case ext == ".pptx":
-		return extractPptx(path)
+		return extractPptx(path, sourceType)
 	case ext == ".csv":
-		return extractCSV(path)
+		return extractCSV(path, sourceType)
 	case ext == ".epub":
-		return extractEpub(path)
+		return extractEpub(path, sourceType)
 	case ext == ".eml" || ext == ".msg":
-		return extractEmail(path)
+		return extractEmail(path, sourceType)
 	case isImageFile(ext):
 		return extractImage(path)
 	case ext == ".txt" || ext == ".log" || ext == ".vtt" || ext == ".srt":

@@ -15,18 +15,18 @@ import (
 // extractPDF extracts text from a PDF file.
 // Tries pdftotext (poppler) first for better font/encoding support,
 // falls back to the pure Go library if pdftotext is not available.
-func extractPDF(path string) (*SourceContent, error) {
+func extractPDF(path, sourceType string) (*SourceContent, error) {
 	// Try pdftotext first
 	if text := extractPDFPoppler(path); text != "" {
 		return &SourceContent{
 			Path: path,
-			Type: "paper",
+			Type: orDefaultType(sourceType, "paper"),
 			Text: text,
 		}, nil
 	}
 
 	// Fallback to Go library
-	return extractPDFGo(path)
+	return extractPDFGo(path, sourceType)
 }
 
 // extractPDFPoppler uses pdftotext (poppler) for extraction.
@@ -52,7 +52,7 @@ func extractPDFPoppler(path string) string {
 // "malformed PDF", "unexpected keyword", EOF — so message-matching is
 // fragile). All panics are recovered AND logged at Warn (nothing is
 // silent; a bug in our own code remains visible in logs).
-func extractPDFGo(path string) (_ *SourceContent, err error) {
+func extractPDFGo(path, sourceType string) (_ *SourceContent, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Warn("extract pdf: recovered library panic", "path", path, "panic", r)
@@ -101,7 +101,7 @@ func extractPDFGo(path string) (_ *SourceContent, err error) {
 
 	return &SourceContent{
 		Path: path,
-		Type: "paper",
+		Type: orDefaultType(sourceType, "paper"),
 		Text: extracted,
 	}, nil
 }
