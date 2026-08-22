@@ -1,7 +1,9 @@
 package compiler
 
 import (
+	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/xoai/sage-wiki/internal/embed"
 	"github.com/xoai/sage-wiki/internal/log"
@@ -157,11 +159,83 @@ func (dc *DedupCache) CheckDuplicate(name string) (match string, score float64, 
 	}
 	dc.mu.RUnlock()
 
-	if bestScore >= dc.threshold {
+	if bestScore >= dc.threshold && !neverMergeNames(name, bestMatch) {
 		return bestMatch, bestScore, vec
 	}
 
 	return "", 0, vec
+}
+
+// neverMergeAntonymPairs are qualifier antonyms where presence asymmetry
+// between two names blocks merging: one name carrying the left token while
+// either carries the right means different entities (a draft and its final
+// are different documents; primary and secondary standards are different
+// regulations).
+var neverMergeAntonymPairs = [][2]string{
+	{"draft", "final"},
+	{"primary", "secondary"},
+}
+
+// neverMergeNames reports whether two concept names must never auto-merge,
+// regardless of embedding similarity (issue #164). In enumerated corpora the
+// token carrying the meaning — a digit, a draft/final qualifier — is the
+// least semantically weighted part of the string, so distinct entities embed
+// almost identically and no cosine threshold separates them from true
+// duplicates. These deterministic guards sit UNDER any similarity decision.
+func neverMergeNames(a, b string) bool {
+	if numericTokenSetsDiffer(a, b) {
+		return true
+	}
+	ta, tb := nameTokenSet(a), nameTokenSet(b)
+	for _, pair := range neverMergeAntonymPairs {
+		x, y := pair[0], pair[1]
+		if ta[x] != tb[x] && (ta[y] || tb[y]) {
+			return true
+		}
+		if ta[y] != tb[y] && (ta[x] || tb[x]) {
+			return true
+		}
+	}
+	return false
+}
+
+// nameTokenSet lowercases and splits a concept slug on non-alphanumeric
+// boundaries: "a-17-084" → {a, 17, 084}.
+func nameTokenSet(s string) map[string]bool {
+	out := map[string]bool{}
+	for _, tok := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		out[tok] = true
+	}
+	return out
+}
+
+// numericTokenSetsDiffer: the sets of digit-containing tokens must be equal
+// for a merge — {3} ≠ {2} (mw-3/mw-2), {17,084} ≠ {17,086} (a-17-084/a-17-086),
+// {2023,2024} ≠ {2022,2023} (fiscal-year estimates). Leading zeros are
+// significant: "084" and "84" are different identifiers.
+func numericTokenSetsDiffer(a, b string) bool {
+	na, nb := numericTokens(a), numericTokens(b)
+	if len(na) != len(nb) {
+		return true
+	}
+	for t := range na {
+		if !nb[t] {
+			return true
+		}
+	}
+	return false
+}
+
+func numericTokens(s string) map[string]bool {
+	out := map[string]bool{}
+	for tok := range nameTokenSet(s) {
+		if strings.ContainsAny(tok, "0123456789") {
+			out[tok] = true
+		}
+	}
+	return out
 }
 
 // AddWithVec registers a new concept with a pre-computed embedding.

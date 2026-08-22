@@ -211,3 +211,83 @@ func TestDedupCache_Seed_VecStoreErrorFallsBackToEmbed(t *testing.T) {
 		t.Errorf("cache-read-failure warnings = %d, want ≤ 2 (first failure + Seed summary, no per-name flood):\n%s", warnLines, out)
 	}
 }
+
+// Issue #164: enumerated corpora interleave must-merge and must-not-merge
+// pairs across the whole similarity range (they peak at the same 0.982), so
+// no threshold separates them. The never-merge guards are deterministic
+// string rules that fire regardless of score.
+func TestNeverMergeNames(t *testing.T) {
+	mustBlock := [][2]string{
+		{"mw-3", "mw-2"}, // different monitoring wells
+		{"mw-8", "mw-9"},
+		{"stockpile-2", "stockpile-1"}, // different stockpiles
+		{"stockpile-2-mse-wall-footing", "stockpile-1-mse-wall-footing"},
+		{"secondary-maximum-contaminant-levels", "primary-maximum-contaminant-levels"},
+		{"final-feasibility-study", "draft-final-feasibility-study"},
+		{"draft-remedial-action-plan", "final-remedial-action-plan"},
+		{"california-primary-mcl", "california-secondary-mcl"},
+		{"caltrans-district-10", "caltrans-district-6"},
+		{"task-order-no-44", "task-order-no-4"},
+		{"a-17-084", "a-17-086"},
+		{"a-17-085", "a-17-086"},
+		{"fiscal-year-cost-estimate-2023-2024", "fiscal-year-cost-estimate-2022-2023"},
+	}
+	for _, p := range mustBlock {
+		if !neverMergeNames(p[0], p[1]) {
+			t.Errorf("neverMergeNames(%q, %q) = false, want blocked", p[0], p[1])
+		}
+		if !neverMergeNames(p[1], p[0]) {
+			t.Errorf("neverMergeNames(%q, %q) = false, want blocked (symmetric)", p[1], p[0])
+		}
+	}
+
+	untouched := [][2]string{
+		// The issue's SHOULD-merge pairs: guards must stay silent.
+		{"operation-and-maintenance-plan", "operations-and-maintenance-plan"},
+		{"remedial-design-and-implementation-plan", "remedial-design-implementation-plan"},
+		{"human-health-risk-assessments", "human-health-risk-assessment"},
+		{"supplemental-site-investigation-report", "supplemental-site-investigation"},
+		{"richard-stewart-pg", "richard-stewart"},
+		{"rem-action-plan", "remedial-action-plan"},
+		// Same numeric set → guard silent, threshold decides.
+		{"covid-19-tracking", "covid-19-monitoring"},
+		// Documented limits (need #167's judgment, not string rules):
+		{"stockpile-1", "stockpile-1-mse-wall-footing"}, // same-number containment
+		{"storm-water-sampling-report", "surface-water-sampling-report"},
+		{"chemicals-of-potential-concern", "chemicals-of-concern"},
+	}
+	for _, p := range untouched {
+		if neverMergeNames(p[0], p[1]) {
+			t.Errorf("neverMergeNames(%q, %q) = true, want untouched", p[0], p[1])
+		}
+	}
+}
+
+// The guard overrides ANY similarity score: identical embeddings (cosine 1.0)
+// for enumerated names must still not merge.
+func TestCheckDuplicate_NeverMergeOverridesScore(t *testing.T) {
+	vec := []float32{0.9, 0.1, 0.0, 0.1}
+	embedder := &mockEmbedder{embeddings: map[string][]float32{
+		"mw-2": vec,
+		"mw-3": vec, // cosine 1.0 — above any threshold
+	}}
+
+	dc := NewDedupCache(embedder, nil, 0.85)
+	dc.Add("mw-2")
+
+	match, score, _ := dc.CheckDuplicate("mw-3")
+	if match != "" {
+		t.Errorf("enumerated pair merged at score %.3f despite the never-merge guard: %q", score, match)
+	}
+
+	// Control: a genuinely duplicate name with no numeric/qualifier
+	// difference still merges at the same score.
+	embedder.embeddings["operation-and-maintenance-plan"] = vec
+	embedder.embeddings["operations-and-maintenance-plan"] = vec
+	dc2 := NewDedupCache(embedder, nil, 0.85)
+	dc2.Add("operations-and-maintenance-plan")
+	match, _, _ = dc2.CheckDuplicate("operation-and-maintenance-plan")
+	if match != "operations-and-maintenance-plan" {
+		t.Errorf("singular/plural pair no longer merges: match=%q", match)
+	}
+}

@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "---\nconcept: rtl-arabic\nentity_type: concept\naliases: []\nsources: [\"raw/unicode/rtl-arabic.md\"]\nconfidence: medium\ncreated_at: 2025-01-01T00:00:00Z\n---\n\n# Raw Unicode Rtl Arabic\n\nRaw Unicode Rtl Arabic is a documented concept in this workspace. It relates to its source material directly.\n\n## See also\n\n- Related concepts appear across the corpus.",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.569,
+            0.95,
+            0.331,
+            0.712,
+            0.045,
+            0.426,
+            0.807,
+            0.188
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

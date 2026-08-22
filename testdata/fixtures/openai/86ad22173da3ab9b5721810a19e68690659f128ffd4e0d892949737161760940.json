@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/embeddings",
+    "body": {
+      "input": "---\nconcept: example-testgo\nentity_type: concept\naliases: []\nsources: [\"raw/code/example_test.go\"]\nconfidence: medium\ncreated_at: 2025-01-01T00:00:00Z\n---\n\n# Raw Code Example Testgo\n\nRaw Code Example Testgo is a documented concept in this workspace. It relates to its source material directly.\n\n## See also\n\n- Related concepts appear across the corpus.",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "embedding": [
+            0.194,
+            0.813,
+            0.956,
+            0.575,
+            0.718,
+            0.337,
+            0.48,
+            0.099
+          ],
+          "index": 0,
+          "object": "embedding"
+        }
+      ],
+      "model": "text-embedding-3-small",
+      "object": "list"
+    }
+  }
+}

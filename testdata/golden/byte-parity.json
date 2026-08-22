@@ -2,13 +2,21 @@
   "golden_format_version": 1,
   "config_sha256": "65b7fdeb0ce6ec24038c6f80447de7fa9e343dcb42f1c1eb2480a35ceef77882",
   "files": {
-    "CHANGELOG.md": "fc3fe7e1f542e172af3c77dfd465c3393bf5c182f95cfc468b4a7b905ad7ca19",
+    "CHANGELOG.md": "5f51b63caa12f8ca4540fdc25219691ee839da0ca54da733010bc4cf386b74d8",
     "concepts/api-gateway.md": "39a581021d429c937187655372f629448a7d237a0b5e619c6f87ce327abe921c",
     "concepts/dated-2024.md": "5080d4c4d35d8e2ae19008c690a2aef4df3d124c179c935fc7d7947bb58a7022",
     "concepts/distributed-systemstxt.md": "dbbd23fd7b6fbe75e068d8c4c3c9a059611ef3b1d5bdb6296e903af6b6ef84cd",
+    "concepts/example-testgo.md": "5fde65516593dcfd75eff86b41f89973b2ddc230ec56c9239390a3361dd101d7",
     "concepts/examplejs.md": "f9936b9ebe22ef328f124da1669f829711d1f645d618ac549dd38e3ec9434542",
+    "concepts/fact-v1.md": "10a1dce335322b0974b689155e52c14ba7cecdf7b7bad908f74f6dc78c9f3aec",
+    "concepts/fact-v2.md": "f5332613e4445cf27752d1cc8b9639cac2ceaad01f56a48c4529928e05b63278",
     "concepts/instruction-lookalike.md": "79e38c603147a221bd9f2fb2aa6bd5f0130a37989ee4b913d51e708d143b0ad0",
+    "concepts/k8s-usage.md": "65f6e6bef0b9b525965bf53f0918ef9ae7b4daa0ce77ad335c7dd357e1ec7ce0",
+    "concepts/kubernetes-k8s.md": "8a862478de3ce4a46f71f4c4b1142aaf1e89076a5e0b6e8707d658fd884995c0",
+    "concepts/mixed-scripts.md": "cd496da371b1e652f016b13e9dedf12eb3c6305075e1499c8932c905bfb5384d",
+    "concepts/rtl-arabic.md": "94e05cb51f9dbb575451ef0fbfbe7fe94b383881d2daf489182930fee3dd17fd",
     "concepts/system-prompt-bait.md": "6b67d103c9dc0a7f8ba3c141ade65bc9c9667276285062c72ee6e025c498a876",
+    "concepts/tier-model.md": "054fcca5f6df22a3ffbabefb05998bdf092123484625444d1d984cadb69d30b6",
     "summaries/raw-adversarial-instruction-lookalike.md": "d3aa84796ba000b17f34e37f4ac6c7a4d2b57dbaf1daddf03f08ea4395aec89e",
     "summaries/raw-adversarial-system-prompt-bait.md": "b61bdd5e11f2b28c0a3e280c3c4923107353333b292607821fa773a6b70b8790",
     "summaries/raw-alias-api-gateway.md": "59b09a732fb22959ac43066bd1e3d9ac2136feca4c639979c05949dc57390778",
@@ -38,7 +46,7 @@
     "summaries/raw-unicode-mixed-scripts.md": "b25ae63784837839a17c495700409b82347d5e90a584c7ce8e0956b9b1ed825c",
     "summaries/raw-unicode-rtl-arabic.md": "3cdf4cd5d2544776fbc7889a54f034f9042831029bdb99499402be5909f0cfb9"
   },
-  "manifest": "43a3d09bf7ae688e093abc6085de85d35835e4c7f5df25fc0016334409e9db01",
+  "manifest": "c4ee1f3673b6f8b1b42e77f528299f5cf8d9240f4f1f95fac006cf90cace326f",
   "compile_items": {
     "raw/adversarial/instruction-lookalike.md": "t3/truetruetruetruetrue",
     "raw/adversarial/system-prompt-bait.md": "t3/truetruetruetruetrue",
@@ -70,10 +78,10 @@
     "raw/unicode/rtl-arabic.md": "t3/truetruetruetruetrue"
   },
   "counts": {
-    "chunks": 34,
-    "fts": 62,
-    "ontology": 20,
-    "relations": 12,
-    "vec": 34
+    "chunks": 42,
+    "fts": 70,
+    "ontology": 36,
+    "relations": 20,
+    "vec": 42
   }
 }

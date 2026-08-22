@@ -4,9 +4,17 @@
 {"source_id":"dated-2024","relation":"cites","target_id":"raw/dates/dated-2024.md"}
 {"source_id":"decentralized-lease","relation":"contradicts","target_id":"centralized-coordinator","evidence":"the centralized coordinator was removed.","confidence":0.95,"source_doc":"raw/contradiction/fact-v2.md","valid_from":"2025-03-01T00:00:00Z"}
 {"source_id":"distributed-systemstxt","relation":"cites","target_id":"raw/text/distributed-systems.txt"}
+{"source_id":"example-testgo","relation":"cites","target_id":"raw/code/example_test.go"}
 {"source_id":"examplejs","relation":"cites","target_id":"raw/code/example.js"}
+{"source_id":"fact-v1","relation":"cites","target_id":"raw/contradiction/fact-v1.md"}
+{"source_id":"fact-v2","relation":"cites","target_id":"raw/contradiction/fact-v2.md"}
 {"source_id":"instruction-lookalike","relation":"cites","target_id":"raw/adversarial/instruction-lookalike.md"}
+{"source_id":"k8s-usage","relation":"cites","target_id":"raw/alias/k8s-usage.md"}
 {"source_id":"kubernetes","relation":"implements","target_id":"etcd","evidence":"K8s uses etcd for cluster state.","confidence":0.85,"source_doc":"raw/alias/kubernetes-k8s.md","valid_from":"2025-01-01T00:00:00Z"}
+{"source_id":"kubernetes-k8s","relation":"cites","target_id":"raw/alias/kubernetes-k8s.md"}
+{"source_id":"mixed-scripts","relation":"cites","target_id":"raw/unicode/mixed-scripts.md"}
 {"source_id":"project-lighthouse","relation":"implements","target_id":"centralized-coordinator","evidence":"Project Lighthouse uses a centralized coordinator for all compile jobs.","confidence":0.9,"source_doc":"raw/contradiction/fact-v1.md","valid_from":"2024-06-01T00:00:00Z","valid_to":"2025-03-01T00:00:00Z","invalidated_by":"triple:6cb70c493478d572"}
 {"source_id":"project-lighthouse","relation":"implements","target_id":"decentralized-lease","evidence":"Project Lighthouse moved to a decentralized lease model in early 2025.","confidence":0.95,"source_doc":"raw/contradiction/fact-v2.md","valid_from":"2025-03-01T00:00:00Z","valid_to":"2025-03-01T00:00:00Z","invalidated_by":"triple:ffa8696fcd816e1c"}
+{"source_id":"rtl-arabic","relation":"cites","target_id":"raw/unicode/rtl-arabic.md"}
 {"source_id":"system-prompt-bait","relation":"cites","target_id":"raw/adversarial/system-prompt-bait.md"}
+{"source_id":"tier-model","relation":"cites","target_id":"raw/notes/tier-model.md"}
