@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -129,7 +130,12 @@ func ReExtract(projectDir string, options ...ReExtractOption) (*CompileResult, e
 	// is a follow-up. Use a background context so the LLM calls still function.
 	concepts, err := ExtractConcepts(context.Background(), summaries, mf.Concepts, client, extractModel, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel, ro.prompts, cfg.Compiler.CompileTemperature())
 	if err != nil {
-		return nil, fmt.Errorf("re-extract: concept extraction: %w", err)
+		var pfe *PartialFailureError
+		if !errors.As(err, &pfe) {
+			return nil, fmt.Errorf("re-extract: concept extraction: %w", err)
+		}
+		// Partial failure (issue #166): count it, keep the surviving concepts.
+		result.Errors++
 	}
 	// Evidence gate (#128): source-less concepts are suppressed entirely.
 	concepts, _ = filterLowEvidence(concepts, cfg.Compiler.MinConceptSourcesOrDefault())

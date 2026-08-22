@@ -259,7 +259,7 @@ func (c *Client) StructuredCompletion(ctx context.Context, messages []Message, s
 			return nil, "", fmt.Errorf("llm: structured completion: %s", resp.EmptyContentDetails())
 		}
 		if serr != nil {
-			return nil, "", fmt.Errorf("llm: parse structured response: %w", serr)
+			return nil, "", fmt.Errorf("llm: parse structured response: %w", withTruncationHint(resp, opts.MaxTokens, serr))
 		}
 		return nil, "", fmt.Errorf("llm: structured completion: empty payload")
 	}
@@ -306,12 +306,23 @@ func (c *Client) structuredFallback(ctx context.Context, messages []Message, sch
 	}
 	payload, err := ParseJSONFromText(resp.Content)
 	if err != nil {
-		return nil, "", err
+		return nil, "", withTruncationHint(resp, opts.MaxTokens, err)
 	}
 	if err := ValidateJSON(schema.Schema, payload); err != nil {
-		return nil, "", err
+		return nil, "", withTruncationHint(resp, opts.MaxTokens, err)
 	}
 	return payload, "", nil
+}
+
+// withTruncationHint annotates a parse/validation failure when the response
+// was cut off at the output-token cap: finish_reason=length means the JSON
+// can never parse, and a bare "unexpected end of JSON input" sends users
+// guessing (issue #166). Wraps the original error so errors.Is/As still work.
+func withTruncationHint(resp *Response, maxTokens int, err error) error {
+	if resp != nil && resp.FinishReason == "length" {
+		return fmt.Errorf("%w (response truncated at MaxTokens=%d — raise this pass's max-tokens setting or reduce its input size)", err, maxTokens)
+	}
+	return err
 }
 
 func mentionsConstraintField(body string) bool {

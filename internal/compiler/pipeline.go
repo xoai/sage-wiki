@@ -1682,13 +1682,23 @@ func resumeBatch(
 		extCacheID, _ := client.SetupCache("You are an expert knowledge organizer. Extract structured concepts from source summaries.", model)
 		progress.StartPhase("Pass 2: Extract concepts", len(successfulSummaries))
 		concepts, err := ExtractConcepts(opts.Ctx, successfulSummaries, mf.Concepts, client, model, cfg.Compiler.ExtractBatchSize, cfg.Compiler.ExtractMaxTokens, cfg.Compiler.MaxParallel, opts.Prompts, cfg.Compiler.CompileTemperature())
-		if err != nil {
+		var pfe *PartialFailureError
+		switch {
+		case err == nil:
+			// clean extraction
+		case errors.As(err, &pfe):
+			// Partial failure (issue #166): count it and name the skipped
+			// documents, then process the surviving concepts below.
+			result.Errors++
+			progress.ItemError("concept extraction (partial)", err)
+		default:
 			progress.ItemError("concept extraction", err)
 			result.Errors++
 			batchPass23OK = false
 			progress.EndPhase()
 			client.TeardownCache(extCacheID)
-		} else {
+		}
+		if err == nil || pfe != nil {
 			// Evidence gate (#128): source-less concepts are suppressed entirely.
 			concepts, _ = filterLowEvidence(concepts, cfg.Compiler.MinConceptSourcesOrDefault())
 			result.ConceptsExtracted = len(concepts)
