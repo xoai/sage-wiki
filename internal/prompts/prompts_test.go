@@ -279,3 +279,21 @@ func TestRenderResolveSuppressesLanguageInstruction(t *testing.T) {
 			"resolve_entities.txt must contain the 'Output ONLY a JSON' marker")
 	}
 }
+
+// Issue #167: the curation template must render and must be scaffolded to
+// the workspace prompts dir under the documented name.
+func TestCurateConceptsTemplateRenders(t *testing.T) {
+	out, err := Render("curate_concepts", CurateData{
+		ExistingConcepts: "remedial-action-plan, mw-2",
+		Proposed:         "rem-action-plan | concept | RAP | 3",
+	}, "")
+	if err != nil {
+		t.Fatalf("render curate_concepts: %v", err)
+	}
+	if !strings.Contains(out, "remedial-action-plan") || !strings.Contains(out, "rem-action-plan") {
+		t.Errorf("render missing inputs: %q", out[:min(200, len(out))])
+	}
+	if filename := templateNameToFilename("curate_concepts.txt"); filename != "curate-concepts.md" {
+		t.Errorf("workspace override name = %q, want curate-concepts.md", filename)
+	}
+}

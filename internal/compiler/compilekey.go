@@ -284,6 +284,8 @@ func compileConfigSubset(cfg *config.Config) map[string]any {
 	put("compiler.article_fields", c.ArticleFields)
 	put("compiler.dedup_threshold", floatOrDefault(c.DedupThreshold, 0.85)) // dedup.go:37
 	put("compiler.dedup_strategy", strOrDefault(c.DedupStrategy, "embedding"))
+	put("compiler.llm_dedup.allow_drop", c.LLMDedup.AllowDropOrDefault())  // issue #167
+	put("compiler.llm_dedup.batch_size", c.LLMDedup.BatchSizeOrDefault())  // issue #167
 	put("compiler.split_threshold", intOrDefault(c.SplitThreshold, 15000)) // write.go:60
 	put("compiler.max_source_context_tokens", c.MaxSourceContextTokensOrDefault())
 	put("compiler.split_strategy", strOrDefault(c.SplitStrategy, "headings"))
@@ -467,6 +469,8 @@ var subsetPolicy = map[string]string{
 	"compiler.demote_signals.stale_days":           "",
 	"compiler.extract_batch_size":                  "",
 	"compiler.extract_max_tokens":                  "",
+	"compiler.llm_dedup.allow_drop":                "",
+	"compiler.llm_dedup.batch_size":                "",
 	"compiler.min_concept_sources":                 "",
 	"compiler.mode":                                "",
 	"compiler.prompt_cache":                        "",

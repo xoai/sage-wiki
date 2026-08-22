@@ -1701,6 +1701,15 @@ func resumeBatch(
 		if err == nil || pfe != nil {
 			// Evidence gate (#128): source-less concepts are suppressed entirely.
 			concepts, _ = filterLowEvidence(concepts, cfg.Compiler.MinConceptSourcesOrDefault())
+
+			// LLM curation pass (#167) — same seam as the other write paths;
+			// failure is advisory (count + proceed uncurated).
+			if curated, cerr := maybeCurateConcepts(orBackground(opts.Ctx), client, model, opts.Prompts, concepts, mf, cfg); cerr != nil {
+				result.Errors++
+				log.Warn("concept curation failed — proceeding uncurated", "error", cerr)
+			} else {
+				concepts = curated
+			}
 			result.ConceptsExtracted = len(concepts)
 			var conceptNames []string
 			for _, c := range concepts {

@@ -139,6 +139,15 @@ func ReExtract(projectDir string, options ...ReExtractOption) (*CompileResult, e
 	}
 	// Evidence gate (#128): source-less concepts are suppressed entirely.
 	concepts, _ = filterLowEvidence(concepts, cfg.Compiler.MinConceptSourcesOrDefault())
+
+	// LLM curation pass (#167) — same seam as the other write paths; failure
+	// is advisory (count + proceed uncurated).
+	if curated, cerr := maybeCurateConcepts(context.Background(), client, extractModel, ro.prompts, concepts, mf, cfg); cerr != nil {
+		result.Errors++
+		log.Warn("concept curation failed — proceeding uncurated", "error", cerr)
+	} else {
+		concepts = curated
+	}
 	result.ConceptsExtracted = len(concepts)
 
 	// Update manifest with concepts

@@ -410,3 +410,37 @@ func writeFileForKeyTest(t *testing.T, path string, data []byte) {
 		t.Fatal(err)
 	}
 }
+
+// Issue #167: the llm-dedup knobs are part of the compile key — a change to
+// allow_drop or batch_size must change the key.
+func TestCompileKeyIncludesLLMDedupKnobs(t *testing.T) {
+	cfg1 := keyTestConfig()
+	cfg1.Compiler.DedupStrategy = "llm"
+	p1, err := ComputeCompileKeyParts("sha256:a", 3, cfg1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	withDrop := keyTestConfig()
+	withDrop.Compiler.DedupStrategy = "llm"
+	withDrop.Compiler.LLMDedup.AllowDrop = true
+	p2, err := ComputeCompileKeyParts("sha256:a", 3, withDrop, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p1.Key(3) == p2.Key(3) {
+		t.Error("allow_drop=true must change the compile key")
+	}
+
+	smaller := keyTestConfig()
+	smaller.Compiler.DedupStrategy = "llm"
+	fifty := 50
+	smaller.Compiler.LLMDedup.BatchSize = &fifty
+	p3, err := ComputeCompileKeyParts("sha256:a", 3, smaller, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p1.Key(3) == p3.Key(3) {
+		t.Error("batch_size=50 must change the compile key")
+	}
+}

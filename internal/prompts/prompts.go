@@ -266,6 +266,12 @@ type ExtractData struct {
 	Summaries        string
 }
 
+// CurateData holds data for the concept curation template (issue #167).
+type CurateData struct {
+	ExistingConcepts string
+	Proposed         string
+}
+
 // TriplesData holds data for the triple-extraction template (P3-2).
 //
 // Summary is the compiled summary body — NOT the raw source — so evidence spans
