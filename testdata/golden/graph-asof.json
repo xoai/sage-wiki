@@ -154,7 +154,7 @@
       "Confidence": 0.9
     },
     {
-      "ID": "api-gateway-cites-raw-alias-api-gateway-md",
+      "ID": "api-gateway-cites-raw-alias-api-gateway-md-06c1dfed",
       "SourceID": "api-gateway",
       "TargetID": "raw/alias/api-gateway.md",
       "Relation": "cites",
@@ -172,7 +172,7 @@
       "Confidence": 0.9
     },
     {
-      "ID": "dated-2024-cites-raw-dates-dated-2024-md",
+      "ID": "dated-2024-cites-raw-dates-dated-2024-md-f64f30e3",
       "SourceID": "dated-2024",
       "TargetID": "raw/dates/dated-2024.md",
       "Relation": "cites",
@@ -181,7 +181,7 @@
       "Confidence": 0
     },
     {
-      "ID": "distributed-systemstxt-cites-raw-text-distributed-systems-txt",
+      "ID": "distributed-systemstxt-cites-raw-text-distributed-systems-txt-6cd0c4b5",
       "SourceID": "distributed-systemstxt",
       "TargetID": "raw/text/distributed-systems.txt",
       "Relation": "cites",
@@ -190,7 +190,7 @@
       "Confidence": 0
     },
     {
-      "ID": "examplejs-cites-raw-code-example-js",
+      "ID": "examplejs-cites-raw-code-example-js-2aad41a8",
       "SourceID": "examplejs",
       "TargetID": "raw/code/example.js",
       "Relation": "cites",
@@ -199,7 +199,7 @@
       "Confidence": 0
     },
     {
-      "ID": "instruction-lookalike-cites-raw-adversarial-instruction-lookalike-md",
+      "ID": "instruction-lookalike-cites-raw-adversarial-instruction-lookalike-md-4269a415",
       "SourceID": "instruction-lookalike",
       "TargetID": "raw/adversarial/instruction-lookalike.md",
       "Relation": "cites",
@@ -226,7 +226,7 @@
       "Confidence": 0.9
     },
     {
-      "ID": "system-prompt-bait-cites-raw-adversarial-system-prompt-bait-md",
+      "ID": "system-prompt-bait-cites-raw-adversarial-system-prompt-bait-md-9d05aed4",
       "SourceID": "system-prompt-bait",
       "TargetID": "raw/adversarial/system-prompt-bait.md",
       "Relation": "cites",
@@ -247,7 +247,7 @@
       "Confidence": 0.9
     },
     {
-      "ID": "api-gateway-cites-raw-alias-api-gateway-md",
+      "ID": "api-gateway-cites-raw-alias-api-gateway-md-06c1dfed",
       "SourceID": "api-gateway",
       "TargetID": "raw/alias/api-gateway.md",
       "Relation": "cites",
@@ -265,7 +265,7 @@
       "Confidence": 0.9
     },
     {
-      "ID": "dated-2024-cites-raw-dates-dated-2024-md",
+      "ID": "dated-2024-cites-raw-dates-dated-2024-md-f64f30e3",
       "SourceID": "dated-2024",
       "TargetID": "raw/dates/dated-2024.md",
       "Relation": "cites",
@@ -283,7 +283,7 @@
       "Confidence": 0.95
     },
     {
-      "ID": "distributed-systemstxt-cites-raw-text-distributed-systems-txt",
+      "ID": "distributed-systemstxt-cites-raw-text-distributed-systems-txt-6cd0c4b5",
       "SourceID": "distributed-systemstxt",
       "TargetID": "raw/text/distributed-systems.txt",
       "Relation": "cites",
@@ -292,7 +292,7 @@
       "Confidence": 0
     },
     {
-      "ID": "examplejs-cites-raw-code-example-js",
+      "ID": "examplejs-cites-raw-code-example-js-2aad41a8",
       "SourceID": "examplejs",
       "TargetID": "raw/code/example.js",
       "Relation": "cites",
@@ -301,7 +301,7 @@
       "Confidence": 0
     },
     {
-      "ID": "instruction-lookalike-cites-raw-adversarial-instruction-lookalike-md",
+      "ID": "instruction-lookalike-cites-raw-adversarial-instruction-lookalike-md-4269a415",
       "SourceID": "instruction-lookalike",
       "TargetID": "raw/adversarial/instruction-lookalike.md",
       "Relation": "cites",
@@ -319,7 +319,7 @@
       "Confidence": 0.85
     },
     {
-      "ID": "system-prompt-bait-cites-raw-adversarial-system-prompt-bait-md",
+      "ID": "system-prompt-bait-cites-raw-adversarial-system-prompt-bait-md-9d05aed4",
       "SourceID": "system-prompt-bait",
       "TargetID": "raw/adversarial/system-prompt-bait.md",
       "Relation": "cites",
