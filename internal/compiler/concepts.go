@@ -60,6 +60,25 @@ func sortedConceptNames(m map[string]manifest.Concept) []string {
 // concurrency > 1 runs batches in parallel; each batch receives the same
 // existingConcepts snapshot as dedup context (not the growing allConcepts),
 // so deduplicateConcepts at the end handles cross-batch merging.
+// PartialFailureError reports that some — not all — extraction batches
+// failed (issue #166). The surviving concepts ARE returned alongside it;
+// callers must count the failure into result.Errors (and may log Skipped)
+// while continuing with the survivors. Total failure keeps the fatal
+// semantics: nil concepts, plain error.
+type PartialFailureError struct {
+	Failed  int      // batches that errored
+	Total   int      // batches attempted
+	Skipped []string // source paths whose summaries sat in failed batches
+	Err     error    // first batch error (the actionable diagnostic)
+}
+
+func (e *PartialFailureError) Error() string {
+	return fmt.Sprintf("concept extraction: %d of %d batches failed; %d source document(s) skipped (%s): %v",
+		e.Failed, e.Total, len(e.Skipped), strings.Join(e.Skipped, ", "), e.Err)
+}
+
+func (e *PartialFailureError) Unwrap() error { return e.Err }
+
 func ExtractConcepts(
 	ctx context.Context,
 	summaries []SummaryResult,
@@ -125,13 +144,17 @@ func ExtractConcepts(
 
 	// Track batch failures so a total failure surfaces as an error instead of a
 	// silent empty result (the caller only increments result.Errors when this
-	// returns non-nil). firstErr carries the actionable diagnostic.
+	// returns non-nil). firstErr carries the actionable diagnostic. failedIdx
+	// records WHICH batches failed so a partial failure can name the skipped
+	// source documents (issue #166).
 	var failMu sync.Mutex
 	failures := 0
 	var firstErr error
-	recordFailure := func(e error) {
+	var failedIdx []int
+	recordFailure := func(batchIndex int, e error) {
 		failMu.Lock()
 		failures++
+		failedIdx = append(failedIdx, batchIndex)
 		if firstErr == nil {
 			firstErr = e
 		}
@@ -173,7 +196,7 @@ func ExtractConcepts(
 				Summaries:        strings.Join(summaryTexts, "\n\n---\n\n"),
 			}, "")
 			if err != nil {
-				recordFailure(fmt.Errorf("batch %d render: %w", b.index+1, err))
+				recordFailure(b.index, fmt.Errorf("batch %d render: %w", b.index+1, err))
 				log.Error("render extract_concepts prompt failed", "batch", b.index+1, "error", err)
 				return
 			}
@@ -188,14 +211,14 @@ func ExtractConcepts(
 				{Role: "user", Content: prompt},
 			}, ConceptsSchema, llm.CallOpts{Model: model, MaxTokens: maxTokens, Temperature: temp})
 			if err != nil {
-				recordFailure(fmt.Errorf("batch %d: %w", b.index+1, err))
+				recordFailure(b.index, fmt.Errorf("batch %d: %w", b.index+1, err))
 				log.Error("concept extraction batch failed", "batch", b.index+1, "error", err)
 				return
 			}
 
 			var concepts []ExtractedConcept
 			if err := json.Unmarshal(payload, &concepts); err != nil {
-				recordFailure(fmt.Errorf("batch %d parse: %w", b.index+1, err))
+				recordFailure(b.index, fmt.Errorf("batch %d parse: %w", b.index+1, err))
 				log.Error("concept extraction parse failed", "batch", b.index+1, "error", err)
 				return
 			}
@@ -222,12 +245,21 @@ func ExtractConcepts(
 	// A total failure (every batch errored) must not look like a clean empty
 	// extraction — return an error so the caller increments result.Errors instead
 	// of silently skipping article writing. Partial failures proceed with what
-	// did extract.
+	// did extract — but no longer invisibly (issue #166): the typed error
+	// carries the skipped source documents so callers count and name them.
 	if failures > 0 {
 		if failures == totalBatches {
 			return nil, fmt.Errorf("concept extraction failed: all %d batch(es) errored: %w", totalBatches, firstErr)
 		}
-		log.Warn("some concept-extraction batches failed", "failed", failures, "of", totalBatches)
+		sort.Ints(failedIdx) // SPEC-04: batch completion order must not leak into logs/tests
+		var skipped []string
+		for _, bi := range failedIdx {
+			for _, s := range batches[bi].items {
+				skipped = append(skipped, s.SourcePath)
+			}
+		}
+		log.Warn("some concept-extraction batches failed", "failed", failures, "of", totalBatches, "skipped_sources", skipped)
+		return allConcepts, &PartialFailureError{Failed: failures, Total: totalBatches, Skipped: skipped, Err: firstErr}
 	}
 
 	log.Info("concepts extracted", "total", len(allConcepts))
