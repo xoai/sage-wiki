@@ -39,6 +39,7 @@ Tìm kiếm vector trả về những đoạn *trông giống* câu hỏi. Đồ
 - **Cạnh có bằng chứng.** Một quan hệ có thể mang `evidence` (đoạn văn chống lưng), `confidence` (0–1) và `source_doc`, nhờ đó kết luận truy ngược tới đúng câu đã tạo ra cạnh, chứ không chỉ tới cả tài liệu.
 - **Bộ ba (triple).** Một lượt xử lý tùy chọn với đầu ra có cấu trúc trích thẳng chủ thể → quan hệ → đối tượng. Phải bật thủ công (`ontology.triples`): nó thêm một lệnh gọi LLM cho mỗi tài liệu, và mặc định không bao giờ tiêu tiền của bạn mà không hỏi.
 - **Hợp nhất thực thể.** “K8s” và “Kubernetes” trở thành một nút. Đề xuất mặc định phải qua duyệt chứ không âm thầm gộp.
+- **Giám tuyển khái niệm.** Một bước tùy chọn (`dedup_strategy: "llm"`) nhìn toàn bộ tập khái niệm được đề xuất cùng lúc — giai đoạn duy nhất có tầm nhìn toàn cục — và quyết định giữ / gộp / bỏ cho từng khái niệm. Cách diễn đạt cùng nghĩa được gộp (alias và nguồn hợp nhất), thực thể liệt kê không bao giờ bị gộp (`mw-3` không phải `mw-2`, dù độ tương đồng bao nhiêu), và việc bỏ chỉ là đề xuất được ghi nhận cho đến khi bật `llm_dedup.allow_drop`. Prompt phán đoán có thể tùy chỉnh trong workspace (`prompts/curate-concepts.md`).
 
 **Đồ thị là một kênh truy xuất, không phải khung nhìn phụ.** Mỗi lần tìm kiếm hợp nhất ba kênh — từ vựng (BM25), vector và độ gần trên đồ thị: từ khóa truy vấn khơi mào các thực thể, một lượt duyệt có giới hạn xếp hạng vùng lân cận, rồi cả ba hợp nhất theo `search.hybrid_weight_graph`. Ontology rỗng không tốn gì và giữ kết quả giống hệt từng byte.
 
@@ -154,6 +155,8 @@ Thích dùng container? Image Docker đa kiến trúc dựng sẵn và các tệ
 | Mã nguồn    | `.go`, `.py`, `.js`, `.ts`, `.rs`, v.v. | Mã nguồn                                                    |
 
 Chỉ cần thả tệp vào thư mục nguồn — sage-wiki tự động phát hiện định dạng. Hình ảnh yêu cầu LLM có khả năng vision (Gemini, Claude, GPT-4o). Cần định dạng không có trong danh sách? sage-wiki hỗ trợ [trình phân tích ngoài](#trình-phân-tích-ngoài) — script bằng bất kỳ ngôn ngữ nào đọc stdin và ghi văn bản ra stdout.
+
+**Kiểu nguồn tùy chỉnh.** Đặt `type:` cho một thư mục gốc nguồn trong `config.yaml` và ghép với `prompts/summarize-{type}.md` để mọi định dạng — kể cả PDF và tài liệu Office — có prompt tóm tắt riêng và `source_type` trong frontmatter. (Nguồn `image` và `code` giữ kiểu nội đặt — chúng chọn pipeline vision và mã, chứ không phải một biến thể prompt.)
 
 ## Bộ nhớ đồ thị
 

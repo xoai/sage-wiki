@@ -47,6 +47,13 @@ you have to keep in sync.
   one LLM call per document, and defaults never spend your key without asking.
 - **Entity resolution.** "K8s" and "Kubernetes" become one node. Proposals are
   review-gated by default rather than silently merged.
+- **Concept curation.** One opt-in pass (`dedup_strategy: "llm"`) sees the whole
+  proposed concept set at once — the only stage with global view — and judges
+  keep / fold / drop per concept. Semantic restatements fold (aliases and
+  sources merge), enumerated entities never fold (`mw-3` is not `mw-2`, at any
+  similarity), and drops stay logged proposals until `llm_dedup.allow_drop`
+  opts in. The judgment prompt is workspace-overridable
+  (`prompts/curate-concepts.md`).
 
 **The graph is a retrieval channel, not a side view.** Every search fuses three
 channels — lexical (BM25), vector, and graph proximity: query terms seed
@@ -176,6 +183,8 @@ covered in the [self-hosted server guide](docs/guides/self-hosted-server.md).
 | Code        | `.go`, `.py`, `.js`, `.ts`, `.rs`, etc. | Source code                                                 |
 
 Just drop files into your source folder — sage-wiki detects the format automatically. Images require a vision-capable LLM (Gemini, Claude, GPT-4o). Need a format not listed? sage-wiki supports [external parsers](#external-parsers) — scripts in any language reading stdin, writing text to stdout.
+
+**Custom source types.** Set `type:` on a source root in `config.yaml` and pair it with `prompts/summarize-{type}.md` to give any format — PDFs and Office documents included — its own summary prompt and `source_type` frontmatter. (`image` and `code` sources keep their built-in types — they select the vision and code pipelines, not a prompt variant.)
 
 ## Graph memory
 

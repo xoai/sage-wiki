@@ -130,6 +130,14 @@ compiler:
   # auto_demote: true          # demote stale articles
   # split_threshold: 15000     # chars — split large docs for faster writing
   # dedup_threshold: 0.85      # cosine similarity for concept dedup
+  # dedup_strategy: embedding  # embedding (default) | llm — the llm strategy runs a
+                              # global keep/fold/drop curation pass over the whole
+                              # concept set before article writing (#167) and
+                              # REPLACES embedding dedup; unknown values fail at load
+  # llm_dedup:                 # knobs for dedup_strategy: llm
+  #   allow_drop: false        # drops stay logged proposals until true (folds
+                              # auto-apply — they are additive)
+  #   batch_size: 200          # concepts per curation call (0 = load error)
   # backpressure: true         # adaptive concurrency on rate limits
 
 search:

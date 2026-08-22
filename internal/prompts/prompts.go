@@ -225,6 +225,10 @@ func ScaffoldDefaults(dir string) error {
 			vars = "{{.ExistingConcepts}}, {{.Summaries}}"
 		} else if strings.Contains(outName, "extract-triples") {
 			vars = "{{.ValidTypes}}, {{.ValidPredicates}}, {{.Summary}}"
+		} else if strings.Contains(outName, "curate-concepts") {
+			// CurateData (issue #167) — the scaffolded header must name the
+			// variables this template actually receives.
+			vars = "{{.ExistingConcepts}}, {{.Proposed}}"
 		}
 		header := fmt.Sprintf("# %s\n# This file customizes the sage-wiki %s prompt.\n# Edit freely — sage-wiki will use this instead of the built-in default.\n# Delete this file to revert to the default.\n#\n# Available variables: %s\n# See: https://github.com/xoai/sage-wiki\n\n", outName, strings.TrimSuffix(outName, ".md"), vars)
 
