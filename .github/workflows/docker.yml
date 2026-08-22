@@ -107,6 +107,34 @@ jobs:
         id: tag-sha
         run: echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
+      # The tag push starts THIS job and the tag's CI run at the same
+      # moment; the proof verifier below must not run until that CI run
+      # has reported (it fails closed when no completed "CI required"
+      # check exists yet — v0.2.9 and v0.2.10 both raced it green-CI-red-
+      # proof). Poll the exact-SHA check-runs until "CI required" is
+      # completed; red conclusions are left to the verifier, preserving
+      # fail-closed semantics.
+      - name: Wait for the tag's CI run to report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 2700)) # 45 min: CI's long pole ~15 min + queue margin
+          while :; do
+            state="$(gh api "repos/${{ github.repository }}/commits/${{ steps.tag-sha.outputs.sha }}/check-runs?per_page=100" \
+              --jq '[.check_runs[] | select(.name == "CI required") | .status] | first // ""')"
+            if [ "$state" = "completed" ]; then
+              echo "CI required is completed; proceeding to proof verification."
+              exit 0
+            fi
+            if [ $SECONDS -ge $deadline ]; then
+              echo "::error::Timed out after 45 min waiting for the tag's CI run (last CI-required state: '${state:-none}')."
+              exit 1
+            fi
+            echo "CI required not yet reported (state: '${state:-none}'); waiting 30s..."
+            sleep 30
+          done
+
       - name: Verify exact-SHA CI proof
         uses: actions/checkout@v4
         with:
