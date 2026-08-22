@@ -155,6 +155,8 @@ Thích dùng container? Image Docker đa kiến trúc dựng sẵn và các tệ
 
 Chỉ cần thả tệp vào thư mục nguồn — sage-wiki tự động phát hiện định dạng. Hình ảnh yêu cầu LLM có khả năng vision (Gemini, Claude, GPT-4o). Cần định dạng không có trong danh sách? sage-wiki hỗ trợ [trình phân tích ngoài](#trình-phân-tích-ngoài) — script bằng bất kỳ ngôn ngữ nào đọc stdin và ghi văn bản ra stdout.
 
+**Kiểu nguồn tùy chỉnh.** Đặt `type:` cho một thư mục gốc nguồn trong `config.yaml` và ghép với `prompts/summarize-{type}.md` để mọi định dạng — kể cả PDF và tài liệu Office — có prompt tóm tắt riêng và `source_type` trong frontmatter.
+
 ## Bộ nhớ đồ thị
 
 Ngay từ đầu, wiki xây dựng một đồ thị tri thức từ độ lân cận từ khóa —
@@ -166,6 +168,7 @@ trong cùng một khối. Bật các
   cho mỗi tài liệu được biên dịch đầy đủ trích xuất các thực thể và quan hệ
   có kiểu, mỗi mục kèm theo đoạn bằng chứng, độ tin cậy, và tài liệu nguồn.
 - **Phân giải thực thể** (`ontology.resolve.enabled`) — các biến thể hình thức
+- **Giám tuyển khái niệm.** Một bước tùy chọn (`dedup_strategy: "llm"`) nhìn toàn bộ tập khái niệm được đề xuất cùng lúc — giai đoạn duy nhất có tầm nhìn toàn cục — và quyết định giữ / gộp / bỏ cho từng khái niệm. Cách diễn đạt cùng nghĩa được gộp (alias và nguồn hợp nhất), thực thể liệt kê không bao giờ bị gộp (`mw-3` không phải `mw-2`, dù độ tương đồng bao nhiêu), và việc bỏ chỉ là đề xuất được ghi nhận cho đến khi bật `llm_dedup.allow_drop`.
   bề mặt ("NASA" / "National Aeronautics and Space Administration")
   được liên kết về một thực thể chuẩn. Đề xuất có độ tin cậy cao được áp dụng
   tự động (ngưỡng 0.85; đặt đúng `1.0` để chỉ rà soát), và

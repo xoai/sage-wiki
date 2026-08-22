@@ -14,12 +14,13 @@ worker cycles, and MCP/REST on-demand topic compilation.
 sage-wiki init --prompts    # scaffolds prompts/ directory with defaults
 ```
 
-This creates editable markdown files — one per built-in prompt, all eight:
+This creates editable markdown files — one per built-in prompt, all nine:
 
 ```
 prompts/
 ├── caption-image.md        # how images are described
 ├── capture-knowledge.md    # how conversation capture extracts knowledge
+├── curate-concepts.md      # how the concept set is curated (dedup_strategy: llm)
 ├── extract-concepts.md     # how concepts are identified
 ├── extract-triples.md      # how typed entities/relations are extracted
 ├── resolve-entities.md     # how entity-resolution candidates are judged
@@ -29,9 +30,11 @@ prompts/
 ```
 
 Edit any file to change how sage-wiki processes that type. Add new source
-types by creating `summarize-{type}.md` (e.g., `summarize-dataset.md`).
-Delete a file to revert to the built-in default. Existing customizations
-are never overwritten by re-running the scaffold.
+types by creating `summarize-{type}.md` (e.g., `summarize-dataset.md`) — this
+works for every format, PDFs and Office documents included, once the type is
+set on the source root (`sources[].type` in `config.yaml`). Delete a file to
+revert to the built-in default. Existing customizations are never overwritten
+by re-running the scaffold.
 
 Each scaffolded file's header lists the template variables available to it
 (e.g. `{{.SourcePath}}`, `{{.MaxTokens}}`; `write-article.md` additionally

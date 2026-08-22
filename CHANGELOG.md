@@ -2,6 +2,77 @@
 
 ## [Unreleased]
 
+## 0.2.10 — 2026-08-22
+
+### Added
+
+- **Global LLM concept curation — `dedup_strategy: "llm"` (#167).** The
+  documented-but-missing `llm` strategy now exists: a single curation pass
+  over the *full* newly-extracted concept set (plus existing manifest names
+  as fold targets) runs before article writing, on all three compile paths —
+  the only stage with global view, so a corpus-wide selectivity bar can
+  finally be enforced. Per concept it decides keep / fold / drop: folds
+  auto-apply (additive — sources union into the target and the name is
+  recorded as an alias), drops are gated behind `llm_dedup.allow_drop`
+  (default `false`) and stay logged proposals otherwise. Deterministic
+  never-merge guards (#164) veto any proposed fold between enumerated
+  identities, unknown actions keep the concept, and a total curation failure
+  is counted and the compile proceeds uncurated. The judgment prompt is
+  workspace-overridable (`prompts/curate-concepts.md`); new knobs
+  `compiler.llm_dedup.allow_drop` and `compiler.llm_dedup.batch_size`
+  (default 200) enter the compile key. Enabling `llm` replaces embedding
+  dedup — running both is incoherent.
+
+### Fixed
+
+- **Configured source types survive binary extraction (#168).** A custom
+  `sources[].type` (e.g. `governance`) was silently discarded for every
+  binary format — PDF, docx, xlsx, pptx, csv, epub, eml/msg — so the
+  summarize pass always rendered the built-in paper/article/dataset prompt
+  and wrote the wrong `source_type` frontmatter, while markdown/text/external
+  sources honored the type. Detection was already correct (manifest,
+  `--dry-run`); extraction now propagates the configured type to the prompt
+  registry and frontmatter for all formats. `image` and `code` stay pinned —
+  they route to the vision/code pipelines rather than restyle the prompt.
+
+- **Injective citation relation IDs (#165).** `sanitizeID` collapsed `/`,
+  `\`, `.`, and space all to `-`, so two sources whose paths differed only in
+  punctuation produced the same `cites` relation ID; the second insert hit
+  the `relations.id` primary key and the provenance edge was dropped at WARN
+  with the compile exiting 0 — invisible to `wiki_provenance` and graph
+  traversal. Relation IDs now append an 8-hex hash of the raw path:
+  injective, deterministic, readable. Existing vaults are unaffected —
+  recompiles update the same natural edge in place.
+
+- **Partial concept-extraction failures are counted and named (#166).** When
+  some — but not all — extraction batches failed, the compile reported
+  `errors=0` and exited 0 while silently skipping up to half the corpus. A
+  typed `PartialFailureError` now increments the error count on all three
+  call paths and WARN-logs the skipped source documents by name, while the
+  surviving concepts still proceed (partial recovery preserved). When a
+  structured-output parse failure coincides with `finish_reason=length`, the
+  error names the token cap (`MaxTokens=N`) instead of a bare
+  `unexpected end of JSON input`.
+
+- **Deterministic never-merge guards for concept dedup (#164).** In
+  enumerated corpora, names differing by a digit or a draft/final qualifier
+  embed almost identically to true duplicates — measured, must-merge and
+  must-not-merge pairs interleave across the whole similarity range and peak
+  at the same 0.982 — so no cosine threshold separates them, and auto-merge
+  silently deleted distinct entities (merged concepts cease to exist as
+  articles/entities). Two deterministic guards now sit inside the dedup
+  check, regardless of score: digit-containing token sets must be equal
+  (`mw-3`/`mw-2`, `a-17-084`/`a-17-086`, `task-order-no-44`/`no-4`), and
+  `draft`/`final` + `primary`/`secondary` qualifier asymmetry blocks the
+  merge. Dedup merge logging raised INFO → WARN so merges are discoverable.
+  Same-number containment and synonym-media pairs remain threshold-governed
+  (use `dedup_strategy: "llm"` for those).
+
+- **Internal: CI waiver test fixture date-rot (#170).** A ciproof test
+  fixture's waiver expiry (2026-08-20) turned required CI checks red on
+  every run regardless of the code under test; the valid-case fixture now
+  carries a far-future date.
+
 ## 0.2.9 — 2026-08-14
 
 ### Fixed

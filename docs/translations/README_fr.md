@@ -39,6 +39,7 @@ La recherche vectorielle retrouve des passages qui *ressemblent* à la requête.
 - **Arêtes sourcées.** Une relation peut porter `evidence` (le passage qui la justifie), `confidence` (0–1) et `source_doc` : une conclusion remonte jusqu'à la phrase qui a justifié l'arête, pas seulement jusqu'au document.
 - **Triplets.** Une passe optionnelle en sortie structurée extrait directement sujet → relation → objet. Activation explicite (`ontology.triples`) : elle ajoute un appel LLM par document, et les valeurs par défaut ne dépensent jamais votre clé sans demande.
 - **Résolution d'entités.** « K8s » et « Kubernetes » deviennent un seul nœud. Les propositions passent par revue plutôt que d'être fusionnées en silence.
+- **Curation de concepts.** Une passe optionnelle (`dedup_strategy: "llm"`) voit l'ensemble des concepts proposés d'un coup — la seule étape avec une vue globale — et décide pour chacun : conserver, fusionner ou supprimer. Les reformulations fusionnent (alias et sources réunis), les entités énumérées ne fusionnent jamais (`mw-3` n'est pas `mw-2`, à quelque similarité que ce soit), et les suppressions restent des propositions journalisées tant que `llm_dedup.allow_drop` n'est pas activé. Le prompt de jugement est personnalisable (`prompts/curate-concepts.md`).
 
 **Le graphe est un canal de recherche, pas une vue annexe.** Chaque recherche fusionne trois canaux — lexical (BM25), vectoriel et proximité de graphe : les termes de la requête amorcent des entités, une traversée bornée classe leur voisinage, et les trois fusionnent selon `search.hybrid_weight_graph`. Une ontologie vide ne coûte rien et laisse les résultats identiques au bit près.
 
@@ -153,7 +154,9 @@ fichiers compose sont couverts dans le [guide du serveur auto-hébergé](../guid
 | Images      | `.png`, `.jpg`, `.gif`, `.webp`, `.svg`, `.bmp` | Description via LLM de vision (légende, contenu, texte visible) |
 | Code        | `.go`, `.py`, `.js`, `.ts`, `.rs`, etc. | Code source                                                 |
 
-Il suffit de déposer les fichiers dans votre dossier source — sage-wiki détecte le format automatiquement. Les images nécessitent un LLM capable de vision (Gemini, Claude, GPT-4o). Besoin d'un format non listé ? sage-wiki prend en charge les [parseurs externes](#parseurs-externes) — des scripts dans n'importe quel langage qui lisent stdin et écrivent du texte sur stdout.
+Il suffit de déposer les fichiers dans votre dossier source — sage-wiki détecte le format automatiquement.
+
+**Types de sources personnalisés.** Définissez `type:` sur une racine de source dans `config.yaml` et associez-lui `prompts/summarize-{type}.md` pour donner à n'importe quel format — PDF et documents Office compris — son propre prompt de résumé et son `source_type` dans le frontmatter. Les images nécessitent un LLM capable de vision (Gemini, Claude, GPT-4o). Besoin d'un format non listé ? sage-wiki prend en charge les [parseurs externes](#parseurs-externes) — des scripts dans n'importe quel langage qui lisent stdin et écrivent du texte sur stdout.
 
 ## Mémoire graphe
 
