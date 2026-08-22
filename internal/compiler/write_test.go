@@ -704,3 +704,52 @@ func TestBuildSourceContext_Defaulting(t *testing.T) {
 		t.Fatal("defaulting produced empty context")
 	}
 }
+
+// Issue #165: sources whose paths differ only in punctuation (`.`, space,
+// `/`, `\`) must produce DISTINCT cites relation IDs — sanitizeID collapses
+// all four to `-`, so the second insert used to hit the relations.id primary
+// key and the provenance edge was silently dropped at WARN.
+func TestCitesRelationIDInjective(t *testing.T) {
+	// The issue's exact colliding pair.
+	a := "wiki/sources/S9525-06-44AModesto Stockpiles GW. SEPT2012.1212/report.md"
+	b := "wiki/sources/S9525-06-44AModesto Stockpiles GW  SEPT2012 1212/report.md"
+
+	// Precondition: the legacy slug really does collide (documents the bug).
+	if sanitizeID(a) != sanitizeID(b) {
+		t.Fatalf("fixture no longer collides under sanitizeID: %q vs %q",
+			sanitizeID(a), sanitizeID(b))
+	}
+
+	idA, idB := citesRelationID("mw-4", a), citesRelationID("mw-4", b)
+	if idA == idB {
+		t.Errorf("cites relation IDs collide for punctuation-only paths: %q", idA)
+	}
+	if got := citesRelationID("mw-4", a); got != idA {
+		t.Errorf("citesRelationID not deterministic: %q vs %q", got, idA)
+	}
+	if !strings.HasPrefix(idA, "mw-4-cites-") {
+		t.Errorf("lost the readable prefix: %q", idA)
+	}
+
+	// Store-level witness: BOTH colliding edges must persist.
+	store := setupTestStore(t)
+	store.AddEntity(ontology.Entity{ID: "mw-4", Type: ontology.TypeConcept, Name: "mw-4"})
+	for _, src := range []string{a, b} {
+		store.AddEntity(ontology.Entity{ID: src, Type: ontology.TypeSource, Name: filepath.Base(src)})
+	}
+	for _, r := range []ontology.Relation{
+		{ID: idA, SourceID: "mw-4", TargetID: a, Relation: ontology.RelCites},
+		{ID: idB, SourceID: "mw-4", TargetID: b, Relation: ontology.RelCites},
+	} {
+		if err := store.AddRelation(r); err != nil {
+			t.Fatalf("AddRelation(%q): %v", r.TargetID, err)
+		}
+	}
+	rels, err := store.GetRelations("mw-4", ontology.Outbound, "")
+	if err != nil {
+		t.Fatalf("GetRelations: %v", err)
+	}
+	if len(rels) != 2 {
+		t.Fatalf("expected both cites edges to persist, got %d", len(rels))
+	}
+}
