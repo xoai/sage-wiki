@@ -50,6 +50,7 @@ internal/compiler/diff.go:128|for path, info := range current {|Added/Modified s
 internal/compiler/diff.go:144|for path := range mf.Sources {|Removed sorted at :149 (pre-existing AGENTS.md rule 6)
 internal/compiler/migrate_checkpoint.go:173|for path := range mf.Sources {|collects mf.Sources keys into a slice that is sort.Strings'd immediately after (PopulateFromManifest) — order-independent collection
 internal/compiler/fullpipeline.go:545|for _, srcPath := range mf.Concepts[ar.ConceptName].Sources {|mf.Concepts[name].Sources is a slice lookup, not a map-order iteration
+internal/compiler/curate.go:274|for name := range mf.Concepts {|collects mf.Concepts keys into a slice that is sort.Strings'd immediately after (#167 curation fold targets)
 internal/compiler/dedup.go:144|for existing, existingVec := range dc.cache {|canonical tie-break (Task 3) makes the result order-independent
 internal/manifest/merge.go:24|for k, s := range m.Sources {|copy loop into a keyed map (json-sorted on save)
 internal/manifest/merge.go:32|for k, con := range m.Concepts {|copy loop into a keyed map (json-sorted on save)
