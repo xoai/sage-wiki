@@ -1,6 +1,8 @@
 package prompts
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -295,5 +297,27 @@ func TestCurateConceptsTemplateRenders(t *testing.T) {
 	}
 	if filename := templateNameToFilename("curate_concepts.txt"); filename != "curate-concepts.md" {
 		t.Errorf("workspace override name = %q, want curate-concepts.md", filename)
+	}
+}
+
+// Issue #167: the scaffolded curate-concepts.md header must list the
+// variables CurateData actually exposes — not the summarize defaults.
+func TestScaffoldCurateConceptsHeaderVars(t *testing.T) {
+	dir := t.TempDir()
+	if err := ScaffoldDefaults(dir); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "curate-concepts.md"))
+	if err != nil {
+		t.Fatalf("curate-concepts.md not scaffolded: %v", err)
+	}
+	head := string(raw[:min(600, len(raw))])
+	for _, want := range []string{"{{.ExistingConcepts}}", "{{.Proposed}}"} {
+		if !strings.Contains(head, want) {
+			t.Errorf("scaffold header missing %s: %q", want, head)
+		}
+	}
+	if strings.Contains(head, "{{.SourcePath}}") {
+		t.Errorf("scaffold header carries summarize vars CurateData does not expose: %q", head)
 	}
 }

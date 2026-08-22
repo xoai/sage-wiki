@@ -156,7 +156,7 @@ fichiers compose sont couverts dans le [guide du serveur auto-hébergé](../guid
 
 Il suffit de déposer les fichiers dans votre dossier source — sage-wiki détecte le format automatiquement.
 
-**Types de sources personnalisés.** Définissez `type:` sur une racine de source dans `config.yaml` et associez-lui `prompts/summarize-{type}.md` pour donner à n'importe quel format — PDF et documents Office compris — son propre prompt de résumé et son `source_type` dans le frontmatter. Les images nécessitent un LLM capable de vision (Gemini, Claude, GPT-4o). Besoin d'un format non listé ? sage-wiki prend en charge les [parseurs externes](#parseurs-externes) — des scripts dans n'importe quel langage qui lisent stdin et écrivent du texte sur stdout.
+**Types de sources personnalisés.** Définissez `type:` sur une racine de source dans `config.yaml` et associez-lui `prompts/summarize-{type}.md` pour donner à n'importe quel format — PDF et documents Office compris — son propre prompt de résumé et son `source_type` dans le frontmatter. (Les sources `image` et `code` conservent leurs types intégrés — elles sélectionnent les pipelines vision et code, pas une variante de prompt.) Les images nécessitent un LLM capable de vision (Gemini, Claude, GPT-4o). Besoin d'un format non listé ? sage-wiki prend en charge les [parseurs externes](#parseurs-externes) — des scripts dans n'importe quel langage qui lisent stdin et écrivent du texte sur stdout.
 
 ## Mémoire graphe
 

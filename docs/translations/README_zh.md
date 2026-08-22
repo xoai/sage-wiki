@@ -39,7 +39,7 @@ _外圈边界上的点代表知识库中所有文档的摘要，内圈的点代�
 - **带证据的边。** 关系可携带 `evidence`（支撑它的原文片段）、`confidence`（0–1）和 `source_doc`，因此结论能追溯到证成这条边的那句话，而不只是整篇文档。
 - **三元组。** 可选的结构化输出流程直接抽取 主语 → 关系 → 宾语。需显式开启（`ontology.triples`）：它会为每篇文档增加一次 LLM 调用，默认配置绝不在未经询问时花你的额度。
 - **实体归一。** “K8s”与“Kubernetes”合并为同一节点。合并提案默认需经复核，不会静默合并。
-- **概念治理（curation）。** 一个可选阶段（`dedup_strategy: "llm"`）一次性审视全部候选概念——唯一具备全局视野的阶段——对每个概念作出 保留 / 归并 / 丢弃 的判定。语义重述会被归并（别名与来源合并），枚举型实体绝不归并（无论相似度多高，`mw-3` 都不是 `mw-2`），而丢弃在你开启 `llm_dedup.allow_drop` 之前始终只是留档提案。
+- **概念治理（curation）。** 一个可选阶段（`dedup_strategy: "llm"`）一次性审视全部候选概念——唯一具备全局视野的阶段——对每个概念作出 保留 / 归并 / 丢弃 的判定。语义重述会被归并（别名与来源合并），枚举型实体绝不归并（无论相似度多高，`mw-3` 都不是 `mw-2`），而丢弃在你开启 `llm_dedup.allow_drop` 之前始终只是留档提案。判定提示词可在工作区覆盖（`prompts/curate-concepts.md`）。
 
 **图是检索通道，而非旁支视图。** 每次检索融合三条通道 —— 词法（BM25）、向量与图邻近：查询词点亮起始实体，受限遍历为其邻域排序，三者按 `search.hybrid_weight_graph` 融合。本体为空时零开销，结果逐字节保持不变。
 
@@ -155,7 +155,7 @@ sage-wiki compile --watch
 
 只需把文件放入源文件夹——sage-wiki 会自动检测格式。图片需要具备视觉能力的 LLM（Gemini、Claude、GPT-4o）。需要列表中没有的格式？sage-wiki 支持[外部解析器](#外部解析器)——任何语言编写的脚本，从 stdin 读取，向 stdout 输出文本。
 
-**自定义来源类型。** 在 `config.yaml` 中为某个来源根目录设置 `type:`，并配上 `prompts/summarize-{type}.md`，即可为任何格式——包括 PDF 与 Office 文档——提供专属的摘要提示词与 `source_type` frontmatter。
+**自定义来源类型。** 在 `config.yaml` 中为某个来源根目录设置 `type:`，并配上 `prompts/summarize-{type}.md`，即可为任何格式——包括 PDF 与 Office 文档——提供专属的摘要提示词与 `source_type` frontmatter。（`image` 与 `code` 来源保留内置类型——它们选择的是视觉与代码流水线，而非提示词变体。）
 
 ## 图记忆
 

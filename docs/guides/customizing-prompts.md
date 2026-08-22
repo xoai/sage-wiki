@@ -32,7 +32,9 @@ prompts/
 Edit any file to change how sage-wiki processes that type. Add new source
 types by creating `summarize-{type}.md` (e.g., `summarize-dataset.md`) — this
 works for every format, PDFs and Office documents included, once the type is
-set on the source root (`sources[].type` in `config.yaml`). Delete a file to
+set on the source root (`sources[].type` in `config.yaml`). `image` and `code`
+sources keep their built-in types — they select the vision and code pipelines,
+not a prompt variant. Delete a file to
 revert to the built-in default. Existing customizations are never overwritten
 by re-running the scaffold.
 
