@@ -1186,3 +1186,16 @@ func buildSourceContext(projectDir string, concept ExtractedConcept, threshold i
 	// early (SEC-04, site 5 — the template wraps this whole string).
 	return prompts.NeutralizeTags(strings.Join(kept, "\n\n---\n\n"))
 }
+
+// RetryArticle re-writes ONE article from scratch (issue #144 blocking
+// quality retry). The caller MUST remove the on-disk article file before
+// calling — prepareArticle seeds ExistingArticle from whatever is on disk,
+// so leaving the bad article there would turn the retry into an
+// "improve this bad content" call instead of a fresh write (#145 gotcha).
+// Rebuilds the single-concept alias/related context the same way
+// WriteArticles builds it for the batch.
+func RetryArticle(opts ArticleWriteOpts, concept ExtractedConcept) ArticleResult {
+	aliasMap := buildAliasMap([]ExtractedConcept{concept}, opts.AllConcepts)
+	relatedIndex := buildRelatedConceptsIndex(opts.AllConcepts, maxRelatedConcepts)
+	return writeOneArticle(opts, concept, aliasMap, relatedIndex[concept.Name])
+}

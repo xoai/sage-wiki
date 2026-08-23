@@ -398,7 +398,14 @@ type QualityConfig struct {
 	WeightCoverage    float64 `yaml:"weight_coverage,omitempty"`    // default: 0.20
 	WeightWikilink    float64 `yaml:"weight_wikilink,omitempty"`    // default: 0.15
 	WeightAntiPattern float64 `yaml:"weight_antipattern,omitempty"` // default: 0.20
+	// Retry (issue #144): give a sub-threshold article ONE rewrite attempt.
+	// The on-disk file is removed before the retry so the rewrite is a fresh
+	// write (not seeded from the bad content); still-low-after-retry counts
+	// as a compile error. Default false — advisory-only behavior unchanged.
+	Retry *bool `yaml:"retry,omitempty"`
 }
+
+func (q QualityConfig) RetryOrDefault() bool { return q.Retry != nil && *q.Retry }
 
 // Default quality weights (issue #97 proposal). Kept here so the config
 // accessors can supply per-field fallbacks without importing the compiler.
