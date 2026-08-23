@@ -307,6 +307,7 @@ func compileConfigSubset(cfg *config.Config) map[string]any {
 	put("compiler.demote_signals.stale_days", c.DemoteSignals.StaleDays)
 	qr := qualityResolved(c)
 	put("compiler.quality.threshold", qr.Threshold)
+	put("compiler.quality.retry", c.Quality.RetryOrDefault()) // issue #144: retry changes output, must rekey
 	put("compiler.quality.weight_antipattern", qr.WeightAntiPattern)
 	put("compiler.quality.weight_coverage", qr.WeightCoverage)
 	put("compiler.quality.weight_format", qr.WeightFormat)
@@ -480,6 +481,7 @@ var subsetPolicy = map[string]string{
 	"compiler.promote_signals.query_hit_count":     "",
 	"compiler.promote_signals.source_recency_days": "",
 	"compiler.quality.threshold":                   "",
+	"compiler.quality.retry":                       "",
 	"compiler.quality.weight_antipattern":          "",
 	"compiler.quality.weight_coverage":             "",
 	"compiler.quality.weight_format":               "",

@@ -1172,3 +1172,18 @@ func TestValidateLLMDedupBatchSize(t *testing.T) {
 		t.Errorf("explicit batch_size=0 should be rejected (nil = default; 0 is a mistake), got: %v", err)
 	}
 }
+
+// Issue #144 increment: quality.retry — one blocking rewrite attempt for a
+// sub-threshold article; still-low-after-retry counts as a compile error.
+// Default OFF (advisory unchanged; an upgrade must not add LLM cost unasked).
+func TestQualityRetryDefaultOff(t *testing.T) {
+	c := &Config{Project: "t", Output: "wiki", Sources: []Source{{Path: "raw"}}}
+	if c.Compiler.Quality.RetryOrDefault() {
+		t.Error("quality.retry must default false")
+	}
+	on := true
+	c.Compiler.Quality.Retry = &on
+	if !c.Compiler.Quality.RetryOrDefault() {
+		t.Error("explicit quality.retry=true must resolve true")
+	}
+}
