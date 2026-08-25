@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -82,6 +83,39 @@ func TestIngestLocalFile(t *testing.T) {
 	mf, _ := manifest.Load(filepath.Join(dir, ".manifest.json"))
 	if mf.SourceCount() != 1 {
 		t.Errorf("expected 1 source in manifest, got %d", mf.SourceCount())
+	}
+}
+
+func TestIngestReadOnlySourceRejected(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(`version: 1
+project: test
+sources:
+  - path: raw
+    type: auto
+    read_only: true
+output: wiki
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "raw"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	srcFile := filepath.Join(t.TempDir(), "article.md")
+	if err := os.WriteFile(srcFile, []byte("# Read-only source"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := IngestPath(dir, srcFile); err == nil || !strings.Contains(err.Error(), "no writable source folder") {
+		t.Fatalf("IngestPath error = %v, want read-only source rejection", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "raw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("read-only ingest wrote %d files into raw", len(entries))
 	}
 }
 

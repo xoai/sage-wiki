@@ -226,9 +226,10 @@ type VaultConfig struct {
 }
 
 type Source struct {
-	Path  string `yaml:"path"`
-	Type  string `yaml:"type"`
-	Watch bool   `yaml:"watch"`
+	Path     string `yaml:"path"`
+	Type     string `yaml:"type"`
+	Watch    bool   `yaml:"watch"`
+	ReadOnly bool   `yaml:"read_only,omitempty"`
 }
 
 type APIConfig struct {

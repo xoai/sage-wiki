@@ -39,7 +39,11 @@ func Backfill(projectDir string, mem store.EntryStore, m *manifest.Manifest) (in
 		if haveBare && haveSrc {
 			continue
 		}
-		ts := Resolve(filepath.Join(projectDir, path), src.AddedAt)
+		absPath := path
+		if !filepath.IsAbs(path) {
+			absPath = filepath.Join(projectDir, path)
+		}
+		ts := Resolve(absPath, src.AddedAt)
 		if ts <= 0 {
 			continue
 		}
@@ -112,7 +116,11 @@ func Backfill(projectDir string, mem store.EntryStore, m *manifest.Manifest) (in
 			if hasSrc && hasBare {
 				continue
 			}
-			ts := Resolve(filepath.Join(projectDir, bareID), "")
+			absPath := bareID
+			if !filepath.IsAbs(bareID) {
+				absPath = filepath.Join(projectDir, bareID)
+			}
+			ts := Resolve(absPath, "")
 			if ts <= 0 {
 				continue
 			}

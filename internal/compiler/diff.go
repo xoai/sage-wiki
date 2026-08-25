@@ -45,12 +45,7 @@ func Diff(projectDir string, cfg *config.Config, mf *manifest.Manifest) (*DiffRe
 	current := make(map[string]SourceInfo)
 
 	for _, src := range cfg.Sources {
-		var srcDir string
-		if filepath.IsAbs(src.Path) {
-			srcDir = src.Path
-		} else {
-			srcDir = filepath.Join(projectDir, src.Path)
-		}
+		srcDir := resolveSourcePath(projectDir, src.Path)
 
 		if _, err := os.Stat(srcDir); os.IsNotExist(err) {
 			log.Warn("source directory not found", "path", srcDir)

@@ -59,7 +59,10 @@ func SummaryFilename(sourcePath string) string {
 	// names) with "-" so the result has exactly one trailing ".md". Without
 	// this, "raw/data.txt" → "raw-data.txt.md" works on disk but reads
 	// inconsistently; collapsing dots avoids that ambiguity.
+	// Also collapse ":" (Windows drive-letter volume from absolute source
+	// paths, e.g. "D:/..." → "D-...") — colons are invalid in filenames.
 	joined = strings.ReplaceAll(joined, ".", "-")
+	joined = strings.ReplaceAll(joined, ":", "-")
 
 	return joined + ".md"
 }
@@ -125,6 +128,7 @@ func SummaryFilenameMode(sourcePath, sourceRoot, mode string) string {
 
 	joined := strings.Join(cleaned, "-")
 	joined = strings.ReplaceAll(joined, ".", "-")
+	joined = strings.ReplaceAll(joined, ":", "-")
 	return joined + ".md"
 }
 
