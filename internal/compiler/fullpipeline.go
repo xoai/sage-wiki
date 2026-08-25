@@ -535,7 +535,7 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 				var sourceText string
 				if concept, ok := mf.Concepts[ar.ConceptName]; ok {
 					for _, srcPath := range concept.Sources {
-						data, err := os.ReadFile(filepath.Join(opts.ProjectDir, srcPath))
+						data, err := os.ReadFile(resolveSourcePath(opts.ProjectDir, srcPath))
 						if err == nil {
 							sourceText += string(data) + "\n"
 						}

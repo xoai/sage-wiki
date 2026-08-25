@@ -113,7 +113,7 @@ func BackfillChunks(projectDir string, outputDir string, chunkSize int, chunkOve
 		if !strings.HasPrefix(id, "src:") {
 			continue
 		}
-		docs = append(docs, doc{id: id, path: filepath.Join(projectDir, strings.TrimPrefix(id, "src:"))})
+		docs = append(docs, doc{id: id, path: resolveSourcePath(projectDir, strings.TrimPrefix(id, "src:"))})
 		res.Sources++
 	}
 

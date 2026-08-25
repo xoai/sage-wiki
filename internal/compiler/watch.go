@@ -81,12 +81,7 @@ func Watch(projectDir string, debounceSeconds int, opts CompileOpts, coordinator
 		// is recognized as a /mnt/ path (the unresolved project-dir
 		// relative path wouldn't start with /mnt/).
 		for _, src := range cfg.Sources {
-			var checkDir string
-			if filepath.IsAbs(src.Path) {
-				checkDir = src.Path
-			} else {
-				checkDir = filepath.Join(projectDir, src.Path)
-			}
+			checkDir := resolveSourcePath(projectDir, src.Path)
 			if resolved, err := filepath.EvalSymlinks(checkDir); err == nil {
 				checkDir = resolved
 			}
@@ -230,12 +225,7 @@ func scanSnapshot(projectDir string, sources []config.Source, ignore []string) m
 	snapshot := make(map[string]string)
 
 	for _, src := range sources {
-		var srcDir string
-		if filepath.IsAbs(src.Path) {
-			srcDir = src.Path
-		} else {
-			srcDir = filepath.Join(projectDir, src.Path)
-		}
+		srcDir := resolveSourcePath(projectDir, src.Path)
 
 		WalkSourceDir(srcDir, func(absPath, relPath string, _ os.DirEntry) error {
 			manifestPath := filepath.ToSlash(filepath.Join(src.Path, relPath))
