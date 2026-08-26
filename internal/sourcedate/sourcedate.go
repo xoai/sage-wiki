@@ -106,7 +106,11 @@ func Max(dates map[string]int64, ids []string) int64 {
 // entry (which concept max-of-sources reads). Errors are logged, never
 // fatal — a missing date must not fail a compile.
 func RecordForSource(mem store.EntryStore, projectDir, srcPath, manifestAddedAt string) {
-	ts := Resolve(filepath.Join(projectDir, srcPath), manifestAddedAt)
+	absPath := srcPath
+	if !filepath.IsAbs(srcPath) {
+		absPath = filepath.Join(projectDir, srcPath)
+	}
+	ts := Resolve(absPath, manifestAddedAt)
 	if ts <= 0 {
 		return
 	}

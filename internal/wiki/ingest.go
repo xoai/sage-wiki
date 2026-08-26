@@ -190,12 +190,7 @@ func IngestPath(projectDir string, srcPath string) (*IngestResult, error) {
 	srcType := extract.DetectSourceTypeWithSignals(absPath, contentHead, signals)
 	destDir := findSourceFolder(projectDir, cfg, srcType)
 	if destDir == "" {
-		// Fallback to first source folder
-		if len(cfg.Sources) > 0 {
-			destDir = filepath.Join(projectDir, cfg.Sources[0].Path)
-		} else {
-			return nil, fmt.Errorf("ingest: no source folder configured")
-		}
+		return nil, fmt.Errorf("ingest: no writable source folder configured")
 	}
 
 	os.MkdirAll(destDir, 0755)
@@ -254,14 +249,26 @@ func findSourceFolder(projectDir string, cfg *config.Config, sourceType string) 
 
 	// First try exact type match
 	for _, s := range cfg.Sources {
+		if s.ReadOnly {
+			continue
+		}
 		if s.Type == configType || s.Type == "auto" {
+			if filepath.IsAbs(s.Path) {
+				return filepath.Clean(s.Path)
+			}
 			return filepath.Join(projectDir, s.Path)
 		}
 	}
 
-	// Fallback to first source
-	if len(cfg.Sources) > 0 {
-		return filepath.Join(projectDir, cfg.Sources[0].Path)
+	// Fallback to the first writable source.
+	for _, s := range cfg.Sources {
+		if s.ReadOnly {
+			continue
+		}
+		if filepath.IsAbs(s.Path) {
+			return filepath.Clean(s.Path)
+		}
+		return filepath.Join(projectDir, s.Path)
 	}
 
 	return ""

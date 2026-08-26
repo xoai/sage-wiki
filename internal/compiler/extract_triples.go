@@ -427,10 +427,7 @@ func runSupersessionSweep(ont store.OntologyStore, supersessions []FunctionalSup
 // undated fact 1970. sourceDoc is project-relative on both call paths
 // (resolveSourceDoc strips to the source: key or the relative SourcePath).
 func validFromForDoc(projectDir string, mf *manifest.Manifest, sourceDoc string) string {
-	abs := sourceDoc
-	if !filepath.IsAbs(abs) {
-		abs = filepath.Join(projectDir, sourceDoc)
-	}
+	abs := resolveSourcePath(projectDir, sourceDoc)
 	addedAt := ""
 	if mf != nil {
 		if src, ok := mf.Sources[sourceDoc]; ok {

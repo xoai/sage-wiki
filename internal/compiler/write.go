@@ -1090,7 +1090,7 @@ func buildSourceContext(projectDir string, concept ExtractedConcept, threshold i
 	var parts []sourcePart
 
 	for _, srcPath := range concept.Sources {
-		absPath := filepath.Join(projectDir, srcPath)
+		absPath := resolveSourcePath(projectDir, srcPath)
 		data, err := os.ReadFile(absPath)
 		if err != nil {
 			continue

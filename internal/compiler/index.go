@@ -36,7 +36,7 @@ func indexRawSources(projectDir string, sources []CompileItem, memStore store.En
 			continue
 		}
 
-		absPath := filepath.Join(projectDir, src.SourcePath)
+		absPath := resolveSourcePath(projectDir, src.SourcePath)
 		content, err := extract.Extract(absPath, src.FileType, extractOpts...)
 		if err != nil {
 			log.Warn("tier 0 index: extract failed", "path", src.SourcePath, "error", err)
@@ -127,7 +127,7 @@ func indexAndEmbedSources(
 			continue
 		}
 
-		absPath := filepath.Join(projectDir, src.SourcePath)
+		absPath := resolveSourcePath(projectDir, src.SourcePath)
 		content, err := extract.Extract(absPath, src.FileType, extractOpts...)
 		if err != nil {
 			log.Warn("tier 1 index: extract failed", "path", src.SourcePath, "error", err)
@@ -208,7 +208,7 @@ func indexAndEmbedSources(
 			defer release()
 
 			s := p.src
-			absPath := filepath.Join(projectDir, s.SourcePath)
+			absPath := resolveSourcePath(projectDir, s.SourcePath)
 			content, err := extract.Extract(absPath, s.FileType, extractOpts...)
 			if err != nil {
 				log.Warn("tier 1 embed: extract failed", "path", s.SourcePath, "error", err)

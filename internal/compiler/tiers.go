@@ -42,7 +42,7 @@ func (tm *TierManager) ResolveTier(path string, projectDir string, frontmatter m
 
 	// 2. .wikitier file — walk up from source directory to projectDir.
 	// Most-specific (closest to file) wins.
-	absDir := filepath.Dir(filepath.Join(projectDir, path))
+	absDir := filepath.Dir(resolveSourcePath(projectDir, path))
 	absProject := filepath.Clean(projectDir)
 	for dir := absDir; ; dir = filepath.Dir(dir) {
 		if tier, ok := tm.resolveWikiTier(dir, path); ok {
