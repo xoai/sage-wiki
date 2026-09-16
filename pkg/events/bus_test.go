@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -681,4 +682,47 @@ func TestSubscribeRacingCloseNoSpuriousBudget(t *testing.T) {
 			t.Fatalf("round %d: Close took %s, want prompt (budget 50ms, idle bus)", round, elapsed)
 		}
 	}
+}
+
+// TestSubscribeRacingCloseNoStragglerAdd (issue #177): the Add(1) for a
+// slot's delivery goroutine must happen INSIDE addSlot's b.mu critical
+// section. Pre-fix, a Subscribe straggler descheduled between the mu
+// release and the Add let Close's waitDone observe the WaitGroup at zero
+// and return — the straggler's Add(1) then raced the completed Wait (the
+// documented sync.WaitGroup contract violation the macOS race detector
+// flagged three times). Post-fix no goroutine may be owed after Close
+// returns nil: every bus goroutine has exited.
+func TestSubscribeRacingCloseNoStragglerAdd(t *testing.T) {
+	before := runtime.NumGoroutine()
+	for round := 0; round < 200; round++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		bus := NewBus(ctx, WithBufferSize(4), WithCloseBudget(50*time.Millisecond))
+		var wg sync.WaitGroup
+		for g := 0; g < 4; g++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				ch, unsub := bus.Subscribe(4)
+				_ = ch
+				unsub()
+			}()
+		}
+		if err := bus.Close(); err != nil {
+			cancel()
+			t.Fatalf("round %d: Close returned %v, want nil", round, err)
+		}
+		wg.Wait()
+		cancel()
+	}
+	// Close returned nil ⇒ pump exited AND every registered slot's delivery
+	// goroutine exited. Allow a brief settle for goroutine teardown, then no
+	// bus goroutines may remain across all 200 rounds.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if runtime.NumGoroutine() <= before+2 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Errorf("goroutines leaked after Close-returned-nil rounds: before=%d now=%d (a straggler slot goroutine outlived its Add)", before, runtime.NumGoroutine())
 }
