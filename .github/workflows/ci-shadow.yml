@@ -244,7 +244,7 @@ jobs:
           -p 9000:9000
           -e MINIO_ROOT_USER=minioadmin
           -e MINIO_ROOT_PASSWORD=minioadmin
-          minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+          quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
           server /data --console-address ":9001"
 
       - name: Wait for MinIO
