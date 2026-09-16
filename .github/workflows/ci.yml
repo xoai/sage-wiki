@@ -320,7 +320,7 @@ jobs:
           -p 9000:9000
           -e MINIO_ROOT_USER=minioadmin
           -e MINIO_ROOT_PASSWORD=minioadmin
-          minio/minio server /data --console-address ":9001"
+          quay.io/minio/minio server /data --console-address ":9001"
       - name: Wait for MinIO
         run: |
           for i in $(seq 1 20); do
@@ -334,7 +334,7 @@ jobs:
 
       - name: Create test buckets
         run: |
-          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /tmp/mc
+          curl -fsSL https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z -o /tmp/mc
           chmod +x /tmp/mc
           /tmp/mc alias set local http://localhost:9000 minioadmin minioadmin
           /tmp/mc mb --ignore-existing local/sage-it-roundtrip
