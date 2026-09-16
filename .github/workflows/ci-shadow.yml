@@ -244,7 +244,7 @@ jobs:
           -p 9000:9000
           -e MINIO_ROOT_USER=minioadmin
           -e MINIO_ROOT_PASSWORD=minioadmin
-          minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+          quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
           server /data --console-address ":9001"
 
       - name: Wait for MinIO
@@ -260,7 +260,7 @@ jobs:
 
       - name: Create test buckets (pinned mc)
         run: |
-          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /tmp/mc
+          curl -fsSL https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z -o /tmp/mc
           echo "01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891  /tmp/mc" | sha256sum -c -
           chmod +x /tmp/mc
           /tmp/mc alias set local http://localhost:9000 minioadmin minioadmin
