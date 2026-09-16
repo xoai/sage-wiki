@@ -422,17 +422,27 @@ func (b *Bus) fanOut(ev Event) {
 // slot would never be stopped and would force Close down the budget-expiry
 // path). Holding b.mu across the closed-check + append prevents Close from
 // setting closed in between. Returns false when the bus is closed.
+//
+// The sinks.Add(1) MUST sit inside this same critical section (issue #177):
+// WaitGroup's contract requires a positive-delta Add at counter zero to
+// happen before Wait, and Close's waitDone starts only after the pump exits
+// — which happens only after closed=true under b.mu. An Add moved past the
+// Unlock lets a descheduled Subscribe straggler fire Add AFTER waitDone
+// already returned at zero: the documented Add-vs-Wait data race (three
+// macOS race-detector sightings). Under b.mu, any addSlot that passed the
+// gate has Add'ed before Close can observe closed — Wait can never see zero
+// with an Add in flight.
 func (b *Bus) addSlot(s *sinkSlot) bool {
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
 		return false
 	}
+	b.sinks.Add(1)
 	b.slotsMu.Lock()
 	b.slots = append(b.slots, s)
 	b.slotsMu.Unlock()
 	b.mu.Unlock()
-	b.sinks.Add(1)
 	go func() {
 		defer b.sinks.Done()
 		s.run(b.ctx)
