@@ -335,21 +335,11 @@ func Compile(projectDir string, opts CompileOpts) (result *CompileResult, err er
 	}
 	run.diff = diff
 
-	// SPEC-08 D1/AC2: max_compile_batch — a run claiming more docs than the
-	// cap fails fast BEFORE any doc is processed, so nothing partial
-	// persists. Typed error + limit_exceeded event.
-	if lim := run.cfg.Limits.Resolve(); int64(len(diff.Added)+len(diff.Modified)) > lim.MaxCompileBatch {
-		le := limits.New(limits.WhichCompileBatch, lim.MaxCompileBatch, int64(len(diff.Added)+len(diff.Modified)))
-		if run.opts.Sink != nil {
-			run.opts.Sink.Emit(events.NewEvent(filepath.Base(projectDir), events.TypeLimitExceeded, events.LimitExceeded{
-				Which:  le.Which,
-				Limit:  le.Limit,
-				Got:    le.Got,
-				Detail: "compile",
-			}))
-		}
-		return nil, le
-	}
+	// SPEC-08 D1/AC2: max_compile_batch is enforced BELOW, after skip
+	// classification — on the raw diff it counted the whole corpus for
+	// tier<3 workspaces (their docs never enter the manifest, so Diff
+	// reports them Added every run) and deadlocked any corpus larger than
+	// the limit, including fully-compiled ones (issue #186).
 
 	run.result.Added = len(diff.Added)
 	run.result.Modified = len(diff.Modified)
@@ -403,6 +393,34 @@ func Compile(projectDir string, opts CompileOpts) (result *CompileResult, err er
 		diff.Modified = append(diff.Modified, skipCls.resume...)
 		run.diff = diff
 		run.result.Modified = len(diff.Modified)
+	}
+
+	// SPEC-08 D1/AC2 + issue #186: max_compile_batch bounds the docs this
+	// run will actually PROCESS — the post-classification pending set,
+	// further capped by MaxDocs when set — never the raw corpus size. A
+	// fully-compiled (or fully-skipped) corpus reaches the nothing-to-
+	// compile fast path below regardless of size; a MaxDocs-truncated run
+	// compares against its truncated work. Fail-fast is preserved: the
+	// typed error fires before any doc is processed. (Classification is
+	// deterministic CPU/DB work — key computation, zero LLM calls — so
+	// running it before the guard costs no spend.)
+	if lim := run.cfg.Limits.Resolve(); lim.MaxCompileBatch > 0 {
+		work := int64(run.result.Added + run.result.Modified)
+		if run.opts.MaxDocs > 0 && int64(run.opts.MaxDocs) < work {
+			work = int64(run.opts.MaxDocs)
+		}
+		if work > lim.MaxCompileBatch {
+			le := limits.New(limits.WhichCompileBatch, lim.MaxCompileBatch, work)
+			if run.opts.Sink != nil {
+				run.opts.Sink.Emit(events.NewEvent(filepath.Base(projectDir), events.TypeLimitExceeded, events.LimitExceeded{
+					Which:  le.Which,
+					Limit:  le.Limit,
+					Got:    le.Got,
+					Detail: "compile",
+				}))
+			}
+			return nil, le
+		}
 	}
 
 	// The fast path yields to pending resume work (SPEC-04 R0): resume docs
