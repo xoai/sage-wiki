@@ -206,6 +206,141 @@ compiler:
 	}
 }
 
+func TestCompileExternalReadOnlySourceWithMockLLM(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		messages, _ := body["messages"].([]any)
+		lastMsg := ""
+		if len(messages) > 0 {
+			if message, ok := messages[len(messages)-1].(map[string]any); ok {
+				lastMsg, _ = message["content"].(string)
+			}
+		}
+
+		var content string
+		switch {
+		case strings.Contains(lastMsg, "concept extraction system"):
+			content = `[{"name":"external-research","aliases":[],"sources":["../external/article.md"],"type":"concept"}]`
+		case strings.Contains(lastMsg, "wiki author writing a comprehensive article"):
+			content = "# External Research\n\n## Definition\n\nA finding grounded in an external source."
+		default:
+			content = "## Key claims\n\nThis external document presents evidence and findings about a research topic. " +
+				"It records the source context and the reasons those findings matter.\n\n## Concepts\n\nexternal-research"
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": content}}},
+			"model":   "gpt-4o-mini",
+			"usage":   map[string]int{"total_tokens": 100},
+		})
+	}))
+	defer server.Close()
+
+	base := t.TempDir()
+	dir := filepath.Join(base, "project")
+	externalDir := filepath.Join(base, "external")
+	if err := os.MkdirAll(externalDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := wiki.InitGreenfield(dir, "test", "gemini-2.5-flash"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	externalFile := filepath.Join(externalDir, "article.md")
+	sourceContent := []byte("# External research\n\nSource evidence for the compilation integration test.")
+	if err := os.WriteFile(externalFile, sourceContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+	sourceID, err := filepath.Rel(dir, externalFile)
+	if err != nil {
+		t.Fatalf("filepath.Rel: %v", err)
+	}
+	sourceID = filepath.ToSlash(sourceID)
+
+	configText := `
+version: 1
+project: test
+sources:
+  - path: "` + filepath.ToSlash(externalDir) + `"
+    type: auto
+    watch: false
+    read_only: true
+output: wiki
+api:
+  provider: openai
+  api_key: sk-test
+  base_url: ` + server.URL + `
+models:
+  summarize: gpt-4o-mini
+compiler:
+  max_parallel: 2
+  auto_commit: false
+  summary_max_tokens: 500
+  default_tier: 3
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(configText), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	result, err := Compile(dir, CompileOpts{})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if result.Summarized != 1 || result.ConceptsExtracted != 1 || result.ArticlesWritten != 1 {
+		t.Fatalf("compile result = summarized %d, concepts %d, articles %d; want 1/1/1",
+			result.Summarized, result.ConceptsExtracted, result.ArticlesWritten)
+	}
+
+	manifestPath := filepath.Join(dir, ".manifest.json")
+	mf, err := manifest.Load(manifestPath)
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	source, ok := mf.Sources[sourceID]
+	if !ok || source.SummaryPath == "" {
+		t.Fatalf("external source %q missing from compiled manifest or summary provenance: %+v", sourceID, source)
+	}
+	summary, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(source.SummaryPath)))
+	if err != nil {
+		t.Fatalf("read external source summary %q: %v", source.SummaryPath, err)
+	}
+	if !strings.Contains(string(summary), "external document presents evidence") {
+		t.Fatalf("summary does not contain mock LLM output: %s", summary)
+	}
+	concept, ok := mf.Concepts["external-research"]
+	if !ok || len(concept.Sources) != 1 || concept.Sources[0] != sourceID {
+		t.Fatalf("concept provenance = %+v, want source %q", concept, sourceID)
+	}
+	articlePath := filepath.Join(dir, filepath.FromSlash(concept.ArticlePath))
+	article, err := os.ReadFile(articlePath)
+	if err != nil {
+		t.Fatalf("read compiled article %q: %v", articlePath, err)
+	}
+	if !strings.Contains(string(article), sourceID) || !strings.Contains(string(article), "External Research") {
+		t.Fatalf("compiled article is missing its source provenance or mock content: %s", article)
+	}
+	if got, err := os.ReadFile(externalFile); err != nil || string(got) != string(sourceContent) {
+		t.Fatalf("external source changed during compile: bytes match = %v, err = %v", string(got) == string(sourceContent), err)
+	}
+
+	db, err := storage.Open(filepath.Join(dir, ".sage", "wiki.db"))
+	if err != nil {
+		t.Fatalf("open compile database: %v", err)
+	}
+	defer db.Close()
+	ont := ontology.NewStore(db,
+		ontology.ValidRelationNames(ontology.MergedRelations(nil)),
+		ontology.ValidEntityTypeNames(ontology.MergedEntityTypes(nil)))
+	citedSources, err := ont.CitedBy("external-research")
+	if err != nil {
+		t.Fatalf("read source provenance edges: %v", err)
+	}
+	if len(citedSources) != 1 || citedSources[0].ID != sourceID || citedSources[0].Type != ontology.TypeSource {
+		t.Fatalf("source provenance edges = %+v, want [%s source]", citedSources, sourceID)
+	}
+}
+
 // TestCompile_SeedsRelatedConceptsIntoWritePrompt is the reproducing test for
 // issue #106: findRelatedConcepts() was a `return nil` stub, so the write
 // prompt's "See also" [[wikilinks]] block was always empty and the writer
