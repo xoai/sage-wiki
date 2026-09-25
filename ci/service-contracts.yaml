@@ -58,14 +58,16 @@ services:
   - id: minio
     workflow: CI Shadow
     job: minio-contract
-    image:
-      repository: minio/minio
-      # Pinned by digest only; there is no floating tag. The workflow pulls
-      # minio/minio@sha256:... directly.
-      digest: "sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
+    # MinIO exited every public registry (Docker Hub removed the repo,
+    # quay.io closed anonymous pulls 2026-09-25, dl.min.io 410s), so the
+    # server is BUILT from the Go module proxy — pinned by the exact
+    # module@version string the workflow must contain; sum.golang.org
+    # provides the content addressing the image digest used to. This
+    # RELEASE is the same version the former quay digest pin carried.
+    module: "github.com/minio/minio@RELEASE.2025-09-07T16-13-09Z"
     client:
       name: mc
-      url: "https://dl.min.io/client/mc/release/linux-amd64/mc"
+      url: "https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z"
       sha256: "01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891"
     env: SAGE_TEST_MINIO
     packages:

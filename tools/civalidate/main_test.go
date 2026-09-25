@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,7 +99,7 @@ services:
   - id: fixture-object
     workflow: CI Shadow
     job: fixture-object-contract
-    image: {repository: minio/minio, tag: latest, digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+    module: "github.com/xoai/sage-wiki/fixtures/minio@RELEASE.2025-09-07T16-13-09Z"
     client: {name: mc, url: "https://dl.min.io/client/mc/release/linux-amd64/mc", sha256: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}
     env: SAGE_TEST_MINIO
     packages: [internal/manifest]
@@ -1032,7 +1033,7 @@ func baseShadowFacts(t *testing.T) RepositoryFacts {
 			},
 		},
 		WorkflowRaw: "image: pgvector/pgvector@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n" +
-			"minio/minio@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n" +
+			"go install github.com/xoai/sage-wiki/fixtures/minio@RELEASE.2025-09-07T16-13-09Z\n" +
 			"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n",
 		ExpectedWorkflows: map[string]struct{}{"CI": {}},
 		MakeTargets:       map[string]struct{}{},
@@ -1048,6 +1049,46 @@ func baseShadowFacts(t *testing.T) RepositoryFacts {
 			"internal/web/dist/":        {},
 			"internal/manifest/lock.go": {},
 		},
+	}
+}
+
+// Module-pinned services (minio via the Go module proxy): the workflow
+// must contain the exact module@version string, and a malformed pin is a
+// static standards problem — mirroring the image-digest rules.
+func TestShadowWorkflowValidation_ModulePinMissing(t *testing.T) {
+	facts := baseShadowFacts(t)
+	facts.WorkflowRaw = strings.Replace(facts.WorkflowRaw,
+		"go install github.com/xoai/sage-wiki/fixtures/minio@RELEASE.2025-09-07T16-13-09Z", "go build ./...", 1)
+	manifests := parseValidManifests(t)
+	problems := validateRepository(manifests, facts)
+	found := false
+	for _, p := range problems {
+		if p.Code == ProblemServicePinMissing && strings.Contains(p.Message, "pinned module version") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("missing module pin in workflow not flagged: %#v", problems)
+	}
+}
+
+func TestServicesStatic_ModulePinMalformed(t *testing.T) {
+	// Corrupt the shared fixture's pin to a floating reference (no @version).
+	raw := strings.Replace(validServices, "module: \"github.com/xoai/sage-wiki/fixtures/minio@RELEASE.2025-09-07T16-13-09Z\"", "module: \"github.com/xoai/sage-wiki/fixtures/minio\"", 1)
+	var m Manifests
+	if err := yaml.Unmarshal([]byte(raw), &m.Services); err != nil {
+		t.Fatal(err)
+	}
+	var problems Problems
+	validateServicesStatic(&problems, m, nil)
+	found := false
+	for _, p := range problems {
+		if strings.Contains(p.Message, "module@version") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("floating module pin not flagged statically: %#v", problems)
 	}
 }
 
