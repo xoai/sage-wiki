@@ -314,13 +314,21 @@ jobs:
       # `server /data` — GitHub Actions service containers run the image's
       # default CMD with no override, and mineio/minio:latest no longer
       # defaults to running the server.
+      # MinIO has exited every public registry (Docker Hub repo removed,
+      # quay.io anonymous pulls closed 2026-09-25, dl.min.io 410). The Go
+      # module proxy still serves tagged release source, checksum-verified
+      # by sum.golang.org — build the pinned release instead of pulling an
+      # image. RELEASE.2025-09-07T16-13-09Z is the same release the former
+      # quay digest pin carried.
+      - name: Build MinIO from the module proxy
+        run: go install github.com/minio/minio@RELEASE.2025-09-07T16-13-09Z
+
       - name: Start MinIO
-        run: >
-          docker run -d --name minio
-          -p 9000:9000
-          -e MINIO_ROOT_USER=minioadmin
-          -e MINIO_ROOT_PASSWORD=minioadmin
-          quay.io/minio/minio server /data --console-address ":9001"
+        run: |
+          mkdir -p /tmp/minio-data
+          MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin \
+            nohup "$(go env GOPATH)/bin/minio" server /tmp/minio-data \
+            --console-address ":9001" > /tmp/minio.log 2>&1 &
       - name: Wait for MinIO
         run: |
           for i in $(seq 1 20); do

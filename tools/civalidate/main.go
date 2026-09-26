@@ -221,6 +221,13 @@ type ServiceContract struct {
 	Packages      []string       `yaml:"packages"`
 	SelectedTests []string       `yaml:"selected_tests"`
 	Parallel      int            `yaml:"parallel"`
+	// Module pins a service built from source via the Go module proxy
+	// (minio: every public registry closed — Docker Hub removed the repo,
+	// quay closed anonymous pulls, dl.min.io 410s). The value is the exact
+	// `module@version` string the workflow must contain; the proxy's
+	// checksum DB (sum.golang.org) provides the content addressing that
+	// the image digest provided. Mutually exclusive with image.digest.
+	Module string `yaml:"module,omitempty"`
 }
 
 type ServiceContractsManifest struct {
@@ -315,7 +322,12 @@ var (
 	idPattern       = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 	shaPattern      = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	checksumPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	ownerTiers      = setOf(
+	// modulePinPattern: an exact module@version reference — what
+	// `go install` accepts (semver or a MinIO-style RELEASE tag) and what
+	// the workflow text must contain verbatim. Floating module refs are
+	// rejected exactly like floating image tags.
+	modulePinPattern = regexp.MustCompile(`^[a-zA-Z0-9._~/-]+@(v[0-9A-Za-z.+-]+|RELEASE\.[0-9A-Za-z.+-]+)$`)
+	ownerTiers       = setOf(
 		"merge-required-ci", "pr-advisory", "scheduled-diagnostics",
 		"release-certification", "local-pre-push", "human-review",
 	)
@@ -670,7 +682,11 @@ func validateRepository(m Manifests, facts RepositoryFacts) Problems {
 		if _, exists := facts.Workflow.Jobs[service.Job]; !exists {
 			problems.add(ProblemShadowJobMissing, "workflow.jobs", "missing service job "+service.Job)
 		}
-		if !strings.Contains(facts.WorkflowRaw, service.Image.Digest) {
+		if service.Module != "" {
+			if !strings.Contains(facts.WorkflowRaw, service.Module) {
+				problems.add(ProblemServicePinMissing, "workflow.jobs."+service.Job, "workflow does not use the pinned module version for "+service.ID)
+			}
+		} else if !strings.Contains(facts.WorkflowRaw, service.Image.Digest) {
 			problems.add(ProblemServicePinMissing, "workflow.jobs."+service.Job, "workflow does not use the pinned image digest for "+service.ID)
 		}
 		if service.Client != nil && !strings.Contains(facts.WorkflowRaw, service.Client.SHA256) {
@@ -856,9 +872,13 @@ func validateServicesStatic(problems *Problems, m Manifests, packagePaths map[st
 		require(problems, path+".workflow", service.Workflow)
 		require(problems, path+".job", service.Job)
 		require(problems, path+".env", service.Env)
-		require(problems, path+".image.repository", service.Image.Repository)
-		if !shaPattern.MatchString(service.Image.Digest) {
-			problems.add(ProblemServicePinMissing, path+".image.digest", "service image is not pinned by sha256 digest")
+		if service.Module == "" {
+			require(problems, path+".image.repository", service.Image.Repository)
+			if !shaPattern.MatchString(service.Image.Digest) {
+				problems.add(ProblemServicePinMissing, path+".image.digest", "service image is not pinned by sha256 digest")
+			}
+		} else if !modulePinPattern.MatchString(service.Module) {
+			problems.add(ProblemServicePinMissing, path+".module", "service module pin is not an exact module@version reference")
 		}
 		if service.Client != nil {
 			require(problems, path+".client.name", service.Client.Name)
