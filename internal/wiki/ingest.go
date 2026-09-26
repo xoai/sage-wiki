@@ -129,6 +129,10 @@ func IngestURL(projectDir string, url string) (*IngestResult, error) {
 	// Generate filename from URL
 	filename := slugifyURL(url) + ".md"
 	destPath := filepath.Join(destDir, filename)
+	contained, err := pathsafe.Contained(projectDir, destPath)
+	if err != nil || !contained {
+		return nil, fmt.Errorf("ingest: destination escapes the workspace: %s: %w", destPath, limits.ErrTraversalTooWide)
+	}
 	relPath, _ := filepath.Rel(projectDir, destPath)
 
 	if err := os.WriteFile(destPath, []byte(content), 0644); err != nil {
@@ -190,12 +194,7 @@ func IngestPath(projectDir string, srcPath string) (*IngestResult, error) {
 	srcType := extract.DetectSourceTypeWithSignals(absPath, contentHead, signals)
 	destDir := findSourceFolder(projectDir, cfg, srcType)
 	if destDir == "" {
-		// Fallback to first source folder
-		if len(cfg.Sources) > 0 {
-			destDir = filepath.Join(projectDir, cfg.Sources[0].Path)
-		} else {
-			return nil, fmt.Errorf("ingest: no source folder configured")
-		}
+		return nil, fmt.Errorf("ingest: no writable source folder configured")
 	}
 
 	os.MkdirAll(destDir, 0755)
@@ -251,17 +250,37 @@ func findSourceFolder(projectDir string, cfg *config.Config, sourceType string) 
 		"code":    "code",
 	}
 	configType := typeMap[sourceType]
+	projectSourceDir := func(source config.Source) string {
+		if source.ReadOnly {
+			return ""
+		}
+
+		dir := source.Path
+		if !filepath.IsAbs(dir) {
+			dir = filepath.Join(projectDir, dir)
+		}
+		dir = filepath.Clean(dir)
+		contained, err := pathsafe.Contained(projectDir, dir)
+		if err != nil || !contained {
+			return ""
+		}
+		return dir
+	}
 
 	// First try exact type match
 	for _, s := range cfg.Sources {
 		if s.Type == configType || s.Type == "auto" {
-			return filepath.Join(projectDir, s.Path)
+			if dir := projectSourceDir(s); dir != "" {
+				return dir
+			}
 		}
 	}
 
-	// Fallback to first source
-	if len(cfg.Sources) > 0 {
-		return filepath.Join(projectDir, cfg.Sources[0].Path)
+	// Fallback to the first writable source that remains inside the project.
+	for _, s := range cfg.Sources {
+		if dir := projectSourceDir(s); dir != "" {
+			return dir
+		}
 	}
 
 	return ""

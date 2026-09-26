@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- **External read-only source roots.** `sources[].path` now accepts absolute
+  paths to existing document directories. With `read_only: true`, Sage reads
+  the source in place without copying it into `raw/` and blocks ingestion
+  writes to that source; relative source paths remain compatible.
+
 ## 0.2.10 — 2026-08-22
 
 ### Added

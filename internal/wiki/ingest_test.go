@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -85,6 +86,61 @@ func TestIngestLocalFile(t *testing.T) {
 	}
 }
 
+func TestIngestReadOnlySourceRejected(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(`version: 1
+project: test
+sources:
+  - path: raw
+    type: auto
+    read_only: true
+output: wiki
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "raw"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	srcFile := filepath.Join(t.TempDir(), "article.md")
+	if err := os.WriteFile(srcFile, []byte("# Read-only source"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := IngestPath(dir, srcFile); err == nil || !strings.Contains(err.Error(), "no writable source folder") {
+		t.Fatalf("IngestPath error = %v, want read-only source rejection", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "raw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("read-only ingest wrote %d files into raw", len(entries))
+	}
+}
+
+func TestIngestPathSkipsExternalSourceAndUsesProjectSource(t *testing.T) {
+	dir, externalDir := initProjectWithExternalSourceFirst(t)
+	srcFile := filepath.Join(t.TempDir(), "article.md")
+	if err := os.WriteFile(srcFile, []byte("# Incoming article"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := IngestPath(dir, srcFile)
+	if err != nil {
+		t.Fatalf("IngestPath: %v", err)
+	}
+	if result.SourcePath != filepath.Join("raw", "article.md") {
+		t.Fatalf("SourcePath = %q, want project-relative raw/article.md", result.SourcePath)
+	}
+	if _, err := os.Stat(filepath.Join(externalDir, "article.md")); !os.IsNotExist(err) {
+		t.Fatalf("external source was used as an ingest destination (stat err = %v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "raw", "article.md")); err != nil {
+		t.Fatalf("project source destination missing: %v", err)
+	}
+}
+
 func TestIngestURL(t *testing.T) {
 	dir := t.TempDir()
 	InitGreenfield(dir, "test", "gemini-2.5-flash")
@@ -113,6 +169,58 @@ func TestIngestURL(t *testing.T) {
 	if _, err := os.Stat(destPath); os.IsNotExist(err) {
 		t.Error("ingested URL should be saved as file")
 	}
+}
+
+func TestIngestURLDoesNotWriteToExternalAbsoluteSource(t *testing.T) {
+	dir, externalDir := initProjectWithExternalSourceFirst(t)
+
+	SkipSSRFCheck = true
+	defer func() { SkipSSRFCheck = false }()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("# External routing regression"))
+	}))
+	defer server.Close()
+
+	result, err := IngestURL(dir, server.URL+"/external-routing")
+	if err != nil {
+		t.Fatalf("IngestURL: %v", err)
+	}
+	wantPath := filepath.Join("raw", slugifyURL(server.URL+"/external-routing")+".md")
+	if result.SourcePath != wantPath {
+		t.Fatalf("SourcePath = %q, want project-relative %q", result.SourcePath, wantPath)
+	}
+	if _, err := os.Stat(filepath.Join(externalDir, filepath.Base(wantPath))); !os.IsNotExist(err) {
+		t.Fatalf("external source was used as an ingest destination (stat err = %v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, wantPath)); err != nil {
+		t.Fatalf("project source destination missing: %v", err)
+	}
+}
+
+func initProjectWithExternalSourceFirst(t *testing.T) (projectDir, externalDir string) {
+	t.Helper()
+	base := t.TempDir()
+	projectDir = filepath.Join(base, "project")
+	externalDir = filepath.Join(base, "external")
+	if err := os.MkdirAll(externalDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := InitGreenfield(projectDir, "test", "gemini-2.5-flash"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	configText := fmt.Sprintf(`version: 1
+project: test
+sources:
+  - path: %q
+    type: auto
+  - path: raw
+    type: auto
+output: wiki
+`, externalDir)
+	if err := os.WriteFile(filepath.Join(projectDir, "config.yaml"), []byte(configText), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return projectDir, externalDir
 }
 
 func TestSlugifyURL(t *testing.T) {

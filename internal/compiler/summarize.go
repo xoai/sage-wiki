@@ -236,7 +236,7 @@ func summarizeOne(
 	}
 
 	// Extract source content
-	absPath := filepath.Join(projectDir, info.Path)
+	absPath := resolveSourcePath(projectDir, info.Path)
 	content, err := extract.Extract(absPath, info.Type, extractOpts...)
 	if err != nil {
 		result.Error = fmt.Errorf("extract: %w", err)
@@ -375,7 +375,7 @@ func summarizeImage(ctx context.Context, projectDir string, info SourceInfo, cli
 		return "", fmt.Errorf("skipping image %s — LLM provider does not support vision", info.Path)
 	}
 
-	absPath := filepath.Join(projectDir, info.Path)
+	absPath := resolveSourcePath(projectDir, info.Path)
 	imgData, err := os.ReadFile(absPath)
 	if err != nil {
 		return "", fmt.Errorf("read image: %w", err)
