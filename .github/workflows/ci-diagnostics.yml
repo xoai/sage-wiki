@@ -100,11 +100,21 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # Repeat the golden-corpus replay to surface low-probability flakes the
-      # single PR pass can miss; a flake here is diagnostic evidence, not a
-      # merge verdict.
-      - name: Parity suite (10x)
-        run: CGO_ENABLED=0 go test -count=10 ./internal/parity/
+      # Repeat the golden-corpus parity checks to surface low-probability
+      # flakes the single PR pass can miss; a flake here is diagnostic
+      # evidence, not a merge verdict.
+      #
+      # -run TestParity matches ci.yml's flake loop: 10x of the parity
+      # CHECKS (each already self-duplicates g1/g2 internally). Repeating
+      # the whole package was priced out of Go's default test timeout by
+      # corpus growth — the package now takes ~5.5m per iteration (three
+      # 71s golden-corpus builds + the 100s sabotage test), so count=10
+      # needed ~55m and the binary was killed at the 10m default on every
+      # scheduled run since this workflow's first day (never green). The
+      # heavy corpus tests keep their per-PR coverage in ci.yml; the
+      # explicit -timeout pins the bound.
+      - name: Parity checks (10x)
+        run: CGO_ENABLED=0 go test -count=10 -run TestParity -timeout 10m ./internal/parity/
 
   performance-warmcheck:
     name: Scheduled performance warmcheck
