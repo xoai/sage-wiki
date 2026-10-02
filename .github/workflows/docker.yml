@@ -25,13 +25,17 @@ permissions:
 jobs:
   docker-main:
     name: Docker (main, exact-SHA proof)
+    # Cancelled ≠ failed: ci.yml cancels superseded main runs via its
+    # concurrency group, and those SHAs are superseded — no image, no red.
+    # (The comment must live OUTSIDE the folded if-block: a `#` inside a
+    # `>-` scalar becomes part of the expression string and corrupts the
+    # condition — exactly the bug that skipped every docker-main run since
+    # #204 landed, silently halting main image publication.)
     if: >-
       github.event_name == 'workflow_run' &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.conclusion == 'success'
-      # Cancelled ≠ failed: ci.yml now cancels superseded main runs via its
-      # concurrency group, and those SHAs are superseded — no image, no red.
     runs-on: ubuntu-latest
     steps:
       # Proof verification BEFORE any artifact checkout, build, login, or push.
