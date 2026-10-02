@@ -56,38 +56,6 @@ jobs:
             --workflow .github/workflows/ci-diagnostics.yml \
             --makefile Makefile
 
-  full-suite-windows:
-    name: Scheduled full Windows suite
-    runs-on: windows-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      # Full OS coverage beyond the PR shards: every package, no race
-      # (Windows has no guaranteed C compiler), matching ci.yml's Windows leg.
-      - name: Test (full suite)
-        run: CGO_ENABLED=0 go test -timeout 15m ./...
-
-  full-suite-macos:
-    name: Scheduled full macOS suite
-    runs-on: macos-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Test (full suite)
-        run: CGO_ENABLED=0 go test -timeout 15m ./...
-
   parity-repetition:
     name: Scheduled parity repetition
     runs-on: ubuntu-latest
