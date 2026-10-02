@@ -12,6 +12,12 @@ on:
   pull_request:
     paths: ["clients/**", "examples/**", "scripts/p4-fixture-server.sh", "scripts/ci/classify-client-paths.sh", "internal/**", "cmd/**", "api/openapi.yaml", ".github/workflows/clients.yml"]
 
+concurrency:
+  # Event-scoped: rapid pushes cancel only their own superseded runs;
+  # scheduled runs (separate event_name) never cancel in-flight push/PR runs.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

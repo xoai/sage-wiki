@@ -16,6 +16,12 @@ on:
   pull_request:
 
 # Least privilege — CI only reads the repo (mirrors release.yml/docker.yml).
+concurrency:
+  # Event-scoped: rapid pushes cancel only their own superseded runs;
+  # scheduled runs (separate event_name) never cancel in-flight push/PR runs.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
