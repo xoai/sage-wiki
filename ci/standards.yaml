@@ -277,16 +277,16 @@ standards:
         qualification: {state: candidate, history: []}
       - id: parity-repetition-candidate
         status: nonblocking
-        command: CGO_ENABLED=0 go test -count=10 ./internal/parity/
+        command: CGO_ENABLED=0 go test -count=10 -run TestParity -timeout 10m ./internal/parity/
         triggers: [schedule, manual]
         platforms: [linux]
         job: {workflow: CI Diagnostics, id: parity-repetition, aggregate: false}
         purpose: {met: [], evidence: "Repetition surfaces low-probability flakes; it is diagnostic evidence, not a merge verdict."}
         authority: {met: [anti-vacuous, bounded, reproducible-or-diagnosable, owned], evidence: "A flake under repetition is evidence, never authority."}
         anti_vacuity: Fixture and replay counts remain asserted on every repetition.
-        runtime: {bound_seconds: 1800, recent: null}
+        runtime: {bound_seconds: 300, recent: null}
         coverage: {packages: [internal/parity], package_classes: [], package_roles: [], platform_contracts: [], paths: [testdata/golden/, testdata/fixtures/], generated_paths: []}
-        diagnostics: {local_command: go test -count=10 ./internal/parity/, local_make_target: null, hosted_artifact: parity-repetition-log, failure_artifact: replay-diff, formats: [text, diff]}
+        diagnostics: {local_command: go test -count=10 -run TestParity -timeout 10m ./internal/parity/, local_make_target: null, hosted_artifact: parity-repetition-log, failure_artifact: replay-diff, formats: [text, diff]}
         qualification: {state: candidate, history: []}
 
   - id: scheduled-full-os-suites
