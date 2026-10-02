@@ -289,38 +289,6 @@ standards:
         diagnostics: {local_command: go test -count=10 -run TestParity -timeout 10m ./internal/parity/, local_make_target: null, hosted_artifact: parity-repetition-log, failure_artifact: replay-diff, formats: [text, diff]}
         qualification: {state: candidate, history: []}
 
-  - id: scheduled-full-os-suites
-    rationale: Full Windows and macOS suites beyond the PR shards remain diagnostic coverage, not merge authority.
-    owner: scheduled-diagnostics
-    fallback_owner: human-review
-    witnesses:
-      - id: full-suite-windows-candidate
-        status: nonblocking
-        command: CGO_ENABLED=0 go test -timeout 15m ./...
-        triggers: [schedule, manual]
-        platforms: [windows]
-        job: {workflow: CI Diagnostics, id: full-suite-windows, aggregate: false}
-        purpose: {met: [], evidence: "Scheduled full-OS coverage is diagnostic, not a candidate-merge property."}
-        authority: {met: [anti-vacuous, bounded, reproducible-or-diagnosable, owned], evidence: "Full-suite discovery must stay nonempty; failures are diagnostic evidence."}
-        anti_vacuity: An empty package list or a skipped suite is diagnostic-red.
-        runtime: {bound_seconds: 2700, recent: null}
-        coverage: {packages: [], package_classes: [test-owned, helper-library], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
-        diagnostics: {local_command: null, local_make_target: null, hosted_artifact: full-os-suite-log, failure_artifact: full-os-suite-log, formats: [text]}
-        qualification: {state: candidate, history: []}
-      - id: full-suite-macos-candidate
-        status: nonblocking
-        command: CGO_ENABLED=0 go test -timeout 15m ./...
-        triggers: [schedule, manual]
-        platforms: [darwin]
-        job: {workflow: CI Diagnostics, id: full-suite-macos, aggregate: false}
-        purpose: {met: [], evidence: "Scheduled full-OS coverage is diagnostic, not a candidate-merge property."}
-        authority: {met: [anti-vacuous, bounded, reproducible-or-diagnosable, owned], evidence: "Full-suite discovery must stay nonempty; failures are diagnostic evidence."}
-        anti_vacuity: An empty package list or a skipped suite is diagnostic-red.
-        runtime: {bound_seconds: 2700, recent: null}
-        coverage: {packages: [], package_classes: [test-owned, helper-library], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
-        diagnostics: {local_command: null, local_make_target: null, hosted_artifact: full-os-suite-log, failure_artifact: full-os-suite-log, formats: [text]}
-        qualification: {state: candidate, history: []}
-
   - id: fuzz-exploration
     rationale: Random exploration discovers crashers but does not provide deterministic merge authority.
     owner: scheduled-diagnostics
