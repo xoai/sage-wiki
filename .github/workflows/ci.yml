@@ -254,7 +254,10 @@ jobs:
     # pgvector/pgvector ships the extension the v1 migration needs.
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        # Digest-pinned (ci/service-contracts.yaml carries the same pin —
+        # the required path must be at least as supply-chain-hard as the
+        # advisory shadow job, not softer).
+        image: pgvector/pgvector:pg16@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -349,6 +352,9 @@ jobs:
       - name: Create test buckets
         run: |
           curl -fsSL https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z -o /tmp/mc
+          # Checksum-verified (same sha the shadow job and
+          # ci/service-contracts.yaml pin — required path, required pin).
+          echo "01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891  /tmp/mc" | sha256sum -c -
           chmod +x /tmp/mc
           /tmp/mc alias set local http://localhost:9000 minioadmin minioadmin
           /tmp/mc mb --ignore-existing local/sage-it-roundtrip
