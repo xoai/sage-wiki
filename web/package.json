@@ -13,7 +13,7 @@
     "force-graph": "^1.51.2",
     "highlight.js": "^11.11.1",
     "markdown-it": "^14.1.1",
-    "preact": "^10.29.1",
+    "preact": "^11.0.0",
     "preact-router": "^4.1.2"
   },
   "devDependencies": {
