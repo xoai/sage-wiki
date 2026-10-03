@@ -405,6 +405,13 @@ jobs:
       - name: Lint (new issues)
         run: golangci-lint run --new-from-merge-base=origin/main --timeout=5m ./...
 
+      # Workflow guards (failure classes this repo has shipped): a '#'
+      # comment inside a folded if-block corrupts the expression and the
+      # job silently skips forever (#206 — docker publishing halted for
+      # two merges). Self-tested: the guard must catch the bad shape.
+      - name: Workflow guards (self-tested)
+        run: bash scripts/ci/check-workflows.sh check
+
       # SPEC-04 D1 tripwire: unsorted map-range loops feeding serializers.
       # Best-effort grep + allowlist (limits documented in docs/determinism.md).
       - name: Determinism check
