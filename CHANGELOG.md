@@ -7,8 +7,8 @@
 ### Added
 
 - **External read-only source roots (#181).** `sources[].path` now accepts absolute
-  paths to existing document directories. With `read_only: true`, Sage reads
-  the source in place without copying it into `raw/` and blocks ingestion
+  paths to existing document directories — Sage compiles them in place, never
+  copying into `raw/`. Setting `read_only: true` additionally blocks ingestion
   writes to that source; relative source paths remain compatible.
 
 - **Blocking quality-gate retry — `compiler.quality.retry` (#144).** The
@@ -54,7 +54,9 @@
   digest/checksum-pinned; parity deduplicated out of the rest shard (it
   was triple-tested — 78% of the critical-path pole) and fuzz-short
   matrix-ized; a self-tested workflow guard in Lint kills the
-  comment-in-folded-if class before merge; CI wall 21 → ~9 minutes.
+  comment-in-folded-if class before merge. Measured wall on the required
+  path: 10.7 min before the final speed pass, ~9 min after (the earlier
+  21-minute figure predates the whole series, concurrency onward).
 
 ## 0.2.10 — 2026-08-22
 

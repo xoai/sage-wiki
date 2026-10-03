@@ -139,10 +139,11 @@ compiler:
   # timezone: Asia/Shanghai   # IANA timezone for user-facing timestamps (default: UTC)
   # quality:                  # article quality scorer; retry makes it blocking (#144)
   #   threshold: 0.5          # warn when an article's composite score is below this
-  #   retry: true             # sub-threshold article gets ONE fresh rewrite; still-low
+  #   retry: false            # sub-threshold article gets ONE fresh rewrite; still-low
                               # after retry counts as a compile error. Default false =
                               # advisory-only (warn and ship). The on-disk file is removed
-                              # before the retry so it is a genuine fresh write.
+                              # before the retry so it is a genuine fresh write. Flipping
+                              # the knob re-keys compiles (retry changes output).
   #   weight_format: 0.15     # 5 dimensions: format / grounding / coverage / wikilink / antipattern
   #   weight_grounding: 0.30
   #   weight_coverage: 0.20
