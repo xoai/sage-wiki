@@ -98,13 +98,45 @@ func TestWatchFsnotify_NewSubdirWatched(t *testing.T) {
 	defer cancel()
 	go srv.watchFsnotify(ctx, outDir)
 
-	time.Sleep(200 * time.Millisecond)
+	// Arm EVENT-DRIVEN, never by a fixed sleep (shadow-shard flake, first
+	// sighting 2026-10-02): under -race load the watcher goroutine can take
+	// arbitrarily long to reach addRecursiveWatch, and any write that lands
+	// BEFORE the walk completes is swallowed silently — the initial walk
+	// emits no events. So REWRITE an arming sentinel on a ticker until a
+	// broadcast arrives: the first rewrite may be swallowed by the walk,
+	// but once the watcher is armed every rewrite is a Write event. The
+	// broadcast proves armed-and-processing; only then does the real probe
+	// (new subdir) race a genuinely-live watcher. The budget bounds only
+	// "the watcher is not working at all", so it is generous.
+	sentinel := filepath.Join(outDir, "arming-sentinel.md")
+	armDeadline := time.Now().Add(10 * time.Second)
+	armed := false
+	for !armed {
+		if time.Now().After(armDeadline) {
+			t.Fatal("watcher never broadcast the arming sentinel — not armed/processing")
+		}
+		os.WriteFile(sentinel, []byte(time.Now().Format(time.RFC3339Nano)), 0644)
+		select {
+		case <-ch:
+			armed = true
+		case <-time.After(500 * time.Millisecond):
+			// Rewrite and probe again. The gap must EXCEED the watcher's
+			// 300ms trailing debounce — rewrites faster than the debounce
+			// reset the timer forever and the broadcast never fires.
+		}
+	}
+	// Drain any duplicate broadcast the sentinel's debounced rewrites queued.
+	select {
+	case <-ch:
+	default:
+	}
+
 	os.MkdirAll(filepath.Join(outDir, "concepts"), 0755)
 	os.WriteFile(filepath.Join(outDir, "concepts", "new.md"), []byte("x"), 0644)
 
 	select {
 	case <-ch:
-	case <-time.After(3 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("no broadcast for file in newly-created subdir")
 	}
 }
