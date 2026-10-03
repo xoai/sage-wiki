@@ -300,6 +300,11 @@ standards:
         triggers: [pull-request, main-push]
         platforms: [linux]
         job: {workflow: CI, id: fuzz-short, aggregate: true}
+        # aggregate: the check name "Fuzz short (<target>)" is a matrix job
+        # set; every target runs on every PR and any target failure turns
+        # its own check (and the run) red — the aggregate semantic is
+        # preserved by the matrix replacing 8 sequential steps (2026-10-03
+        # speed pass: 325s serial -> ~75s parallel wall, same invocations).
         purpose: {met: [candidate-property], evidence: "The current workflow runs time-bounded random exploration on every candidate."}
         authority: {met: [anti-vacuous, bounded, owned], evidence: "Random duration cannot be deterministic merge evidence and is requalifying for demotion."}
         anti_vacuity: Every target is invoked separately and any target failure turns the aggregate red.

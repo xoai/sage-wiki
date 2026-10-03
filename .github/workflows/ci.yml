@@ -132,7 +132,12 @@ jobs:
           case "${{ matrix.shard }}" in
             compiler) PKGS="./internal/compiler" ;;
             core)     PKGS="./internal/api ./internal/mcp ./internal/llm ./internal/extract/..." ;;
-            rest)     PKGS=$(go list ./... | grep -v -E "internal/(compiler|api|mcp|llm|extract)" | tr '\n' ' ') ;;
+            # internal/parity is EXCLUDED: it has its own dedicated required
+            # job (full replay suite + 10x flake loop) AND the shadow's
+            # linux-race-parity shard. Measured: parity-with-race was 445s of
+            # this shard's 569s (78% of the critical-path pole) — pure
+            # triple-testing, zero coverage lost by removing it here.
+            rest)     PKGS=$(go list ./... | grep -v -E "internal/(compiler|api|mcp|llm|extract|parity)" | tr '\n' ' ') ;;
           esac
           echo "packages=$PKGS" >> "$GITHUB_OUTPUT"
 
@@ -154,9 +159,21 @@ jobs:
   # package (the five pure-string frontmatter sites live in five packages;
   # Go visibility forbids one cross-package target).
   fuzz-short:
-    name: Fuzz (short, SPEC-08)
+    name: Fuzz short (${{ matrix.target.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - {name: frontmatter-extract, pkg: ./internal/extract/, fn: FuzzFrontmatter}
+          - {name: frontmatter-web, pkg: ./internal/web/, fn: FuzzFrontmatter}
+          - {name: frontmatter-ontology, pkg: ./internal/ontology/, fn: FuzzFrontmatter}
+          - {name: frontmatter-wiki, pkg: ./internal/wiki/, fn: FuzzFrontmatter}
+          - {name: frontmatter-compiler, pkg: ./internal/compiler/, fn: FuzzFrontmatter}
+          - {name: wikilink, pkg: ./internal/compiler/, fn: FuzzWikilink}
+          - {name: alias-normalize, pkg: ./internal/compiler/, fn: FuzzAliasNormalize}
+          - {name: canonical, pkg: ./internal/compiler/, fn: FuzzCanonical}
     steps:
       - uses: actions/checkout@v4
 
@@ -165,67 +182,23 @@ jobs:
           go-version: "1.26"
           cache: true
 
-      - id: fm-extract
-        name: FuzzFrontmatter (extract)
-        run: go test -run=NONE -fuzz=FuzzFrontmatter -fuzztime=30s ./internal/extract/
-        continue-on-error: true
-      - id: fm-web
-        name: FuzzFrontmatter (web)
-        run: go test -run=NONE -fuzz=FuzzFrontmatter -fuzztime=30s ./internal/web/
-        continue-on-error: true
-      - id: fm-ontology
-        name: FuzzFrontmatter (ontology)
-        run: go test -run=NONE -fuzz=FuzzFrontmatter -fuzztime=30s ./internal/ontology/
-        continue-on-error: true
-      - id: fm-wiki
-        name: FuzzFrontmatter (wiki)
-        run: go test -run=NONE -fuzz=FuzzFrontmatter -fuzztime=30s ./internal/wiki/
-        continue-on-error: true
-      - id: fm-compiler
-        name: FuzzFrontmatter (compiler)
-        run: go test -run=NONE -fuzz=FuzzFrontmatter -fuzztime=30s ./internal/compiler/
-        continue-on-error: true
-      - id: wikilink
-        name: FuzzWikilink
-        run: go test -run=NONE -fuzz=FuzzWikilink -fuzztime=30s ./internal/compiler/
-        continue-on-error: true
-      - id: alias
-        name: FuzzAliasNormalize
-        run: go test -run=NONE -fuzz=FuzzAliasNormalize -fuzztime=30s ./internal/compiler/
-        continue-on-error: true
-      - id: canonical
-        name: FuzzCanonical
-        run: go test -run=NONE -fuzz=FuzzCanonical -fuzztime=30s ./internal/compiler/
-        continue-on-error: true
+      # SPEC-08 AC5 short PR-gated pass. Previously 8 sequential 30s
+      # invocations in ONE job (325s wall); matrix independence is the
+      # only change — same invocation shape, same hard-fail gate: a
+      # crasher fails this check directly (the old per-step
+      # continue-on-error existed so later targets could still run; in a
+      # matrix they run unconditionally).
+      - name: Fuzz
+        run: go test -run=NONE -fuzz=${{ matrix.target.fn }} -fuzztime=30s ${{ matrix.target.pkg }}
 
-      - name: Upload crashers (when any target failed)
-        if: always() && (steps.fm-extract.outcome == 'failure' || steps.fm-web.outcome == 'failure' || steps.fm-ontology.outcome == 'failure' || steps.fm-wiki.outcome == 'failure' || steps.fm-compiler.outcome == 'failure' || steps.wikilink.outcome == 'failure' || steps.alias.outcome == 'failure' || steps.canonical.outcome == 'failure')
+      - name: Upload crashers
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: fuzz-short-crashers
-          path: |
-            internal/extract/testdata/fuzz/
-            internal/web/testdata/fuzz/
-            internal/ontology/testdata/fuzz/
-            internal/wiki/testdata/fuzz/
-            internal/compiler/testdata/fuzz/
+          name: fuzz-short-crashers-${{ matrix.target.name }}
+          path: ${{ matrix.target.pkg }}testdata/fuzz/
           if-no-files-found: ignore
           retention-days: 14
-
-      - name: Fail if any target crashed
-        if: always()
-        run: |
-          if [ "${{ steps.fm-extract.outcome }}" = "failure" ] || \
-             [ "${{ steps.fm-web.outcome }}" = "failure" ] || \
-             [ "${{ steps.fm-ontology.outcome }}" = "failure" ] || \
-             [ "${{ steps.fm-wiki.outcome }}" = "failure" ] || \
-             [ "${{ steps.fm-compiler.outcome }}" = "failure" ] || \
-             [ "${{ steps.wikilink.outcome }}" = "failure" ] || \
-             [ "${{ steps.alias.outcome }}" = "failure" ] || \
-             [ "${{ steps.canonical.outcome }}" = "failure" ]; then
-            echo "fuzz findings — see the fuzz-short-crashers artifact"
-            exit 1
-          fi
 
   skill-drift:
     name: Agent skill drift
