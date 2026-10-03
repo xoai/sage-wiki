@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 )
 
 // TestMutateCrossProcessHelper is not a real test — it is the subprocess body
@@ -102,7 +103,12 @@ func TestMutateConcurrencyNoLostUpdate(t *testing.T) {
 
 	const inProcN = 15
 	const subProcN = 15
+	// Contention headroom (Windows sighting 2026-10-02, rerun-clean): 30
+	// writers serialize on the file lock; under whole-package parallel load
+	// the acquire queue alone can eat the default 2s timeout. The test's
+	// invariant is no-lost-update, not wall-clock — 10s per mutate.
 	opts := fastLockOpts()
+	opts.timeout = 10 * time.Second
 
 	// Launch the cross-process contender first so it overlaps the goroutines.
 	cmd := exec.Command(os.Args[0], "-test.run=^TestMutateCrossProcessHelper$")

@@ -366,7 +366,9 @@ func TestQueueDepthGaugeEvictionReassembly(t *testing.T) {
 	// Re-assembly: a NEW queue over the SAME ledger runs the recovery
 	// accounting — it must not re-Add the carried backlog.
 	block2 := make(chan struct{})
+	started2 := make(chan struct{}, 2)
 	exec2 := func(ctx context.Context, j *Job) (json.RawMessage, error) {
+		started2 <- struct{}{}
 		select {
 		case <-block2:
 		case <-ctx.Done():
@@ -377,10 +379,18 @@ func TestQueueDepthGaugeEvictionReassembly(t *testing.T) {
 	q2 := NewQueue(l, 2, exec2, now)
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	go q2.Run(ctx2)
-	// q2 claims the carried job (Dec → 0) and blocks in exec2. WITH a
-	// double-count, recovery would have re-Added the carried backlog and
-	// the gauge would read 1 here; without one it reads exactly 0.
-	time.Sleep(100 * time.Millisecond)
+	// q2 claims the carried job (Dec → 0) and blocks in exec2. Wait for the
+	// claim EVENT-DRIVEN (hosted-runner sighting 2026-09-25: a fixed 100ms
+	// sleep assumes the queue recovered and dispatched within 100ms — under
+	// load the assertion raced the claim and double-counted nothing while
+	// reading a stale gauge). WITH a double-count, recovery would have
+	// re-Added the carried backlog and the gauge would read 1; without one
+	// it reads exactly 0.
+	select {
+	case <-started2:
+	case <-time.After(5 * time.Second):
+		t.Fatal("second queue did not claim the carried job")
+	}
 	if got := gaugeValue(); got != 0 {
 		t.Errorf("gauge after re-assembly = %d, want 0 (carried backlog double-counted)", got)
 	}

@@ -72,7 +72,19 @@ func TestShutdownDrainPortable(t *testing.T) {
 	defer cancel()
 	go srv.Serve(ctx, "127.0.0.1:0")
 
-	time.Sleep(100 * time.Millisecond) // let the job start
+	// Wait for the job to actually be RUNNING (hosted-runner sighting
+	// 2026-10-03: a fixed 100ms sleep assumed dispatch completed — under
+	// load Shutdown could begin before the job started, weakening the
+	// "interrupt a running job" intent). Bounded generously: this bounds
+	// "the queue is broken", not scheduler speed.
+	jobRunning := time.Now().Add(5 * time.Second)
+	for time.Now().Before(jobRunning) {
+		gj, _ := srv.ledger.Get(j.ID)
+		if gj != nil && gj.Status == JobRunning {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	start := time.Now()
 	if err := srv.Shutdown(); err != nil && err != context.DeadlineExceeded {
 		t.Fatalf("Shutdown: %v", err)
@@ -80,9 +92,12 @@ func TestShutdownDrainPortable(t *testing.T) {
 	close(blockCh)
 	// Budget floor is 10s (clamped) — a never-finishing job consumes the
 	// full budget before being cancelled and interrupted (F-040: Stop
-	// waits up to the budget, then cancels).
-	if elapsed := time.Since(start); elapsed > 11*time.Second {
-		t.Errorf("drain took %v, want <= drain-timeout+cushion", elapsed)
+	// waits up to the budget, then cancels). The bound is 1.5x the budget:
+	// the invariant is "drain is bounded by its budget", and hosted runners
+	// need real headroom for cancel+ledger-flush after the 10s floor — the
+	// old budget+1s cushion flaked on loaded runners (12.07s observed).
+	if elapsed := time.Since(start); elapsed > 15*time.Second {
+		t.Errorf("drain took %v, want <= 1.5x drain-timeout", elapsed)
 	}
 
 	got, _ := srv.ledger.Get(j.ID)

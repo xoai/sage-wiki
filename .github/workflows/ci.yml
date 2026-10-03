@@ -189,7 +189,11 @@ jobs:
       # continue-on-error existed so later targets could still run; in a
       # matrix they run unconditionally).
       - name: Fuzz
-        run: go test -run=NONE -fuzz=${{ matrix.target.fn }} -fuzztime=30s ${{ matrix.target.pkg }}
+        # -timeout 2m: explicit shutdown headroom beyond -fuzztime — when
+        # the fuzz deadline and the binary deadline coincide on a loaded
+        # runner, the coordinator dies with "context deadline exceeded"
+        # instead of stopping cleanly (2 sightings, rerun-clean).
+        run: go test -run=NONE -timeout 2m -fuzz=${{ matrix.target.fn }} -fuzztime=30s ${{ matrix.target.pkg }}
 
       - name: Upload crashers
         if: failure()
