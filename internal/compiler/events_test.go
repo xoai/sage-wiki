@@ -290,9 +290,17 @@ func TestCompileThroughputWithSlowSink(t *testing.T) {
 	withSlow := compileWith(sleepingSink{delay: 5 * time.Millisecond})
 
 	// A blocking engine pays 5ms per emitted event (100+ events → 500ms+).
-	// Allow the slow-sink run at most 3× the baseline plus a fixed 150ms
-	// scheduling budget — far under the blocking cost, far above noise.
-	if bound := 3*baseline + 150*time.Millisecond; withSlow > bound {
+	// The bound is max(3x baseline, baseline + 400ms): proportional while
+	// both legs are fast, but always >= 400ms of ABSOLUTE slack so baseline
+	// jitter on a loaded runner cannot squeeze the margin to zero (sighting
+	// 2026-09-25: 643ms vs a 569ms bound — a slow baseline's 3x was itself
+	// the noise). Both bounds sit far under the ~500ms+ blocking cost, so a
+	// genuinely stalling sink still trips them.
+	bound := 3 * baseline
+	if min := baseline + 400*time.Millisecond; min > bound {
+		bound = min
+	}
+	if withSlow > bound {
 		t.Fatalf("compile with a 5ms-slow sink took %s (baseline %s, bound %s) — sink stalled the pipeline",
 			withSlow, baseline, bound)
 	}

@@ -183,6 +183,29 @@ func TestLockLiveHolderNotReclaimed(t *testing.T) {
 	// Wait well past the stale threshold. The heartbeat must keep l1 alive.
 	time.Sleep(4 * fastLockOpts().staleThreshold)
 
+	// EVENT-DRIVEN freshness gate (Windows sightings x7, all rerun-clean):
+	// a fixed sleep assumes the heartbeat goroutine was scheduled — under
+	// runner load it can lag, the mtime goes stale, and the waiter then
+	// RECLAIMS a live holder without any bug. The test's subject is the
+	// waiter's no-reclaim logic, so wait until the heartbeat has observably
+	// refreshed the mtime (bounded: this bounds "the heartbeat is broken",
+	// not the scheduler), and only then run the waiter.
+	freshDeadline := time.Now().Add(5 * time.Second)
+	for {
+		fi, err := os.Stat(path + ".lock")
+		if err != nil {
+			t.Fatalf("stat lock: %v", err)
+		}
+		age := time.Since(fi.ModTime())
+		if age < fastLockOpts().staleThreshold {
+			break // heartbeat is observably alive
+		}
+		if time.Now().After(freshDeadline) {
+			t.Fatalf("heartbeat never refreshed the lock mtime within 5s (age %v)", age)
+		}
+		time.Sleep(fastLockOpts().heartbeatInterval)
+	}
+
 	// A waiter with a bounded timeout must NOT reclaim the live holder.
 	opts := fastLockOpts()
 	opts.timeout = 150 * time.Millisecond

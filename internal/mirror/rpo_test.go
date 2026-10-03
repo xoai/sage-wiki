@@ -19,7 +19,11 @@ import (
 // most ship_interval of writes on the fixture workload. The measurement is
 // written to rpo-results.md by the test runner (Task 23 artifact).
 func TestRPO_ServeShipper(t *testing.T) {
-	interval := 50 * time.Millisecond
+	// 200ms, not 50ms (Linux -race sightings x3, rerun-clean): at 50ms the
+	// 2x-slack measurement window (100ms) is one delayed tick wide under
+	// load; 200ms keeps the SAME measured guarantee (loss <= ship_interval)
+	// while scheduler noise shrinks proportionally.
+	interval := 200 * time.Millisecond
 	f := newShipFixture(t)
 	defer f.dbClose()
 	f.m.cfg.ShipInterval = interval
