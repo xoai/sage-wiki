@@ -158,6 +158,8 @@ Il suffit de déposer les fichiers dans votre dossier source — sage-wiki déte
 
 **Types de sources personnalisés.** Définissez `type:` sur une racine de source dans `config.yaml` et associez-lui `prompts/summarize-{type}.md` pour donner à n'importe quel format — PDF et documents Office compris — son propre prompt de résumé et son `source_type` dans le frontmatter. (Les sources `image` et `code` conservent leurs types intégrés — elles sélectionnent les pipelines vision et code, pas une variante de prompt.) Les images nécessitent un LLM capable de vision (Gemini, Claude, GPT-4o). Besoin d'un format non listé ? sage-wiki prend en charge les [parseurs externes](#parseurs-externes) — des scripts dans n'importe quel langage qui lisent stdin et écrivent du texte sur stdout.
 
+**Racines de sources externes.** Un `path:` de source peut désigner un répertoire de documents existant hors du projet — Sage le compile en place, sans copie dans `raw/`. Marquez-le `read_only: true` et l'ingestion refusera d'y écrire. Voir [configuration](../guides/configuration.md).
+
 ## Mémoire graphe
 
 D'emblée, le wiki construit un graphe de connaissances par proximité de

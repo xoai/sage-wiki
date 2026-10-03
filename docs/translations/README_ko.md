@@ -158,6 +158,8 @@ sage-wiki compile --watch
 
 **사용자 지정 소스 타입.** `config.yaml`의 소스 루트에 `type:`를 설정하고 `prompts/summarize-{type}.md`를 짝지으면 모든 형식 — PDF와 Office 문서 포함 — 에 고유한 요약 프롬프트와 `source_type` 프론트매터를 부여할 수 있습니다. (`image`와 `code` 소스는 내장 타입을 유지합니다 — 프롬프트 변형이 아니라 비전/코드 파이프라인을 선택합니다.) 이미지는 비전 지원 LLM (Gemini, Claude, GPT-4o)이 필요합니다. 목록에 없는 형식이 필요하신가요? sage-wiki는 [외부 파서](#외부-파서)를 지원합니다 — stdin을 읽고 텍스트를 stdout에 쓰는 모든 언어의 스크립트입니다.
 
+**외부 소스 루트.** 소스의 `path:`는 프로젝트 밖의 기존 문서 디렉터리를 가리킬 수 있습니다 — Sage는 `raw/`로 복사하지 않고 그 자리에서 컴파일합니다. `read_only: true`로 표시하면 ingestion이 해당 경로에 쓰기를 거부합니다. [설정 가이드](../guides/configuration.md) 참조.
+
 ## 그래프 메모리
 
 기본 상태에서 위키는 키워드 근접성으로 지식 그래프를 구축합니다 —

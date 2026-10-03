@@ -186,6 +186,8 @@ Just drop files into your source folder — sage-wiki detects the format automat
 
 **Custom source types.** Set `type:` on a source root in `config.yaml` and pair it with `prompts/summarize-{type}.md` to give any format — PDFs and Office documents included — its own summary prompt and `source_type` frontmatter. (`image` and `code` sources keep their built-in types — they select the vision and code pipelines, not a prompt variant.)
 
+**External source roots.** A source `path` may point at an existing documents directory outside the project — Sage compiles it in place, no copy into `raw/`. Mark it `read_only: true` and ingestion refuses to write there. See [configuration: external read-only source roots](docs/guides/configuration.md).
+
 ## Graph memory
 
 Out of the box the wiki builds a knowledge graph from keyword proximity —
