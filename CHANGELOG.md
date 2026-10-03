@@ -2,12 +2,59 @@
 
 ## [Unreleased]
 
+## 0.2.11 — 2026-10-03
+
 ### Added
 
-- **External read-only source roots.** `sources[].path` now accepts absolute
+- **External read-only source roots (#181).** `sources[].path` now accepts absolute
   paths to existing document directories. With `read_only: true`, Sage reads
   the source in place without copying it into `raw/` and blocks ingestion
   writes to that source; relative source paths remain compatible.
+
+- **Blocking quality-gate retry — `compiler.quality.retry` (#144).** The
+  article quality gate was advisory-only: a sub-threshold article was logged
+  as "low quality" and shipped anyway. With `quality.retry: true` (default
+  `false`), a sub-threshold article gets exactly one rewrite — the on-disk
+  file is removed first, so the retry is a genuine fresh write rather than
+  an "improve this bad content" call (#145's `prepareArticle` gotcha) — and
+  still-low-after-retry counts as a real compile error. The knob is in the
+  compile key. First increment of the #144 roadmap; citation verification
+  is the follow-up design.
+
+### Fixed
+
+- **`max_compile_batch` bounds per-run work, not corpus size (#186).** The
+  batch guard compared against the raw manifest diff before skip
+  classification — and tier<3 sources never enter the manifest, so their
+  diff is ≈ the whole corpus on every compile. Any workspace larger than
+  the limit aborted every compile with a `compile_batch` LimitError,
+  including fully-compiled ones that could never reach the
+  nothing-to-compile fast path; MaxDocs-truncated drain runs died the same
+  way. The guard now runs after classification and compares against the
+  work the run will actually process (capped by MaxDocs when set).
+  Fail-fast semantics on genuinely over-limit runs are preserved.
+
+- **Events bus: Subscribe racing Close no longer trips the race detector
+  (#177).** `addSlot` released the bus mutex before `WaitGroup.Add(1)` — a
+  descheduled Subscribe straggler could fire its Add after Close's Wait had
+  already returned at zero, the documented `sync.WaitGroup` data race
+  (three macOS race-detector sightings, all rerun-clean). The Add now sits
+  inside the mutex critical section, closing the window by construction.
+
+### Internal
+
+- **CI fleet hardening and speed** (11 commits, #176–#208): MinIO moved
+  from dead public registries to the Go module proxy (checksum-verified
+  via sum.golang.org) with the responsibility gate extended to
+  module-pinned services; fork-run/approval and publish-path races fixed;
+  concurrency groups cancel superseded runs; the never-green CI Observe
+  (broken jq splice, unwired verdict, unattainable p95 bound) and CI
+  Diagnostics parity-repetition timeout repaired; the qualification
+  verdict now commits to `ci/qualification.json`; required jobs
+  digest/checksum-pinned; parity deduplicated out of the rest shard (it
+  was triple-tested — 78% of the critical-path pole) and fuzz-short
+  matrix-ized; a self-tested workflow guard in Lint kills the
+  comment-in-folded-if class before merge; CI wall 21 → ~9 minutes.
 
 ## 0.2.10 — 2026-08-22
 

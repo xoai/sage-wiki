@@ -157,6 +157,8 @@ sage-wiki compile --watch
 
 **自定义来源类型。** 在 `config.yaml` 中为某个来源根目录设置 `type:`，并配上 `prompts/summarize-{type}.md`，即可为任何格式——包括 PDF 与 Office 文档——提供专属的摘要提示词与 `source_type` frontmatter。（`image` 与 `code` 来源保留内置类型——它们选择的是视觉与代码流水线，而非提示词变体。）
 
+**外部来源根目录。** 来源的 `path:` 可以指向项目外已有的文档目录——Sage 原地编译，不复制进 `raw/`。标记 `read_only: true` 后，ingestion 将拒绝写入该目录。参见[配置指南](../guides/configuration.md)。
+
 ## 图记忆
 
 开箱即用，wiki 基于关键词邻近构建知识图谱——当关系关键词与 `[[wikilink]]` 在同一文本块中共现时，概念之间即建立连接。启用**可选的图谱处理阶段**，即可将其变成带证据的图谱：

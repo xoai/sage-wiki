@@ -158,6 +158,8 @@ Chỉ cần thả tệp vào thư mục nguồn — sage-wiki tự động phát
 
 **Kiểu nguồn tùy chỉnh.** Đặt `type:` cho một thư mục gốc nguồn trong `config.yaml` và ghép với `prompts/summarize-{type}.md` để mọi định dạng — kể cả PDF và tài liệu Office — có prompt tóm tắt riêng và `source_type` trong frontmatter. (Nguồn `image` và `code` giữ kiểu nội đặt — chúng chọn pipeline vision và mã, chứ không phải một biến thể prompt.)
 
+**Gốc nguồn bên ngoài.** `path:` của nguồn có thể trỏ tới một thư mục tài liệu có sẵn ngoài project — Sage biên dịch ngay tại chỗ, không sao chép vào `raw/`. Đánh dấu `read_only: true` thì ingestion sẽ từ chối ghi vào đó. Xem [hướng dẫn cấu hình](../guides/configuration.md).
+
 ## Bộ nhớ đồ thị
 
 Ngay từ đầu, wiki xây dựng một đồ thị tri thức từ độ lân cận từ khóa —
