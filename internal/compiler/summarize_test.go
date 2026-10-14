@@ -63,7 +63,7 @@ func TestSummarizeOneReusesExistingSummaryOnHashMatch(t *testing.T) {
 	buildSummaryFile(t, filepath.Join(projectDir, outputDir), "sources-doc", sourceHash, longBody)
 
 	info := SourceInfo{Path: "sources/doc.md", Hash: sourceHash, Type: "article"}
-	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil, nil, nil)
+	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil, nil, nil, false)
 
 	if result.Error != nil {
 		t.Fatalf("expected no error, got: %v", result.Error)
@@ -85,7 +85,7 @@ func TestSummarizeOneSkipsReusedWhenHashMismatch(t *testing.T) {
 
 	// Hash differs → must not reuse; extraction of missing source returns an error
 	info := SourceInfo{Path: "sources/doc.md", Hash: "sha256:new", Type: "article"}
-	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil, nil, nil)
+	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil, nil, nil, false)
 
 	if result.Error == nil {
 		t.Fatal("expected an error (extract should fail on missing source), got nil")
@@ -104,7 +104,7 @@ func TestSummarizeOneSkipsReusedWhenSummaryTooShort(t *testing.T) {
 
 	// Body below 100 chars → must not reuse
 	info := SourceInfo{Path: "sources/doc.md", Hash: sourceHash, Type: "article"}
-	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil, nil, nil)
+	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil, nil, nil, false)
 
 	if result.Error == nil {
 		t.Fatal("expected an error (extract should fail on missing source), got nil")
@@ -120,7 +120,7 @@ func TestSummarizeOneSkipsReusedWhenNoSummaryFile(t *testing.T) {
 
 	// No summary file exists → must not reuse
 	info := SourceInfo{Path: "sources/doc.md", Hash: "sha256:abc123", Type: "article"}
-	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil, nil, nil)
+	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil, nil, nil, false)
 
 	if result.Error == nil {
 		t.Fatal("expected an error (extract should fail on missing source), got nil")

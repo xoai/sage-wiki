@@ -103,6 +103,9 @@ type FullPipelineOpts struct {
 	Budgets *DocBudgets
 	// JobID labels the compile_doc_finished emissions for timeout docs.
 	JobID string
+	// Force carries SPEC-04 `--force`: the summary on-disk cache is bypassed so a
+	// deliberate recompile actually regenerates summaries (issue #219).
+	Force bool
 }
 
 // FullPipelineResult summarizes what the full pipeline produced.
@@ -180,23 +183,24 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	warnSummaryNameCollisions(sourceInfoPaths(sources), sourceRoots, summaryNaming)
 
 	summaries := Summarize(SummarizeOpts{
-		Temperature:   cfg.Compiler.CompileTemperature(),
-		Prompts:       opts.Prompts,
-		Ctx:           opts.Ctx,
-		ProjectDir:    opts.ProjectDir,
-		OutputDir:     cfg.Output,
-		Sources:       sources,
-		Client:        client,
-		Model:         model,
-		MaxTokens:     maxTokens,
-		MaxParallel:   cfg.Compiler.MaxParallel,
-		UserTZ:        cfg.Compiler.UserTimeLocation(),
-		Language:      cfg.Language,
-		Backpressure:  opts.Backpressure,
-		ExtractOpts:   sumExOpts,
-		SummaryNaming: summaryNaming,
-		SourceRoots:   sourceRoots,
-		Budgets:       opts.Budgets,
+		Temperature:     cfg.Compiler.CompileTemperature(),
+		Prompts:         opts.Prompts,
+		ForceRegenerate: opts.Force,
+		Ctx:             opts.Ctx,
+		ProjectDir:      opts.ProjectDir,
+		OutputDir:       cfg.Output,
+		Sources:         sources,
+		Client:          client,
+		Model:           model,
+		MaxTokens:       maxTokens,
+		MaxParallel:     cfg.Compiler.MaxParallel,
+		UserTZ:          cfg.Compiler.UserTimeLocation(),
+		Language:        cfg.Language,
+		Backpressure:    opts.Backpressure,
+		ExtractOpts:     sumExOpts,
+		SummaryNaming:   summaryNaming,
+		SourceRoots:     sourceRoots,
+		Budgets:         opts.Budgets,
 	})
 
 	for _, sr := range summaries {

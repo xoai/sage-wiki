@@ -59,6 +59,13 @@ type SummarizeOpts struct {
 	// stopwatch (SPEC-08 D6): each source's summarize unit runs under a
 	// deadline derived from its remaining budget. nil = no per-doc bound.
 	Budgets *DocBudgets
+	// ForceRegenerate disables the on-disk summary cache for this run (SPEC-04
+	// `--force`). The cache exists to make *interrupted* compiles cheap to
+	// resume; it must not silently override a deliberate recompile, or
+	// `--force` is a no-op for the caller's actual goal — e.g. after editing
+	// prompts/*.md the summary would be served from cache and stay
+	// byte-identical (issue #219).
+	ForceRegenerate bool
 }
 
 // Summarize processes sources through Pass 1, producing summaries.
@@ -134,7 +141,7 @@ func Summarize(opts SummarizeOpts) []SummaryResult {
 				unitCtx, cancelUnit = budget.UnitContext(opts.Ctx)
 			}
 			start := time.Now()
-			result := summarizeOne(unitCtx, opts.ProjectDir, opts.OutputDir, info, opts.Client, opts.Model, opts.MaxTokens, opts.UserTZ, opts.Language, opts.SummaryNaming, opts.SourceRoots, opts.Prompts, opts.Temperature, opts.ExtractOpts...)
+			result := summarizeOne(unitCtx, opts.ProjectDir, opts.OutputDir, info, opts.Client, opts.Model, opts.MaxTokens, opts.UserTZ, opts.Language, opts.SummaryNaming, opts.SourceRoots, opts.Prompts, opts.Temperature, opts.ForceRegenerate, opts.ExtractOpts...)
 			if budget != nil {
 				budgetTimedOut := budget.finishUnit(unitCtx, time.Since(start), result.Error)
 				cancelUnit()
@@ -186,6 +193,7 @@ func summarizeOne(
 	sourceRoots []string,
 	pr *prompts.Registry,
 	temp *float64,
+	regenerate bool,
 	extractOpts ...extract.ExtractOpts,
 ) SummaryResult {
 	result := SummaryResult{SourcePath: info.Path}
@@ -205,9 +213,14 @@ func summarizeOne(
 	// sources whose summaries survived are reused instead of re-billed. The
 	// source_hash field in the frontmatter guards against serving stale summaries
 	// for modified sources.
+	//
+	// NOT under --force (SPEC-04): the cache is a resume optimization, not an
+	// override for a deliberate recompile. Without this guard, `compile --force`
+	// after editing prompts/*.md reports the doc as recompiled while writing back
+	// the cached summary unchanged (issue #219) — the new template never applies.
 	summaryPath := filepath.ToSlash(filepath.Join(outputDir, "summaries", summaryName))
 	absSummary := filepath.Join(projectDir, summaryPath)
-	if existing, err := os.ReadFile(absSummary); err == nil {
+	if existing, err := os.ReadFile(absSummary); err == nil && !regenerate {
 		body := string(existing)
 		// Parse source_hash from YAML frontmatter and verify it matches the current
 		// source file. This prevents stale summaries being served for modified sources.

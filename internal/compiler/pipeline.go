@@ -1194,6 +1194,9 @@ func runTiers(projectDir string, run *compileRun) {
 				Budgets:      run.docBudgets,
 				JobID:        opts.JobID,
 				Prompts:      opts.Prompts,
+				// SPEC-04 --force: the deliberately-recompiled docs must not have
+				// their summaries served from the on-disk cache (issue #219).
+				Force: opts.Force,
 			})
 		}()
 		run.result.Summarized = pipelineResult.Summarized
