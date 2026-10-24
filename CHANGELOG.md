@@ -8,17 +8,19 @@
 
 - **BM25-only workspaces no longer deadlock tier-3 compilation (#218).** With
   no embedding provider configured (an officially supported setup — `status`
-  reports `embed_provider: none`), already-compiled documents sat in a state
-  no code path advanced: `compile --force` printed "Nothing to compile",
+  reports `embed_provider: none (BM25-only)`), already-compiled documents
+  sat in a state no code path advanced: `compile --force` printed "Nothing
+  to compile — wiki is up to date.",
   template-drift recompiles never fired, and Tier 1 re-claimed the same
   documents every run making no progress — silently, with no diagnostic.
   Three fixes: tier-3 completion no longer requires the embedding pass
   (embedding is an optional enhancement of the LLM tier, not its
   prerequisite — applies to both the SQLite and Postgres queues); under a
   nil embedder the Tier-1 pass marks embedding done (stops the re-claim
-  churn; not a vector backfill — see below); and the silent classification
-  fall-through now logs the item's pass state. Existing BM25-only corpora
-  heal on the next compile with no migration.
+  churn; not a vector backfill — see below); and the classification
+  fall-through now logs the item's pass state at Debug level (run with
+  `-vv` to see it — the default log level is WARN). Existing BM25-only
+  corpora heal on the next compile with no migration.
 
 - **`compile --force` now genuinely regenerates summaries (#219).** The
   summarization pass served any on-disk summary whose source hash matched —
@@ -46,13 +48,11 @@
 
 ### Internal
 
-- **Test + CI hardening** (#210, #220–#229): the seven-test timing-flake
-  family hardened (event-driven waits, scaled margins — rerun-clean reds
-  eliminated); workflow guards in Lint kill the folded-if-comment class at
-  PR time; the qualification observer repaired end-to-end (jq splice,
-  exit-contract inversion, data-branch persistence under branch
-  protection) with the verdict now durably accumulating on
-  `ci/qualification-data`; two poisoned actions-cache incidents cleared.
+- **CI: qualification observer repaired end-to-end** (#228, #229): the
+  exit-contract inversion (a still-filling window is not an alert) and
+  data-branch persistence under branch protection — the verdict now
+  durably accumulates on `ci/qualification-data`. The timing-flake family
+  hardening (#210) also landed in this window.
 
 ## 0.2.11 — 2026-10-03
 

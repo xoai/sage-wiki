@@ -39,8 +39,8 @@ revert to the built-in default. Existing customizations are never overwritten
 by re-running the scaffold.
 
 **Applying an edited template to existing documents:** run
-`sage-wiki compile --force`. The template hash is part of each document's
-compile key, so a plain compile schedules the documents — but the summary
+`sage-wiki compile --force`. The template hash is part of each LLM-tier
+document's compile key, so a plain compile schedules the documents — but the summary
 cache is source-hash-keyed and will serve the stored summary for an
 unchanged source (a known limitation, tracked in #219). `--force` bypasses
 the cache and regenerates; deleting `wiki/summaries/*.md` by hand also
