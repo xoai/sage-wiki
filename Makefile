@@ -74,9 +74,10 @@ modules-check:
 # validator (exact package partition, aggregate membership, Make targets,
 # determinism roles, platform inventory, shards, service contracts, fuzz
 # inventory). Every workflow is validated so a witness job reference can
-# never point at a job that does not exist: ci.yml (required aggregate),
-# ci-shadow.yml (advisory candidates), fuzz.yml (scheduled exploration),
-# and ci-diagnostics.yml (scheduled broad diagnostics).
+# never point at a job that does not exist: ci.yml (required aggregate,
+# including the promoted qualified candidates since 2026-10-24), fuzz.yml
+# (scheduled exploration), and ci-diagnostics.yml (scheduled broad
+# diagnostics). ci-shadow.yml was retired with the promotion.
 responsibility-check:
 	$(GO) test ./tools/civalidate -count=1
 	$(GO) run ./tools/civalidate \
@@ -86,14 +87,6 @@ responsibility-check:
 		--services ci/service-contracts.yaml \
 		--fuzz-targets ci/fuzz-targets.yaml \
 		--workflow .github/workflows/ci.yml \
-		--makefile Makefile
-	$(GO) run ./tools/civalidate \
-		--standards ci/standards.yaml \
-		--packages ci/package-ownership.yaml \
-		--platforms ci/platform-contracts.yaml \
-		--services ci/service-contracts.yaml \
-		--fuzz-targets ci/fuzz-targets.yaml \
-		--workflow .github/workflows/ci-shadow.yml \
 		--makefile Makefile
 	$(GO) run ./tools/civalidate \
 		--standards ci/standards.yaml \

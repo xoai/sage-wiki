@@ -61,6 +61,7 @@ const (
 	ProblemPlatformUnowned         ProblemCode        = "platform-unowned"
 	ProblemPlatformStale           ProblemCode        = "platform-stale"
 	ProblemPlatformParse           ProblemCode        = "platform-parse"
+	ProblemWitnessUnqualified      ProblemCode        = "witness-unqualified"
 	ProblemShardEmpty              ProblemCode        = "shard-empty"
 	ProblemShardDuplicate          ProblemCode        = "shard-duplicate"
 	ProblemShardMissing            ProblemCode        = "shard-missing"
@@ -621,16 +622,45 @@ func validateRepository(m Manifests, facts RepositoryFacts) Problems {
 					if witness.Status == "required" {
 						if witness.Job.Aggregate {
 							requiredJobs[witness.Job.ID] = struct{}{}
+							// A required, aggregate-owned witness is the
+							// promotion seam (20260812 Task 15): the aggregate
+							// must never cite evidence still marked candidate.
+							switch witness.Qualification.State {
+							case "required", "required-requalifying":
+							default:
+								problems.add(ProblemWitnessUnqualified, "standards.witnesses."+witness.ID,
+									fmt.Sprintf("required aggregate witness cites unqualified evidence state %q", witness.Qualification.State))
+							}
 						} else {
 							problems.add(ProblemAggregateMissing, "standards.witnesses."+witness.ID, "required workflow witness is not declared aggregate-owned")
 						}
 					}
 				}
+			} else if witness.Status == "required" {
+				// Required without any workflow binding: nothing would force
+				// it into the aggregate — a vacuous required witness.
+				problems.add(ProblemAggregateMissing, "standards.witnesses."+witness.ID, "required witness has no workflow job binding")
 			}
 			if witness.Diagnostics.LocalMakeTarget != nil {
 				if _, exists := facts.MakeTargets[*witness.Diagnostics.LocalMakeTarget]; !exists {
 					problems.add(ProblemMakeTargetMissing, "makefile", "missing target "+*witness.Diagnostics.LocalMakeTarget)
 				}
+			}
+		}
+	}
+	if shards := m.Packages.LinuxRaceShards; shards != nil {
+		if _, declared := known[shards.Workflow]; !declared {
+			problems.add(ProblemWorkflowMismatch, "linux_race_shards.workflow", "shards reference undeclared workflow "+shards.Workflow)
+		} else if shards.Workflow == facts.Workflow.Name {
+			for _, shard := range shards.Shards {
+				if _, exists := facts.Workflow.Jobs[shard.ID]; !exists {
+					problems.add(ProblemShadowJobMissing, "workflow.jobs", "missing shard job "+shard.ID)
+				}
+				// Promotion closure (20260812 Task 15): a manifest-declared
+				// shard job in the required workflow must appear in the
+				// aggregate needs — dropping one from `needs` is red, so a
+				// shard cannot silently leave the required path.
+				requiredJobs[shard.ID] = struct{}{}
 			}
 		}
 	}
@@ -660,17 +690,6 @@ func validateRepository(m Manifests, facts RepositoryFacts) Problems {
 		}
 	}
 
-	if shards := m.Packages.LinuxRaceShards; shards != nil {
-		if _, declared := known[shards.Workflow]; !declared {
-			problems.add(ProblemWorkflowMismatch, "linux_race_shards.workflow", "shards reference undeclared workflow "+shards.Workflow)
-		} else if shards.Workflow == facts.Workflow.Name {
-			for _, shard := range shards.Shards {
-				if _, exists := facts.Workflow.Jobs[shard.ID]; !exists {
-					problems.add(ProblemShadowJobMissing, "workflow.jobs", "missing shard job "+shard.ID)
-				}
-			}
-		}
-	}
 	for _, service := range m.Services.Services {
 		if _, declared := known[service.Workflow]; !declared {
 			problems.add(ProblemWorkflowMismatch, "services."+service.ID, "service references undeclared workflow "+service.Workflow)

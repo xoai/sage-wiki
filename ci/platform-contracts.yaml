@@ -3,70 +3,70 @@ focused_goos: [windows, darwin]
 
 contracts:
   - id: manifest-lock-windows
-    witness: platform-focused-candidate
+    witness: platform-windows-current
     package: internal/manifest
     goos: windows
     goarch: any
     invariant: Windows sharing and pending-delete errors are retried as contention without losing concurrent manifest updates.
     tests: [TestLockContentionClassification, TestLockConcurrentAcquireNoLostAcquisition, TestMergeSaveMergesConcurrentWriter]
   - id: compiler-checkpoint-windows
-    witness: platform-focused-candidate
+    witness: platform-windows-current
     package: internal/compiler
     goos: windows
     goarch: any
     invariant: Checkpoint readers and atomic replacement tolerate bounded Windows sharing violations without partial or lost state.
     tests: [TestBatchCheckpointWriters_Concurrent, TestIsTransientRenameErrorMatchesRealWindowsText, TestBothStateReadersRetryTransientErrors]
   - id: engine-lock-windows
-    witness: platform-focused-candidate
+    witness: platform-windows-current
     package: pkg/engine
     goos: windows
     goarch: any
     invariant: The non-Unix lockfile fallback permits exactly one workspace writer and supports release and reacquisition.
     tests: [TestEngine_ConcurrentOpenSameDir, TestLockfileFallback]
   - id: mirror-lock-windows
-    witness: platform-focused-candidate
+    witness: platform-windows-current
     package: internal/mirror
     goos: windows
     goarch: any
     invariant: The non-Unix mirror ship lock provides exclusion, stale takeover, and token-fenced release.
     tests: [TestShipMutex_MutualExclusion, TestShipMutex_ReleaseFrees, TestShipMutex_StaleLockfileTakeover, TestShipMutex_TokenFencedRelease]
   - id: vectors-fallback-windows
-    witness: platform-focused-candidate
+    witness: platform-windows-current
     package: internal/vectors
     goos: windows
     goarch: any
     invariant: The non-Unix resident-file mmap fallback preserves exact vector-search semantics.
     tests: [TestMmapParity_Synthetic, TestStoreClose_Unmaps]
   - id: engine-flock-darwin
-    witness: platform-focused-candidate
+    witness: platform-macos-current
     package: pkg/engine
     goos: darwin
     goarch: any
     invariant: Darwin nonblocking flock permits exactly one workspace writer and releases immediately for reacquisition.
     tests: [TestEngine_ConcurrentOpenSameDir]
   - id: mirror-flock-darwin
-    witness: platform-focused-candidate
+    witness: platform-macos-current
     package: internal/mirror
     goos: darwin
     goarch: any
     invariant: Darwin mirror flock is mutually exclusive, process-death-safe, and observable by serve-lock probing.
     tests: [TestShipMutex_MutualExclusion, TestShipMutex_ReleaseFrees, TestCrashKillLoop]
   - id: vectors-mmap-darwin
-    witness: platform-focused-candidate
+    witness: platform-macos-current
     package: internal/vectors
     goos: darwin
     goarch: any
     invariant: Darwin uses read-only private mmap, preserves exact search results, and unmaps on close.
     tests: [TestMmapParity_Synthetic, TestStoreClose_Unmaps]
   - id: serve-signal-darwin
-    witness: platform-focused-candidate
+    witness: platform-macos-current
     package: internal/serve
     goos: darwin
     goarch: any
     invariant: SIGTERM initiates bounded graceful drain and releases the workspace lock on Darwin.
     tests: [TestSIGTERMUnix, TestShutdownDrainPortable]
   - id: pack-containment-darwin
-    witness: platform-focused-candidate
+    witness: platform-macos-current
     package: internal/pack
     goos: darwin
     goarch: any

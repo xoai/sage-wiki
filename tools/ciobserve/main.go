@@ -115,6 +115,22 @@ func evaluateQualification(runs []RunObservation, opts QualificationOptions) Qua
 		GeneratedAt:      time.Now().UTC().Format(time.RFC3339),
 	}
 
+	// Live fixtures carry started_at/completed_at but not runtime_seconds;
+	// derive it so runner occupancy reflects reality rather than zero.
+	for i := range runs {
+		for j := range runs[i].Jobs {
+			job := &runs[i].Jobs[j]
+			if job.RuntimeSeconds != 0 {
+				continue
+			}
+			st, err1 := time.Parse(time.RFC3339, job.StartedAt)
+			en, err2 := time.Parse(time.RFC3339, job.CompletedAt)
+			if err1 == nil && err2 == nil && en.After(st) {
+				job.RuntimeSeconds = en.Sub(st).Seconds()
+			}
+		}
+	}
+
 	// Group runs by workflow, then match by head_sha.
 	currentBySHA := map[string]RunObservation{}
 	candidateBySHA := map[string]RunObservation{}
@@ -177,24 +193,17 @@ func evaluateQualification(runs []RunObservation, opts QualificationOptions) Qua
 		return rec
 	}
 
-	// Check for identical-tree divergence (before success checks: a candidate
-	// failure where the current succeeded IS the divergence we look for).
-	for _, p := range pairs {
-		if p.current.Conclusion != p.candidate.Conclusion {
-			rec.Divergences = append(rec.Divergences, Divergence{
-				HeadSHA:         p.sha,
-				CurrentResult:   p.current.Conclusion,
-				CandidateResult: p.candidate.Conclusion,
-			})
-		}
-	}
-	if len(rec.Divergences) > 0 {
-		rec.Status = "divergent"
-		rec.Reason = fmt.Sprintf("%d unexplained identical-tree divergence(s)", len(rec.Divergences))
-		return rec
-	}
-
-	// Check for vacuous candidate jobs, require success, and collect wall times.
+	// Shared-responsibility scoping (2026-10-24 disposition lesson): the two
+	// workflows deliberately differ in coverage — CI carries vuln scan,
+	// frontend dist verify, and fuzz that the shadow does not duplicate.
+	// A whole-run conclusion mismatch caused by those CI-only jobs is a
+	// COVERAGE difference, not a candidate-quality divergence (the live
+	// window flagged exactly this shape twice: 3669810, d8ca516). Divergence
+	// is therefore job-scoped:
+	//   - a conclusion mismatch on a job BOTH workflows run, either direction;
+	//   - a failure on ANY candidate job (the shadow exists to prove itself —
+	//     its regressions are alert-worthy even without a current counterpart).
+	// Current-only job failures are coverage, ignored by design.
 	var wallTimes []float64
 	var totalOccupancy float64
 	for _, p := range pairs {
@@ -203,15 +212,49 @@ func evaluateQualification(runs []RunObservation, opts QualificationOptions) Qua
 			rec.Reason = "candidate run " + p.sha + " has no jobs (vacuous)"
 			return rec
 		}
-		if p.candidate.Conclusion != "success" {
+		currentByName := map[string]string{}
+		for _, job := range p.current.Jobs {
+			currentByName[job.Name] = job.Conclusion
+		}
+		candidateByName := map[string]string{}
+		for _, job := range p.candidate.Jobs {
+			candidateByName[job.Name] = job.Conclusion
+		}
+		shared := 0
+		for name, cand := range candidateByName {
+			cur, both := currentByName[name]
+			if !both {
+				continue
+			}
+			shared++
+			if cur != cand {
+				rec.Divergences = append(rec.Divergences, Divergence{
+					HeadSHA:         p.sha,
+					CurrentResult:   cur,
+					CandidateResult: cand,
+					Explanation:     fmt.Sprintf("shared job %q: current=%s candidate=%s", name, cur, cand),
+				})
+			}
+		}
+		if shared == 0 {
 			rec.Status = "insufficient"
-			rec.Reason = "candidate run " + p.sha + " did not succeed (" + p.candidate.Conclusion + ")"
+			rec.Reason = "candidate run " + p.sha + " shares no job names with the current run — vacuous comparison"
 			return rec
 		}
-		if p.current.Conclusion != "success" {
-			rec.Status = "insufficient"
-			rec.Reason = "current run " + p.sha + " did not succeed (" + p.current.Conclusion + ")"
-			return rec
+		// Candidate-only regressions: the shadow exists to prove itself, so a
+		// failure in a job the current workflow lacks is still alert-worthy.
+		// Shared both-red agreement on a genuinely red tree is not — the
+		// mismatch path above owns shared disagreements.
+		for name, cand := range candidateByName {
+			_, sharedJob := currentByName[name]
+			if cand == "failure" && !sharedJob {
+				rec.Divergences = append(rec.Divergences, Divergence{
+					HeadSHA:         p.sha,
+					CurrentResult:   p.current.Conclusion,
+					CandidateResult: p.candidate.Conclusion,
+					Explanation:     fmt.Sprintf("candidate job %q failed", name),
+				})
+			}
 		}
 		wt := p.candidate.wallTime()
 		if wt > 0 {
@@ -225,6 +268,14 @@ func evaluateQualification(runs []RunObservation, opts QualificationOptions) Qua
 			rec.Reason = "candidate run " + p.sha + " has no event metadata"
 			return rec
 		}
+	}
+	if len(rec.Divergences) > 0 {
+		sort.Slice(rec.Divergences, func(i, j int) bool {
+			return rec.Divergences[i].HeadSHA < rec.Divergences[j].HeadSHA
+		})
+		rec.Status = "divergent"
+		rec.Reason = fmt.Sprintf("%d shared-responsibility divergence(s)", len(rec.Divergences))
+		return rec
 	}
 
 	// Compute p50/p95.

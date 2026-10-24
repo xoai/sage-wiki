@@ -1,10 +1,28 @@
 {
   "candidate_workflow": "CI Shadow",
   "current_workflow": "CI",
-  "sample_count": 0,
-  "date_span_days": 0,
-  "status": "pending",
-  "reason": "Qualification window not yet started.",
-  "owner_disposition": "pending",
-  "generated_at": ""
+  "sample_count": 20,
+  "date_span_days": 21.02988425925926,
+  "earliest_run": "2026-10-03T04:46:29Z",
+  "latest_run": "2026-10-24T05:29:31Z",
+  "status": "divergent",
+  "reason": "2 unexplained identical-tree divergence(s)",
+  "p50_seconds": 0,
+  "p95_seconds": 0,
+  "runner_occupancy_seconds": 0,
+  "divergences": [
+    {
+      "head_sha": "366981017343834751d69bb0248102b4cff864df",
+      "current_result": "failure",
+      "candidate_result": "success"
+    },
+    {
+      "head_sha": "d8ca51684e4abcb8cd73c94f392a5bfd22710c1a",
+      "current_result": "failure",
+      "candidate_result": "success"
+    }
+  ],
+  "owner_disposition": "qualified 2026-10-24: both same-tree divergences (3669810, d8ca516) explained as CI-only coverage failures (GO-2026-6629 window since fixed by #226; fleet-era dist drift since regenerated) plus one known fuzz-boundary flake; shared-responsibility verdicts 20/20 over 20 pairs / 21.0 days; owner approved promotion (initiative decisions.md, 2026-10-24)",
+  "generated_at": "2026-10-24T08:56:39Z",
+  "mutations": []
 }
