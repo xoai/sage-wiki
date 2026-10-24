@@ -156,13 +156,26 @@ jobs:
           set -euo pipefail
           # The verdict is only useful where decisions can read it: commit
           # it next to the standards manifest. No-op when unchanged.
-          if ! cmp -s /tmp/qualification.json ci/qualification.json; then
-            cp /tmp/qualification.json ci/qualification.json
+          # Branch protection blocks bot commits to main (required CI
+          # checks the observer's own commit can never satisfy — found on
+          # the first live run). The verdict is durable EVIDENCE, not
+          # source: persist to a dedicated data branch (the gh-pages
+          # pattern). Readers: gh api contents at refs/heads/ci/qualification-data
+          # or `git show ci/qualification-data:ci/qualification.json`.
+          DATA_BRANCH=ci/qualification-data
+          if git fetch origin "$DATA_BRANCH" 2>/dev/null; then
+            git checkout -B "$DATA_BRANCH" "origin/$DATA_BRANCH"
+          else
+            git checkout -b "$DATA_BRANCH"   # first run: branch from current checkout
+          fi
+          mkdir -p ci
+          cp /tmp/qualification.json ci/qualification.json
+          if ! git diff --quiet; then
             git config user.name "sage-wiki-observer"
             git config user.email "actions@github.com"
             git add ci/qualification.json
             git commit -m "chore(ci): refresh qualification verdict [skip ci]"
-            git push
+            git push origin "$DATA_BRANCH"
           else
             echo "verdict unchanged; nothing to commit"
           fi
