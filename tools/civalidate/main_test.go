@@ -1092,6 +1092,109 @@ func TestServicesStatic_ModulePinMalformed(t *testing.T) {
 	}
 }
 
+// TestPromotionClosure covers the mutation set the promotion (20260812
+// Milestone 4, Task 15) must keep red: aggregate closure over manifest-owned
+// shard jobs, rejection of unqualified evidence in the required aggregate,
+// and required witnesses that escape workflow binding entirely.
+func TestPromotionClosure(t *testing.T) {
+	type mutation struct {
+		name   string
+		mutate func(*Manifests, *RepositoryFacts)
+		code   ProblemCode
+	}
+
+	// promotionFacts: CI owns the promoted shard jobs; the aggregate needs
+	// every required witness job AND every manifest shard job.
+	promotionFacts := func(manifests Manifests) RepositoryFacts {
+		facts := RepositoryFacts{
+			GoPackages: map[string][]string{
+				"linux": {
+					"github.com/xoai/sage-wiki",
+					"github.com/xoai/sage-wiki/internal/manifest",
+					"github.com/xoai/sage-wiki/pkg/engine",
+					"github.com/xoai/sage-wiki/tools/skillgen",
+				},
+			},
+			Workflow: WorkflowFacts{
+				Name: "CI",
+				Jobs: map[string]WorkflowJob{
+					"skill-drift":      {},
+					"ci-required":      {Needs: []string{"skill-drift", "linux-race-alpha", "linux-race-beta"}},
+					"linux-race-alpha": {},
+					"linux-race-beta":  {},
+				},
+			},
+			MakeTargets:         map[string]struct{}{},
+			DeterminismPackages: nil,
+			ExpectedWorkflows:   map[string]struct{}{"CI Shadow": {}},
+			PlatformSignals: []DiscoveredPlatformSignal{
+				{Path: "internal/manifest/lock.go", Kind: PlatformSignalRuntimeGOOS},
+			},
+			ExistingPaths: map[string]struct{}{
+				"skills/":                   {},
+				"internal/web/dist/":        {},
+				"internal/manifest/lock.go": {},
+			},
+		}
+		return facts
+	}
+
+	// Shard manifest must point at CI for closure to apply in these fixtures.
+	shardsToCI := func(manifests *Manifests) {
+		manifests.Packages.LinuxRaceShards.Workflow = "CI"
+	}
+
+	tests := []mutation{
+		{
+			name: "aggregate omits a manifest shard job",
+			mutate: func(m *Manifests, facts *RepositoryFacts) {
+				shardsToCI(m)
+				facts.Workflow.Jobs["ci-required"] = WorkflowJob{Needs: []string{"skill-drift", "linux-race-alpha"}}
+			},
+			code: ProblemAggregateMissing,
+		},
+		{
+			name: "promoted shard job deleted from workflow",
+			mutate: func(m *Manifests, facts *RepositoryFacts) {
+				shardsToCI(m)
+				delete(facts.Workflow.Jobs, "linux-race-beta")
+			},
+			code: ProblemShadowJobMissing,
+		},
+		{
+			name: "required aggregate witness cites candidate evidence",
+			mutate: func(m *Manifests, _ *RepositoryFacts) {
+				m.Standards.Standards[0].Witnesses[0].Qualification.State = "candidate"
+			},
+			code: ProblemWitnessUnqualified,
+		},
+		{
+			name: "required witness drops its workflow binding",
+			mutate: func(m *Manifests, _ *RepositoryFacts) {
+				m.Standards.Standards[0].Witnesses[0].Job = nil
+			},
+			code: ProblemAggregateMissing,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manifests := parseValidManifests(t)
+			facts := promotionFacts(manifests)
+			tt.mutate(&manifests, &facts)
+			assertProblemCode(t, validateRepository(manifests, facts), tt.code)
+		})
+	}
+
+	t.Run("fully closed promotion facts validate clean", func(t *testing.T) {
+		manifests := parseValidManifests(t)
+		facts := promotionFacts(manifests)
+		shardsToCI(&manifests)
+		if problems := validateRepository(manifests, facts); len(problems) != 0 {
+			t.Fatalf("closed promotion facts: %#v", problems)
+		}
+	})
+}
+
 func TestShadowWorkflowValidation(t *testing.T) {
 	facts := baseShadowFacts(t)
 	manifests := parseValidManifests(t)

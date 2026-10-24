@@ -158,68 +158,63 @@ standards:
     owner: merge-required-ci
     fallback_owner: local-pre-push
     witnesses:
-      - id: go-tests-current
+      - id: linux-race-current
         status: required
-        command: CGO_ENABLED=1 go test -race -timeout 15m <current-shard-packages>
-        triggers: [pull-request, main-push]
-        platforms: [linux, darwin, windows]
-        job: {workflow: CI, id: go-test, aggregate: true}
-        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "Current broad shards execute candidate package tests across the supported matrix."}
-        authority: {met: [anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Current package selection is broad but not yet manifest-validated or qualified."}
-        anti_vacuity: Resolved shard package output must be nonempty and package failures remain red.
-        runtime: {bound_seconds: 900, recent: null}
-        coverage: {packages: [], package_classes: [test-owned, helper-library], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
-        diagnostics: {local_command: go test -race ./..., local_make_target: ci-race, hosted_artifact: go-test-log, failure_artifact: go-test-log, formats: [text]}
-        qualification:
-          state: required-requalifying
-          history: [{date: "2026-08-12", state: required-requalifying, reason: "Imported from the broad current OS shard matrix."}]
-      - id: linux-race-candidate
-        status: advisory
         command: CGO_ENABLED=1 go test -race -timeout 15m <manifest-owned-packages>
         triggers: [pull-request, merge-group, main-push]
         platforms: [linux]
-        job: null
+        job: {workflow: CI, id: linux-race-parity, aggregate: true}
         purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "A manifest partitions every ordinary package exactly once."}
         authority: {met: [deterministic, anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Balanced shard timings and hosted qualification are pending."}
         anti_vacuity: go list equality, exact ownership, and nonempty test metadata are required.
         runtime: {bound_seconds: 360, recent: null}
         coverage: {packages: [], package_classes: [test-owned, helper-library], package_roles: [], platform_contracts: [], paths: [ci/package-ownership.yaml], generated_paths: []}
         diagnostics: {local_command: go test -race <focused-packages>, local_make_target: null, hosted_artifact: go-test-json, failure_artifact: go-test-json, formats: [go-test-json, github-annotation]}
-        qualification: {state: candidate, history: []}
+        qualification:
+          state: required
+          history:
+            - {date: "2026-08-12", state: candidate, reason: "Candidate defined; hosted qualification pending."}
+            - {date: "2026-10-24", state: required, reason: "Promoted: qualification record 20 matched pairs over 21.0 days, shared-responsibility verdicts 20/20; both same-tree divergences dispositioned as CI-only coverage plus a known fuzz-boundary flake (initiative decisions.md, 2026-10-24)."}
 
   - id: platform-behavior
     rationale: Supported OS behavior must be witnessed by named platform invariants rather than duplicate generic suites.
     owner: merge-required-ci
     fallback_owner: scheduled-diagnostics
     witnesses:
-      - id: platform-broad-current
+      - id: platform-windows-current
         status: required
-        command: go test -timeout 15m <current-shard-packages>
-        triggers: [pull-request, main-push]
-        platforms: [darwin, windows]
-        job: {workflow: CI, id: go-test, aggregate: true}
-        purpose: {met: [candidate-property, ci-best-environment], evidence: "Current broad native suites preserve supported-OS evidence during migration."}
-        authority: {met: [anti-vacuous, bounded, owned], evidence: "Broad suites remain required while focused contracts qualify."}
-        anti_vacuity: Every current shard must resolve a nonempty package list.
-        runtime: {bound_seconds: 900, recent: null}
-        coverage: {packages: [], package_classes: [test-owned, helper-library], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
-        diagnostics: {local_command: null, local_make_target: null, hosted_artifact: full-os-suite-log, failure_artifact: full-os-suite-log, formats: [text]}
-        qualification:
-          state: required-requalifying
-          history: [{date: "2026-08-12", state: required-requalifying, reason: "Existing full macOS and Windows suites remain fallback authority."}]
-      - id: platform-focused-candidate
-        status: advisory
         command: go test -timeout 15m <platform-contract-packages>
         triggers: [pull-request, merge-group, main-push, schedule]
-        platforms: [darwin, windows]
-        job: null
+        platforms: [windows]
+        job: {workflow: CI, id: platform-windows, aggregate: true}
         purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "Each focused package carries a named native-OS invariant."}
-        authority: {met: [anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Source classification and seven-day hosted qualification are pending."}
+        authority: {met: [anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Qualified in the hosted shadow window; named invariants replace the duplicate generic suite."}
         anti_vacuity: Platform inventories, contracts, and assigned tests must all be nonempty and mutation-tested.
         runtime: {bound_seconds: 480, recent: null}
-        coverage: {packages: [], package_classes: [], package_roles: [], platform_contracts: [manifest-lock-windows, compiler-checkpoint-windows, engine-lock-windows, mirror-lock-windows, vectors-fallback-windows, engine-flock-darwin, mirror-flock-darwin, vectors-mmap-darwin, serve-signal-darwin, pack-containment-darwin], paths: [ci/platform-contracts.yaml], generated_paths: []}
+        coverage: {packages: [], package_classes: [], package_roles: [], platform_contracts: [manifest-lock-windows, compiler-checkpoint-windows, engine-lock-windows, mirror-lock-windows, vectors-fallback-windows], paths: [ci/platform-contracts.yaml], generated_paths: []}
         diagnostics: {local_command: null, local_make_target: null, hosted_artifact: platform-contract-json, failure_artifact: platform-contract-json, formats: [go-test-json, github-annotation]}
-        qualification: {state: candidate, history: []}
+        qualification:
+          state: required
+          history:
+            - {date: "2026-08-12", state: candidate, reason: "Candidate defined; hosted qualification pending."}
+            - {date: "2026-10-24", state: required, reason: "Promoted: qualification record 20 matched pairs over 21.0 days, shared-responsibility verdicts 20/20; both same-tree divergences dispositioned as CI-only coverage plus a known fuzz-boundary flake (initiative decisions.md, 2026-10-24)."}
+      - id: platform-macos-current
+        status: required
+        command: go test -timeout 15m <platform-contract-packages>
+        triggers: [pull-request, merge-group, main-push, schedule]
+        platforms: [darwin]
+        job: {workflow: CI, id: platform-macos, aggregate: true}
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "Each focused package carries a named native-OS invariant."}
+        authority: {met: [anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Qualified in the hosted shadow window; named invariants replace the duplicate generic suite."}
+        anti_vacuity: Platform inventories, contracts, and assigned tests must all be nonempty and mutation-tested.
+        runtime: {bound_seconds: 480, recent: null}
+        coverage: {packages: [], package_classes: [], package_roles: [], platform_contracts: [engine-flock-darwin, mirror-flock-darwin, vectors-mmap-darwin, serve-signal-darwin, pack-containment-darwin], paths: [ci/platform-contracts.yaml], generated_paths: []}
+        diagnostics: {local_command: null, local_make_target: null, hosted_artifact: platform-contract-json, failure_artifact: platform-contract-json, formats: [go-test-json, github-annotation]}
+        qualification:
+          state: required
+          history:
+            - {date: "2026-08-12", state: candidate, reason: "Candidate defined; hosted qualification pending."}
+            - {date: "2026-10-24", state: required, reason: "Promoted: qualification record 20 matched pairs over 21.0 days, shared-responsibility verdicts 20/20; both same-tree divergences dispositioned as CI-only coverage plus a known fuzz-boundary flake (initiative decisions.md, 2026-10-24)."}
 
   - id: generated-contract-drift
     rationale: Generated API, skill, and frontend artifacts must match their declared sources.
@@ -337,17 +332,19 @@ standards:
         status: required
         command: go test <seed-owning-packages>
         triggers: [pull-request, main-push]
-        platforms: [linux, darwin, windows]
-        job: {workflow: CI, id: go-test, aggregate: true}
-        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "Committed seed corpora execute deterministically during normal package tests."}
+        platforms: [linux]
+        job: {workflow: CI, id: linux-race-parity, aggregate: true}
+        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "Committed seed corpora execute deterministically during normal package tests in the Linux race shards."}
         authority: {met: [deterministic, hermetic-enough, anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "A seed mutation makes its owning package red."}
         anti_vacuity: Every committed crasher remains in the owning package corpus and a mutation is red.
         runtime: {bound_seconds: 900, recent: null}
         coverage: {packages: [internal/extract, internal/web, internal/ontology, internal/wiki, internal/compiler], package_classes: [], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
         diagnostics: {local_command: go test <seed-owning-package>, local_make_target: test, hosted_artifact: go-test-log, failure_artifact: go-test-log, formats: [text]}
         qualification:
-          state: required-requalifying
-          history: [{date: "2026-08-12", state: required-requalifying, reason: "Seed execution is currently embedded in broad test shards."}]
+          state: required
+          history:
+            - {date: "2026-08-12", state: required-requalifying, reason: "Seed execution was embedded in broad test shards."}
+            - {date: "2026-10-24", state: required, reason: "Re-anchored to the promoted Linux race shards when the broad OS matrix was retired; seeds execute wherever their owning shard runs."}
 
   - id: postgres-contract
     rationale: PostgreSQL-specific storage behavior requires a real pinned service witness.
@@ -356,32 +353,21 @@ standards:
     witnesses:
       - id: postgres-current
         status: required
-        command: TEST_DATABASE_URL=<url> go test -p 1 -count=1 <postgres-packages>
-        triggers: [pull-request, main-push]
-        platforms: [linux]
-        job: {workflow: CI, id: postgres, aggregate: true}
-        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "Hosted CI provides the service and extension required by env-gated tests."}
-        authority: {met: [anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Current broad service packages remain required while focused selection qualifies."}
-        anti_vacuity: Extension probe and a nonempty selected-test count are mandatory.
-        runtime: {bound_seconds: 300, recent: null}
-        coverage: {packages: [internal/storage/postgres, internal/storetest, internal/hub, internal/wiki], package_classes: [], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
-        diagnostics: {local_command: null, local_make_target: null, hosted_artifact: postgres-service-log, failure_artifact: postgres-service-log, formats: [text, service-logs]}
-        qualification:
-          state: required-requalifying
-          history: [{date: "2026-08-12", state: required-requalifying, reason: "Imported from the current broad PostgreSQL job."}]
-      - id: postgres-focused-candidate
-        status: advisory
         command: TEST_DATABASE_URL=<url> go test -p 1 -count=1 <postgres-contract-packages>
         triggers: [pull-request, merge-group, main-push]
         platforms: [linux]
-        job: null
+        job: {workflow: CI, id: postgres-contract, aggregate: true}
         purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "Focused env-gated contracts avoid repeating ordinary package ownership."}
         authority: {met: [anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Pinned service details and selected-test discovery are deferred to Task 10."}
         anti_vacuity: Service probe, selected-test count, and a contract mutation must fail closed.
         runtime: {bound_seconds: 300, recent: null}
         coverage: {packages: [internal/storage/postgres, internal/storetest, internal/hub, internal/wiki], package_classes: [], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
         diagnostics: {local_command: null, local_make_target: null, hosted_artifact: postgres-shadow-log, failure_artifact: postgres-service-log, formats: [go-test-json, service-logs]}
-        qualification: {state: candidate, history: []}
+        qualification:
+          state: required
+          history:
+            - {date: "2026-08-12", state: candidate, reason: "Candidate defined; hosted qualification pending."}
+            - {date: "2026-10-24", state: required, reason: "Promoted: qualification record 20 matched pairs over 21.0 days, shared-responsibility verdicts 20/20; both same-tree divergences dispositioned as CI-only coverage plus a known fuzz-boundary flake (initiative decisions.md, 2026-10-24)."}
 
   - id: minio-contract
     rationale: S3 mirror behavior requires a real pinned MinIO service witness.
@@ -390,32 +376,21 @@ standards:
     witnesses:
       - id: minio-current
         status: required
-        command: SAGE_TEST_MINIO=1 go test -count=1 -timeout 10m ./internal/mirror/...
-        triggers: [pull-request, main-push]
-        platforms: [linux]
-        job: {workflow: CI, id: minio, aggregate: true}
-        purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "Hosted CI provides a real object store for env-gated mirror contracts."}
-        authority: {met: [anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Current broad package execution stays required while focused selection qualifies."}
-        anti_vacuity: Health and bucket probes plus a nonempty selected-test count are mandatory.
-        runtime: {bound_seconds: 600, recent: null}
-        coverage: {packages: [internal/mirror, internal/mirror/s3], package_classes: [], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
-        diagnostics: {local_command: null, local_make_target: null, hosted_artifact: minio-service-log, failure_artifact: minio-service-log, formats: [text, service-logs]}
-        qualification:
-          state: required-requalifying
-          history: [{date: "2026-08-12", state: required-requalifying, reason: "Imported from the current broad MinIO job after a fake-store reliability incident."}]
-      - id: minio-focused-candidate
-        status: advisory
         command: SAGE_TEST_MINIO=1 go test -count=1 -timeout 10m <minio-contract-packages>
         triggers: [pull-request, merge-group, main-push]
         platforms: [linux]
-        job: null
+        job: {workflow: CI, id: minio-contract, aggregate: true}
         purpose: {met: [candidate-property, ci-best-environment, contributor-actionable], evidence: "Focused env-gated contracts avoid repeating ordinary mirror tests."}
         authority: {met: [anti-vacuous, actionable, bounded, reproducible-or-diagnosable, owned], evidence: "Pinned image/client details and test discovery are deferred to Task 10."}
         anti_vacuity: Pinned service probes, selected-test count, and a contract mutation must fail closed.
         runtime: {bound_seconds: 600, recent: null}
         coverage: {packages: [internal/mirror, internal/mirror/s3], package_classes: [], package_roles: [], platform_contracts: [], paths: [], generated_paths: []}
         diagnostics: {local_command: null, local_make_target: null, hosted_artifact: minio-shadow-log, failure_artifact: minio-service-log, formats: [go-test-json, service-logs]}
-        qualification: {state: candidate, history: []}
+        qualification:
+          state: required
+          history:
+            - {date: "2026-08-12", state: candidate, reason: "Candidate defined; hosted qualification pending."}
+            - {date: "2026-10-24", state: required, reason: "Promoted: qualification record 20 matched pairs over 21.0 days, shared-responsibility verdicts 20/20; both same-tree divergences dispositioned as CI-only coverage plus a known fuzz-boundary flake (initiative decisions.md, 2026-10-24)."}
 
   - id: timing-performance
     rationale: Wall-clock and memory trends are diagnostic evidence, not deterministic merge semantics.
