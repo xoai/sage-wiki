@@ -65,8 +65,10 @@ func TestQualification(t *testing.T) {
 	tests := []struct {
 		name     string
 		runs     []RunObservation
-		want     string
-		wantCode int // 0 qualified, 1 insufficient/divergent
+		want string
+		// wantCode: 0 qualified/insufficient (insufficient = healthy
+		// accumulation — a scheduled observer must NOT alert on it), 1
+		// divergent (same-tree mismatch: the one alert-worthy state).
 	}{
 		{
 			name: "qualified",
@@ -137,8 +139,12 @@ func TestRunFixtures(t *testing.T) {
 
 	var stdout, stderr bytesLike
 	code := run([]string{"--fixtures", dir, "--output", out, "--minimum-runs", "20", "--minimum-days", "7"}, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("exit = %d, want 1 (insufficient); stderr=%s", code, stderr.String())
+	// Exit contract (issue: observer red daily during accumulation): 2
+	// matched pairs < minimum 20 → insufficient → exit 0, NOT 1 — the
+	// window filling is the observer's normal intermediate state. Only
+	// divergence (same-tree conclusion mismatch) exits 1.
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 (insufficient = healthy accumulation); stderr=%s", code, stderr.String())
 	}
 
 	rec, err := os.ReadFile(out)

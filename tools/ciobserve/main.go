@@ -338,10 +338,23 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, string(data))
 	}
 
-	if rec.Status == "qualified" {
+	// Exit contract (fail-closed): a scheduled observer must not alert on
+	// its own healthy intermediate state. "insufficient" — the window is
+	// still accumulating pairs — is that state: exit 0 so the daily run is
+	// green and the persist step commits the accumulating verdict.
+	// "divergent" — same-tree conclusion mismatch between current and
+	// candidate — is the one observation a scheduled observer exists to
+	// alert on: exit 1. Any other status string (including the zero value
+	// if a future refactor adds an early return) is unexpected: exit 2,
+	// never a silent green.
+	switch rec.Status {
+	case "qualified", "insufficient":
 		return 0
+	case "divergent":
+		return 1
+	default:
+		return 2
 	}
-	return 1
 }
 
 func main() {

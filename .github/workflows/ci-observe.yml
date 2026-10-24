@@ -143,7 +143,16 @@ jobs:
         run: cat /tmp/qualification.json
 
       - name: Persist verdict to ci/qualification.json
+        if: always()
         run: |
+          # Missing-file guard: exit-2 runs (flag/fetch errors — the
+          # evaluate step never wrote the verdict) must no-op here, not
+          # fail at cp with a confusing "No such file" on top of the real
+          # failure. Fresh runner per job: no stale-file risk.
+          if [ ! -f /tmp/qualification.json ]; then
+            echo "no verdict written — evaluate failed before the write; nothing to persist"
+            exit 0
+          fi
           set -euo pipefail
           # The verdict is only useful where decisions can read it: commit
           # it next to the standards manifest. No-op when unchanged.
