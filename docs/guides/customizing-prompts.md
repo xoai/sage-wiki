@@ -38,6 +38,14 @@ not a prompt variant. Delete a file to
 revert to the built-in default. Existing customizations are never overwritten
 by re-running the scaffold.
 
+**Applying an edited template to existing documents:** run
+`sage-wiki compile --force`. The template hash is part of each document's
+compile key, so a plain compile schedules the documents — but the summary
+cache is source-hash-keyed and will serve the stored summary for an
+unchanged source (a known limitation, tracked in #219). `--force` bypasses
+the cache and regenerates; deleting `wiki/summaries/*.md` by hand also
+works but re-bills every document, not just the affected ones.
+
 Each scaffolded file's header lists the template variables available to it
 (e.g. `{{.SourcePath}}`, `{{.MaxTokens}}`; `write-article.md` additionally
 gets `{{.ConceptName}}`, `{{.Sources}}`, `{{.Aliases}}`, `{{.Learnings}}`,
