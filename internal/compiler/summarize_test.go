@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xoai/sage-wiki/internal/extract"
 	"github.com/xoai/sage-wiki/internal/llm"
@@ -63,7 +64,7 @@ func TestSummarizeOneReusesExistingSummaryOnHashMatch(t *testing.T) {
 	buildSummaryFile(t, filepath.Join(projectDir, outputDir), "sources-doc", sourceHash, longBody)
 
 	info := SourceInfo{Path: "sources/doc.md", Hash: sourceHash, Type: "article"}
-	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil, nil, nil, false)
+	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil, nil, nil, false, "")
 
 	if result.Error != nil {
 		t.Fatalf("expected no error, got: %v", result.Error)
@@ -85,7 +86,7 @@ func TestSummarizeOneSkipsReusedWhenHashMismatch(t *testing.T) {
 
 	// Hash differs → must not reuse; extraction of missing source returns an error
 	info := SourceInfo{Path: "sources/doc.md", Hash: "sha256:new", Type: "article"}
-	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil, nil, nil, false)
+	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil, nil, nil, false, "")
 
 	if result.Error == nil {
 		t.Fatal("expected an error (extract should fail on missing source), got nil")
@@ -104,7 +105,7 @@ func TestSummarizeOneSkipsReusedWhenSummaryTooShort(t *testing.T) {
 
 	// Body below 100 chars → must not reuse
 	info := SourceInfo{Path: "sources/doc.md", Hash: sourceHash, Type: "article"}
-	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil, nil, nil, false)
+	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil, nil, nil, false, "")
 
 	if result.Error == nil {
 		t.Fatal("expected an error (extract should fail on missing source), got nil")
@@ -120,7 +121,7 @@ func TestSummarizeOneSkipsReusedWhenNoSummaryFile(t *testing.T) {
 
 	// No summary file exists → must not reuse
 	info := SourceInfo{Path: "sources/doc.md", Hash: "sha256:abc123", Type: "article"}
-	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil, nil, nil, false)
+	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil, nil, nil, false, "")
 
 	if result.Error == nil {
 		t.Fatal("expected an error (extract should fail on missing source), got nil")
@@ -283,5 +284,99 @@ func TestValidateSummary(t *testing.T) {
 				t.Errorf("validateSummary(%q): got err=%v, wantErr=%v", tt.name, err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// Issue #219 drift path: the reuse check was source-hash-only, so a
+// template/models/config change scheduled docs via R5 drift and then the
+// cache served the stale body on a PLAIN compile. The fix stamps a
+// context_hash (tier-3 key minus source) into the frontmatter and requires
+// it PRESENT AND MATCHING when the run computed one — absent ⇒ regenerate
+// ⇒ restamp (self-healing per doc, closes the corpus-wide legacy hole).
+func TestSummarizeReuseContextHash(t *testing.T) {
+	longBody := strings.Repeat("fresh summary body ", 20) // ≥100 chars
+
+	scenario := func(t *testing.T, name, storedCtx, runCtx string, wantReuse bool) {
+		t.Helper()
+		projectDir := t.TempDir()
+		outputDir := "wiki"
+		sourceHash := "sha256:src"
+		info := SourceInfo{Path: "raw/doc.md", Hash: sourceHash, Type: "article"}
+
+		// Fixture PRODUCED BY writeSummaryFile with the scenario's stamp —
+		// the truest round-trip (the parser must read what the writer
+		// emits; a hand-typed fixture would hide the field-order trap the
+		// plan review flagged). storedCtx="" writes an empty-valued stamp;
+		// the legacy scenario needs the LINE ABSENT, so strip it after.
+		sc := &extract.SourceContent{Type: "article"}
+		res := writeSummaryFile(projectDir, outputDir, info, "raw-doc.md", sc, longBody, SummaryResult{}, time.UTC, storedCtx)
+		if res.Error != nil {
+			t.Fatalf("fixture write: %v", res.Error)
+		}
+		if storedCtx == "" {
+			// legacy shape: no context_hash line at all (pre-fix summaries)
+			raw, _ := os.ReadFile(filepath.Join(projectDir, outputDir, "summaries", "raw-doc.md"))
+			os.WriteFile(filepath.Join(projectDir, outputDir, "summaries", "raw-doc.md"),
+				[]byte(strings.Replace(string(raw), "context_hash: \n", "", 1)), 0644)
+		}
+
+		// Source file must exist for the non-reuse regeneration path... no:
+		// reuse path doesn't read the source. Only non-reuse needs it, and
+		// it will fail on missing source — which still proves non-reuse.
+		result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil, nil, nil, false, runCtx)
+		if wantReuse {
+			if result.Summary != strings.TrimSpace(longBody) {
+				t.Errorf("%s: want reuse, got regeneration or error (err=%v len=%d)",
+					name, result.Error, len(result.Summary))
+			}
+		} else {
+			if result.Summary == longBody && result.Error == nil {
+				t.Errorf("%s: stale body reused — drift bug (issue #219)", name)
+			}
+		}
+	}
+
+	t.Run("hashed run, matching stamp → reuse", func(t *testing.T) {
+		scenario(t, "match", "abc123", "abc123", true)
+	})
+	t.Run("hashed run, mismatched stamp → regenerate", func(t *testing.T) {
+		scenario(t, "mismatch", "abc123", "def456", false)
+	})
+	t.Run("hashed run, absent stamp (legacy) → regenerate (self-heal)", func(t *testing.T) {
+		scenario(t, "legacy", "", "abc123", false)
+	})
+	t.Run("unthreaded caller (empty run hash) → legacy reuse", func(t *testing.T) {
+		scenario(t, "empty-run-hash", "abc123", "", true)
+	})
+}
+
+// Config drift must also break reuse (the M3 closure): the context digest
+// covers models + config, not just templates.
+func TestSummarizeReuseBreaksOnConfigDrift(t *testing.T) {
+	// Covered semantically by the mismatch scenario above (any context-hash
+	// change → regenerate) — this test pins the DIGEST itself: same context,
+	// same digest; any single component change, different digest.
+	base := KeyContext{Templates: "t1", Models: "m1", Config: "c1", Embed: "e1"}
+	d1 := base.ContextDigest()
+	if d1 == "" {
+		t.Fatal("ContextDigest empty")
+	}
+	if base.ContextDigest() != d1 {
+		t.Fatal("ContextDigest not deterministic for identical context")
+	}
+	mutated := base
+	mutated.Models = "m2"
+	if mutated.ContextDigest() == d1 {
+		t.Fatal("models change did not change ContextDigest — drift on models axis would reuse stale summary")
+	}
+	mutated = base
+	mutated.Config = "c2"
+	if mutated.ContextDigest() == d1 {
+		t.Fatal("config change did not change ContextDigest — drift on config axis would reuse stale summary")
+	}
+	mutated = base
+	mutated.Templates = "t2"
+	if mutated.ContextDigest() == d1 {
+		t.Fatal("template change did not change ContextDigest — drift on templates axis would reuse stale summary")
 	}
 }

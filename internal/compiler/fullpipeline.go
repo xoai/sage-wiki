@@ -3,6 +3,7 @@ package compiler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -182,10 +183,27 @@ func runFullPipeline(sources []SourceInfo, opts FullPipelineOpts) *FullPipelineR
 	sourceRoots := sourceRootPaths(cfg.Sources)
 	warnSummaryNameCollisions(sourceInfoPaths(sources), sourceRoots, summaryNaming)
 
+	// Context digest for summary-reuse invalidation (#219): same key
+	// material the classifier uses (NewKeyContextForMode with injected=
+	// false — a self-consistency choice: stamp-write and stamp-check both
+	// derive from this one call, so a forced restamp can never mismatch a
+	// later plain compile's check). Computed ONCE per run; a computation
+	// error fails the run — key material must never embed error text
+	// (classifySkips' rule).
+	contextHash := ""
+	if kc, err := NewKeyContextForMode(cfg, opts.Prompts, false); err != nil {
+		result.Errors++
+		progress.ItemError("pass 1 setup", fmt.Errorf("context digest: %w", err))
+		return result
+	} else {
+		contextHash = kc.ContextDigest()
+	}
+
 	summaries := Summarize(SummarizeOpts{
 		Temperature:     cfg.Compiler.CompileTemperature(),
 		Prompts:         opts.Prompts,
 		ForceRegenerate: opts.Force,
+		ContextHash:     contextHash,
 		Ctx:             opts.Ctx,
 		ProjectDir:      opts.ProjectDir,
 		OutputDir:       cfg.Output,

@@ -125,6 +125,21 @@ func NewKeyContextForMode(cfg *config.Config, pr *prompts.Registry, injected boo
 	}, nil
 }
 
+// ContextDigest is the tier-3 compile context as one stable short digest:
+// everything Parts() includes for tier 3 EXCEPT the per-document source
+// hash (Pipeline + Templates + Models + Config + Embed). Summary reuse
+// stamps this (issue #219 drift path): any context-axis drift — template
+// edit, models change, config change — must invalidate the cached summary
+// exactly as it drifts the compile key.
+//
+// Preimage is PINNED (byte-stable across versions, reproducible by users):
+// domain-prefixed \n-join, deliberately the same layout as Key()'s digest
+// (see :45-49) so both are auditable side by side.
+func (kc *KeyContext) ContextDigest() string {
+	return sha256Hex("spec04/ctx/v1\n" + PipelineVersion + "\n" + kc.Templates + "\n" +
+		kc.Models + "\n" + kc.Config + "\n" + kc.Embed)[:16]
+}
+
 // Parts assembles the per-doc parts from the run context + source hash
 // (tier selects the shape, spec R6).
 func (kc *KeyContext) Parts(sourceHash string, tier int) CompileKeyParts {

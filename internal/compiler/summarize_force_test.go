@@ -23,7 +23,7 @@ func TestSummarizeOneForceBypassesCache(t *testing.T) {
 	info := SourceInfo{Path: "sources/doc.md", Hash: sourceHash, Type: "article"}
 	// regenerate=true：这里没有 LLM client，所以这次调用注定失败 —— 但**绝不能**把缓存
 	// 正文当成结果返回，那正是 bug 的形态（"重编了"但内容一字未变）。
-	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil, nil, nil, true)
+	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil, nil, nil, true, "")
 
 	if result.Summary == cachedBody {
 		t.Fatalf("--force 下不得复用磁盘摘要（issue #219）：拿到 %q", truncateForMsg(result.Summary))
@@ -41,7 +41,7 @@ func TestSummarizeOneWithoutForceStillReuses(t *testing.T) {
 	buildSummaryFile(t, filepath.Join(projectDir, outputDir), "sources-doc", sourceHash, cachedBody)
 
 	info := SourceInfo{Path: "sources/doc.md", Hash: sourceHash, Type: "article"}
-	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil, nil, nil, false)
+	result := summarizeOne(context.Background(), projectDir, outputDir, info, nil, "", 0, nil, "", "", nil, nil, nil, false, "")
 
 	if result.Summary != cachedBody {
 		t.Fatalf("非 --force 时应复用缓存，实际 %q", truncateForMsg(result.Summary))

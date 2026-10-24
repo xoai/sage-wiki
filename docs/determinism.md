@@ -224,6 +224,25 @@ key is then stamped by the deterministic pipeline. Any future
 "reproduce-and-verify" tooling should treat adopted docs as
 non-reproducing until re-baselined.
 
+Unstamped summaries (written before the `context_hash` frontmatter field,
+issue #219) are the same artifact class as pre-SPEC-04 rows: adopted
+without re-billing, and non-reproducing until each document's next genuine
+recompile — which the strict stamp semantics guarantees will regenerate
+and restamp (a run with a computed context hash requires the stamp PRESENT
+and matching; absent ⇒ regenerate).
+
+Two granularity dispositions for the stamp (deliberate, matching the
+compile key's own component granularity):
+
+- The digest covers the full tier-3 context — templates, models, config,
+  embed — so a config or embedder change re-summarizes the corpus. That
+  is the same bill a template edit already incurred pre-fix (any template
+  edit re-bills via R5); under-stamping would leave the drift bug open
+  on those axes.
+- Image summaries carry the stamp though they use an inline prompt:
+  models invalidation is correct for them; template invalidation is
+  conservative (matches the compile key's granularity — accepted).
+
 ## What determinism does not cover
 
 - **Non-compile writers.** MCP capture, the session scribe, on-demand

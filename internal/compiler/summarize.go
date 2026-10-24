@@ -66,6 +66,16 @@ type SummarizeOpts struct {
 	// prompts/*.md the summary would be served from cache and stay
 	// byte-identical (issue #219).
 	ForceRegenerate bool
+
+	// ContextHash is the tier-3 compile context digest (compilekey
+	// ContextDigest). When non-empty, summary reuse additionally requires
+	// the stored context_hash stamp to be PRESENT AND MATCHING — absent ⇒
+	// regenerate ⇒ restamp (self-healing per doc; closes the drift path
+	// where a template/models/config change scheduled the doc via R5 and the
+	// cache then served the stale body, issue #219). Empty (unthreaded or
+	// test callers) keeps legacy source-hash-only semantics — a stated
+	// decision, not an accident.
+	ContextHash string
 }
 
 // Summarize processes sources through Pass 1, producing summaries.
@@ -141,7 +151,7 @@ func Summarize(opts SummarizeOpts) []SummaryResult {
 				unitCtx, cancelUnit = budget.UnitContext(opts.Ctx)
 			}
 			start := time.Now()
-			result := summarizeOne(unitCtx, opts.ProjectDir, opts.OutputDir, info, opts.Client, opts.Model, opts.MaxTokens, opts.UserTZ, opts.Language, opts.SummaryNaming, opts.SourceRoots, opts.Prompts, opts.Temperature, opts.ForceRegenerate, opts.ExtractOpts...)
+			result := summarizeOne(unitCtx, opts.ProjectDir, opts.OutputDir, info, opts.Client, opts.Model, opts.MaxTokens, opts.UserTZ, opts.Language, opts.SummaryNaming, opts.SourceRoots, opts.Prompts, opts.Temperature, opts.ForceRegenerate, opts.ContextHash, opts.ExtractOpts...)
 			if budget != nil {
 				budgetTimedOut := budget.finishUnit(unitCtx, time.Since(start), result.Error)
 				cancelUnit()
@@ -194,6 +204,7 @@ func summarizeOne(
 	pr *prompts.Registry,
 	temp *float64,
 	regenerate bool,
+	contextHash string,
 	extractOpts ...extract.ExtractOpts,
 ) SummaryResult {
 	result := SummaryResult{SourcePath: info.Path}
@@ -222,23 +233,36 @@ func summarizeOne(
 	absSummary := filepath.Join(projectDir, summaryPath)
 	if existing, err := os.ReadFile(absSummary); err == nil && !regenerate {
 		body := string(existing)
-		// Parse source_hash from YAML frontmatter and verify it matches the current
-		// source file. This prevents stale summaries being served for modified sources.
-		var storedHash string
+		// Parse source_hash AND context_hash from YAML frontmatter in ONE
+		// pass — no break on first match: the writer emits context_hash
+		// after source_hash, and a first-match break would never reach it
+		// (the parser trap the #219 plan review flagged; the round-trip test
+		// uses a fixture PRODUCED BY writeSummaryFile, not hand-typed).
+		// source_hash guards against modified sources; context_hash guards
+		// against context drift (template/models/config — issue #219).
+		var storedHash, storedContext string
 		if strings.HasPrefix(body, "---\n") {
 			if end := strings.Index(body[4:], "\n---\n"); end >= 0 {
 				frontmatter := body[4 : 4+end]
 				for _, line := range strings.Split(frontmatter, "\n") {
-					if strings.HasPrefix(line, "source_hash: ") {
-						storedHash = strings.TrimPrefix(line, "source_hash: ")
-						break
+					if v, ok := strings.CutPrefix(line, "source_hash: "); ok {
+						storedHash = v
+					} else if v, ok := strings.CutPrefix(line, "context_hash: "); ok {
+						storedContext = v
 					}
 				}
 				body = body[4+end+5:]
 			}
 		}
 		body = strings.TrimSpace(body)
-		if len(body) >= 100 && storedHash != "" && storedHash == info.Hash {
+		// Context gate: when the run computed a context hash, the stamp must
+		// be present AND matching. Absent ⇒ regenerate ⇒ restamp (self-heal
+		// — every legacy summary crosses this exactly once). Mismatch ⇒ a
+		// template/models/config change drifted the key; the cached body is
+		// stale by construction. Empty run hash (unthreaded/test caller) ⇒
+		// legacy semantics.
+		contextOK := contextHash == "" || (storedContext != "" && storedContext == contextHash)
+		if len(body) >= 100 && storedHash != "" && storedHash == info.Hash && contextOK {
 			log.Info("reusing existing summary", "path", info.Path)
 			result.Summary = body
 			result.SummaryPath = summaryPath
@@ -266,7 +290,7 @@ func summarizeOne(
 			return result
 		}
 		summaryText = text
-		return writeSummaryFile(projectDir, outputDir, info, summaryName, content, summaryText, result, userTZ)
+		return writeSummaryFile(projectDir, outputDir, info, summaryName, content, summaryText, result, userTZ, contextHash)
 	}
 
 	// Chunk if needed
@@ -326,7 +350,7 @@ func summarizeOne(
 		return result
 	}
 
-	return writeSummaryFile(projectDir, outputDir, info, summaryName, content, summaryText, result, userTZ)
+	return writeSummaryFile(projectDir, outputDir, info, summaryName, content, summaryText, result, userTZ, contextHash)
 }
 
 // emptyContentError returns a non-nil error when an LLM response carries no
@@ -354,7 +378,7 @@ func validateSummary(text string) error {
 	return nil
 }
 
-func writeSummaryFile(projectDir, outputDir string, info SourceInfo, summaryName string, content *extract.SourceContent, summaryText string, result SummaryResult, loc *time.Location) SummaryResult {
+func writeSummaryFile(projectDir, outputDir string, info SourceInfo, summaryName string, content *extract.SourceContent, summaryText string, result SummaryResult, loc *time.Location, contextHash string) SummaryResult {
 	summaryDir := filepath.Join(projectDir, outputDir, "summaries")
 	os.MkdirAll(summaryDir, 0755)
 
@@ -365,11 +389,12 @@ func writeSummaryFile(projectDir, outputDir string, info SourceInfo, summaryName
 source: %s
 source_type: %s
 source_hash: %s
+context_hash: %s
 compiled_at: %s
 chunk_count: %d
 ---
 
-`, info.Path, content.Type, info.Hash, timeNow(loc), content.ChunkCount)
+`, info.Path, content.Type, info.Hash, contextHash, timeNow(loc), content.ChunkCount)
 
 	// Canonical write-then-index order (I2): write the summary atomically first;
 	// the caller then indexes it into the DB and the compile marks the manifest.
