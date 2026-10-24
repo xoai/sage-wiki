@@ -1,10 +1,15 @@
 {
   "candidate_workflow": "CI Shadow",
   "current_workflow": "CI",
-  "sample_count": 0,
-  "date_span_days": 0,
-  "status": "pending",
-  "reason": "Qualification window not yet started.",
+  "sample_count": 18,
+  "date_span_days": 20.910185185185185,
+  "earliest_run": "2026-10-03T04:46:29Z",
+  "latest_run": "2026-10-24T02:37:09Z",
+  "status": "insufficient",
+  "reason": "sample count 18 below minimum 20",
+  "p50_seconds": 0,
+  "p95_seconds": 0,
+  "runner_occupancy_seconds": 0,
   "owner_disposition": "pending",
-  "generated_at": ""
+  "generated_at": "2026-10-24T02:52:05Z"
 }
