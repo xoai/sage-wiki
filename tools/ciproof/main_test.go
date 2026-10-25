@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 const validSHA = "58166c18e49aceed83651388e1108bd381b683aa"
@@ -213,11 +214,14 @@ func TestProof(t *testing.T) {
 				r.Attempts[0].Conclusion = "failure"
 				f.Runs = []RunFixture{r}
 				f.Waiver = &WaiverFixture{
-					Approver:         "xoai",
-					Reason:           "Runner capacity outage caused red; confirmed not a code regression.",
-					IncidentLink:     "https://github.com/xoai/sage-wiki/issues/200",
-					SHA:              validSHA,
-					ExpiresAt:        "2036-08-20T00:00:00Z", // far-future: a "valid" fixture must not date-rot
+					Approver:     "xoai",
+					Reason:       "Runner capacity outage caused red; confirmed not a code regression.",
+					IncidentLink: "https://github.com/xoai/sage-wiki/issues/200",
+					SHA:          validSHA,
+					// Relative expiry: a hardcoded future date rots into the
+					// expired case as wall-clock time passes (this exact test
+					// failed on resume three months after it was written).
+					ExpiresAt:        time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
 					OriginalEvidence: "CI required failed due to runner timeout, not code defect.",
 				}
 				return f
