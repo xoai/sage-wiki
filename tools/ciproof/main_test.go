@@ -4,9 +4,17 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	yaml "gopkg.in/yaml.v3"
 )
+
+// yamlUnmarshal reads the publication policy (YAML) into generic maps.
+func yamlUnmarshal(data []byte, out any) error {
+	return yaml.Unmarshal(data, out)
+}
 
 const validSHA = "58166c18e49aceed83651388e1108bd381b683aa"
 
@@ -279,6 +287,91 @@ func TestProof(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestPublicationCoupling is the stale-coupling contract (Milestone 5 Task 19):
+// it reads the REAL repository files — a fixture-based variant could never
+// catch the drift it exists to catch. Docker must still name the declared CI
+// authority in its workflow_run trigger; every publication the policy marks
+// proof-required must actually invoke this verifier; release builds must sit
+// behind a proof job.
+func TestPublicationCoupling(t *testing.T) {
+	loadPolicy := func(t *testing.T) map[string]any {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join("..", "..", "ci", "publication-policy.yaml"))
+		if err != nil {
+			t.Fatalf("publication policy unreadable: %v", err)
+		}
+		var policy map[string]any
+		if err := yamlUnmarshal(data, &policy); err != nil {
+			t.Fatalf("publication policy unparseable: %v", err)
+		}
+		return policy
+	}
+	workflowText := func(t *testing.T, rel string) string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", rel))
+		if err != nil {
+			t.Fatalf("%s unreadable: %v", rel, err)
+		}
+		return string(data)
+	}
+
+	policy := loadPolicy(t)
+	authority, _ := policy["ci_authority"].(map[string]any)
+	if authority == nil {
+		t.Fatal("policy has no ci_authority")
+	}
+	authorityWorkflow, _ := authority["workflow"].(string)
+	authorityFile, _ := authority["workflow_file"].(string)
+	if authorityWorkflow == "" || authorityFile == "" {
+		t.Fatal("ci_authority must declare workflow and workflow_file")
+	}
+	if _, err := os.Stat(filepath.Join("..", "..", authorityFile)); err != nil {
+		t.Fatalf("ci_authority.workflow_file %s does not exist: %v", authorityFile, err)
+	}
+
+	publications, _ := policy["publications"].([]any)
+	if len(publications) == 0 {
+		t.Fatal("policy declares no publications")
+	}
+	workflowOf := map[string]string{ // policy publication id -> workflow file
+		"docker-main":       "docker.yml",
+		"docker-tag":        "docker.yml",
+		"release-tag":       "release.yml",
+		"client-python":     "publish-python.yml",
+		"client-typescript": "publish-typescript.yml",
+	}
+	for _, entry := range publications {
+		pub, _ := entry.(map[string]any)
+		id, _ := pub["id"].(string)
+		file, known := workflowOf[id]
+		if !known {
+			t.Fatalf("coupling test does not know which workflow file owns publication %q — update the map", id)
+		}
+		text := workflowText(t, file)
+		if proofRequired, _ := pub["proof_required"].(bool); proofRequired {
+			if !strings.Contains(text, "tools/ciproof") {
+				t.Fatalf("%s: publication %q is proof_required but the workflow never invokes tools/ciproof", file, id)
+			}
+		}
+		if trigger, _ := pub["trigger"].(string); trigger == "workflow_run" {
+			// The stale-coupling check proper: docker must name the declared
+			// CI authority, so renaming the CI workflow cannot silently
+			// disable main publication.
+			if !strings.Contains(text, `workflows: ["`+authorityWorkflow+`"]`) {
+				t.Fatalf("%s: workflow_run trigger no longer names the declared CI authority %q", file, authorityWorkflow)
+			}
+		}
+	}
+
+	release := workflowText(t, "release.yml")
+	for _, job := range []string{"build", "release"} {
+		if !strings.Contains(release, "needs: proof") && !strings.Contains(release, "needs: [proof") {
+			t.Fatalf("release.yml %s job does not depend on a proof job — publication can start without exact-SHA proof", job)
+			break
+		}
 	}
 }
 

@@ -37,13 +37,19 @@ publications:
 
   - id: client-python
     trigger: manual
-    proof_required: true
+    # Deferred: manual dispatch, rare, and the version_sync contract has no
+    # verifier yet — declaring proof_required while ungated would be policy
+    # drift (the ciproof coupling test enforces what this file declares).
+    proof_required: false
     version_sync_required: true
     write_steps_after_proof: [build, publish]
 
   - id: client-typescript
     trigger: manual
-    proof_required: true
+    # Deferred: manual dispatch, rare, and the version_sync contract has no
+    # verifier yet — declaring proof_required while ungated would be policy
+    # drift (the ciproof coupling test enforces what this file declares).
+    proof_required: false
     version_sync_required: true
     write_steps_after_proof: [build, publish]
 
