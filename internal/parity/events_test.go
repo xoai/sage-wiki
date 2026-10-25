@@ -25,6 +25,31 @@ func (s *eventCaptureSink) Emit(ev events.Event) {
 	s.events = append(s.events, ev)
 }
 
+// eventSequenceOnce: the event build is a full ~70s corpus compile; the
+// golden comparison and the privacy scan read the SAME lines, so the
+// sequence is built once per test binary (Milestone 6 iteration 1).
+var eventSequenceOnce struct {
+	once  sync.Once
+	lines []string
+}
+
+func sharedEventSequence(t *testing.T) []string {
+	t.Helper()
+	// buildEventSequence fatals internally on failure; the once wrapper
+	// only needs the successful lines.
+	eventSequenceOnce.once.Do(func() {
+		eventSequenceOnce.lines = buildEventSequence(t)
+	})
+	// t.Fatal inside once.Do Goexits without marking failure for the SECOND
+	// consumer: it would see nil lines, range zero times, and pass vacuously.
+	// A successful build always emits >= compile_started/finished, so nil
+	// means the build failed — fail this consumer too.
+	if eventSequenceOnce.lines == nil {
+		t.Fatal("shared event sequence unavailable (build failed in another consumer)")
+	}
+	return eventSequenceOnce.lines
+}
+
 // TestEventSequenceGolden (SPEC-07 AC-1): compiling the golden corpus in
 // replay mode emits the documented event sequence — field-by-field against
 // testdata/golden/events.jsonl with id/time/durations normalized and the
@@ -33,7 +58,7 @@ func TestEventSequenceGolden(t *testing.T) {
 	if os.Getenv("SAGE_PARITY_FORCE") == "1" {
 		t.Skip("SAGE_PARITY_FORCE=1: regen tests own the build (parity TestMain contract)")
 	}
-	got := buildEventSequence(t)
+	got := sharedEventSequence(t)
 
 	wantRaw, err := os.ReadFile(goldenPath("events.jsonl"))
 	if err != nil {
@@ -166,7 +191,7 @@ func TestEventSequencePrivacy(t *testing.T) {
 	if os.Getenv("SAGE_PARITY_FORCE") == "1" {
 		t.Skip("SAGE_PARITY_FORCE=1: regen tests own the build")
 	}
-	for _, line := range buildEventSequence(t) {
+	for _, line := range sharedEventSequence(t) {
 		if strings.Contains(line, "/abs/") || strings.Contains(line, string(filepath.Separator)+"home"+string(filepath.Separator)) {
 			t.Errorf("absolute path leaked into event stream: %s", line)
 		}

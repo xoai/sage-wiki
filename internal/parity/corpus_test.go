@@ -74,12 +74,19 @@ func TestCorpusSmoke(t *testing.T) {
 	if testing.Short() {
 		t.Skip("smoke compiles the full corpus")
 	}
-	root := filepath.Join("..", "..", "testdata", "golden-corpus")
-	origin := NewOriginServer()
-	defer origin.Close()
-	dir := filepath.Join(t.TempDir(), "ws")
-	if err := BuildWorkspace(root, dir, origin.URL, ""); err != nil {
-		t.Fatalf("corpus smoke build: %v", err)
+	// Shared fixture: TestMain already built the identical corpus through the
+	// replay server — rebuilding it here duplicates a ~70s serial build per
+	// run (Milestone 6 iteration 1). Only FORCE mode (regen owns the build)
+	// falls back to a private OriginServer build.
+	dir := suiteWS
+	if dir == "" {
+		root := filepath.Join("..", "..", "testdata", "golden-corpus")
+		origin := NewOriginServer()
+		defer origin.Close()
+		dir = filepath.Join(t.TempDir(), "ws")
+		if err := BuildWorkspace(root, dir, origin.URL, ""); err != nil {
+			t.Fatalf("corpus smoke build: %v", err)
+		}
 	}
 	hashes, err := treeHashes(filepath.Join(dir, "wiki"))
 	if err != nil {

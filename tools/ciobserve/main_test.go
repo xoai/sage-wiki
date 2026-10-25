@@ -301,7 +301,7 @@ func TestMetricsBaseline(t *testing.T) {
 			created := time.Date(2026, 10, 24, 10, 0, 0, 0, time.UTC)
 			r := makeRun("CI", "sha"+string(rune('a'+i)), "push", "success", created, 300)
 			// Queue delay: jobs start 4 minutes after run creation. A
-			// queue-inclusive wall implementation would report 640s; the
+			// queue-inclusive wall implementation would report 540s; the
 			// execution span is 300s.
 			r.DagRevision = "dag-854f29"
 			for j := range r.Jobs {
@@ -327,8 +327,8 @@ func TestMetricsBaseline(t *testing.T) {
 		if rec.SlowestJob == "" || rec.SlowestJobSeconds != 300 {
 			t.Fatalf("slowest job attribution wrong: %q %v", rec.SlowestJob, rec.SlowestJobSeconds)
 		}
-		if rec.MedianQueueSeconds != 240 {
-			t.Fatalf("median queue = %v, want 240", rec.MedianQueueSeconds)
+		if rec.MedianStartDelaySeconds != 240 {
+			t.Fatalf("median start delay = %v, want 240", rec.MedianStartDelaySeconds)
 		}
 	})
 

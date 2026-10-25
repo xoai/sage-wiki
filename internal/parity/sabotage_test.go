@@ -44,11 +44,18 @@ func TestSabotage_MapOrderFailsByteParity(t *testing.T) {
 	t.Logf("byte parity caught the sabotage:\n%v", err)
 
 	compiler.ShuffleSourcesForTest = nil
-	ws2 := filepath.Join(t.TempDir(), "ws2")
-	if err := BuildWorkspace(filepath.Join("..", "..", "testdata", "golden-corpus"), ws2, replay.URL(), readGoldenConfigForSabotage(t)); err != nil {
-		t.Fatalf("clean build: %v", err)
+	// Clean-build control: TestMain already produced the identical clean
+	// workspace (same corpus, replay server, golden config) — verify against
+	// it instead of a fourth full build (Milestone 6 iteration 1). FORCE
+	// mode falls back to the private rebuild.
+	cleanWS := suiteWS
+	if cleanWS == "" {
+		cleanWS = filepath.Join(t.TempDir(), "ws2")
+		if err := BuildWorkspace(filepath.Join("..", "..", "testdata", "golden-corpus"), cleanWS, replay.URL(), readGoldenConfigForSabotage(t)); err != nil {
+			t.Fatalf("clean build: %v", err)
+		}
 	}
-	if err := CheckByteParity(ws2, goldenConfigPath(), goldenPath("byte-parity.json")); err != nil {
+	if err := CheckByteParity(cleanWS, goldenConfigPath(), goldenPath("byte-parity.json")); err != nil {
 		t.Fatalf("clean build must pass after unsetting the seam: %v", err)
 	}
 }

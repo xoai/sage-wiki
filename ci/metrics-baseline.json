@@ -9,7 +9,7 @@
       "dag_revision": "854f29653aaa",
       "wall_seconds": 533,
       "runner_occupancy_seconds": 4122,
-      "max_queue_seconds": 531,
+      "max_start_delay_seconds": 531,
       "slowest_job": "parity (ubuntu-latest)",
       "slowest_job_seconds": 526,
       "job_count": 29
@@ -21,7 +21,7 @@
       "dag_revision": "854f29653aaa",
       "wall_seconds": 533,
       "runner_occupancy_seconds": 4022,
-      "max_queue_seconds": 531,
+      "max_start_delay_seconds": 531,
       "slowest_job": "parity (ubuntu-latest)",
       "slowest_job_seconds": 527,
       "job_count": 29
@@ -33,7 +33,7 @@
       "dag_revision": "854f29653aaa",
       "wall_seconds": 541,
       "runner_occupancy_seconds": 4273,
-      "max_queue_seconds": 539,
+      "max_start_delay_seconds": 539,
       "slowest_job": "parity (macos-latest)",
       "slowest_job_seconds": 530,
       "job_count": 29
@@ -45,7 +45,7 @@
       "dag_revision": "854f29653aaa",
       "wall_seconds": 535,
       "runner_occupancy_seconds": 4194,
-      "max_queue_seconds": 535,
+      "max_start_delay_seconds": 535,
       "slowest_job": "parity (macos-latest)",
       "slowest_job_seconds": 529,
       "job_count": 29
@@ -57,7 +57,7 @@
       "dag_revision": "854f29653aaa",
       "wall_seconds": 530,
       "runner_occupancy_seconds": 3995,
-      "max_queue_seconds": 529,
+      "max_start_delay_seconds": 529,
       "slowest_job": "parity (macos-latest)",
       "slowest_job_seconds": 523,
       "job_count": 29
@@ -66,8 +66,8 @@
   "median_wall_seconds": 533,
   "p95_wall_seconds": 541,
   "aggregate_occupancy_seconds": 20606,
-  "median_queue_seconds": 3,
+  "median_start_delay_seconds": 3,
   "slowest_job": "parity (macos-latest)",
   "slowest_job_seconds": 530,
-  "generated_at": "2026-10-25T03:46:53Z"
+  "generated_at": "2026-10-25T05:12:01Z"
 }

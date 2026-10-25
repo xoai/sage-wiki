@@ -307,7 +307,7 @@ type RunMetric struct {
 	DagRevision            string  `json:"dag_revision"`
 	WallSeconds            float64 `json:"wall_seconds"`
 	RunnerOccupancySeconds float64 `json:"runner_occupancy_seconds"`
-	MaxQueueSeconds        float64 `json:"max_queue_seconds"`
+	MaxStartDelaySeconds   float64 `json:"max_start_delay_seconds"` // started_at - run created_at: queue + dependency wait
 	SlowestJob             string  `json:"slowest_job"`
 	SlowestJobSeconds      float64 `json:"slowest_job_seconds"`
 	JobCount               int     `json:"job_count"`
@@ -326,7 +326,7 @@ type MetricsRecord struct {
 	MedianWallSeconds         float64     `json:"median_wall_seconds"`
 	P95WallSeconds            float64     `json:"p95_wall_seconds"`
 	AggregateOccupancySeconds float64     `json:"aggregate_occupancy_seconds"`
-	MedianQueueSeconds        float64     `json:"median_queue_seconds"`
+	MedianStartDelaySeconds   float64     `json:"median_start_delay_seconds"` // start delay: queue AND dependency wait; NOT queue health
 	SlowestJob                string      `json:"slowest_job"`
 	SlowestJobSeconds         float64     `json:"slowest_job_seconds"`
 	GeneratedAt               string      `json:"generated_at"`
@@ -363,11 +363,22 @@ func evaluateMetrics(runs []RunObservation, opts MetricsOptions) MetricsRecord {
 		rec.Reason = fmt.Sprintf("%d comparable runs below minimum %d", valid, opts.MinimumRuns)
 		return rec
 	}
+	if runs[0].DagRevision == "" {
+		rec.Status = "mixed-dag"
+		rec.Reason = "runs carry no DAG revision — comparability unproven"
+		return rec
+	}
 	rev := runs[0].DagRevision
+	wfName := runs[0].Workflow
 	for _, run := range runs[1:] {
 		if run.DagRevision != rev {
 			rec.Status = "mixed-dag"
 			rec.Reason = "runs span multiple DAG revisions (" + rev + ", " + run.DagRevision + ") — not comparable"
+			return rec
+		}
+		if run.Workflow != wfName {
+			rec.Status = "mixed-dag"
+			rec.Reason = "runs span multiple workflows (" + wfName + ", " + run.Workflow + ") — not comparable"
 			return rec
 		}
 	}
@@ -392,8 +403,8 @@ func evaluateMetrics(runs []RunObservation, opts MetricsOptions) MetricsRecord {
 				rm.SlowestJobSeconds = job.RuntimeSeconds
 				rm.SlowestJob = job.Name
 			}
-			if job.QueueSeconds > rm.MaxQueueSeconds {
-				rm.MaxQueueSeconds = job.QueueSeconds
+			if job.QueueSeconds > rm.MaxStartDelaySeconds {
+				rm.MaxStartDelaySeconds = job.QueueSeconds
 			}
 			queues = append(queues, job.QueueSeconds)
 		}
@@ -408,7 +419,7 @@ func evaluateMetrics(runs []RunObservation, opts MetricsOptions) MetricsRecord {
 	}
 	rec.MedianWallSeconds = percentile(walls, 0.50)
 	rec.P95WallSeconds = percentile(walls, 0.95)
-	rec.MedianQueueSeconds = percentile(queues, 0.50)
+	rec.MedianStartDelaySeconds = percentile(queues, 0.50)
 	rec.Status = "ok"
 	return rec
 }
@@ -597,6 +608,12 @@ func runMetrics(repo, workflow, workflowFile string, minRuns int, outputPath str
 			fmt.Fprintln(stderr, err)
 			return 2
 		}
+		if len(jobsResp.Jobs) == 100 {
+			// Fail closed rather than silently truncating: occupancy and wall
+			// spans would understate with no rejection.
+			fmt.Fprintf(stderr, "run %d has >= 100 jobs — pagination required before a baseline can be trusted\n", run.RunID)
+			return 2
+		}
 		run.Jobs = jobsResp.Jobs
 		for j := range run.Jobs {
 			job := &run.Jobs[j]
@@ -607,6 +624,9 @@ func runMetrics(repo, workflow, workflowFile string, minRuns int, outputPath str
 					job.RuntimeSeconds = en.Sub(st).Seconds()
 				}
 			}
+			// Start delay (started_at - created_at): includes queue AND
+			// dependency wait; recorded as its own metric, never folded
+			// into wall time.
 			if job.QueueSeconds == 0 && job.StartedAt != "" {
 				if created, err := time.Parse(time.RFC3339, run.CreatedAt); err == nil {
 					if st, err2 := time.Parse(time.RFC3339, job.StartedAt); err2 == nil && st.After(created) {
