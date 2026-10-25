@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+## 0.2.13 — 2026-10-25
+
+### Fixed
+
+- **Template, model, and config edits now invalidate cached summaries on a
+  plain `compile` (#219, the drift path).** Since v0.2.12 fixed `--force`,
+  one gap remained: editing `prompts/*.md` (or the models/embedding
+  configuration) and running `compile` WITHOUT `--force` still served the
+  cached summary — the compile key drifted, the summary cache did not.
+  Every summary now carries a `context_hash:` stamp (a digest of the
+  template/model/config material that determines its bytes), and reuse
+  requires the stamp to be present and matching. Existing summaries
+  self-heal: each document regenerates exactly once, on its next genuine
+  scheduling, and is stamped from then on. `--force` is no longer needed
+  for template edits. Granularity note: a `models:` or config change also
+  re-summarizes, deliberately — those change output bytes just as much as
+  a template edit (reasoning in `docs/determinism.md`).
+
+### Internal
+
+- **CI: qualified candidates promoted into the required aggregate.** The
+  manifest-owned Linux race shards, focused Windows/macOS platform
+  contracts, and focused PostgreSQL/MinIO service contracts — qualified
+  over a 20-pair/21-day shadow window — replaced the broad OS test
+  matrix and broad service jobs.
+- **Publication now requires exact-SHA proof.** Docker and GitHub Releases
+  publish only after a read-only verifier proves the exact commit has a
+  fully successful CI history (every attempt green, `CI required` from
+  the GitHub Actions app, no red-then-rerun). A green rerun can no longer
+  publish over a red attempt.
+- **CI latency: parity suite −54% local / parity job −40% hosted.** The
+  golden-corpus fixture is built once and shared across suite consumers
+  instead of five identical serial builds per run; promoted-DAG wall
+  533s → ~315s.
+- **Dependencies:** Go minor-patch group (13 updates), web: npm
+  minor-patch group (7), markdown-it 14 → 15.
+
 ## 0.2.12 — 2026-10-24
 
 ### Fixed
