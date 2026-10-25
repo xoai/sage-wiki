@@ -1,0 +1,73 @@
+{
+  "workflow": "CI",
+  "status": "ok",
+  "runs": [
+    {
+      "head_sha": "ba153ea3bf998aef7115598f049fe2c5cb678b27",
+      "event": "push",
+      "head_branch": "main",
+      "dag_revision": "854f29653aaa",
+      "wall_seconds": 533,
+      "runner_occupancy_seconds": 4122,
+      "max_queue_seconds": 531,
+      "slowest_job": "parity (ubuntu-latest)",
+      "slowest_job_seconds": 526,
+      "job_count": 29
+    },
+    {
+      "head_sha": "3fa97e6058890fc0264edba54dd09076259badae",
+      "event": "push",
+      "head_branch": "main",
+      "dag_revision": "854f29653aaa",
+      "wall_seconds": 533,
+      "runner_occupancy_seconds": 4022,
+      "max_queue_seconds": 531,
+      "slowest_job": "parity (ubuntu-latest)",
+      "slowest_job_seconds": 527,
+      "job_count": 29
+    },
+    {
+      "head_sha": "a98d52a1510a8042c3d0a6093c3adfef9156270d",
+      "event": "push",
+      "head_branch": "main",
+      "dag_revision": "854f29653aaa",
+      "wall_seconds": 541,
+      "runner_occupancy_seconds": 4273,
+      "max_queue_seconds": 539,
+      "slowest_job": "parity (macos-latest)",
+      "slowest_job_seconds": 530,
+      "job_count": 29
+    },
+    {
+      "head_sha": "739891c3e39a2bd9a234b33b3bd9489deb796e0d",
+      "event": "push",
+      "head_branch": "main",
+      "dag_revision": "854f29653aaa",
+      "wall_seconds": 535,
+      "runner_occupancy_seconds": 4194,
+      "max_queue_seconds": 535,
+      "slowest_job": "parity (macos-latest)",
+      "slowest_job_seconds": 529,
+      "job_count": 29
+    },
+    {
+      "head_sha": "34ea06e28c4c24769896f10ffb4f683c87247065",
+      "event": "push",
+      "head_branch": "main",
+      "dag_revision": "854f29653aaa",
+      "wall_seconds": 530,
+      "runner_occupancy_seconds": 3995,
+      "max_queue_seconds": 529,
+      "slowest_job": "parity (macos-latest)",
+      "slowest_job_seconds": 523,
+      "job_count": 29
+    }
+  ],
+  "median_wall_seconds": 533,
+  "p95_wall_seconds": 541,
+  "aggregate_occupancy_seconds": 20606,
+  "median_queue_seconds": 3,
+  "slowest_job": "parity (macos-latest)",
+  "slowest_job_seconds": 530,
+  "generated_at": "2026-10-25T03:46:53Z"
+}

@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -37,6 +39,7 @@ type RunObservation struct {
 	CreatedAt    string           `json:"created_at"`
 	Status       string           `json:"status"`
 	Conclusion   string           `json:"conclusion"`
+	DagRevision  string           `json:"dag_revision,omitempty"`
 	Jobs         []JobObservation `json:"jobs"`
 	FirstFailure *JobObservation  `json:"first_failure,omitempty"`
 }
@@ -296,6 +299,120 @@ func evaluateQualification(runs []RunObservation, opts QualificationOptions) Qua
 	return rec
 }
 
+// RunMetric is one run's latency attribution inside a baseline.
+type RunMetric struct {
+	HeadSHA                string  `json:"head_sha"`
+	Event                  string  `json:"event"`
+	Branch                 string  `json:"head_branch"`
+	DagRevision            string  `json:"dag_revision"`
+	WallSeconds            float64 `json:"wall_seconds"`
+	RunnerOccupancySeconds float64 `json:"runner_occupancy_seconds"`
+	MaxQueueSeconds        float64 `json:"max_queue_seconds"`
+	SlowestJob             string  `json:"slowest_job"`
+	SlowestJobSeconds      float64 `json:"slowest_job_seconds"`
+	JobCount               int     `json:"job_count"`
+	FirstActionableFailure string  `json:"first_actionable_failure,omitempty"`
+}
+
+// MetricsRecord is the promoted-DAG latency baseline (Milestone 6 Task 22).
+// Wall time is the job EXECUTION span (max job end - min job start), never
+// queue-inclusive: queue delay is recorded separately so an iteration that
+// only moves waiting around cannot masquerade as an execution win.
+type MetricsRecord struct {
+	Workflow                  string      `json:"workflow"`
+	Status                    string      `json:"status"`
+	Reason                    string      `json:"reason,omitempty"`
+	Runs                      []RunMetric `json:"runs"`
+	MedianWallSeconds         float64     `json:"median_wall_seconds"`
+	P95WallSeconds            float64     `json:"p95_wall_seconds"`
+	AggregateOccupancySeconds float64     `json:"aggregate_occupancy_seconds"`
+	MedianQueueSeconds        float64     `json:"median_queue_seconds"`
+	SlowestJob                string      `json:"slowest_job"`
+	SlowestJobSeconds         float64     `json:"slowest_job_seconds"`
+	GeneratedAt               string      `json:"generated_at"`
+}
+
+// MetricsOptions controls baseline evaluation thresholds.
+type MetricsOptions struct {
+	MinimumRuns int
+}
+
+func evaluateMetrics(runs []RunObservation, opts MetricsOptions) MetricsRecord {
+	rec := MetricsRecord{GeneratedAt: time.Now().UTC().Format(time.RFC3339)}
+	valid := 0
+	for _, run := range runs {
+		if run.Workflow == "" {
+			rec.Workflow = "CI"
+		} else if rec.Workflow == "" {
+			rec.Workflow = run.Workflow
+		}
+		if run.Conclusion != "success" || run.Status != "completed" {
+			rec.Status = "not-success"
+			rec.Reason = "run " + run.HeadSHA + " conclusion " + run.Conclusion + " — baseline requires successful runs only"
+			return rec
+		}
+		if len(run.Jobs) == 0 {
+			rec.Status = "missing-jobs"
+			rec.Reason = "run " + run.HeadSHA + " has no job observations"
+			return rec
+		}
+		valid++
+	}
+	if valid < opts.MinimumRuns {
+		rec.Status = "insufficient"
+		rec.Reason = fmt.Sprintf("%d comparable runs below minimum %d", valid, opts.MinimumRuns)
+		return rec
+	}
+	rev := runs[0].DagRevision
+	for _, run := range runs[1:] {
+		if run.DagRevision != rev {
+			rec.Status = "mixed-dag"
+			rec.Reason = "runs span multiple DAG revisions (" + rev + ", " + run.DagRevision + ") — not comparable"
+			return rec
+		}
+	}
+
+	var walls, queues []float64
+	for _, run := range runs {
+		rm := RunMetric{
+			HeadSHA:     run.HeadSHA,
+			Event:       run.Event,
+			Branch:      run.HeadBranch,
+			DagRevision: run.DagRevision,
+			JobCount:    len(run.Jobs),
+		}
+		if run.FirstFailure != nil {
+			rm.FirstActionableFailure = run.FirstFailure.Name
+		}
+		rm.WallSeconds = run.wallTime() // execution span, queue-excluded
+		var occ float64
+		for _, job := range run.Jobs {
+			occ += job.RuntimeSeconds
+			if job.RuntimeSeconds > rm.SlowestJobSeconds {
+				rm.SlowestJobSeconds = job.RuntimeSeconds
+				rm.SlowestJob = job.Name
+			}
+			if job.QueueSeconds > rm.MaxQueueSeconds {
+				rm.MaxQueueSeconds = job.QueueSeconds
+			}
+			queues = append(queues, job.QueueSeconds)
+		}
+		rm.RunnerOccupancySeconds = occ
+		rec.AggregateOccupancySeconds += occ
+		walls = append(walls, rm.WallSeconds)
+		if rm.SlowestJobSeconds > rec.SlowestJobSeconds {
+			rec.SlowestJobSeconds = rm.SlowestJobSeconds
+			rec.SlowestJob = rm.SlowestJob
+		}
+		rec.Runs = append(rec.Runs, rm)
+	}
+	rec.MedianWallSeconds = percentile(walls, 0.50)
+	rec.P95WallSeconds = percentile(walls, 0.95)
+	rec.MedianQueueSeconds = percentile(queues, 0.50)
+	rec.Status = "ok"
+	return rec
+}
+
 func percentile(values []float64, p float64) float64 {
 	if len(values) == 0 {
 		return 0
@@ -344,12 +461,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("ciobserve", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	fixturesDir := flags.String("fixtures", "", "directory of JSON run fixtures to evaluate")
+	metricsRepo := flags.String("repository", "", "live metrics mode: repository (owner/name)")
+	metricsWorkflow := flags.String("workflow", "CI", "live metrics mode: workflow name")
+	metricsWorkflowFile := flags.String("workflow-file", ".github/workflows/ci.yml", "live metrics mode: DAG revision file (blob sha per run commit)")
+	metricsRuns := flags.Int("runs", 5, "live metrics mode: minimum comparable successful runs")
 	outputPath := flags.String("output", "", "write qualification JSON to this path")
 	minRuns := flags.Int("minimum-runs", 20, "minimum matched run pairs for qualification")
 	minDays := flags.Int("minimum-days", 7, "minimum date span in days for qualification")
 	maxP95 := flags.Float64("max-p95-seconds", 480, "maximum p95 wall time in seconds")
 	if err := flags.Parse(args); err != nil {
 		return 2
+	}
+
+	if *metricsRepo != "" {
+		return runMetrics(*metricsRepo, *metricsWorkflow, *metricsWorkflowFile, *metricsRuns, *outputPath, stdout, stderr)
 	}
 
 	if *fixturesDir == "" {
@@ -406,6 +531,118 @@ func run(args []string, stdout, stderr io.Writer) int {
 	default:
 		return 2
 	}
+}
+
+// ghAPIJSON runs `gh api` and decodes JSON into out.
+func ghAPIJSON(path string, out any) error {
+	cmd := exec.Command("gh", "api", path, "-q", ".")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdout, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("gh api %s: %v: %s", path, err, stderr.String())
+	}
+	return json.Unmarshal(stdout, out)
+}
+
+// runMetrics fetches the N most recent successful push runs of one workflow,
+// pins each to its DAG revision (workflow-file blob sha at the run's commit),
+// evaluates the latency baseline, and writes it. Exit contract mirrors the
+// qualification mode: ok exits 0; every rejection exits 1 (a baseline
+// evaluator must not silently green on incomparable data).
+func runMetrics(repo, workflow, workflowFile string, minRuns int, outputPath string, stdout, stderr io.Writer) int {
+	var wfList struct {
+		Workflows []struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
+		} `json:"workflows"`
+	}
+	if err := ghAPIJSON("repos/"+repo+"/actions/workflows?per_page=100", &wfList); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	var wfID int64
+	for _, wf := range wfList.Workflows {
+		if wf.Name == workflow {
+			wfID = wf.ID
+			break
+		}
+	}
+	if wfID == 0 {
+		fmt.Fprintf(stderr, "workflow %q not found in %s\n", workflow, repo)
+		return 2
+	}
+	var runsResp struct {
+		WorkflowRuns []struct {
+			RunObservation
+			ID int64 `json:"id"` // the runs API names it id, not run_id
+		} `json:"workflow_runs"`
+	}
+	if err := ghAPIJSON(fmt.Sprintf("repos/%s/actions/workflows/%d/runs?event=push&status=success&per_page=%d", repo, wfID, minRuns), &runsResp); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	runs := make([]RunObservation, 0, len(runsResp.WorkflowRuns))
+	for i := range runsResp.WorkflowRuns {
+		runs = append(runs, runsResp.WorkflowRuns[i].RunObservation)
+		runs[i].RunID = runsResp.WorkflowRuns[i].ID
+	}
+	for i := range runs {
+		run := &runs[i]
+		run.Workflow = workflow
+		var jobsResp struct {
+			Jobs []JobObservation `json:"jobs"`
+		}
+		if err := ghAPIJSON(fmt.Sprintf("repos/%s/actions/runs/%d/jobs?per_page=100", repo, run.RunID), &jobsResp); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 2
+		}
+		run.Jobs = jobsResp.Jobs
+		for j := range run.Jobs {
+			job := &run.Jobs[j]
+			if job.RuntimeSeconds == 0 {
+				st, err1 := time.Parse(time.RFC3339, job.StartedAt)
+				en, err2 := time.Parse(time.RFC3339, job.CompletedAt)
+				if err1 == nil && err2 == nil && en.After(st) {
+					job.RuntimeSeconds = en.Sub(st).Seconds()
+				}
+			}
+			if job.QueueSeconds == 0 && job.StartedAt != "" {
+				if created, err := time.Parse(time.RFC3339, run.CreatedAt); err == nil {
+					if st, err2 := time.Parse(time.RFC3339, job.StartedAt); err2 == nil && st.After(created) {
+						job.QueueSeconds = st.Sub(created).Seconds()
+					}
+				}
+			}
+		}
+		var content struct {
+			SHA string `json:"sha"`
+		}
+		if err := ghAPIJSON(fmt.Sprintf("repos/%s/contents/%s?ref=%s", repo, workflowFile, run.HeadSHA), &content); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 2
+		}
+		run.DagRevision = content.SHA[:12]
+	}
+	rec := evaluateMetrics(runs, MetricsOptions{MinimumRuns: minRuns})
+	data, err := json.MarshalIndent(rec, "", "  ")
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	if outputPath != "" {
+		if err := os.WriteFile(outputPath, data, 0o644); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 2
+		}
+	} else {
+		fmt.Fprintln(stdout, string(data))
+	}
+	if rec.Status != "ok" {
+		fmt.Fprintf(stderr, "metrics baseline rejected: %s (%s)\n", rec.Status, rec.Reason)
+		return 1
+	}
+	return 0
 }
 
 func main() {

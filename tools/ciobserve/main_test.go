@@ -287,6 +287,80 @@ func TestRuntimeDerivedFromTimestamps(t *testing.T) {
 	}
 }
 
+// TestMetricsBaseline covers the Task 22 baseline evaluator: five comparable
+// successful same-DAG runs, wall time measured from job execution spans
+// (NEVER queue-inclusive), per-run occupancy and slowest-job attribution,
+// and the four rejections (too few runs, mixed DAG revisions, missing jobs,
+// unsuccessful runs).
+func TestMetricsBaseline(t *testing.T) {
+	opts := MetricsOptions{MinimumRuns: 5}
+
+	buildRuns := func(n int) []RunObservation {
+		var runs []RunObservation
+		for i := 0; i < n; i++ {
+			created := time.Date(2026, 10, 24, 10, 0, 0, 0, time.UTC)
+			r := makeRun("CI", "sha"+string(rune('a'+i)), "push", "success", created, 300)
+			// Queue delay: jobs start 4 minutes after run creation. A
+			// queue-inclusive wall implementation would report 640s; the
+			// execution span is 300s.
+			r.DagRevision = "dag-854f29"
+			for j := range r.Jobs {
+				r.Jobs[j].StartedAt = created.Add(4 * time.Minute).UTC().Format(time.RFC3339)
+				r.Jobs[j].CompletedAt = created.Add(4*time.Minute + 300*time.Second).UTC().Format(time.RFC3339)
+				r.Jobs[j].QueueSeconds = 240
+			}
+			runs = append(runs, r)
+		}
+		return runs
+	}
+
+	t.Run("five comparable runs produce a baseline", func(t *testing.T) {
+		rec := evaluateMetrics(buildRuns(5), opts)
+		if rec.Status != "ok" {
+			t.Fatalf("status = %q (%s), want ok", rec.Status, rec.Reason)
+		}
+		for _, rm := range rec.Runs {
+			if rm.WallSeconds != 300 {
+				t.Fatalf("wall = %v, want 300 (execution span, not queue-inclusive 540)", rm.WallSeconds)
+			}
+		}
+		if rec.SlowestJob == "" || rec.SlowestJobSeconds != 300 {
+			t.Fatalf("slowest job attribution wrong: %q %v", rec.SlowestJob, rec.SlowestJobSeconds)
+		}
+		if rec.MedianQueueSeconds != 240 {
+			t.Fatalf("median queue = %v, want 240", rec.MedianQueueSeconds)
+		}
+	})
+
+	rejections := []struct {
+		name   string
+		mutate func([]RunObservation) []RunObservation
+		want   string
+	}{
+		{"fewer than five runs", func(r []RunObservation) []RunObservation { return r[:4] }, "insufficient"},
+		{"mixed DAG revisions", func(r []RunObservation) []RunObservation {
+			r[2].DagRevision = "dag-older"
+			return r
+		}, "mixed-dag"},
+		{"missing job timing", func(r []RunObservation) []RunObservation {
+			r[3].Jobs = nil
+			return r
+		}, "missing-jobs"},
+		{"unsuccessful run", func(r []RunObservation) []RunObservation {
+			r[4].Conclusion = "failure"
+			return r
+		}, "not-success"},
+	}
+	for _, tt := range rejections {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := evaluateMetrics(tt.mutate(buildRuns(5)), opts)
+			if rec.Status != tt.want {
+				t.Fatalf("status = %q (%s), want %q", rec.Status, rec.Reason, tt.want)
+			}
+		})
+	}
+}
+
 func TestRunFixtures(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "qualification.json")
