@@ -165,6 +165,10 @@ sage-wiki compile --watch
 Prefer containers? Prebuilt multi-arch Docker images and compose files are
 covered in the [self-hosted server guide](docs/guides/self-hosted-server.md).
 
+## One-Click Deploy
+
+[![Deploy on RepoCloud](https://d16t0pc4846x52.cloudfront.net/deploylobe.svg)](https://repocloud.io/details/Sage%20Wiki/)
+
 ## Supported Source Formats
 
 | Format      | Extensions                              | What gets extracted                                         |
