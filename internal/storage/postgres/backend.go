@@ -40,10 +40,11 @@ type backend struct {
 	pool      *sql.DB
 	mode      store.Mode
 	opts      store.OpenOptions
-	lockCon   *sql.Conn // pinned advisory-lock conn (writer only)
+	lock      *sessionLock // shared per-process vault lock (writer only)
 	writeMu   sync.Mutex
 	session   int64
 	txKey     int64
+	connCfg   *pgx.ConnConfig // for the session lock's own connection
 	host      string
 	dbName    string
 	closeOnce sync.Once
@@ -99,7 +100,7 @@ func Open(dsn string, opts store.OpenOptions) (store.Backend, error) {
 		keyScope += "." + sp
 	}
 	b := &backend{
-		pool: pool, mode: opts.Mode, opts: opts,
+		pool: pool, mode: opts.Mode, opts: opts, connCfg: cfg,
 		session: advisoryKey("session", keyScope),
 		txKey:   advisoryKey("tx", keyScope),
 		host:    cfg.Host, dbName: cfg.Database,
@@ -143,38 +144,105 @@ func Open(dsn string, opts store.OpenOptions) (store.Backend, error) {
 	return b, nil
 }
 
-// acquireSessionLock polls pg_try_advisory_lock every 100ms until
-// LockTimeout, then fails with ErrWriterActive naming both causes
-// (live second writer; crashed writer not yet reaped).
+// sessionLock is a vault's session advisory lock, held on its own
+// connection and shared by every writer backend this process opens on the
+// vault. The lock means one writer PROCESS per vault: serve opens a writer
+// for each of its worker, web UI and MCP server, and those must not lock
+// each other out. Their write transactions still serialize through the
+// per-tx xact lock.
+type sessionLock struct {
+	scope string
+	db    *sql.DB
+	conn  *sql.Conn
+	refs  int
+}
+
+var (
+	sessionLocksMu sync.Mutex
+	sessionLocks   = map[string]*sessionLock{}
+)
+
+// acquireSessionLock joins this process's lock on the vault if it holds one;
+// otherwise it polls pg_try_advisory_lock every 100ms until LockTimeout,
+// then fails with ErrWriterActive naming both causes (live second writer;
+// crashed writer not yet reaped).
 func (b *backend) acquireSessionLock(ctx context.Context) error {
-	conn, err := b.pool.Conn(ctx)
+	scope := fmt.Sprintf("%s:%d/%d", b.connCfg.Host, b.connCfg.Port, b.session)
+	sessionLocksMu.Lock()
+	defer sessionLocksMu.Unlock()
+	if l := sessionLocks[scope]; l != nil {
+		// The lock lives as long as its connection's session. If that
+		// session is gone (pg_terminate_backend, a dropped connection), so
+		// is the lock: forget it and take the lock afresh below, so this
+		// open cannot join a lock another process may now hold.
+		// The probe gets its own deadline, not the caller's: a deadline that
+		// fires mid-query makes pgx close the connection, which ends the
+		// session and releases the lock. Any probe failure therefore means
+		// the lock is gone.
+		probeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		var one int
+		err := l.conn.QueryRowContext(probeCtx, "SELECT 1").Scan(&one)
+		cancel()
+		if err == nil {
+			l.refs++
+			b.lock = l
+			return nil
+		}
+		delete(sessionLocks, scope)
+	}
+	// Its own one-connection pool, so the lock outlives whichever backend
+	// took it and is released when the last one closes.
+	db := stdlib.OpenDB(*b.connCfg)
+	db.SetMaxOpenConns(1)
+	conn, err := db.Conn(ctx)
 	if err != nil {
+		db.Close()
 		return fmt.Errorf("storage: lock conn: %w", err)
+	}
+	fail := func(err error) error {
+		conn.Close()
+		db.Close()
+		return err
 	}
 	deadline := time.Now().Add(b.opts.LockTimeout)
 	for {
 		var got bool
 		if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", b.session).Scan(&got); err != nil {
-			conn.Close()
-			return fmt.Errorf("storage: advisory lock: %w", err)
+			return fail(fmt.Errorf("storage: advisory lock: %w", err))
 		}
 		if got {
-			b.lockCon = conn
+			b.lock = &sessionLock{scope: scope, db: db, conn: conn, refs: 1}
+			sessionLocks[scope] = b.lock
 			return nil
 		}
 		if time.Now().After(deadline) {
-			conn.Close()
-			return fmt.Errorf("%w — another sage-wiki writer process holds this vault's lock "+
+			return fail(fmt.Errorf("%w — another sage-wiki writer process holds this vault's lock "+
 				"(stop it, point this process elsewhere, or if a writer crashed: inspect pg_locks and "+
-				"pg_terminate_backend the stale session)", store.ErrWriterActive)
+				"pg_terminate_backend the stale session)", store.ErrWriterActive))
 		}
 		select {
 		case <-ctx.Done():
-			conn.Close()
-			return ctx.Err()
+			return fail(ctx.Err())
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// releaseSessionLock drops this backend's share of the lock; the last one
+// out closes the lock's connection, which releases the lock.
+func (b *backend) releaseSessionLock() error {
+	sessionLocksMu.Lock()
+	defer sessionLocksMu.Unlock()
+	l := b.lock
+	b.lock = nil
+	if l.refs--; l.refs > 0 {
+		return nil
+	}
+	if sessionLocks[l.scope] == l {
+		delete(sessionLocks, l.scope)
+	}
+	l.conn.Close()
+	return l.db.Close()
 }
 
 // verifySchemaVersion (reader mode): the DB must already be at this binary's
@@ -302,11 +370,8 @@ func (b *backend) Location() string { return b.host + "/" + b.dbName }
 func (b *backend) Close() error {
 	var err error
 	b.closeOnce.Do(func() {
-		if b.lockCon != nil {
-			// Session lock releases with the conn.
-			if cerr := b.lockCon.Close(); cerr != nil {
-				err = cerr
-			}
+		if b.lock != nil {
+			err = b.releaseSessionLock()
 		}
 		if perr := b.pool.Close(); perr != nil && err == nil {
 			err = perr

@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`serve --ui` starts on postgres: one process's writer backends share
+  the vault lock.** The compile worker, web UI and MCP server each opened
+  a writer and each took the vault's session advisory lock on its own
+  connection, so the second open failed with `ErrWriterActive`. Writer
+  backends in one process now share a reference-counted lock held on a
+  dedicated connection, released when the last one closes. A second
+  process is still refused, as `docs/guides/storage-backends.md`
+  describes, and write transactions still serialize through the
+  per-transaction lock.
+
 ## 0.2.13 — 2026-10-25
 
 ### Fixed
