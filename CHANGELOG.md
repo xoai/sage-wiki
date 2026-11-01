@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`serve`, `web`, `mcp`, `query` and `compile --re-embed` now open a
+  postgres vault.** `app.OpenWithOptions` and the re-embed path built
+  `store.OpenOptions` without `VectorDimension`, so every writer open with
+  `storage.backend: postgres` failed with "vector_dimension required when
+  backend=postgres" even when `config.yaml` set it. They now pass it the
+  way `storedial.OpenWithConfig` already did.
+
 ## 0.2.13 — 2026-10-25
 
 ### Fixed

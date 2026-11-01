@@ -78,6 +78,7 @@ func OpenWithOptions(projectDir, configPath string, mode store.Mode) (*App, erro
 	backend, err := storedial.Open(cfg.Storage, store.OpenOptions{
 		Mode:             mode,
 		ProjectDir:       projectDir,
+		VectorDimension:  cfg.Storage.VectorDimension,
 		ValidRelations:   ontology.ValidRelationNames(mergedRels),
 		ValidEntityTypes: ontology.ValidEntityTypeNames(mergedTypes),
 		ANN:              cfg.Search.ANNEnabled(),
