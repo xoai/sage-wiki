@@ -1251,7 +1251,7 @@ func maybePromptEstimate(dir string) error {
 		model = "gemini-2.5-flash"
 	}
 
-	_, cost, err := llm.EstimateFromBytes(totalBytes, cfg.API.Provider, model, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
+	_, cost, err := llm.EstimateFromBytesFor(totalBytes, priceEndpoint(cfg), model, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
 	if err != nil {
 		return fmt.Errorf("cost estimate: %w", err)
 	}
@@ -1308,7 +1308,7 @@ func runEstimate(dir string) error {
 		model = "gemini-2.5-flash"
 	}
 
-	variants, err := llm.EstimateVariantsFromBytes(totalBytes, cfg.API.Provider, model, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
+	variants, err := llm.EstimateVariantsFromBytesFor(totalBytes, priceEndpoint(cfg), model, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
 	if err != nil {
 		return fmt.Errorf("cost estimate: %w", err)
 	}

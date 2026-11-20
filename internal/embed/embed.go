@@ -125,7 +125,7 @@ func newCascade(provider string, apiKey string, baseURL string, override *EmbedO
 		if url == "" {
 			url = baseURL
 		}
-		if key != "" {
+		if key != "" || p == "litellm" {
 			dims := override.Dimensions
 			if dims == 0 {
 				dims = defaultDimensions[override.Model]
@@ -153,6 +153,28 @@ func newCascade(provider string, apiKey string, baseURL string, override *EmbedO
 	var rateLimit int
 	if override != nil {
 		rateLimit = override.RateLimit
+	}
+
+	// Tier 1 (LiteLLM proxy): the first alias the proxy serves in embedding
+	// mode, with the dimensions it reports (0 = auto-detect). A proxy may run
+	// without a master key, so no API key is required here.
+	if provider == "litellm" {
+		if m, ok := llm.LiteLLMEmbeddingModel(baseURL, apiKey); ok {
+			url := baseURL
+			if url == "" {
+				url = llm.DefaultLiteLLMBaseURL
+			}
+			log.Info("embedding provider detected", "tier", 1, "provider", provider, "model", m.Name, "dims", m.OutputVectorSize)
+			return &APIEmbedder{
+				provider: provider,
+				model:    m.Name,
+				apiKey:   apiKey,
+				baseURL:  url,
+				dims:     m.OutputVectorSize,
+				client:   newEmbedHTTPClient(),
+				limiter:  newEmbedLimiter(rateLimit),
+			}
+		}
 	}
 
 	// Tier 1: Provider embedding API
@@ -333,7 +355,9 @@ func (e *APIEmbedder) embedOpenAI(text string) ([]float32, error) {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+e.apiKey)
+	if e.apiKey != "" { // a keyless LiteLLM proxy takes no Authorization header
+		req.Header.Set("Authorization", "Bearer "+e.apiKey)
+	}
 
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -436,6 +460,8 @@ func (e *APIEmbedder) embeddingURL() string {
 			base = "https://api.voyageai.com/v1"
 		case "mistral":
 			base = "https://api.mistral.ai/v1"
+		case "litellm":
+			base = llm.DefaultLiteLLMBaseURL
 		}
 	}
 	return base + "/embeddings"

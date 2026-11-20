@@ -69,7 +69,7 @@ func RunDoctor(projectDir string) *DoctorResult {
 	// Check API provider
 	if cfg.API.Provider == "" {
 		result.add("api", "warn", "No API provider configured — compile will fail")
-	} else if cfg.API.APIKey == "" && cfg.API.Provider != "ollama" {
+	} else if cfg.API.APIKey == "" && cfg.API.Provider != "ollama" && cfg.API.Provider != "litellm" { // a local LiteLLM proxy may run keyless
 		result.add("api", "error", fmt.Sprintf("Provider %q configured but API key is empty", cfg.API.Provider))
 	} else {
 		result.add("api", "ok", fmt.Sprintf("Provider: %s", cfg.API.Provider))

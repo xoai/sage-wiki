@@ -17,10 +17,19 @@ import (
 const (
 	PriceSourceBuiltin = "builtin"
 	PriceSourceUser    = "user"
-	// PriceSourceProviderAPI is reserved for providers that report pricing
-	// via an API. No provider does today — no loader emits this source.
+	// PriceSourceProviderAPI marks prices the configured provider reports
+	// via its own API (a LiteLLM proxy's /model/info).
 	PriceSourceProviderAPI = "provider-api"
 )
+
+// Endpoint is the configured provider connection. Providers that report
+// pricing over their own API (litellm) need BaseURL and APIKey to load it;
+// for every other provider only Provider matters.
+type Endpoint struct {
+	Provider string
+	BaseURL  string
+	APIKey   string
+}
 
 // Price holds per-million-token pricing for one provider:model. A nil
 // component means that component's price is unknown — unknown components
@@ -82,18 +91,47 @@ type jsonPriceDoc struct {
 // (legacy PERF-04 shape or the registry shape) — later wins. Missing files
 // are skipped; malformed files are a hard error.
 func LoadRegistry(workspaceTablePath string) (*Registry, error) {
+	return LoadRegistryFor(workspaceTablePath, Endpoint{})
+}
+
+// LoadRegistryFor is LoadRegistry plus the prices the configured provider
+// reports via its own API, layered between the embedded defaults and the
+// user file so explicit user and workspace prices still win. A provider API
+// that cannot be reached contributes nothing (its models price as unknown);
+// it is never a load error.
+func LoadRegistryFor(workspaceTablePath string, ep Endpoint) (*Registry, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("locate user home for price registry: %w", err)
 	}
-	return loadRegistryFrom(workspaceTablePath, filepath.Join(home, ".sage-wiki", "prices.json"))
+	return loadRegistryWith(workspaceTablePath, filepath.Join(home, ".sage-wiki", "prices.json"), providerAPIPrices(ep))
+}
+
+// providerAPIPrices returns the PriceSourceProviderAPI entries for ep, or
+// nil for providers that do not report pricing.
+func providerAPIPrices(ep Endpoint) map[string]Price {
+	if ep.Provider != "litellm" {
+		return nil
+	}
+	models, err := LiteLLMModels(ep.BaseURL, ep.APIKey)
+	if err != nil {
+		return nil
+	}
+	return litellmPrices(models, time.Now().UTC())
 }
 
 func loadRegistryFrom(workspaceTablePath, userPath string) (*Registry, error) {
+	return loadRegistryWith(workspaceTablePath, userPath, nil)
+}
+
+func loadRegistryWith(workspaceTablePath, userPath string, apiPrices map[string]Price) (*Registry, error) {
 	r := &Registry{entries: make(map[string]Price), prefix: make(map[string][]string)}
 
 	if err := r.loadBuiltin(); err != nil {
 		return nil, err
+	}
+	for key, p := range apiPrices {
+		r.entries[key] = p
 	}
 	if err := r.loadUserFile(userPath); err != nil {
 		return nil, err
