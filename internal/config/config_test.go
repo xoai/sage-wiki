@@ -177,6 +177,10 @@ func TestValidation(t *testing.T) {
 			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, API: APIConfig{Provider: "qwen"}},
 		},
 		{
+			name: "valid litellm provider",
+			cfg:  Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, API: APIConfig{Provider: "litellm"}},
+		},
+		{
 			name:    "invalid transport",
 			cfg:     Config{Project: "test", Output: "wiki", Sources: []Source{{Path: "raw"}}, Serve: ServeConfig{Transport: "websocket"}},
 			wantErr: "invalid transport",

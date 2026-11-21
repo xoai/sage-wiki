@@ -337,9 +337,19 @@ func (c *Client) SetPriceTable(path string) {
 // workspace's prices into another's usage events.
 func (c *Client) pricingRegistry() (*Registry, error) {
 	c.registryOnce.Do(func() {
-		c.registry, c.registryErr = LoadRegistry(c.priceTable)
+		c.registry, c.registryErr = LoadRegistryFor(c.priceTable, c.PriceEndpoint())
 	})
 	return c.registry, c.registryErr
+}
+
+// PriceEndpoint is the connection a price registry needs for this client's
+// provider: a LiteLLM proxy reports its own per-alias prices, every other
+// provider is priced from the builtin/user/workspace tables alone.
+func (c *Client) PriceEndpoint() Endpoint {
+	if p, ok := c.provider.(*litellmProvider); ok {
+		return p.endpoint()
+	}
+	return Endpoint{Provider: c.providerName}
 }
 
 // SetTier sets the compile tier recorded on usage events.
@@ -468,6 +478,8 @@ func newProvider(name string, apiKey string, baseURL string) (Provider, error) {
 			baseURL = "http://localhost:11434"
 		}
 		return &nonBatchProvider{inner: newOpenAIProvider("", baseURL+"/v1")}, nil
+	case "litellm":
+		return newLiteLLMProvider(apiKey, baseURL), nil
 	default:
 		return nil, fmt.Errorf("llm: unsupported provider %q", name)
 	}
@@ -476,7 +488,8 @@ func newProvider(name string, apiKey string, baseURL string) (Provider, error) {
 // defaultRateLimit returns the default RPM for a provider.
 //
 //   - Public paid APIs get conservative defaults matching their published limits.
-//   - Self-hosted backends (openai-compatible = vLLM/LocalAI/etc., ollama) return
+//   - Self-hosted backends (openai-compatible = vLLM/LocalAI/etc., ollama) and
+//     the LiteLLM proxy (which enforces its own per-key RPM/TPM limits) return
 //     0, meaning "no client-side rate limiting": the compiler's BackpressureController
 //   - server-side capacity are the real governors, and a 1/sec (or 1/2sec) cap
 //     was the hidden reason sage-wiki could not saturate a local GPU endpoint
@@ -508,8 +521,8 @@ func defaultRateLimit(provider string) int {
 		return 60
 	case "gemini":
 		return 60
-	case "openai-compatible", "ollama":
-		return 0 // self-hosted: no client-side RPM cap
+	case "openai-compatible", "ollama", "litellm":
+		return 0 // self-hosted / proxy-governed: no client-side RPM cap
 	default:
 		return 30
 	}

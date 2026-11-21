@@ -288,13 +288,15 @@ func runCostModels(cmd *cobra.Command, args []string) error {
 	// to load means the workspace overlay is NOT applied — say so loudly
 	// rather than present a silently incomplete audit view.
 	tablePath := ""
+	var ep llm.Endpoint
 	cfg, cfgErr := config.Load(resolveConfigPath(dir))
 	if cfgErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: config load failed (%v) — workspace price_table NOT applied to this listing\n", cfgErr)
 	} else {
 		tablePath = cfg.Compiler.PriceTable
+		ep = priceEndpoint(cfg)
 	}
-	registry, err := llm.LoadRegistry(tablePath)
+	registry, err := llm.LoadRegistryFor(tablePath, ep)
 	if err != nil {
 		return cli.CLIError(outputFormat, err)
 	}
@@ -371,4 +373,10 @@ func decOrDash(d *decimal.Decimal) string {
 		return "-"
 	}
 	return d.String()
+}
+
+// priceEndpoint is the provider connection used to load prices: a LiteLLM
+// proxy reports its own per-alias prices over /model/info.
+func priceEndpoint(cfg *config.Config) llm.Endpoint {
+	return llm.Endpoint{Provider: cfg.API.Provider, BaseURL: cfg.API.BaseURL, APIKey: cfg.API.APIKey}
 }

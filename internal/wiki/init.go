@@ -241,13 +241,17 @@ sources:
 output: wiki
 
 # LLM provider configuration
-# Supported: anthropic, openai, gemini, ollama, openai-compatible, qwen
+# Supported: anthropic, openai, gemini, ollama, openai-compatible, qwen, litellm
 # For OpenRouter or other OpenAI-compatible providers, set:
 #   provider: openai-compatible
 #   base_url: https://openrouter.ai/api/v1
 # For Alibaba Cloud DashScope Qwen, set:
 #   provider: qwen
 #   api_key: ${DASHSCOPE_API_KEY}
+# For a LiteLLM proxy (models are its aliases; prices and embeddings come from /model/info), set:
+#   provider: litellm
+#   base_url: http://localhost:4000
+#   api_key: ${LITELLM_API_KEY}
 api:
   provider: gemini
   api_key: ${GEMINI_API_KEY}
@@ -336,13 +340,17 @@ output: %s
 ignore:
 %s
 # LLM provider configuration
-# Supported: anthropic, openai, gemini, ollama, openai-compatible, qwen
+# Supported: anthropic, openai, gemini, ollama, openai-compatible, qwen, litellm
 # For OpenRouter or other OpenAI-compatible providers, set:
 #   provider: openai-compatible
 #   base_url: https://openrouter.ai/api/v1
 # For Alibaba Cloud DashScope Qwen, set:
 #   provider: qwen
 #   api_key: ${DASHSCOPE_API_KEY}
+# For a LiteLLM proxy (models are its aliases; prices and embeddings come from /model/info), set:
+#   provider: litellm
+#   base_url: http://localhost:4000
+#   api_key: ${LITELLM_API_KEY}
 api:
   provider: gemini
   api_key: ${GEMINI_API_KEY}

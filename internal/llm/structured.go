@@ -210,8 +210,9 @@ func (c *Client) StructuredCompletion(ctx context.Context, messages []Message, s
 		if errors.As(err, &se) && se.Code == 400 && mentionsConstraintField(se.Body) {
 			// The json_object degrade is an OpenAI mechanism; providers whose
 			// formatter ignores Degraded (anthropic/gemini) must not resend
-			// the identical request. Pinned: only openaiProvider degrades.
-			if _, isOpenAI := c.provider.(*openaiProvider); isOpenAI {
+			// the identical request. Pinned: only the OpenAI formatter
+			// (openaiProvider, and litellmProvider which reuses it) degrades.
+			if degradesToJSONObject(c.provider) {
 				degraded := schema
 				degraded.Degraded = true
 				if dreq, dok, derr := c.provider.FormatStructuredRequest(messages, degraded, opts); derr == nil && dok {
@@ -327,4 +328,14 @@ func withTruncationHint(resp *Response, maxTokens int, err error) error {
 
 func mentionsConstraintField(body string) bool {
 	return strings.Contains(body, "response_format") || strings.Contains(body, "json_schema")
+}
+
+// degradesToJSONObject reports whether p's structured formatter honors
+// JSONSchema.Degraded (the OpenAI json_object fallback).
+func degradesToJSONObject(p Provider) bool {
+	switch p.(type) {
+	case *openaiProvider, *litellmProvider:
+		return true
+	}
+	return false
 }

@@ -81,6 +81,77 @@ func TestAPIEmbedderWithMockServer(t *testing.T) {
 	}
 }
 
+// fakeLiteLLMEmbedProxy serves /model/info with the given entries and an
+// OpenAI-shaped /embeddings that rejects any Authorization header (keyless).
+func fakeLiteLLMEmbedProxy(t *testing.T, modelInfo string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/model/info":
+			w.Write([]byte(modelInfo))
+		case "/embeddings":
+			if r.Header.Get("Authorization") != "" {
+				http.Error(w, "keyless proxy got an Authorization header", 400)
+				return
+			}
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			if body["model"] != "embed-small" {
+				http.Error(w, "unexpected model", 400)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{"embedding": []float32{0.1, 0.2, 0.3, 0.4}}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func TestCascadeLiteLLMDiscoversEmbeddingAlias(t *testing.T) {
+	server := fakeLiteLLMEmbedProxy(t, `{"data": [
+	  {"model_name": "chat", "model_info": {"mode": "chat"}},
+	  {"model_name": "embed-small", "litellm_params": {"model": "azure/text-embedding-3-small"},
+	   "model_info": {"mode": "embedding", "output_vector_size": 4}}
+	]}`)
+
+	e := NewCascade("litellm", "", server.URL, nil)
+	if e == nil {
+		t.Fatal("expected the proxy's embedding alias as the Tier 1 embedder")
+	}
+	if e.Name() != "litellm/embed-small" || e.Dimensions() != 4 {
+		t.Errorf("embedder = %s (%d dims)", e.Name(), e.Dimensions())
+	}
+	vec, err := e.Embed("hello")
+	if err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	if len(vec) != 4 {
+		t.Errorf("expected 4 dimensions, got %d", len(vec))
+	}
+}
+
+func TestCascadeLiteLLMWithoutEmbeddingAlias(t *testing.T) {
+	server := fakeLiteLLMEmbedProxy(t, `{"data": [{"model_name": "chat", "model_info": {"mode": "chat"}}]}`)
+	if e := NewCascade("litellm", "", server.URL, nil); e != nil && strings.HasPrefix(e.Name(), "litellm/") {
+		t.Errorf("no embedding alias on the proxy, got %s", e.Name())
+	}
+}
+
+func TestCascadeTier0LiteLLMKeyless(t *testing.T) {
+	server := fakeLiteLLMEmbedProxy(t, `{"data": []}`)
+	e := NewCascade("litellm", "", server.URL, &EmbedOverride{Model: "embed-small"})
+	if e == nil || e.Name() != "litellm/embed-small" {
+		t.Fatalf("explicit embed model on a keyless proxy: %v", e)
+	}
+	if _, err := e.Embed("hello"); err != nil {
+		t.Errorf("Embed: %v", err)
+	}
+}
+
 func TestAPIEmbedderErrorResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "rate limited", 429)

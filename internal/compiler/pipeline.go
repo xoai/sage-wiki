@@ -177,11 +177,9 @@ func orBackground(ctx context.Context) context.Context {
 // Extracted so the early batch-resume path and the lazy standard path
 // construct them identically (P1-3).
 func newTrackedClient(projectDir string, cfg *config.Config, opts *CompileOpts) (*llm.Client, *llm.CostTracker, error) {
-	providerName := cfg.API.Provider
 	var client *llm.Client
 	var err error
 	if opts.CompletionProvider != nil {
-		providerName = llm.InjectedProviderName
 		client, err = llm.NewClientWithProvider(opts.CompletionProvider)
 		if err == nil {
 			client.SetCallTimeout(cfg.Limits.Resolve().ProviderTimeout)
@@ -195,7 +193,9 @@ func newTrackedClient(projectDir string, cfg *config.Config, opts *CompileOpts) 
 	tracker := opts.Tracker
 	if tracker == nil {
 		var err error
-		tracker, err = llm.NewCostTrackerWithTable(providerName, cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
+		// The client's endpoint carries the provider name (InjectedProviderName
+		// for injected completions) plus a LiteLLM proxy's URL for its prices.
+		tracker, err = llm.NewCostTrackerForEndpoint(client.PriceEndpoint(), cfg.Compiler.TokenPriceOverride, cfg.Compiler.PriceTable)
 		if err != nil {
 			return nil, nil, fmt.Errorf("compile: load price registry: %w", err)
 		}

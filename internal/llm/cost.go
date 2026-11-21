@@ -81,11 +81,18 @@ func NewCostTracker(provider string, priceOverride float64) (*CostTracker, error
 // the workspace price table (legacy PERF-04 or registry shape). A malformed
 // registry file is a hard error.
 func NewCostTrackerWithTable(provider string, priceOverride float64, tablePath string) (*CostTracker, error) {
-	r, err := LoadRegistry(tablePath)
+	return NewCostTrackerForEndpoint(Endpoint{Provider: provider}, priceOverride, tablePath)
+}
+
+// NewCostTrackerForEndpoint is NewCostTrackerWithTable for a full provider
+// connection, so a LiteLLM proxy's own per-alias prices join the registry
+// (see LoadRegistryFor).
+func NewCostTrackerForEndpoint(ep Endpoint, priceOverride float64, tablePath string) (*CostTracker, error) {
+	r, err := LoadRegistryFor(tablePath, ep)
 	if err != nil {
 		return nil, err
 	}
-	return &CostTracker{provider: provider, override: priceOverride, registry: r}, nil
+	return &CostTracker{provider: ep.Provider, override: priceOverride, registry: r}, nil
 }
 
 // newCostTrackerWithRegistry builds a tracker from an explicit registry —
@@ -316,11 +323,17 @@ func sortedKeys(set map[string]bool) []string {
 // file). Cost is nil when the model's price is unknown — callers render
 // "unknown", never $0.
 func EstimateFromBytes(contentBytes int, provider string, model string, priceOverride float64, tablePath string) (inputTokens int, cost *decimal.Decimal, err error) {
-	ct, err := NewCostTrackerWithTable(provider, priceOverride, tablePath)
+	return EstimateFromBytesFor(contentBytes, Endpoint{Provider: provider}, model, priceOverride, tablePath)
+}
+
+// EstimateFromBytesFor is EstimateFromBytes for a full provider connection
+// (a LiteLLM proxy prices its aliases itself).
+func EstimateFromBytesFor(contentBytes int, ep Endpoint, model string, priceOverride float64, tablePath string) (inputTokens int, cost *decimal.Decimal, err error) {
+	ct, err := NewCostTrackerForEndpoint(ep, priceOverride, tablePath)
 	if err != nil {
 		return 0, nil, err
 	}
-	return estimateFromBytesWithRegistry(contentBytes, provider, model, priceOverride, ct.registry)
+	return estimateFromBytesWithRegistry(contentBytes, ep.Provider, model, priceOverride, ct.registry)
 }
 
 // estimateFromBytesWithRegistry is the hermetic test seam — same math with
@@ -354,11 +367,17 @@ type CostEstimates struct {
 // EstimateVariantsFromBytes computes the estimate triplet from actual
 // registry rates (never hard-coded discounts).
 func EstimateVariantsFromBytes(contentBytes int, provider string, model string, priceOverride float64, tablePath string) (CostEstimates, error) {
-	ct, err := NewCostTrackerWithTable(provider, priceOverride, tablePath)
+	return EstimateVariantsFromBytesFor(contentBytes, Endpoint{Provider: provider}, model, priceOverride, tablePath)
+}
+
+// EstimateVariantsFromBytesFor is EstimateVariantsFromBytes for a full
+// provider connection.
+func EstimateVariantsFromBytesFor(contentBytes int, ep Endpoint, model string, priceOverride float64, tablePath string) (CostEstimates, error) {
+	ct, err := NewCostTrackerForEndpoint(ep, priceOverride, tablePath)
 	if err != nil {
 		return CostEstimates{}, err
 	}
-	return estimateVariantsWithRegistry(contentBytes, provider, model, priceOverride, ct.registry), nil
+	return estimateVariantsWithRegistry(contentBytes, ep.Provider, model, priceOverride, ct.registry), nil
 }
 
 // estimateVariantsWithRegistry is the hermetic test seam for
